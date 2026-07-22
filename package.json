@@ -1,0 +1,19 @@
+{
+  "name": "pseagent-platform",
+  "private": true,
+  "engines": { "node": ">=24 <25" },
+  "workspaces": ["apps/pseagent", "services/knowledge-mcp"],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present && cargo build --manifest-path services/knowledge-engine/Cargo.toml",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && cargo test --manifest-path services/knowledge-engine/Cargo.toml",
+    "test:ts": "npm run test --workspaces --if-present",
+    "test:rust": "cargo test --manifest-path services/knowledge-engine/Cargo.toml"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "tsx": "4.23.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

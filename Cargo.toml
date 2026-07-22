@@ -1,0 +1,3 @@
+[workspace]
+members = ["services/knowledge-engine"]
+resolver = "2"
