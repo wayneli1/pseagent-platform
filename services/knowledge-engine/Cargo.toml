@@ -1,0 +1,52 @@
+[package]
+name = "knowledge-engine"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+license = "GPL-3.0-only"
+autotests = false
+
+[lib]
+name = "knowledge_engine"
+path = "src/lib.rs"
+
+[[test]]
+name = "module_boundary"
+path = "tests/module_boundary.rs"
+
+[[test]]
+name = "catalog"
+path = "tests/catalog.rs"
+
+[[test]]
+name = "graph"
+path = "tests/graph.rs"
+
+[[test]]
+name = "lexical"
+path = "tests/lexical.rs"
+
+[[test]]
+name = "project_registry"
+path = "tests/project_registry.rs"
+
+[dependencies]
+axum = "=0.8.4"
+jieba-rs = "=0.10.3"
+regex = "=1.13.1"
+serde = { version = "=1.0.229", features = ["derive", "rc"] }
+serde_json = "=1.0.151"
+serde_yaml_ng = "=0.10.0"
+sha2 = "=0.10.9"
+subtle = "=2.6.1"
+thiserror = "=2.0.12"
+tokio = { version = "=1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "=0.1.41"
+tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "fmt"] }
+unicode-normalization = "=0.1.25"
+unicode-segmentation = "=1.13.3"
+walkdir = "=2.5.0"
+
+[dev-dependencies]
+http-body-util = "=0.1.4"
+tower = { version = "=0.5.3", features = ["util"] }
