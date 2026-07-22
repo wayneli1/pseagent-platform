@@ -11,6 +11,7 @@ export type AgentRunner = (input: {
   scope: Exclude<Scope, "normal">;
   question: string;
   conversationContext?: string;
+  model: ModelClient;
   session: KnowledgeSession;
   signal?: AbortSignal;
 }) => Promise<AnswerResult>;
@@ -35,8 +36,19 @@ export class AnswerService {
         return { scope, status: "answered", answer, references: [] };
       }
       const session = await this.dependencies.knowledge.open(scope, signal);
-      const input = { scope, question, session, ...(conversationContext === undefined ? {} : { conversationContext }), ...(signal === undefined ? {} : { signal }) };
-      return await this.dependencies.runAgent(input);
+      try {
+        const input = {
+          scope,
+          question,
+          model: this.dependencies.model,
+          session,
+          ...(conversationContext === undefined ? {} : { conversationContext }),
+          ...(signal === undefined ? {} : { signal }),
+        };
+        return await this.dependencies.runAgent(input);
+      } finally {
+        await session.close().catch(() => undefined);
+      }
     } catch {
       return temporaryUnavailableResult(scope);
     }
