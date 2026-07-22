@@ -1,7 +1,10 @@
+pub mod bootstrap;
 pub mod catalog;
 pub mod document;
 pub mod error;
 pub mod graph;
+pub mod http;
 pub mod lexical;
 pub mod project;
+pub mod service;
 pub mod tokenize;

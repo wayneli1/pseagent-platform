@@ -30,6 +30,18 @@ path = "tests/lexical.rs"
 name = "project_registry"
 path = "tests/project_registry.rs"
 
+[[test]]
+name = "service"
+path = "tests/service.rs"
+
+[[test]]
+name = "http_api"
+path = "tests/http_api.rs"
+
+[[bin]]
+name = "knowledge-engine"
+path = "src/main.rs"
+
 [dependencies]
 axum = "=0.8.4"
 jieba-rs = "=0.10.3"
