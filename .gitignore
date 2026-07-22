@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+coverage/
+indexes/
+.env
+.env.local
+!.env.example
+config/*.local.json
+*.log
+.DS_Store
+Thumbs.db
