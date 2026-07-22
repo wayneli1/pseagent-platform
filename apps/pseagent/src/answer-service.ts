@@ -2,8 +2,8 @@ import type { AnswerResult, Scope } from "./contracts.js";
 import type { ModelClient } from "./model-client.js";
 import { normalAnswerMessages } from "./prompts.js";
 import type { ScopeRouter } from "./router.js";
+import type { KnowledgeSession } from "./knowledge-session.js";
 
-export interface KnowledgeSession {}
 export interface KnowledgeSessionFactory {
   open(scope: Exclude<Scope, "normal">, signal?: AbortSignal): Promise<KnowledgeSession>;
 }
