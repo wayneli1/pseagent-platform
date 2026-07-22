@@ -159,4 +159,40 @@ describe("runKnowledgeAgent", () => {
     expect(model.calls).toBe(2);
     expect(result.status).toBe("temporarily_unavailable");
   });
+
+  it("allows exactly one repair attempt for invalid citations", async () => {
+    const badFinal = final("complete", "未经读取的结论[1]", [1]);
+    const model = scriptedAgentModel([badFinal, badFinal]);
+
+    const result = await runKnowledgeAgent(agentInput(model, fakeSession()));
+
+    expect(model.calls).toBe(2);
+    expect(model.lastSchemaName()).toBe("pse_final_action");
+    expect(result.status).toBe("temporarily_unavailable");
+  });
+
+  it("never answers a covered final without a read-page reference", async () => {
+    const model = scriptedAgentModel([
+      final("complete", "未经读取的结论[1]", [1]),
+      final("none", "当前资料未覆盖该问题", []),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, fakeSession()));
+
+    expect(result.status).toBe("not_covered");
+    expect(result.references).toEqual([]);
+  });
+
+  it("returns unavailable for invalid citations on turn eight", async () => {
+    const invalid = () => new InvalidModelPayloadError();
+    const model = scriptedAgentModel([
+      invalid(), search("one"), invalid(), search("two"), invalid(), search("three"), invalid(),
+      final("complete", "未经读取的结论[1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, fakeSession({ alwaysNew: true })));
+
+    expect(model.calls).toBe(8);
+    expect(result.status).toBe("temporarily_unavailable");
+  });
 });

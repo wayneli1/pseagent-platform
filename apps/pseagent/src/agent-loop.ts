@@ -1,11 +1,4 @@
-import {
-  agentActionSchema,
-  finalOnlyActionSchema,
-  type AnswerResult,
-  type FinalAction,
-  type Reference,
-  type ToolAction,
-} from "./contracts.js";
+import { agentActionSchema, finalOnlyActionSchema, type AnswerResult, type ToolAction } from "./contracts.js";
 import type {
   KnowledgeGraphResult,
   KnowledgePage,
@@ -14,6 +7,8 @@ import type {
 } from "./knowledge-session.js";
 import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { knowledgeAgentMessages } from "./prompts.js";
+import { ReferenceRegistry } from "./references.js";
+import { formatKnowledgeFinal, unavailableResult } from "./response.js";
 
 export const MAX_AGENT_TURNS = 8;
 export const MAX_RETRIEVAL_ACTIONS = 4;
@@ -41,17 +36,18 @@ export interface KnowledgeAgentInput {
 type AgentState = {
   readonly actionFingerprints: Set<string>;
   readonly candidatePaths: Set<string>;
-  readonly referenceKeys: Set<string>;
-  readonly references: Reference[];
+  readonly matchedTermsByPath: Map<string, string[]>;
+  readonly references: ReferenceRegistry;
   readonly observations: string[];
   retrievalActions: number;
   noGainStreak: number;
   invalidStreak: number;
+  citationRepairAttempts: number;
   forceFinal: boolean;
 };
 
 export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<AnswerResult> {
-  const state = createAgentState();
+  const state = createAgentState(input.session);
   for (let turn = 1; turn <= MAX_AGENT_TURNS; turn += 1) {
     const finalOnly = state.forceFinal || turn === MAX_AGENT_TURNS;
     let action;
@@ -59,14 +55,26 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       action = await requestAgentAction(input, state, turn, finalOnly);
       state.invalidStreak = 0;
     } catch (error) {
-      if (!(error instanceof InvalidModelPayloadError)) return temporarilyUnavailable(input.scope);
+      if (!(error instanceof InvalidModelPayloadError)) return unavailableResult(input.scope);
       state.invalidStreak += 1;
       observe(state, { type: "invalid_model_payload" });
-      if (state.invalidStreak >= 2) return temporarilyUnavailable(input.scope);
+      if (state.invalidStreak >= 2) return unavailableResult(input.scope);
       continue;
     }
 
-    if (action.action === "final") return finalizeAgentResult(input.scope, action, state.references);
+    if (action.action === "final") {
+      const validation = state.references.validateFinal(action);
+      if (!validation.ok) {
+        if (state.citationRepairAttempts === 0 && turn < MAX_AGENT_TURNS) {
+          state.citationRepairAttempts += 1;
+          state.forceFinal = true;
+          observe(state, { type: "invalid_citations", reason: validation.reason });
+          continue;
+        }
+        return unavailableResult(input.scope);
+      }
+      return formatKnowledgeFinal(input.scope, action, state.references.resolve(action.citations));
+    }
     if (finalOnly) {
       observe(state, { type: "tool_not_allowed" });
       continue;
@@ -92,19 +100,20 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       state.forceFinal = true;
     }
   }
-  return temporarilyUnavailable(input.scope);
+  return unavailableResult(input.scope);
 }
 
-function createAgentState(): AgentState {
+function createAgentState(session: KnowledgeAgentSession): AgentState {
   return {
     actionFingerprints: new Set(),
     candidatePaths: new Set(),
-    referenceKeys: new Set(),
-    references: [],
+    matchedTermsByPath: new Map(),
+    references: new ReferenceRegistry(session.project, session.revision),
     observations: [],
     retrievalActions: 0,
     noGainStreak: 0,
     invalidStreak: 0,
+    citationRepairAttempts: 0,
     forceFinal: false,
   };
 }
@@ -122,7 +131,7 @@ async function requestAgentAction(
       schema: input.session.schema,
       overview: input.session.overview,
       observations: state.observations,
-      references: state.references,
+      references: state.references.list(),
       remainingTurns: MAX_AGENT_TURNS - turn + 1,
       remainingRetrievalActions: MAX_RETRIEVAL_ACTIONS - state.retrievalActions,
     }),
@@ -155,6 +164,8 @@ function observeSearch(result: KnowledgeSearchResult, state: AgentState): boolea
   for (const hit of result.hits) {
     if (!state.candidatePaths.has(hit.path)) gained = true;
     state.candidatePaths.add(hit.path);
+    const terms = new Set([...(state.matchedTermsByPath.get(hit.path) ?? []), ...hit.matchedTerms]);
+    state.matchedTermsByPath.set(hit.path, [...terms]);
   }
   observe(state, {
     type: "search_result",
@@ -182,26 +193,17 @@ function observeGraph(result: KnowledgeGraphResult, state: AgentState): boolean 
 }
 
 function observeRead(page: KnowledgePage, session: KnowledgeAgentSession, state: AgentState): boolean {
-  const key = `${session.project}\u0000${session.revision}\u0000${page.path}\u0000${page.contentHash}`;
-  const gained = !state.referenceKeys.has(key);
-  if (gained) {
-    state.referenceKeys.add(key);
-    state.references.push({
-      index: state.references.length + 1,
-      project: session.project,
-      title: page.title,
-      path: page.path,
-      revision: session.revision,
-      contentHash: page.contentHash,
-    });
-  }
-  const reference = state.references.find((item) =>
-    item.project === session.project && item.revision === session.revision &&
-    item.path === page.path && item.contentHash === page.contentHash);
+  const before = state.references.list().length;
+  const reference = state.references.register({
+    project: session.project,
+    revision: session.revision,
+    page,
+  });
+  const gained = state.references.list().length > before;
   observe(state, {
     type: "read_page",
-    reference: reference?.index,
-    content: session.compactPage(page, []),
+    reference: reference.index,
+    content: session.compactPage(page, state.matchedTermsByPath.get(page.path) ?? []),
   });
   return gained;
 }
@@ -210,27 +212,6 @@ function observe(state: AgentState, value: unknown): void {
   const bounded = JSON.stringify(value).slice(0, 4_000);
   state.observations.push(bounded);
   if (state.observations.length > 12) state.observations.shift();
-}
-
-function finalizeAgentResult(
-  scope: "professional" | "general",
-  action: FinalAction,
-  references: Reference[],
-): AnswerResult {
-  const selected = references.filter((reference) => action.citations.includes(reference.index));
-  const status = action.coverage === "complete"
-    ? "answered"
-    : action.coverage === "partial" ? "partially_answered" : "not_covered";
-  return { scope, status, answer: action.answer, references: selected };
-}
-
-function temporarilyUnavailable(scope: "professional" | "general"): AnswerResult {
-  return {
-    scope,
-    status: "temporarily_unavailable",
-    answer: "知识问答服务暂时不可用，请稍后重试。",
-    references: [],
-  };
 }
 
 function assertNever(value: never): never {
