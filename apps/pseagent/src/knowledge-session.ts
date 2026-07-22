@@ -152,10 +152,6 @@ export class KnowledgeSession {
     return header + bodyCharacters.slice(start, start + budget).join("");
   }
 
-  close(): Promise<void> {
-    return this.caller.close();
-  }
-
   private assertSeen(path: string): void {
     if (!this.seenPaths.has(path)) throw new UnknownKnowledgePathError("knowledge_path_not_observed");
   }

@@ -36,19 +36,15 @@ export class AnswerService {
         return { scope, status: "answered", answer, references: [] };
       }
       const session = await this.dependencies.knowledge.open(scope, signal);
-      try {
-        const input = {
-          scope,
-          question,
-          model: this.dependencies.model,
-          session,
-          ...(conversationContext === undefined ? {} : { conversationContext }),
-          ...(signal === undefined ? {} : { signal }),
-        };
-        return await this.dependencies.runAgent(input);
-      } finally {
-        await session.close().catch(() => undefined);
-      }
+      const input = {
+        scope,
+        question,
+        model: this.dependencies.model,
+        session,
+        ...(conversationContext === undefined ? {} : { conversationContext }),
+        ...(signal === undefined ? {} : { signal }),
+      };
+      return await this.dependencies.runAgent(input);
     } catch {
       return temporaryUnavailableResult(scope);
     }

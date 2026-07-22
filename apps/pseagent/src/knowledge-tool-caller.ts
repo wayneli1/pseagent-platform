@@ -1,7 +1,11 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport, type StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+  StdioClientTransport,
+  getDefaultEnvironment,
+  type StdioServerParameters,
+} from "@modelcontextprotocol/sdk/client/stdio.js";
 
 export const KNOWLEDGE_TOOL_NAMES = [
   "knowledge_status",
@@ -33,6 +37,8 @@ type McpClientFacade = {
 type TransportFacade = { stderr?: { on(event: "data", listener: (chunk: unknown) => void): unknown } | null };
 
 export interface KnowledgeToolCallerDependencies {
+  command?: string;
+  env?: Record<string, string>;
   createClient?: () => McpClientFacade;
   createTransport?: (options: StdioServerParameters) => TransportFacade;
 }
@@ -47,6 +53,8 @@ export class KnowledgeToolCallerError extends Error {
 export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
   private readonly createClient: () => McpClientFacade;
   private readonly createTransport: (options: StdioServerParameters) => TransportFacade;
+  private readonly command: string;
+  private readonly env: Record<string, string> | undefined;
   private state: "idle" | "connecting" | "connected" | "closing" | "closed" = "idle";
   private connectPromise?: Promise<void>;
   private closePromise?: Promise<void>;
@@ -57,6 +65,8 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
     private readonly entryPath: string,
     dependencies: KnowledgeToolCallerDependencies = {},
   ) {
+    this.command = dependencies.command ?? process.execPath;
+    this.env = dependencies.env;
     this.createClient = dependencies.createClient ?? (() =>
       new Client({ name: "pseagent-app", version: "0.1.0" }) as unknown as McpClientFacade);
     this.createTransport = dependencies.createTransport ?? ((options) =>
@@ -124,8 +134,11 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
       const client = this.createClient();
       this.client = client;
       const transport = this.createTransport({
-        command: process.execPath,
+        command: this.command,
         args: [normalizedEntry],
+        ...(this.env === undefined
+          ? {}
+          : { env: { ...getDefaultEnvironment(), ...this.env } }),
         stderr: "pipe",
       });
       transport.stderr?.on("data", () => {
