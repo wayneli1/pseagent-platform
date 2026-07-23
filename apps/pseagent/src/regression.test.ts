@@ -180,6 +180,16 @@ describe("fixed 40-question regression", () => {
     }
   });
 
+  it("activates the imported SPIN evidence case", () => {
+    expect(cases.find((item) => item.id === "G03")).toMatchObject({
+      expectedScope: "general",
+      expectedStatus: "answered",
+      allowedProjects: ["presales-general"],
+      requiredFacts: ["情境问题", "问题问题", "暗示问题", "需求效益问题"],
+      allowedSourcePages: ["wiki/concepts/spin四类问题.md"],
+    });
+  });
+
   it.each(cases)("routes and handles $id", async (testCase) => {
     const routeModel = routingModel();
     const routed = await new ScopeRouter(routeModel).route(testCase.question);

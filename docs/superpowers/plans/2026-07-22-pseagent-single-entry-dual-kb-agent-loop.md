@@ -8,7 +8,7 @@
 
 **Tech Stack:** Windows PowerShell、Git、Node.js 24、TypeScript 7、MCP TypeScript SDK 1.29、Zod 4、Vitest 4、Rust 1.91、Axum 0.8、Jieba、OpenAI-compatible Chat Completions API。
 
-**2026-07-23 执行更新：** 通用库已经导入真实资料并固定到 `60d88323b8d6a464f5fc7810846af618ed052d70`。G01 改为从 `wiki/synthesis/售前诊断式对话框架.md` 获取证据的正向用例，真实探针要求 `answered`/`partially_answered` 且至少一个 `presales-general` 引用；其余未逐题核实的通用问题继续保持 `not_covered`。原计划中的健康空库步骤是已完成的历史阶段，不再代表当前运行状态。
+**2026-07-23 执行更新：** 通用库第二批资料已经提交并固定到 `ca4ee0f8fb3c466378371c14bf3394c82a903281`。G01 继续从 `wiki/synthesis/售前诊断式对话框架.md` 获取证据，G03 从 `wiki/concepts/spin四类问题.md` 获取证据；真实探针改为验证 G03，要求 `answered`/`partially_answered` 且至少一个 `presales-general` 引用。其余未逐题核实的通用问题继续保持 `not_covered`。原计划中的健康空库步骤是已完成的历史阶段，不再代表当前运行状态。
 
 ---
 
@@ -503,7 +503,7 @@ related: []
 
 # 通用售前知识库概览
 
-首期尚未导入通用售前正文时，知识引擎应把本项目视为健康空库；该阶段已完成。2026-07-23 起使用固定 revision `60d88323b8d6a464f5fc7810846af618ed052d70` 的真实资料：有可靠读页时回答并引用，未覆盖时返回 `not_covered`。
+首期尚未导入通用售前正文时，知识引擎应把本项目视为健康空库；该阶段已完成。2026-07-23 起使用固定 revision `ca4ee0f8fb3c466378371c14bf3394c82a903281` 的真实资料：有可靠读页时回答并引用，未覆盖时返回 `not_covered`。
 ```
 
 Use `apply_patch` 将 `wiki/index.md` 替换为：
@@ -2412,7 +2412,7 @@ P09 Coremail 在信创环境中的兼容性如何 — professional
 P10 Coremail 邮件系统如何进行账号和组织同步 — professional
 G01 如何开展厂商无关的售前需求访谈 — general — answered（来源：wiki/synthesis/售前诊断式对话框架.md）
 G02 如何组织一份通用解决方案建议书 — general — not_covered
-G03 售前如何发现客户的隐性需求 — general — not_covered
+G03 售前如何发现客户的隐性需求 — general — answered（来源：wiki/concepts/spin四类问题.md）
 G04 如何准备电梯式价值陈述 — general — not_covered
 G05 如何处理客户的预算异议 — general — not_covered
 G06 售前项目如何管理决策链 — general — not_covered
@@ -2450,7 +2450,7 @@ Create `regression.test.ts` to load the JSON with an absolute path derived from 
 
 - Script the route output to `expectedScope` and assert `ScopeRouter` preserves it.
 - For `normal`, script a text answer and assert zero KnowledgeSession opens.
-- For G01, use a fake session with the declared general source page and assert `answered` plus one `presales-general` reference; use a healthy empty fake session for the remaining uncovered general cases and assert `not_covered`.
+- For G01 and G03, use fake sessions with their declared general source pages and assert `answered` plus one `presales-general` reference; use a healthy empty fake session for the remaining uncovered general cases and assert `not_covered`.
 - For professional `not_covered`, use healthy empty search and assert fixed text.
 - For P01, script search → read `wiki/concepts/coremail-ai助手.md` → final with `[1]`, then assert `answered` and one professional reference.
 - For X01..X05, assert no general project call occurs.
@@ -2464,7 +2464,7 @@ Create `scripts/probe-live.mts` using MCP `Client` + `StdioClientTransport` to s
 ```ts
 const probes = [
   { question: "列出 Coremail AI 助手的新功能特性", expectedScope: "professional", allowed: ["answered", "partially_answered"] },
-  { question: "如何开展厂商无关的售前需求访谈", expectedScope: "general", allowed: ["answered", "partially_answered"] },
+  { question: "售前如何发现客户的隐性需求", expectedScope: "general", allowed: ["answered", "partially_answered"] },
   { question: "解释什么是二分查找", expectedScope: "normal", allowed: ["answered"] },
   { question: "Coremail 下一季度一定会发布哪些未公告功能", expectedScope: "professional", allowed: ["not_covered"] },
 ] as const;
@@ -2520,7 +2520,7 @@ Follow `docs/local-runbook.md` exactly. Expected:
 
 ```text
 P01 scope=professional status=answered|partially_answered refs>=1
-G01 scope=general status=answered|partially_answered refs>=1
+G03 scope=general status=answered|partially_answered refs>=1
 N02 scope=normal status=answered refs=0
 M03 scope=professional status=not_covered refs=0
 engine stopped + professional question => temporarily_unavailable refs=0

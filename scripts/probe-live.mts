@@ -11,7 +11,7 @@ import {
 
 const probes = [
   { question: "列出 Coremail AI 助手的新功能特性", expectedScope: "professional", allowed: ["answered", "partially_answered"] },
-  { question: "如何开展厂商无关的售前需求访谈", expectedScope: "general", allowed: ["answered", "partially_answered"] },
+  { question: "售前如何发现客户的隐性需求", expectedScope: "general", allowed: ["answered", "partially_answered"] },
   { question: "解释什么是二分查找", expectedScope: "normal", allowed: ["answered"] },
   { question: "Coremail 下一季度一定会发布哪些未公告功能", expectedScope: "professional", allowed: ["not_covered"] },
 ] as const;

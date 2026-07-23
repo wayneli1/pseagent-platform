@@ -6,7 +6,7 @@
 
 ```powershell
 $expectedProfessionalRevision = 'e003c787326609afc3b6d4159e5096a8c29128ed'
-$expectedGeneralRevision = '60d88323b8d6a464f5fc7810846af618ed052d70'
+$expectedGeneralRevision = 'ca4ee0f8fb3c466378371c14bf3394c82a903281'
 $professionalRevision = git -C ..\coremail-professional rev-parse HEAD
 $generalRevision = git -C ..\presales-general rev-parse HEAD
 if ($professionalRevision -ne $expectedProfessionalRevision) { throw 'unexpected_professional_revision' }
