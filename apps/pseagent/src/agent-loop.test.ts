@@ -22,6 +22,36 @@ it("puts every strict knowledge action shape in the model prompt", () => {
   );
 });
 
+it("defines evidence-bounded adaptive answer depth in the knowledge prompt", () => {
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain("在已读取的知识证据范围内充分回答用户问题");
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain("事实查询应直接、简洁地回答");
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain("方法类问题应说明关键步骤和注意事项");
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "方案、部署和架构类问题应适当展开，分别说明方案组成、实施思路、主要风险与待确认项",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "其中某一项缺少知识证据时不得省略或编造，应明确标记为待确认",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "用户要求详细回答时，方案、部署和架构类答案必须显式包含“主要风险”和“待确认项”",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "没有对应知识证据时，在该项明确写明“知识证据不足，待确认”",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "优先服从用户明确提出的“简要”或“详细”要求",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "不得为了丰富内容补充没有知识证据支持的事实",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "证据只能支持部分内容时，应明确区分已确认内容与待确认内容，并使用 partial",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "没有可靠知识证据时使用 none，不得依靠模型先验补充答案",
+  );
+});
+
 const search = (query: string, topK = 5): AgentAction => ({
   action: "tool", tool: "kb.search", input: { query, topK },
 });
