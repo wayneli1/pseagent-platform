@@ -5,6 +5,8 @@
 状态：用户已确认（含新代码仓与现有知识库复用策略）
 实施范围：只读问答主链，不包含知识改进、审核或自动写回
 
+2026-07-23 激活说明：`presales-general` 已导入并提交真实售前资料，固定 revision 为 `60d88323b8d6a464f5fc7810846af618ed052d70`。当前至少以 G01 验证通用库有证据时的正向回答；未被可靠页面覆盖的其他通用问题仍返回 `not_covered`。下文“健康空库”表述保留为首期历史设计背景，以本说明和 15.3、15.4 节的现行验收契约为准。
+
 ## 1. 文档定位
 
 本文定义 PSEAgent 第一阶段问答主链的简化方案：外部客户端只调用一个 PSEAgent MCP 问答工具；PSEAgent 使用同一个主模型先判断 `professional`、`general` 或 `normal`，再自行决定是否检索、检索什么以及何时结束，专业与通用问题采用接近 LLM Wiki 标准模式的有界 Agent Loop。
@@ -58,7 +60,7 @@ PSEAgent 与 LLM Wiki 的必要差异只有一个：PSEAgent 在 Agent Loop 前�
 - 保持工具调用次数有上限、行为可测试、引用可验证。
 - 在新的纯代码仓 `pseagent-platform` 实施，专业库与通用库继续作为两个独立 Git 仓库存在。
 - 专业库直接复用现有 Markdown，不重新上传或全量解析原始 PDF；新 Knowledge Engine 从已提交的 Markdown 重建索引。
-- 允许通用库首期是健康空库；`general` 问题在内容导入前稳定返回 `not_covered`。
+- 允许通用库首期是健康空库；内容导入后，`general` 问题有可靠读页时回答并引用通用库，未覆盖时稳定返回 `not_covered`。
 
 ### 3.2 非目标
 
@@ -96,7 +98,7 @@ PSEAgent 与 LLM Wiki 的必要差异只有一个：PSEAgent 在 Agent Loop 前�
 C:\Users\Coremail\Desktop\Coremail-PSE\
 ├─ pseagent-platform\          # 新建：PSEAgent 应用、Knowledge Engine、Knowledge MCP 和测试
 ├─ coremail-professional\      # 本地克隆：现有专业知识 Markdown 和来源资料
-└─ presales-general\           # 本地克隆：现有通用知识库骨架，首期允许为空
+└─ presales-general\           # 本地克隆：通用售前知识库，已导入真实资料
 ```
 
 `Coremail-PSE` 只承担本机目录归类，不初始化 `.git`，不把三个子仓变成一个 monorepo，也不使用 Git submodule。
@@ -106,7 +108,7 @@ C:\Users\Coremail\Desktop\Coremail-PSE\
 | 逻辑仓库 | 当前来源 | 总目录内目标 | 首期处理 |
 |---|---|---|---|
 | `coremail-professional` | 已从原专业库 `main` revision 创建独立本地克隆 | `C:\Users\Coremail\Desktop\Coremail-PSE\coremail-professional` | 后续有限就绪检查和知识提交只在目标克隆内进行 |
-| `presales-general` | 已从原通用库 revision 创建独立本地克隆 | `C:\Users\Coremail\Desktop\Coremail-PSE\presales-general` | 在目标克隆内定义健康空库；空内容视为健康状态 |
+| `presales-general` | 已从原通用库 revision 创建独立本地克隆 | `C:\Users\Coremail\Desktop\Coremail-PSE\presales-general` | 已提交真实通用售前资料；有证据时回答，未覆盖时返回 `not_covered` |
 | `pseagent-platform` | 全新初始化 | `C:\Users\Coremail\Desktop\Coremail-PSE\pseagent-platform` | 只保留本设计、实施计划及后续精简运行代码，不继承旧仓混合目录或历史 |
 
 旧 `codex/pseagent-local-mvp` linked worktree、原专业库和原通用库均保持原状。旧原型不再作为后续代码移植来源，也不作为新版本继续堆叠的开发基础；后续工作目录固定为 `C:\Users\Coremail\Desktop\Coremail-PSE\pseagent-platform`。新三仓完成回归和真实 smoke test 前，不删除原目录、旧分支、旧工作树或其中的未提交修改。
@@ -151,15 +153,15 @@ C:\Users\Coremail\Desktop\Coremail-PSE\pseagent-platform\
 
 #### 通用库
 
-`C:\Users\Coremail\Desktop\generalKnowledgebase` 已经是可直接配置为 `presales-general` 的独立 Git 仓库，但当前只有项目骨架：`purpose.md`、`schema.md`、空的 `index.md`、`overview.md`、`log.md` 和 LLM Wiki 项目标识，没有通用售前正文或原始资料。
+`presales-general` 首期以健康空库完成启动验收。2026-07-23，用户导入的四份真实来源和 49 个正文页已经过元数据、来源关系、Wiki 链接与敏感信息检查，并以 revision `60d88323b8d6a464f5fc7810846af618ed052d70` 固定。
 
-第一阶段允许它作为健康空库启动：
+激活后的通用库契约为：
 
-- Knowledge Engine 必须能为零内容页构建空索引并报告 `ready`；
-- `kb.search` 健康返回空结果，而不是抛出 provider unavailable；
-- 路由为 `general` 的问题返回固定 `not_covered`，不得转到专业库或伪装成 `normal`；
-- 首期只把默认 `purpose.md`、`schema.md` 和导航页改成通用售前边界，不为了填满测试数量生成虚构知识；
-- 后续有真实通用售前资料时，再按独立知识导入任务生成 Markdown 和增加正向回归问题。
+- Knowledge Engine 必须从固定 revision 建立索引并报告 `ready`；
+- 路由为 `general` 的问题只能搜索、读取和引用 `presales-general`；
+- 有可靠读页时可以返回 `answered` 或 `partially_answered`，且至少包含一个同项目、同 revision 的有效引用；
+- 健康搜索无可靠依据时返回固定 `not_covered`，不得转到专业库、互联网或模型先验；
+- 固定回归只激活已经逐页核实的通用问题，不为了提高覆盖率批量宣称其他问题已覆盖。
 
 ### 5.3 运行架构
 
@@ -534,7 +536,7 @@ Coremail AI 助手目前支持……[1]
 首期至少维护 40 个问题：
 
 - 10 个专业库直接覆盖问题；
-- 10 个通用售前路由问题；空通用库阶段预期为 `not_covered`，并用假 Knowledge Engine 单独覆盖通用库有证据时的正向流程；
+- 10 个通用售前路由问题；G01 使用已核实的 `wiki/synthesis/售前诊断式对话框架.md` 验证正向回答与引用，其余未逐题确认覆盖的问题仍预期为 `not_covered`；
 - 10 个普通问题；
 - 5 个两个知识库均未覆盖的问题；
 - 5 个产品与通用售前表达混合、容易串库的问题。
@@ -548,7 +550,7 @@ Coremail AI 助手目前支持……[1]
 在配置好的真实主模型和两个真实知识库上至少验证：
 
 1. 一个专业命中问题；
-2. 一个通用问题，验证健康空库返回 `not_covered` 而不是 `temporarily_unavailable`；
+2. 一个通用命中问题，验证返回 `answered`/`partially_answered`、至少一个通用库引用且不跨库；
 3. 一个普通问题；
 4. 一个健康的知识未覆盖问题；
 5. 一次 Knowledge Engine 不可用故障。
@@ -571,23 +573,23 @@ Coremail AI 助手目前支持……[1]
 - 目标问题“列出 Coremail AI 的新功能特性”能从专业库读取证据并正常回答。
 - `pseagent-platform` 新仓不包含专业/通用知识正文，也不包含旧 Admin、Worker、Supabase 和兜底 Provider。
 - 专业库无需重新上传或全量解析 PDF，能够从已提交 Markdown 重建索引并回答专业问题。
-- 空的通用库启动状态为健康，`general` 查询稳定返回 `not_covered`。
+- 通用库以固定 revision 启动为健康；G01 有证据时正常回答并引用，未覆盖的 `general` 查询稳定返回 `not_covered`。
 
 ## 17. 实施边界与迁移顺序
 
 后续实施计划应按以下边界拆解，而不是同时重写整个平台：
 
 1. 使用已经初始化的 `C:\Users\Coremail\Desktop\Coremail-PSE` 三仓目录；原专业库、原通用库和旧原型保持不动，后续提交只发生在三个新子仓。
-2. 在 `coremail-professional` 目标克隆审核待纳入新快照的知识变更，不重新解析 PDF；在 `presales-general` 目标克隆定义健康空库。
+2. 在 `coremail-professional` 目标克隆审核待纳入新快照的知识变更，不重新解析 PDF；`presales-general` 的健康空库初始化已完成，后续真实资料按独立导入任务提交和激活。
 3. 在全新的 `pseagent-platform` 本地 Git 仓建立应用、Knowledge Engine、Knowledge MCP、配置、测试和文档边界。
 4. 根据本文契约和固定的 LLM Wiki 上游参考重新实现 Knowledge Engine 的 catalog/revision、词法检索、图谱、页面读取、项目隔离和路径安全，不读取或复制旧原型实现。
 5. 选择性迁移 Knowledge MCP 的只读 search/read/graph 契约和可靠的 stdio 生命周期逻辑；不迁移 `knowledge_query` 查询规划路径。
 6. 在新仓建立新的三值契约、单入口 MCP 和脚本化 Agent Loop 测试，重新实现精简 Orchestrator 和模型动作协议。
 7. 接入引用注册、状态映射和统一文本格式化。
-8. 从总目录内专业库的已提交 Markdown 重建索引；对空通用库构建健康空索引。
+8. 从总目录内两个知识库的已提交 Markdown 重建索引；每个项目都固定并验证精确 revision。
 9. 切换 OpenCode/PSEAgent 客户端提示词，只调用单入口。
 10. 跑完整单元、集成、固定回归和真实只读 smoke test。
-11. 新仓验收后再决定是否归档旧原型；原目录处理、旧代码物理删除和通用知识导入均作为独立后续任务。
+11. 新仓验收后再决定是否归档旧原型；原目录处理和旧代码物理删除均作为独立后续任务。通用知识导入已经在 2026-07-23 独立完成。
 
 任何阶段都不得自动修改专业库或通用库内容。
 

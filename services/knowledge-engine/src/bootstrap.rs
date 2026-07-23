@@ -105,8 +105,11 @@ mod tests {
         fs,
         path::{Path, PathBuf},
         process::Command,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     struct Fixture {
         root: PathBuf,
@@ -223,14 +226,29 @@ mod tests {
         assert_eq!(error.code(), "invalid_revision");
     }
 
+    #[test]
+    fn temporary_paths_remain_unique_when_the_clock_does_not_advance() {
+        assert_ne!(
+            temporary_at("pse-bootstrap", 42),
+            temporary_at("pse-bootstrap", 42)
+        );
+    }
+
     fn temporary(prefix: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "{prefix}-{}-{}",
-            std::process::id(),
+        temporary_at(
+            prefix,
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+        )
+    }
+
+    fn temporary_at(prefix: &str, timestamp: u128) -> PathBuf {
+        let sequence = TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{timestamp}-{sequence}",
+            std::process::id()
         ))
     }
 

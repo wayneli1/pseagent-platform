@@ -11,7 +11,7 @@ import {
 
 const probes = [
   { question: "列出 Coremail AI 助手的新功能特性", expectedScope: "professional", allowed: ["answered", "partially_answered"] },
-  { question: "如何开展厂商无关的售前需求访谈", expectedScope: "general", allowed: ["not_covered"] },
+  { question: "如何开展厂商无关的售前需求访谈", expectedScope: "general", allowed: ["answered", "partially_answered"] },
   { question: "解释什么是二分查找", expectedScope: "normal", allowed: ["answered"] },
   { question: "Coremail 下一季度一定会发布哪些未公告功能", expectedScope: "professional", allowed: ["not_covered"] },
 ] as const;
@@ -38,7 +38,7 @@ const safeFailureCodes = new Set([
   "unexpected_probe_result",
   "unexpected_not_covered_text",
   "unexpected_unavailable_text",
-  "professional_answer_without_reference",
+  "knowledge_answer_without_reference",
   "unexpected_reference",
   "reference_project_mismatch",
   "invalid_reference_revision",
@@ -92,11 +92,11 @@ async function probe(): Promise<void> {
         throw new Error("unexpected_unavailable_text");
       }
       if (
-        result.scope === "professional" &&
+        (result.scope === "professional" || result.scope === "general") &&
         (result.status === "answered" || result.status === "partially_answered") &&
         result.references.length === 0
       ) {
-        throw new Error("professional_answer_without_reference");
+        throw new Error("knowledge_answer_without_reference");
       }
       if (
         (result.scope === "normal" || result.status === "not_covered" || result.status === "temporarily_unavailable") &&

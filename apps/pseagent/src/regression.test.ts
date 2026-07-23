@@ -168,6 +168,18 @@ describe("fixed 40-question regression", () => {
     }
   });
 
+  it("contains an evidence-backed answered general case", () => {
+    const answeredGeneral = cases.filter(
+      (item) => item.expectedScope === "general" && item.expectedStatus === "answered",
+    );
+    expect(answeredGeneral.length).toBeGreaterThan(0);
+    for (const item of answeredGeneral) {
+      expect(item.allowedProjects).toEqual(["presales-general"]);
+      expect(item.requiredFacts.length).toBeGreaterThan(0);
+      expect(item.allowedSourcePages.length).toBeGreaterThan(0);
+    }
+  });
+
   it.each(cases)("routes and handles $id", async (testCase) => {
     const routeModel = routingModel();
     const routed = await new ScopeRouter(routeModel).route(testCase.question);

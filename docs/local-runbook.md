@@ -6,7 +6,7 @@
 
 ```powershell
 $expectedProfessionalRevision = 'e003c787326609afc3b6d4159e5096a8c29128ed'
-$expectedGeneralRevision = 'b7f3d60fe781a57856174cf61f83bdf11df3727a'
+$expectedGeneralRevision = '60d88323b8d6a464f5fc7810846af618ed052d70'
 $professionalRevision = git -C ..\coremail-professional rev-parse HEAD
 $generalRevision = git -C ..\presales-general rev-parse HEAD
 if ($professionalRevision -ne $expectedProfessionalRevision) { throw 'unexpected_professional_revision' }
@@ -107,7 +107,7 @@ try {
 }
 ```
 
-预期四行摘要分别为：professional 的 answered/partially_answered 且至少一个引用、general 的 not_covered、normal 的 answered、professional 未公告问题的 not_covered。输出不得包含完整答案、知识页正文或密钥。
+预期四行摘要分别为：professional 的 answered/partially_answered 且至少一个引用、general 的 answered/partially_answered 且至少一个引用、normal 的 answered、professional 未公告问题的 not_covered。输出不得包含完整答案、知识页正文或密钥。
 
 ## 6. 演练引擎不可用
 
