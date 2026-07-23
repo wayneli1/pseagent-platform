@@ -8,7 +8,9 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present && cargo test --manifest-path services/knowledge-engine/Cargo.toml",
     "test:ts": "npm run test --workspaces --if-present",
-    "test:rust": "cargo test --manifest-path services/knowledge-engine/Cargo.toml"
+    "test:rust": "cargo test --manifest-path services/knowledge-engine/Cargo.toml",
+    "probe:live": "node --env-file=.env.local --import tsx scripts/probe-live.mts",
+    "test:regression": "npm exec -w @pseagent/app -- vitest run src/regression.test.ts"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Complete Stage 13 live PSEAgent acceptance with the locally authenticated Codex CLI as a disposable OpenAI-compatible model bridge, then restore the pre-existing Docker container and remove every bridge artifact.
+**Execution update (2026-07-23):** The user later regained Guangzhou-office intranet access and authorized direct acceptance with the company OpenAI-compatible model `deepseek-v4-pro`. That direct run is the accepted result. The conflicting Docker container had already been deleted by the user, so its absent state was preserved. This update supersedes bridge/container assumptions below wherever they conflict; all temporary bridge artifacts were still removed.
 
-**Architecture:** A Node.js HTTP bridge exists only under the current user's system temporary directory, binds `127.0.0.1:19831`, validates the small Chat Completions surface used by `OpenAiCompatibleModelClient`, and serializes requests through isolated `codex exec` processes. A temporary `.env.local` points the unchanged PSEAgent client at that bridge. A PowerShell acceptance harness records the original container state, starts the bridge before touching Docker, stops only `pseagent-knowledge-engine-phase1`, runs the release Knowledge Engine and five probes, and restores the exact container in `finally`.
+**Goal:** Complete Stage 13 live PSEAgent acceptance with the company model when reachable, retaining the locally authenticated Codex CLI bridge only as a disposable fallback, then remove every bridge and credential artifact.
+
+**Architecture:** The accepted path points the unchanged `OpenAiCompatibleModelClient` directly at the company endpoint through ignored `.env.local` configuration. A release Knowledge Engine is started and stopped by exact saved PID. The Node.js Codex bridge remains a loopback-only fallback design under the system temporary directory and never enters Git.
 
 **Tech Stack:** Node.js 24 built-in `http`, `child_process`, and `node:test`; Codex CLI 0.144.1 non-interactive mode; PowerShell 5.1; Rust release binary; MCP TypeScript client; Docker CLI.
 
@@ -682,7 +684,7 @@ Require harness exit 0. Parse `acceptance-status.json` and require every boolean
 
 - [ ] **Step 1: Write the verification record**
 
-Record date `2026-07-22`, Codex CLI version, both exact revisions, release-engine identity checks, search/read boolean checks, the five summary lines, the restored container ID/name/state, and cleanup checks. Do not include prompt text, answer text, knowledge snippets, tokens, local Codex paths, session identifiers, or stderr.
+Record the actual date, company-model direct mode and model name, both exact revisions, release-engine identity checks, search/read boolean checks, the five summary lines, the preserved pre-run container state, and cleanup checks. Do not include endpoint address, prompt text, answer text, knowledge snippets, tokens, local Codex paths, session identifiers, or stderr.
 
 - [ ] **Step 2: Delete temporary configuration and bridge artifacts**
 
@@ -698,7 +700,7 @@ Test-Path C:\Users\Coremail\AppData\Local\Temp\pseagent-codex-bridge-20260722
 docker inspect -f '{{.State.Running}}' b44f60b2fee5
 ```
 
-Expected: `False`, `False`, `true`.
+Expected for the accepted direct run: `False`, `False`, and Docker inspection reports the user-deleted container as absent; do not recreate it.
 
 ### Task 6: Run the full Stage 13 verification suite
 
@@ -730,44 +732,52 @@ Run three `git status --short` commands, `git remote -v` in each repository, and
 
 - [ ] **Step 3: Scan for secrets and accidental transient paths**
 
-Run tracked-file searches for `local-codex-bridge`, `local-stage13-readonly`, `.env.local`, `AppData\\Local\\Temp\\pseagent-codex-bridge`, `authorization: Bearer`, and Codex session IDs. Expected: runtime bearer values and temporary absolute paths are absent from tracked deliverables; `.env.local` appears only as a documented ignored filename.
+Run tracked-file searches for `local-codex-bridge`, `local-stage13-readonly`, `.env.local`, `AppData\\Local\\Temp\\pseagent-codex-bridge`, `authorization: Bearer`, and Codex session IDs. Expected: the explicitly non-sensitive placeholder values and temporary path appear only in this committed fallback plan; runtime deliverables contain no credential, authorization header, session ID, or generated bridge path. `.env.local` appears only as a documented ignored filename.
 
 ### Task 7: Commit Stage 13 and close the 13-task goal
 
 **Files:**
 - Commit: `package.json`
+- Commit: `apps/pseagent/src/agent-loop.test.ts`
+- Commit: `apps/pseagent/src/agent-loop.ts`
+- Commit: `apps/pseagent/src/prompts.ts`
+- Commit: `apps/pseagent/src/router.test.ts`
 - Commit: `apps/pseagent/src/regression.test.ts`
 - Commit: `tests/regression/questions.json`
 - Commit: `scripts/probe-live.mts`
 - Commit: `docs/local-runbook.md`
 - Commit: `docs/verification/stage-13-live-acceptance.md`
+- Commit: `docs/superpowers/plans/2026-07-22-codex-temporary-model-bridge.md`
+- Commit: `docs/superpowers/specs/2026-07-22-codex-temporary-model-bridge-design.md`
 
 **Interfaces:**
 - Consumes: Task 6 passing output.
 - Produces: one focused Stage 13 commit and a final audit across all three repositories.
 
-- [ ] **Step 1: Stage only the six Stage 13 paths**
+- [ ] **Step 1: Stage only the twelve Stage 13 paths**
 
 Run:
 
 ```powershell
-git add -- package.json apps/pseagent/src/regression.test.ts tests/regression/questions.json scripts/probe-live.mts docs/local-runbook.md docs/verification/stage-13-live-acceptance.md
+git add -- package.json apps/pseagent/src/agent-loop.test.ts apps/pseagent/src/agent-loop.ts apps/pseagent/src/prompts.ts apps/pseagent/src/router.test.ts apps/pseagent/src/regression.test.ts tests/regression/questions.json scripts/probe-live.mts docs/local-runbook.md docs/verification/stage-13-live-acceptance.md docs/superpowers/plans/2026-07-22-codex-temporary-model-bridge.md docs/superpowers/specs/2026-07-22-codex-temporary-model-bridge-design.md
 git diff --cached --check
 git diff --cached --name-only
 ```
 
-Expected: exactly the six listed paths and no whitespace errors.
+Expected: exactly the twelve listed paths and no whitespace errors.
 
 - [ ] **Step 2: Commit the verified deliverable**
 
 Run:
 
 ```powershell
-git commit -m "test: complete stage 13 live acceptance"
+git commit -m '阶段 13：完成双知识库问答真实验收' `
+  -m '完成内容：完成公司模型直连、提示契约修复、40 题强约束回归、只读探针、故障演练、运行手册和脱敏验收记录。' `
+  -m '验证结果：TypeScript/Rust 全量检查、构建、40 题回归、四条真实问答和引擎不可用测试全部通过。'
 ```
 
 Expected: commit succeeds without including ignored runtime files, indexes, logs, bridge files, or credentials.
 
 - [ ] **Step 3: Perform the final audit**
 
-Run `git status --short` in all three repositories, inspect the Stage 13 commit file list, verify all 13 stage commits remain reachable, verify the restored Docker container is running, and verify the five source directories remain present. Mark the active 13-task goal complete only after every check passes.
+Run `git status --short` in all three repositories, inspect the Stage 13 commit file list, verify all 13 stage commits remain reachable, verify the user-deleted Docker container was not recreated, and verify the five source directories remain present. Mark the active 13-task goal complete only after every check passes.

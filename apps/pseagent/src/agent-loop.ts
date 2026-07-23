@@ -134,6 +134,7 @@ async function requestAgentAction(
       references: state.references.list(),
       remainingTurns: MAX_AGENT_TURNS - turn + 1,
       remainingRetrievalActions: MAX_RETRIEVAL_ACTIONS - state.retrievalActions,
+      finalOnly,
     }),
     schema: finalOnly ? finalOnlyActionSchema : agentActionSchema,
     schemaDescription: finalOnly ? "pse_final_action" : "pse_agent_action",

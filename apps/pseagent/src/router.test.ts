@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
+import { ROUTE_SYSTEM_PROMPT } from "./prompts.js";
 import { ScopeRouter } from "./router.js";
 
 describe("ScopeRouter", () => {
+  it("puts the complete strict route contract in the model prompt", () => {
+    expect(ROUTE_SYSTEM_PROMPT).toContain(
+      '{"action":"route","scope":"professional|general|normal"}',
+    );
+  });
+
   it.each([
     ["Coremail XT6 怎么部署？", "professional"],
     ["怎样向银行客户介绍 Coremail 容灾方案？", "professional"],

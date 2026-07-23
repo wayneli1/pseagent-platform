@@ -2,9 +2,25 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentAction } from "./contracts.js";
 import { runKnowledgeAgent } from "./agent-loop.js";
 import { InvalidModelPayloadError, type ModelClient, type ModelMessage } from "./model-client.js";
+import { KNOWLEDGE_AGENT_SYSTEM_PROMPT } from "./prompts.js";
 
 const revision = "a".repeat(40);
 const hash = "b".repeat(64);
+
+it("puts every strict knowledge action shape in the model prompt", () => {
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    '{"action":"tool","tool":"kb.search","input":{"query":"...","topK":5}}',
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    '{"action":"tool","tool":"kb.read_page","input":{"path":"..."}}',
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    '{"action":"tool","tool":"kb.graph","input":{"path":"...","topK":5}}',
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    '{"action":"final","coverage":"complete|partial|none","answer":"... [1]","citations":[1]}',
+  );
+});
 
 const search = (query: string, topK = 5): AgentAction => ({
   action: "tool", tool: "kb.search", input: { query, topK },
@@ -106,6 +122,10 @@ describe("runKnowledgeAgent", () => {
 
     expect(session.search).toHaveBeenCalledTimes(1);
     expect(model.lastSchemaName()).toBe("pse_final_action");
+    const finalPayload = JSON.parse(model.prompts.at(-1)?.at(-1)?.content ?? "null") as {
+      finalOnly?: boolean;
+    };
+    expect(finalPayload.finalOnly).toBe(true);
   });
 
   it("forces final after two consecutive no-gain actions", async () => {
