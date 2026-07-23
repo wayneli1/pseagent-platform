@@ -1,8 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
-import type { AnswerResult } from "./contracts.js";
-import { createPseMcpServer } from "./mcp-server.js";
+import {
+  HISTORICAL_ANSWER_WARNING,
+  type AnswerResult,
+} from "./contracts.js";
+import { createPseMcpServer, formatMcpText } from "./mcp-server.js";
 
 const fixture: AnswerResult = {
   scope: "professional",
@@ -49,5 +52,48 @@ describe("PSEAgent MCP", () => {
     expect(result.content).toEqual([{ type: "text", text: fixture.answer }]);
     expect(result.structuredContent).toMatchObject({ scope: "professional", status: "answered" });
     await Promise.all([pair.client.close(), pair.server.close()]);
+  });
+
+  it("renders an isolated historical section without rewriting Markdown or Mermaid", () => {
+    const rawHistoricalAnswer = [
+      "原始历史答案。",
+      "```mermaid",
+      "flowchart LR",
+      "  A --> B",
+      "```",
+    ].join("\n");
+    const result: AnswerResult = {
+      scope: "professional",
+      status: "not_covered",
+      answer: "当前知识库暂未覆盖该问题，暂时无法给出可靠答案。",
+      references: [],
+      historicalAnswer: {
+        provider: "coremail_mcp",
+        verified: false,
+        confidence: "low",
+        warning: HISTORICAL_ANSWER_WARNING,
+        answer: rawHistoricalAnswer,
+        references: [{
+          sourceType: "jira",
+          key: "CMHA-1097",
+          title: "镜像版本记录",
+          updatedAt: "2026-07-20",
+          versions: ["5.0", "5.1"],
+          status: "已解决",
+          url: "https://jira.example.test/browse/CMHA-1097",
+        }],
+      },
+    };
+
+    const text = formatMcpText(result);
+
+    expect(text).toContain(result.answer);
+    expect(text).toContain("Jira/Wiki 历史资料辅助回答");
+    expect(text).toContain(HISTORICAL_ANSWER_WARNING);
+    expect(text).toContain("可信度：低");
+    expect(text).toContain(rawHistoricalAnswer);
+    expect(text).toContain("版本：5.0、5.1");
+    expect(text.indexOf(result.answer)).toBeLessThan(text.indexOf(rawHistoricalAnswer));
+    expect(result.references).toEqual([]);
   });
 });

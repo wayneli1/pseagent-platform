@@ -1,6 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { AnswerResult } from "./contracts.js";
+import type {
+  AnswerResult,
+  HistoricalReference,
+} from "./contracts.js";
 import { pseAnswerInputSchema } from "./contracts.js";
+
+const confidenceLabels = {
+  low: "低",
+  medium: "中",
+  high: "高",
+} as const;
 
 export function createPseMcpServer(dependencies: {
   readonly answer: (
@@ -28,5 +37,34 @@ export function createPseMcpServer(dependencies: {
 }
 
 export function formatMcpText(result: AnswerResult): string {
-  return result.answer;
+  if (!result.historicalAnswer) return result.answer;
+  const historical = result.historicalAnswer;
+  return [
+    result.answer,
+    "Jira/Wiki 历史资料辅助回答",
+    historical.warning,
+    `可信度：${confidenceLabels[historical.confidence]}`,
+    historical.answer,
+    "历史来源：",
+    ...historical.references.map(formatHistoricalReference),
+  ].join("\n\n");
+}
+
+function formatHistoricalReference(
+  reference: HistoricalReference,
+  index: number,
+): string {
+  const identity = reference.key ?? reference.id;
+  const heading = [
+    `${index + 1}. ${reference.sourceType === "jira" ? "Jira" : "Wiki"}`,
+    identity,
+    `《${reference.title}》`,
+  ].filter((part): part is string => part !== undefined).join(" ");
+  const details = [
+    reference.updatedAt ? `更新时间：${reference.updatedAt}` : undefined,
+    reference.status ? `状态：${reference.status}` : undefined,
+    reference.versions?.length ? `版本：${reference.versions.join("、")}` : undefined,
+    reference.url ? `链接：${reference.url}` : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return [heading, ...details].join("\n");
 }

@@ -46,11 +46,32 @@ export const referenceSchema = z.object({
   revision: z.string().min(1),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
 }).strict();
+export const HISTORICAL_ANSWER_WARNING =
+  "以下内容由 Coremail MCP 根据 Jira/Wiki 历史资料自动整理，未经过产品或售前人员验证。资料可能过时、不完整或不准确，请勿直接作为投标、部署、升级或变更依据。";
+export const historicalReferenceSchema = z.object({
+  sourceType: z.enum(["jira", "wiki"]),
+  id: z.string().min(1).optional(),
+  key: z.string().min(1).optional(),
+  title: z.string().min(1),
+  url: z.string().min(1).optional(),
+  updatedAt: z.string().min(1).optional(),
+  versions: z.array(z.string().min(1)).max(20).optional(),
+  status: z.string().min(1).optional(),
+}).strict();
+export const historicalAnswerSchema = z.object({
+  provider: z.literal("coremail_mcp"),
+  verified: z.literal(false),
+  confidence: z.enum(["low", "medium", "high"]),
+  warning: z.literal(HISTORICAL_ANSWER_WARNING),
+  answer: z.string().min(1).max(32_768),
+  references: z.array(historicalReferenceSchema).min(1).max(20),
+}).strict();
 export const answerResultSchema = z.object({
   scope: scopeSchema,
   status: answerStatusSchema,
   answer: z.string(),
   references: z.array(referenceSchema),
+  historicalAnswer: historicalAnswerSchema.optional(),
 }).strict();
 export type Scope = z.infer<typeof scopeSchema>;
 export type RouteAction = z.infer<typeof routeActionSchema>;
@@ -59,5 +80,7 @@ export type ToolAction = z.infer<typeof toolActionSchema>;
 export type FinalAction = z.infer<typeof finalActionSchema>;
 export type AnswerResult = z.infer<typeof answerResultSchema>;
 export type Reference = z.infer<typeof referenceSchema>;
+export type HistoricalReference = z.infer<typeof historicalReferenceSchema>;
+export type HistoricalAnswer = z.infer<typeof historicalAnswerSchema>;
 export type Coverage = z.infer<typeof coverageSchema>;
 export type AnswerStatus = z.infer<typeof answerStatusSchema>;
