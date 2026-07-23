@@ -3,7 +3,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { runKnowledgeAgent } from "./agent-loop.js";
 import { AnswerService, type AgentRunner, type KnowledgeSessionFactory } from "./answer-service.js";
-import { loadConfig, type AppConfig } from "./config.js";
+import { loadConfig, type AppConfig, type CoremailMcpConfig } from "./config.js";
+import {
+  StdioCoremailHistoricalAnswerProvider,
+  type HistoricalAnswerProvider,
+} from "./coremail-mcp-client.js";
 import { KnowledgeSession } from "./knowledge-session.js";
 import { StdioKnowledgeToolCaller, type KnowledgeToolCaller } from "./knowledge-tool-caller.js";
 import { createPseMcpServer } from "./mcp-server.js";
@@ -17,6 +21,9 @@ export interface PseRuntimeDependencies {
   readonly createKnowledgeSessionFactory?: (caller: KnowledgeToolCaller) => KnowledgeSessionFactory;
   readonly runAgent?: AgentRunner;
   readonly createServer?: (answer: AnswerService["answer"]) => McpServer;
+  readonly createHistoricalProvider?: (
+    config: Extract<CoremailMcpConfig, { enabled: true }>,
+  ) => HistoricalAnswerProvider;
 }
 
 export interface PseAgentRuntime {
@@ -32,10 +39,17 @@ export async function createPseAgentRuntime(
   const config = loadConfig(env);
   const model = (dependencies.createModel ?? defaultCreateModel)(config);
   const caller = (dependencies.createKnowledgeCaller ?? defaultCreateKnowledgeCaller)(config, env);
-  await caller.connect();
+  let historicalProvider: HistoricalAnswerProvider | undefined;
   let server: McpServer;
   let answer: AnswerService["answer"];
   try {
+    if (config.coremailMcp.enabled) {
+      historicalProvider = (
+        dependencies.createHistoricalProvider ??
+        defaultCreateHistoricalProvider
+      )(config.coremailMcp);
+    }
+    await caller.connect();
     const router = (dependencies.createRouter ?? ((value) => new ScopeRouter(value)))(model);
     const knowledge = (dependencies.createKnowledgeSessionFactory ?? defaultKnowledgeSessionFactory)(caller);
     const service = new AnswerService({
@@ -43,11 +57,18 @@ export async function createPseAgentRuntime(
       router,
       knowledge,
       runAgent: dependencies.runAgent ?? runKnowledgeAgent,
+      ...(historicalProvider === undefined ? {} : { historicalProvider }),
     });
     answer = service.answer.bind(service);
     server = (dependencies.createServer ?? ((handler) => createPseMcpServer({ answer: handler })))(answer);
   } catch (error) {
-    await caller.close();
+    const providerToClose = historicalProvider;
+    await Promise.allSettled([
+      Promise.resolve().then(() => caller.close()),
+      ...(providerToClose === undefined
+        ? []
+        : [Promise.resolve().then(() => providerToClose.close())]),
+    ]);
     throw error;
   }
   let closePromise: Promise<void> | undefined;
@@ -55,10 +76,14 @@ export async function createPseAgentRuntime(
     server,
     answer,
     close() {
+      const providerToClose = historicalProvider;
       closePromise ??= (async () => {
         await Promise.allSettled([
           Promise.resolve().then(() => server.close()),
           Promise.resolve().then(() => caller.close()),
+          ...(providerToClose === undefined
+            ? []
+            : [Promise.resolve().then(() => providerToClose.close())]),
         ]);
       })();
       return closePromise;
@@ -109,6 +134,15 @@ function defaultCreateKnowledgeCaller(config: AppConfig, env: NodeJS.ProcessEnv)
   return new StdioKnowledgeToolCaller(config.KNOWLEDGE_MCP_ENTRY_PATH, {
     command: config.KNOWLEDGE_MCP_COMMAND,
     env: childEnv,
+  });
+}
+
+function defaultCreateHistoricalProvider(
+  config: Extract<CoremailMcpConfig, { enabled: true }>,
+): HistoricalAnswerProvider {
+  return new StdioCoremailHistoricalAnswerProvider(config.entryPath, {
+    command: config.command,
+    timeoutMs: config.timeoutMs,
   });
 }
 

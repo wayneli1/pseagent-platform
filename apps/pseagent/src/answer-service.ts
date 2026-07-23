@@ -3,6 +3,7 @@ import type { ModelClient } from "./model-client.js";
 import { normalAnswerMessages } from "./prompts.js";
 import type { ScopeRouter } from "./router.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
+import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 
 export interface KnowledgeSessionFactory {
   open(scope: Exclude<Scope, "normal">, signal?: AbortSignal): Promise<KnowledgeSession>;
@@ -22,6 +23,7 @@ export class AnswerService {
     readonly router: Pick<ScopeRouter, "route">;
     readonly knowledge: KnowledgeSessionFactory;
     readonly runAgent: AgentRunner;
+    readonly historicalProvider?: HistoricalAnswerProvider;
   }) {}
 
   async answer(question: string, conversationContext?: string, signal?: AbortSignal): Promise<AnswerResult> {
@@ -44,7 +46,22 @@ export class AnswerService {
         ...(conversationContext === undefined ? {} : { conversationContext }),
         ...(signal === undefined ? {} : { signal }),
       };
-      return await this.dependencies.runAgent(input);
+      const primary = await this.dependencies.runAgent(input);
+      if (
+        primary.status !== "not_covered" ||
+        this.dependencies.historicalProvider === undefined
+      ) {
+        return primary;
+      }
+      try {
+        const historicalAnswer =
+          await this.dependencies.historicalProvider.answer(question, signal);
+        return historicalAnswer === undefined
+          ? primary
+          : { ...primary, historicalAnswer };
+      } catch {
+        return primary;
+      }
     } catch {
       return temporaryUnavailableResult(scope);
     }

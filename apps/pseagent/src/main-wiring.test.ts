@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentRunner } from "./answer-service.js";
 import type { AnswerResult } from "./contracts.js";
+import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { KnowledgeToolCaller } from "./knowledge-tool-caller.js";
 import type { ModelClient } from "./model-client.js";
@@ -14,6 +15,14 @@ const configEnv = {
   PSE_MODEL_TIMEOUT_MS: "60000",
   KNOWLEDGE_MCP_COMMAND: "node",
   KNOWLEDGE_MCP_ENTRY_PATH: process.execPath,
+};
+
+const enabledConfigEnv = {
+  ...configEnv,
+  COREMAIL_MCP_ENABLED: "true",
+  COREMAIL_MCP_COMMAND: "node",
+  COREMAIL_MCP_ENTRY_PATH: "C:\\runtime\\dist\\server.js",
+  COREMAIL_MCP_TIMEOUT_MS: "30000",
 };
 
 describe("main wiring", () => {
@@ -41,6 +50,7 @@ describe("main wiring", () => {
     const runAgent = vi.fn<AgentRunner>(async () => agentResult);
     const closeServer = vi.fn(async () => undefined);
     const server = { close: closeServer } as unknown as McpServer;
+    const createHistoricalProvider = vi.fn();
 
     const runtime = await createPseAgentRuntime(configEnv, {
       createModel,
@@ -49,6 +59,7 @@ describe("main wiring", () => {
       createKnowledgeSessionFactory: () => knowledge,
       runAgent,
       createServer: () => server,
+      createHistoricalProvider,
     });
 
     await expect(runtime.answer("普通问题")).resolves.toMatchObject({ scope: "normal", answer: "普通回答" });
@@ -57,9 +68,66 @@ describe("main wiring", () => {
     expect(model.completeText).toHaveBeenCalledOnce();
     expect(runAgent.mock.calls[0]?.[0].model).toBe(model);
     expect(caller.connect).toHaveBeenCalledOnce();
+    expect(createHistoricalProvider).not.toHaveBeenCalled();
 
     await runtime.close();
     await runtime.close();
+    expect(caller.close).toHaveBeenCalledOnce();
+    expect(closeServer).toHaveBeenCalledOnce();
+  });
+
+  it("lazily wires and idempotently closes the enabled historical provider", async () => {
+    const model = {
+      completeJson: vi.fn(),
+      completeText: vi.fn(async () => "普通回答"),
+    } as unknown as ModelClient;
+    const caller = {
+      connect: vi.fn(async () => undefined),
+      call: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } satisfies KnowledgeToolCaller;
+    const session = { project: "coremail-professional" } as KnowledgeSession;
+    const knowledge = { open: vi.fn(async () => session) };
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "professional",
+      status: "not_covered",
+      answer: "未覆盖",
+      references: [],
+    }));
+    const provider = {
+      answer: vi.fn(async () => undefined),
+      close: vi.fn(async (): Promise<void> => {
+        throw new Error("close failure");
+      }),
+    } satisfies HistoricalAnswerProvider;
+    const createHistoricalProvider = vi.fn(() => provider);
+    const closeServer = vi.fn(async () => undefined);
+    const server = { close: closeServer } as unknown as McpServer;
+
+    const runtime = await createPseAgentRuntime(enabledConfigEnv, {
+      createModel: () => model,
+      createRouter: () => ({
+        route: vi.fn(async () => "normal" as const),
+      }),
+      createKnowledgeCaller: () => caller,
+      createKnowledgeSessionFactory: () => knowledge,
+      runAgent,
+      createServer: () => server,
+      createHistoricalProvider,
+    });
+
+    expect(createHistoricalProvider).toHaveBeenCalledOnce();
+    expect(createHistoricalProvider).toHaveBeenCalledWith({
+      enabled: true,
+      command: "node",
+      entryPath: "C:\\runtime\\dist\\server.js",
+      timeoutMs: 30000,
+    });
+    expect(provider.answer).not.toHaveBeenCalled();
+
+    await expect(runtime.close()).resolves.toBeUndefined();
+    await expect(runtime.close()).resolves.toBeUndefined();
+    expect(provider.close).toHaveBeenCalledOnce();
     expect(caller.close).toHaveBeenCalledOnce();
     expect(closeServer).toHaveBeenCalledOnce();
   });
