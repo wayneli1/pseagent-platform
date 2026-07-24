@@ -10,6 +10,7 @@
     "test:ts": "npm run test --workspaces --if-present",
     "test:rust": "cargo test --manifest-path services/knowledge-engine/Cargo.toml",
     "probe:live": "node --env-file=.env.local --import tsx scripts/probe-live.mts",
+    "probe:coremail": "node --env-file=.env.local --import tsx scripts/probe-coremail-historical.mts",
     "test:regression": "npm exec -w @pseagent/app -- vitest run src/regression.test.ts"
   },
   "devDependencies": {
