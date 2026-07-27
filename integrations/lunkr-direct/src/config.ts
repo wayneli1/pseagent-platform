@@ -1,0 +1,58 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+export interface LunkrDirectConfig {
+  readonly baseUrl: string;
+  readonly apiPath: string;
+  readonly sessionPath: string;
+  readonly connectTimeoutMs: number;
+  readonly reconnectMaxMs: number;
+  readonly messageDedupeTtlMs: number;
+  readonly messageDedupeMax: number;
+  readonly contextMaxTurns: number;
+  readonly contextMaxChars: number;
+  readonly messageMaxChars: number;
+}
+
+export function loadLunkrConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): LunkrDirectConfig {
+  const baseUrl = (env.LUNKR_BASE_URL ?? "https://lunkr.coremail.cn").replace(/\/+$/, "");
+  const parsedBaseUrl = new URL(baseUrl);
+  if (parsedBaseUrl.protocol !== "https:") {
+    throw new Error("LUNKR_BASE_URL 必须使用 HTTPS");
+  }
+  const apiPath = env.LUNKR_API_PATH?.trim() || "/lunkr/s/json";
+  if (!apiPath.startsWith("/")) {
+    throw new Error("LUNKR_API_PATH 必须以 / 开头");
+  }
+  return {
+    baseUrl,
+    apiPath,
+    sessionPath:
+      env.LUNKR_SESSION_PATH?.trim() ||
+      join(homedir(), ".config", "pseagent-lunkr", "session.json"),
+    connectTimeoutMs: positiveInteger(env, "LUNKR_CONNECT_TIMEOUT_MS", 30_000),
+    reconnectMaxMs: positiveInteger(env, "LUNKR_RECONNECT_MAX_MS", 30_000),
+    messageDedupeTtlMs: positiveInteger(env, "LUNKR_MESSAGE_DEDUPE_TTL_MS", 600_000),
+    messageDedupeMax: positiveInteger(env, "LUNKR_MESSAGE_DEDUPE_MAX", 2_000),
+    contextMaxTurns: positiveInteger(env, "LUNKR_CONTEXT_MAX_TURNS", 6),
+    contextMaxChars: positiveInteger(env, "LUNKR_CONTEXT_MAX_CHARS", 12_000),
+    messageMaxChars: positiveInteger(env, "LUNKR_MESSAGE_MAX_CHARS", 1_000),
+  };
+}
+
+function positiveInteger(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+): number {
+  const raw = env[name]?.trim();
+  if (raw === undefined || raw === "") return fallback;
+  if (!/^\d+$/.test(raw)) throw new Error(`${name} 必须是正整数`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} 必须是正整数`);
+  }
+  return value;
+}

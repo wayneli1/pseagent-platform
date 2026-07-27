@@ -2,7 +2,7 @@
   "name": "pseagent-platform",
   "private": true,
   "engines": { "node": ">=24 <25" },
-  "workspaces": ["apps/pseagent", "services/knowledge-mcp"],
+  "workspaces": ["apps/pseagent", "services/knowledge-mcp", "integrations/lunkr-direct"],
   "scripts": {
     "build": "npm run build --workspaces --if-present && cargo build --manifest-path services/knowledge-engine/Cargo.toml",
     "typecheck": "npm run typecheck --workspaces --if-present",

@@ -10,3 +10,5 @@ config/*.local.json
 *.log
 .DS_Store
 Thumbs.db
+integrations/lunkr-direct/.local/
+session.json
