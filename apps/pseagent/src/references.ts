@@ -1,4 +1,4 @@
-import type { FinalAction, Reference } from "./contracts.js";
+import type { FinalAction, KnowledgeRequirement, Reference } from "./contracts.js";
 import type { KnowledgePage, ProjectKey } from "./knowledge-session.js";
 
 export interface ReadEvidence {
@@ -66,7 +66,29 @@ export class ReferenceRegistry {
     return indices.map((index) => this.entries[index - 1]).filter((entry): entry is Reference => entry !== undefined);
   }
 
-  validateFinal(action: FinalAction): FinalValidation {
+  validateFinal(
+    action: FinalAction,
+    requirements: readonly KnowledgeRequirement[],
+    evidenceByRequirement: ReadonlyMap<string, ReadonlySet<number>>,
+  ): FinalValidation {
+    if (action.requirements.length !== requirements.length) {
+      return { ok: false, reason: "requirement_coverage_mismatch" };
+    }
+    for (let index = 0; index < requirements.length; index += 1) {
+      if (action.requirements[index]?.id !== requirements[index]?.id) {
+        return { ok: false, reason: "requirement_coverage_mismatch" };
+      }
+    }
+    const requirementIds = action.requirements.map((item) => item.id);
+    if (new Set(requirementIds).size !== requirementIds.length) {
+      return { ok: false, reason: "duplicate_requirement_coverage" };
+    }
+    const requirementCitations = stableUnique(
+      action.requirements.flatMap((item) => item.citations),
+    );
+    if (!sameNumbers(requirementCitations, action.citations)) {
+      return { ok: false, reason: "requirement_citation_union_mismatch" };
+    }
     const answerCitations = stableUnique(
       [...action.answer.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
     );
@@ -76,15 +98,29 @@ export class ReferenceRegistry {
     if (action.citations.some((index) => this.entries[index - 1] === undefined)) {
       return { ok: false, reason: "unknown_citation" };
     }
-    if (action.coverage === "complete" || action.coverage === "partial") {
-      return action.citations.length > 0
-        ? { ok: true }
-        : { ok: false, reason: "covered_answer_without_citation" };
+    for (const item of action.requirements) {
+      if (stableUnique([...item.citations]).length !== item.citations.length) {
+        return { ok: false, reason: "duplicate_requirement_citation" };
+      }
+      const evidence = evidenceByRequirement.get(item.id) ?? new Set<number>();
+      if (item.citations.some((citation) => !evidence.has(citation))) {
+        return { ok: false, reason: "citation_not_read_for_requirement" };
+      }
+      if (item.coverage === "complete" || item.coverage === "partial") {
+        if (item.citations.length === 0) {
+          return { ok: false, reason: "covered_requirement_without_citation" };
+        }
+      } else if (item.citations.length > 0) {
+        return { ok: false, reason: "none_requirement_with_citation" };
+      }
     }
-    if (action.citations.length > 0) return { ok: false, reason: "none_with_citation" };
+    const incomplete = action.requirements.some((item) => item.coverage !== "complete");
     const draft = action.answer.trim();
-    if (draft && !/(未覆盖|暂无|无法|不足|没有|缺少)/u.test(draft)) {
-      return { ok: false, reason: "none_with_factual_draft" };
+    if (action.citations.length > 0 && !draft) {
+      return { ok: false, reason: "covered_answer_without_text" };
+    }
+    if (incomplete && draft && !hasCoverageLimitation(draft)) {
+      return { ok: false, reason: "incomplete_without_limitation" };
     }
     return { ok: true };
   }
@@ -101,4 +137,8 @@ function stableUnique(values: number[]): number[] {
 
 function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function hasCoverageLimitation(answer: string): boolean {
+  return /(未覆盖|待确认|暂无|无法|不足|没有|缺少|有限|其余|尚未|仅能|只能)/u.test(answer);
 }

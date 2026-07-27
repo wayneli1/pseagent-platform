@@ -71,7 +71,8 @@ export const KNOWLEDGE_AGENT_SYSTEM_PROMPT = `你是 PSEAgent 的知识问答代
 {"action":"tool","tool":"kb.search","input":{"requirementId":"R1","query":"...","topK":5}}
 {"action":"tool","tool":"kb.read_page","input":{"requirementId":"R1","path":"..."}}
 {"action":"tool","tool":"kb.graph","input":{"requirementId":"R1","path":"...","topK":5}}
-最终动作只能使用：{"action":"final","coverage":"complete|partial|none","answer":"... [1]","citations":[1]}
+最终动作只能使用：
+{"action":"final","requirements":[{"id":"R1","coverage":"complete|partial|none","citations":[1]}],"answer":"... [1]","citations":[1]}
 字段名必须完全一致，禁止使用 arguments 或把工具名放进 action。
 所有工具动作必须绑定规划中真实存在的 requirementId。
 规划查询已自动搜索并按 RRF 融合；优先从对应 requirement 的候选中读取页面，再按需补充语义查询。
@@ -91,6 +92,10 @@ export const KNOWLEDGE_AGENT_SYSTEM_PROMPT = `你是 PSEAgent 的知识问答代
 证据只能支持部分内容时，应明确区分已确认内容与待确认内容，并使用 partial。
 没有可靠知识证据时使用 none，不得依靠模型先验补充答案。
 complete/partial 的 answer 必须包含 [n] 内联标记，citations 必须按相同顺序列出完全相同的编号；没有可靠读页时使用 coverage=none。
+最终 requirements 必须按规划顺序完整列出每个 requirement，不能遗漏、重复或增加。
+每项 complete/partial 只能引用为该 requirement 实际读取的页面；none 不得引用。
+只要任一项是 partial 或 none，回答必须明确指出对应的未覆盖内容。
+顶层 citations 必须等于逐项 citations 按 requirements 顺序合并去重后的结果。
 不要重复完全相同的工具和参数。`;
 
 export function knowledgeAgentMessages(input: {

@@ -18,7 +18,7 @@ it("puts requirement-bound strict knowledge action shapes in the model prompt", 
     '{"action":"tool","tool":"kb.graph","input":{"requirementId":"R1","path":"...","topK":5}}',
   );
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
-    '{"action":"final","coverage":"complete|partial|none","answer":"... [1]","citations":[1]}',
+    '{"action":"final","requirements":[{"id":"R1","coverage":"complete|partial|none","citations":[1]}],"answer":"... [1]","citations":[1]}',
   );
 });
 
@@ -59,9 +59,10 @@ const final = (
   coverage: "complete" | "partial" | "none",
   answer = "",
   citations: number[] = [],
+  requirements = [{ id: "R1", coverage, citations }],
 ): AgentAction => ({
   action: "final",
-  coverage,
+  requirements,
   answer,
   citations,
 });
@@ -211,7 +212,10 @@ describe("runKnowledgeAgent", () => {
         ],
       },
     });
-    const model = scriptedAgentModel([final("none", "当前资料未覆盖该问题")]);
+    const model = scriptedAgentModel([
+      read("R1", "wiki/shared.md"),
+      final("complete", "网关功能和 POC[1]", [1]),
+    ]);
 
     await runKnowledgeAgent(agentInput(model, session, plan));
 
@@ -254,7 +258,10 @@ describe("runKnowledgeAgent", () => {
       graph("R2", "wiki/r2.md"),
       search("R1", "supplement-r1"),
       search("R2", "supplement-r2"),
-      final("complete", "功能[1]，POC[2]", [1, 2]),
+      final("complete", "功能[1]，POC[2]", [1, 2], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [2] },
+      ]),
     ]);
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
@@ -282,13 +289,18 @@ describe("runKnowledgeAgent", () => {
     const model = scriptedAgentModel([
       read("R2", "wiki/r1.md"),
       read("R2", "wiki/r2.md"),
-      final("complete", "POC[1]", [1]),
+      read("R1", "wiki/r1.md"),
+      final("complete", "功能[2]；POC[1]", [2, 1], [
+        { id: "R1", coverage: "complete", citations: [2] },
+        { id: "R2", coverage: "complete", citations: [1] },
+      ]),
     ]);
 
     await runKnowledgeAgent(agentInput(model, session, plan));
 
-    expect(session.readPage).toHaveBeenCalledOnce();
-    expect(session.readPage).toHaveBeenCalledWith("wiki/r2.md", undefined);
+    expect(session.readPage).toHaveBeenCalledTimes(2);
+    expect(session.readPage).toHaveBeenNthCalledWith(1, "wiki/r2.md", undefined);
+    expect(session.readPage).toHaveBeenNthCalledWith(2, "wiki/r1.md", undefined);
     expect(payloadAt(model, 1).observations?.join("\n"))
       .toContain("path_not_candidate_for_requirement");
   });
@@ -311,7 +323,10 @@ describe("runKnowledgeAgent", () => {
     const model = scriptedAgentModel([
       search("R1", "still-no-hit"),
       read("R2", "wiki/r2.md"),
-      final("partial", "R2 已确认[1]，R1 资料不足", [1]),
+      final("partial", "R2 已确认[1]，R1 资料不足", [1], [
+        { id: "R1", coverage: "none", citations: [] },
+        { id: "R2", coverage: "complete", citations: [1] },
+      ]),
     ]);
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
@@ -348,6 +363,25 @@ describe("runKnowledgeAgent", () => {
       expect.objectContaining({ path: "wiki/r1.md" }),
       expect.arrayContaining(["Coremail AI 是什么", "seed-r1", "AI 助手"]),
     );
+  });
+
+  it("does not accept none while a requirement still has an unread candidate", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
+    });
+    const model = scriptedAgentModel([
+      final("none", "当前资料未覆盖该问题"),
+      read("R1", "wiki/r1.md"),
+      final("complete", "读取后确认[1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(payloadAt(model, 1).observations?.join("\n")).toContain(
+      "coverage_gate_requires_read",
+    );
+    expect(session.readPage).toHaveBeenCalledOnce();
+    expect(result.status).toBe("answered");
   });
 
   it("requests a final-only action after the active deadline", async () => {

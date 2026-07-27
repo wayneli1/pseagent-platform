@@ -12,9 +12,16 @@ export const KNOWLEDGE_UNAVAILABLE_TEXT = "知识问答服务暂时不可用，�
 export const GENERAL_UNAVAILABLE_TEXT = "问答服务暂时不可用，请稍后重试。";
 export const PARTIAL_LIMITATION_TEXT = "知识库尚未覆盖问题的其余部分。";
 
-export function deriveStatus(coverage: Coverage, referenceCount: number): AnswerStatus {
-  if (coverage === "none" || referenceCount === 0) return "not_covered";
-  return coverage === "partial" ? "partially_answered" : "answered";
+export function deriveStatus(
+  requirementCoverages: readonly Coverage[],
+  referenceCount: number,
+): AnswerStatus {
+  if (referenceCount === 0 || requirementCoverages.every((coverage) => coverage === "none")) {
+    return "not_covered";
+  }
+  return requirementCoverages.every((coverage) => coverage === "complete")
+    ? "answered"
+    : "partially_answered";
 }
 
 export function formatKnowledgeFinal(
@@ -24,7 +31,10 @@ export function formatKnowledgeFinal(
 ): AnswerResult {
   return formatAnswerResult({
     scope,
-    status: deriveStatus(action.coverage, references.length),
+    status: deriveStatus(
+      action.requirements.map((requirement) => requirement.coverage),
+      references.length,
+    ),
     answer: action.answer,
     references,
   });

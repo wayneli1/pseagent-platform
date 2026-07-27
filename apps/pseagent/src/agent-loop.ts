@@ -2,6 +2,7 @@ import {
   agentActionSchema,
   finalOnlyActionSchema,
   type AnswerResult,
+  type FinalAction,
   type KnowledgePlan,
   type KnowledgeRequirement,
   type ToolAction,
@@ -105,7 +106,20 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
     }
 
     if (action.action === "final") {
-      const validation = state.references.validateFinal(action);
+      const pendingReviews = pendingEvidenceReviews(action, state);
+      if (pendingReviews.length > 0 && !deadlineReached(input)) {
+        observe(state, {
+          type: "coverage_gate_requires_read",
+          requirements: pendingReviews,
+        });
+        if (turn < maxTurns) continue;
+        return unavailableResult(input.scope);
+      }
+      const validation = state.references.validateFinal(
+        action,
+        input.plan.requirements,
+        evidenceByRequirement(state),
+      );
       if (!validation.ok) {
         if (state.citationRepairAttempts === 0 && turn < maxTurns) {
           state.citationRepairAttempts += 1;
@@ -463,6 +477,29 @@ function requirementEvidence(state: AgentState) {
       : MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT - requirementState.supplementalSearches,
     remainingReads: MAX_READS_PER_REQUIREMENT - requirementState.readPaths.size,
   }));
+}
+
+function evidenceByRequirement(state: AgentState): ReadonlyMap<string, ReadonlySet<number>> {
+  return new Map([...state.requirements].map(([id, requirementState]) => [
+    id,
+    requirementState.citationIndexes,
+  ]));
+}
+
+function pendingEvidenceReviews(
+  action: FinalAction,
+  state: AgentState,
+): string[] {
+  const pending: string[] = [];
+  for (const result of action.requirements) {
+    if (result.coverage !== "none") continue;
+    const requirementState = state.requirements.get(result.id);
+    if (!requirementState || requirementState.readPaths.size >= MAX_READS_PER_REQUIREMENT) continue;
+    const hasUnreadCandidate = [...requirementState.candidatePaths.keys()]
+      .some((path) => !requirementState.readPaths.has(path));
+    if (hasUnreadCandidate) pending.push(result.id);
+  }
+  return pending;
 }
 
 function sortedCandidates(requirementState: RequirementState): Candidate[] {

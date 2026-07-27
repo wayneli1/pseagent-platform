@@ -76,9 +76,14 @@ const graphActionSchema = z.object({
   }).strict(),
 }).strict();
 export const toolActionSchema = z.discriminatedUnion("tool", [searchActionSchema, readActionSchema, graphActionSchema]);
+export const requirementCoverageSchema = z.object({
+  id: knowledgeRequirementIdSchema,
+  coverage: coverageSchema,
+  citations: z.array(z.number().int().positive()).max(20),
+}).strict();
 export const finalActionSchema = z.object({
   action: z.literal("final"),
-  coverage: coverageSchema,
+  requirements: z.array(requirementCoverageSchema).min(1).max(6),
   answer: z.string().max(32_768),
   citations: z.array(z.number().int().positive()).max(20),
 }).strict();
@@ -127,6 +132,7 @@ export type Scope = z.infer<typeof scopeSchema>;
 export type RouteAction = z.infer<typeof routeActionSchema>;
 export type KnowledgeRequirement = z.infer<typeof knowledgeRequirementSchema>;
 export type KnowledgePlan = z.infer<typeof knowledgePlanSchema>;
+export type RequirementCoverage = z.infer<typeof requirementCoverageSchema>;
 export type AgentAction = z.infer<typeof agentActionSchema>;
 export type ToolAction = z.infer<typeof toolActionSchema>;
 export type FinalAction = z.infer<typeof finalActionSchema>;

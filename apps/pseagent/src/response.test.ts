@@ -18,12 +18,14 @@ const reference: Reference = {
 };
 
 describe("knowledge response", () => {
-  it.each<[Coverage, number, AnswerStatus]>([
-    ["none", 0, "not_covered"],
-    ["complete", 1, "answered"],
-    ["partial", 1, "partially_answered"],
-    ["complete", 0, "not_covered"],
-  ])("maps coverage %s with %i refs to %s", (coverage, refs, expected) => {
+  it.each<[Coverage[], number, AnswerStatus]>([
+    [["none"], 0, "not_covered"],
+    [["complete"], 1, "answered"],
+    [["partial"], 1, "partially_answered"],
+    [["complete"], 0, "not_covered"],
+    [["complete", "none"], 1, "partially_answered"],
+    [["complete", "complete"], 2, "answered"],
+  ])("maps requirement coverage %s with %i refs to %s", (coverage, refs, expected) => {
     expect(deriveStatus(coverage, refs)).toBe(expected);
   });
 
