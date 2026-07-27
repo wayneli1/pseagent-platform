@@ -14,5 +14,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src"
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.10.1"
   }
 }
