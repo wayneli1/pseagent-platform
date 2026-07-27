@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentAction, KnowledgePlan } from "./contracts.js";
+import type { DiagnosticEvent, DiagnosticTrace } from "./diagnostics.js";
 import { runKnowledgeAgent } from "./agent-loop.js";
 import { InvalidModelPayloadError, type ModelClient, type ModelMessage } from "./model-client.js";
 import { KNOWLEDGE_AGENT_SYSTEM_PROMPT } from "./prompts.js";
@@ -382,6 +383,39 @@ describe("runKnowledgeAgent", () => {
     );
     expect(session.readPage).toHaveBeenCalledOnce();
     expect(result.status).toBe("answered");
+  });
+
+  it("emits a content-free search-to-coverage diagnostic trail", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/r1.md"),
+      final("complete", "读取后确认[1]", [1]),
+    ]);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "trace-1",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+
+    await runKnowledgeAgent({ ...agentInput(model, session), trace });
+
+    expect(events.map((event) => event.event)).toEqual([
+      "search",
+      "candidates",
+      "read",
+      "coverage",
+    ]);
+    expect(events.find((event) => event.event === "read")).toMatchObject({
+      requirementId: "R1",
+      path: "wiki/r1.md",
+      citation: 1,
+    });
+    expect(JSON.stringify(events)).not.toContain("body:wiki/r1.md");
+    expect(JSON.stringify(events)).not.toContain("读取后确认");
   });
 
   it("requests a final-only action after the active deadline", async () => {

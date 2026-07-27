@@ -8,6 +8,10 @@ import {
   StdioCoremailHistoricalAnswerProvider,
   type HistoricalAnswerProvider,
 } from "./coremail-mcp-client.js";
+import {
+  JsonlDiagnosticTraceFactory,
+  type DiagnosticTraceFactory,
+} from "./diagnostics.js";
 import { KnowledgeSession } from "./knowledge-session.js";
 import { StdioKnowledgeToolCaller, type KnowledgeToolCaller } from "./knowledge-tool-caller.js";
 import { ModelKnowledgePlanner, type KnowledgePlanner } from "./knowledge-planner.js";
@@ -20,6 +24,7 @@ export interface PseRuntimeDependencies {
   readonly createKnowledgeCaller?: (config: AppConfig, env: NodeJS.ProcessEnv) => KnowledgeToolCaller;
   readonly createRouter?: (model: ModelClient) => Pick<ScopeRouter, "route">;
   readonly createKnowledgePlanner?: (model: ModelClient) => KnowledgePlanner;
+  readonly createDiagnosticTraceFactory?: (config: AppConfig) => DiagnosticTraceFactory | undefined;
   readonly createKnowledgeSessionFactory?: (caller: KnowledgeToolCaller) => KnowledgeSessionFactory;
   readonly runAgent?: AgentRunner;
   readonly createServer?: (answer: AnswerService["answer"]) => McpServer;
@@ -41,6 +46,10 @@ export async function createPseAgentRuntime(
   const config = loadConfig(env);
   const model = (dependencies.createModel ?? defaultCreateModel)(config);
   const caller = (dependencies.createKnowledgeCaller ?? defaultCreateKnowledgeCaller)(config, env);
+  const diagnostics = (
+    dependencies.createDiagnosticTraceFactory ??
+    defaultCreateDiagnosticTraceFactory
+  )(config);
   let historicalProvider: HistoricalAnswerProvider | undefined;
   let server: McpServer;
   let answer: AnswerService["answer"];
@@ -62,6 +71,7 @@ export async function createPseAgentRuntime(
       model,
       router,
       planner,
+      ...(diagnostics === undefined ? {} : { diagnostics }),
       knowledge,
       runAgent: dependencies.runAgent ?? runKnowledgeAgent,
       ...(historicalProvider === undefined ? {} : { historicalProvider }),
@@ -142,6 +152,14 @@ function defaultCreateKnowledgeCaller(config: AppConfig, env: NodeJS.ProcessEnv)
     command: config.KNOWLEDGE_MCP_COMMAND,
     env: childEnv,
   });
+}
+
+function defaultCreateDiagnosticTraceFactory(
+  config: AppConfig,
+): DiagnosticTraceFactory | undefined {
+  return config.diagnostics.enabled
+    ? new JsonlDiagnosticTraceFactory(config.diagnostics.directory)
+    : undefined;
 }
 
 function defaultCreateHistoricalProvider(

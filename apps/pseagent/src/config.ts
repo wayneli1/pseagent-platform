@@ -1,4 +1,5 @@
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { z } from "zod";
 
 const baseEnvSchema = z.object({
@@ -27,6 +28,9 @@ export type CoremailMcpConfig =
   };
 export type AppConfig = BaseConfig & {
   readonly coremailMcp: CoremailMcpConfig;
+  readonly diagnostics:
+    | { readonly enabled: false }
+    | { readonly enabled: true; readonly directory: string };
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -45,8 +49,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const enabled = z.enum(["true", "false"]).parse(
     env.COREMAIL_MCP_ENABLED ?? "false",
   );
+  const diagnostics = loadDiagnosticsConfig(env);
   if (enabled === "false") {
-    return { ...parsed, coremailMcp: { enabled: false } };
+    return { ...parsed, coremailMcp: { enabled: false }, diagnostics };
   }
 
   const coremail = enabledCoremailMcpSchema.parse({
@@ -70,5 +75,22 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       entryPath: normalizedEntry,
       timeoutMs: coremail.timeoutMs,
     },
+    diagnostics,
   };
+}
+
+function loadDiagnosticsConfig(env: NodeJS.ProcessEnv): AppConfig["diagnostics"] {
+  const enabled = z.enum(["true", "false"]).parse(
+    env.PSE_DIAGNOSTICS_ENABLED ?? "false",
+  );
+  if (enabled === "false") return { enabled: false };
+  const temporaryRoot = path.resolve(tmpdir());
+  const directory = path.resolve(
+    env.PSE_DIAGNOSTICS_DIR?.trim() || path.join(temporaryRoot, "pseagent-diagnostics"),
+  );
+  const relative = path.relative(temporaryRoot, directory);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("PSE_DIAGNOSTICS_DIR must be a subdirectory of the system temporary directory.");
+  }
+  return { enabled: true, directory };
 }

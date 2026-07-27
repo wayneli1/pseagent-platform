@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadConfig } from "./config.js";
 
 const baseEnv = {
@@ -27,6 +29,34 @@ describe("loadConfig", () => {
       COREMAIL_MCP_ENABLED: "false",
     }).coremailMcp).toEqual({ enabled: false });
   });
+
+  it("keeps diagnostics disabled by default and restricts enabled logs to the temp tree", () => {
+    expect(loadConfig(baseEnv).diagnostics).toEqual({ enabled: false });
+    const directory = join(tmpdir(), "pseagent-diagnostics-custom");
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_DIAGNOSTICS_ENABLED: "true",
+      PSE_DIAGNOSTICS_DIR: directory,
+    }).diagnostics).toEqual({
+      enabled: true,
+      directory,
+    });
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_DIAGNOSTICS_ENABLED: "true",
+      PSE_DIAGNOSTICS_DIR: "C:\\pseagent-production-logs",
+    })).toThrow("system temporary directory");
+  });
+
+  it.each(["1", "yes", "TRUE", ""])(
+    "rejects ambiguous PSE_DIAGNOSTICS_ENABLED value %j",
+    (enabled) => {
+      expect(() => loadConfig({
+        ...baseEnv,
+        PSE_DIAGNOSTICS_ENABLED: enabled,
+      })).toThrow();
+    },
+  );
 
   it("loads the enabled read-only Coremail MCP configuration", () => {
     expect(loadConfig({

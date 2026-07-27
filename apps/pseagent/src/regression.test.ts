@@ -157,7 +157,12 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
   ];
 }
 
-describe("fixed 40-question regression", () => {
+describe("fixed 40-question scripted protocol regression", () => {
+  it("is explicitly a protocol harness rather than a real retrieval quality test", () => {
+    expect(scriptedModel).toBeTypeOf("function");
+    expect(fakeSession).toBeTypeOf("function");
+  });
+
   it("contains exactly 40 unique stable IDs", () => {
     expect(cases).toHaveLength(40);
     expect(new Set(cases.map((item) => item.id)).size).toBe(40);

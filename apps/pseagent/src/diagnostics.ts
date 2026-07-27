@@ -1,0 +1,142 @@
+import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import type {
+  AnswerStatus,
+  RequirementCoverage,
+  Scope,
+} from "./contracts.js";
+
+export type DiagnosticEvent =
+  | { readonly event: "route"; readonly scope: Scope }
+  | {
+      readonly event: "plan";
+      readonly subject: string;
+      readonly requirements: readonly {
+        readonly id: string;
+        readonly question: string;
+        readonly queries: readonly string[];
+      }[];
+    }
+  | {
+      readonly event: "search";
+      readonly requirementId: string;
+      readonly phase: "seed" | "supplemental";
+      readonly query: string;
+    }
+  | {
+      readonly event: "candidates";
+      readonly requirementId: string;
+      readonly source: "seed_search_result" | "supplemental_search_result" | "graph_result";
+      readonly candidates: readonly {
+        readonly path: string;
+        readonly rrfScore: number;
+        readonly sourceQueries: readonly string[];
+        readonly graphRelations: readonly string[];
+      }[];
+    }
+  | {
+      readonly event: "read";
+      readonly requirementId: string;
+      readonly path: string;
+      readonly citation: number;
+      readonly sectionHeadings: readonly string[];
+    }
+  | {
+      readonly event: "coverage";
+      readonly requirements: readonly RequirementCoverage[];
+      readonly citations: readonly number[];
+      readonly stopReason: "final" | "deadline";
+    }
+  | {
+      readonly event: "stop";
+      readonly reason:
+        | "seed_unavailable"
+        | "routing_or_planning_unavailable"
+        | "invalid_model_payload"
+        | "invalid_final"
+        | "turn_budget_exhausted";
+    }
+  | {
+      readonly event: "finish";
+      readonly scope: Scope;
+      readonly status: AnswerStatus;
+      readonly citationCount: number;
+      readonly elapsedMs: number;
+      readonly historicalUsed: boolean;
+    };
+
+export interface DiagnosticTrace {
+  readonly requestId: string;
+  record(event: DiagnosticEvent): void;
+}
+
+export interface DiagnosticTraceFactory {
+  start(): DiagnosticTrace;
+}
+
+export const NOOP_DIAGNOSTIC_TRACE: DiagnosticTrace = {
+  requestId: "disabled",
+  record() {},
+};
+
+export class JsonlDiagnosticTraceFactory implements DiagnosticTraceFactory {
+  constructor(private readonly directory: string) {
+    mkdirSync(directory, { recursive: true });
+  }
+
+  start(): DiagnosticTrace {
+    const requestId = randomUUID();
+    const filename = `pseagent-${new Date().toISOString().slice(0, 10)}-${requestId}.jsonl`;
+    return new JsonlDiagnosticTrace(requestId, join(this.directory, filename));
+  }
+}
+
+export function recordDiagnostic(
+  trace: DiagnosticTrace | undefined,
+  event: DiagnosticEvent,
+): void {
+  try {
+    trace?.record(event);
+  } catch {
+    // Development diagnostics must never change the answer path.
+  }
+}
+
+class JsonlDiagnosticTrace implements DiagnosticTrace {
+  constructor(
+    readonly requestId: string,
+    private readonly path: string,
+  ) {}
+
+  record(event: DiagnosticEvent): void {
+    const record = sanitizeRecord({
+      timestamp: new Date().toISOString(),
+      requestId: this.requestId,
+      ...event,
+    });
+    appendFileSync(this.path, `${JSON.stringify(record)}\n`, { encoding: "utf8" });
+  }
+}
+
+function sanitizeRecord(value: unknown): unknown {
+  if (typeof value === "string") return redactText(value);
+  if (Array.isArray(value)) return value.map(sanitizeRecord);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, sanitizeRecord(item)]),
+    );
+  }
+  return value;
+}
+
+function redactText(value: string): string {
+  return value
+    .replace(/\bBearer\s+\S+/giu, "Bearer [REDACTED]")
+    .replace(
+      /\b(password|passwd|token|cookie|sid|api[_-]?key)\b(?:\s*[:=：]\s*|\s+)[^\s,，;；]+/giu,
+      "$1=[REDACTED]",
+    )
+    .replace(/(密码|口令|令牌|会话)(?:\s*[:=：]\s*|\s*)[^\s,，;；]+/gu, "$1=[REDACTED]")
+    .slice(0, 1_024);
+}

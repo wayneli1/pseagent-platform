@@ -5,8 +5,8 @@
 ## 1. 固定两个知识库 revision
 
 ```powershell
-$expectedProfessionalRevision = 'e003c787326609afc3b6d4159e5096a8c29128ed'
-$expectedGeneralRevision = 'ca4ee0f8fb3c466378371c14bf3394c82a903281'
+$expectedProfessionalRevision = '2f293528af751d8997e837b1a7569f4582a02059'
+$expectedGeneralRevision = '26945059ca4b9796f2ff7c89ed84dca1c2d71641'
 $professionalRevision = git -C ..\coremail-professional rev-parse HEAD
 $generalRevision = git -C ..\presales-general rev-parse HEAD
 if ($professionalRevision -ne $expectedProfessionalRevision) { throw 'unexpected_professional_revision' }
@@ -55,7 +55,13 @@ COREMAIL_MCP_ENABLED=true
 COREMAIL_MCP_COMMAND=node
 COREMAIL_MCP_ENTRY_PATH=C:/Users/Coremail/.local/share/coremail-knowledge-mcp/current/dist/server.js
 COREMAIL_MCP_TIMEOUT_MS=30000
+PSE_DIAGNOSTICS_ENABLED=false
 ```
+
+诊断轨迹默认关闭。只在本机开发排查时把 `PSE_DIAGNOSTICS_ENABLED` 改为
+`true`；可选的 `PSE_DIAGNOSTICS_DIR` 必须是系统临时目录的子目录。轨迹仅记录
+request ID、scope、规划项、查询、候选路径与分数、读页路径与章节标题、覆盖状态、
+引用编号、停止原因和耗时，不记录模型完整回答、知识正文或认证数据。
 
 ## 4. 构建全部组件
 
@@ -116,7 +122,12 @@ try {
 }
 ```
 
-预期四行既有摘要分别为：professional 的 answered/partially_answered 且至少一个引用、general 的 answered/partially_answered 且至少一个引用、normal 的 answered、professional 未公告问题的 not_covered。历史摘要必须保持主结果 `not_covered` 和 `main_refs=0`，同时满足 `history_refs>=1`、`raw_equal=true`、`warning=true`。输出不得包含问题、完整答案、来源标题、URL、知识页正文、内网地址或密钥。
+默认探针按 `tests/regression/evidence-coverage.json` 执行五题黄金集，预期输出五行
+脱敏摘要；设置 `PSE_PROBE_INCLUDE_PARAPHRASES=1` 时同时执行五个同义改写。知识题
+必须为 `answered` 并包含黄金集规定的证据页，PSEAgent 自身题必须为 `normal` 且
+引用为零，每题耗时不得超过 300 秒。历史摘要必须保持主结果 `not_covered` 和
+`main_refs=0`，同时满足 `history_refs>=1`、`raw_equal=true`、`warning=true`。
+输出不得包含问题、完整答案、来源标题、URL、知识页正文、内网地址或密钥。
 
 ## 6. 演练引擎不可用
 

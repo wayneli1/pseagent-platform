@@ -17,6 +17,10 @@ import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { knowledgeAgentMessages } from "./prompts.js";
 import { ReferenceRegistry } from "./references.js";
 import { formatKnowledgeFinal, unavailableResult } from "./response.js";
+import {
+  recordDiagnostic,
+  type DiagnosticTrace,
+} from "./diagnostics.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const MAX_READS_PER_REQUIREMENT = 3;
@@ -44,6 +48,7 @@ export interface KnowledgeAgentInput {
   readonly model: ModelClient;
   readonly session: KnowledgeAgentSession;
   readonly deadlineAt?: number;
+  readonly trace?: DiagnosticTrace;
   readonly signal?: AbortSignal;
 }
 
@@ -84,7 +89,10 @@ type AgentState = {
 export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<AnswerResult> {
   const state = createAgentState(input);
   await executeSeedSearches(input, state);
-  if (state.successfulSeedSearches === 0) return unavailableResult(input.scope);
+  if (state.successfulSeedSearches === 0) {
+    recordDiagnostic(input.trace, { event: "stop", reason: "seed_unavailable" });
+    return unavailableResult(input.scope);
+  }
 
   const maxTurns = Math.min(
     40,
@@ -98,10 +106,16 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       action = await requestAgentAction(input, state, turn, maxTurns, finalOnly);
       state.invalidStreak = 0;
     } catch (error) {
-      if (!(error instanceof InvalidModelPayloadError)) return unavailableResult(input.scope);
+      if (!(error instanceof InvalidModelPayloadError)) {
+        recordDiagnostic(input.trace, { event: "stop", reason: "invalid_model_payload" });
+        return unavailableResult(input.scope);
+      }
       state.invalidStreak += 1;
       observe(state, { type: "invalid_model_payload" });
-      if (state.invalidStreak >= 2) return unavailableResult(input.scope);
+      if (state.invalidStreak >= 2) {
+        recordDiagnostic(input.trace, { event: "stop", reason: "invalid_model_payload" });
+        return unavailableResult(input.scope);
+      }
       continue;
     }
 
@@ -113,6 +127,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           requirements: pendingReviews,
         });
         if (turn < maxTurns) continue;
+        recordDiagnostic(input.trace, { event: "stop", reason: "turn_budget_exhausted" });
         return unavailableResult(input.scope);
       }
       const validation = state.references.validateFinal(
@@ -127,8 +142,15 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           observe(state, { type: "invalid_citations", reason: validation.reason });
           continue;
         }
+        recordDiagnostic(input.trace, { event: "stop", reason: "invalid_final" });
         return unavailableResult(input.scope);
       }
+      recordDiagnostic(input.trace, {
+        event: "coverage",
+        requirements: action.requirements,
+        citations: action.citations,
+        stopReason: deadlineReached(input) ? "deadline" : "final",
+      });
       return formatKnowledgeFinal(input.scope, action, state.references.resolve(action.citations));
     }
     if (finalOnly) {
@@ -159,6 +181,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       stopSearchAfterNoGain(state.requirements.get(action.input.requirementId));
     }
   }
+  recordDiagnostic(input.trace, { event: "stop", reason: "turn_budget_exhausted" });
   return unavailableResult(input.scope);
 }
 
@@ -191,6 +214,12 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
 async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState): Promise<void> {
   await Promise.all([...state.requirements.values()].map(async (requirementState) => {
     const results = await Promise.all(requirementState.requirement.queries.map(async (query) => {
+      recordDiagnostic(input.trace, {
+        event: "search",
+        requirementId: requirementState.requirement.id,
+        phase: "seed",
+        query,
+      });
       try {
         const result = await input.session.search(query, SEED_TOP_K, toolSignal(input));
         state.successfulSeedSearches += 1;
@@ -209,7 +238,7 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
     );
     const gained = mergeSearchResults(requirementState, successful);
     if (!gained) requirementState.noGainRounds = 1;
-    observeCandidates(state, requirementState, "seed_search_result");
+    observeCandidates(state, requirementState, "seed_search_result", input.trace);
   }));
 }
 
@@ -296,11 +325,17 @@ async function executeSupplementalSearch(
   }
   requirementState.queries.add(query);
   requirementState.supplementalSearches += 1;
+  recordDiagnostic(input.trace, {
+    event: "search",
+    requirementId: requirementState.requirement.id,
+    phase: "supplemental",
+    query: action.input.query,
+  });
   const result = await input.session.search(action.input.query, action.input.topK, toolSignal(input));
   const gained = mergeSearchResults(requirementState, [{ query: action.input.query, result }]);
   requirementState.noGainRounds = gained ? 0 : requirementState.noGainRounds + 1;
   if (requirementState.noGainRounds >= 2) requirementState.searchStopped = true;
-  observeCandidates(state, requirementState, "supplemental_search_result");
+  observeCandidates(state, requirementState, "supplemental_search_result", input.trace);
 }
 
 async function executeRead(
@@ -342,12 +377,20 @@ async function executeRead(
     ...requirementState.requirement.queries,
     ...(candidate === undefined ? [] : candidate.matchedTerms),
   ];
+  const content = input.session.compactPage(page, terms);
   observe(state, {
     type: "read_page",
     requirementId: requirementState.requirement.id,
     reference: reference.index,
     path: page.path,
-    content: input.session.compactPage(page, terms),
+    content,
+  });
+  recordDiagnostic(input.trace, {
+    event: "read",
+    requirementId: requirementState.requirement.id,
+    path: page.path,
+    citation: reference.index,
+    sectionHeadings: markdownHeadings(content),
   });
 }
 
@@ -373,7 +416,7 @@ async function executeGraph(
   const gained = mergeGraphResult(requirementState, action.input.path, result);
   requirementState.noGainRounds = gained ? 0 : requirementState.noGainRounds + 1;
   if (requirementState.noGainRounds >= 2) requirementState.searchStopped = true;
-  observeCandidates(state, requirementState, "graph_result");
+  observeCandidates(state, requirementState, "graph_result", input.trace);
 }
 
 function mergeSearchResults(
@@ -439,6 +482,7 @@ function observeCandidates(
   state: AgentState,
   requirementState: RequirementState,
   type: "seed_search_result" | "supplemental_search_result" | "graph_result",
+  trace?: DiagnosticTrace,
 ): void {
   observe(state, {
     type,
@@ -451,6 +495,17 @@ function observeCandidates(
       rankings: candidate.rankings,
       matchedTerms: [...candidate.matchedTerms],
       snippets: [...candidate.snippets],
+      graphRelations: [...candidate.graphRelations],
+    })),
+  });
+  recordDiagnostic(trace, {
+    event: "candidates",
+    requirementId: requirementState.requirement.id,
+    source: type,
+    candidates: sortedCandidates(requirementState).slice(0, 10).map((candidate) => ({
+      path: candidate.path,
+      rrfScore: roundedScore(candidate.rrfScore),
+      sourceQueries: [...candidate.sourceQueries],
       graphRelations: [...candidate.graphRelations],
     })),
   });
@@ -586,6 +641,13 @@ function observe(state: AgentState, value: unknown): void {
 
 function roundedScore(score: number): number {
   return Number(score.toFixed(6));
+}
+
+function markdownHeadings(content: string): string[] {
+  return [...content.matchAll(/^#{1,6}\s+(.+?)\s*$/gmu)]
+    .map((match) => match[1] ?? "")
+    .filter(Boolean)
+    .slice(0, 4);
 }
 
 function assertNever(value: never): never {

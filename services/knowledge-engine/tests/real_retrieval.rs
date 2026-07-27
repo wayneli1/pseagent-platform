@@ -1,10 +1,45 @@
-use std::path::PathBuf;
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use knowledge_engine::{
     catalog::Catalog,
     project::ProjectKey,
     service::{KnowledgeService, ProjectIndexes},
 };
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct EvidenceCorpus {
+    revisions: EvidenceRevisions,
+    cases: Vec<EvidenceCase>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EvidenceRevisions {
+    #[serde(rename = "coremail-professional")]
+    professional: String,
+    #[serde(rename = "presales-general")]
+    general: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EvidenceCase {
+    id: String,
+    expected_scope: String,
+    requirements: Vec<EvidenceRequirement>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EvidenceRequirement {
+    id: String,
+    queries: Vec<String>,
+    expected_evidence_pages: Vec<String>,
+}
 
 #[test]
 fn fixed_professional_snapshot_recalls_multi_part_evidence_pages() {
@@ -14,7 +49,20 @@ fn fixed_professional_snapshot_recalls_multi_part_evidence_pages() {
     let Some(general_root) = configured_root("PSE_REAL_GENERAL_ROOT") else {
         return;
     };
-    let revision = "a".repeat(40);
+    let corpus: EvidenceCorpus = serde_json::from_str(include_str!(
+        "../../../tests/regression/evidence-coverage.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        git_head(&professional_root),
+        corpus.revisions.professional,
+        "professional knowledge snapshot drifted"
+    );
+    assert_eq!(
+        git_head(&general_root),
+        corpus.revisions.general,
+        "general knowledge snapshot drifted"
+    );
     let service = KnowledgeService::new([
         (
             ProjectKey::CoremailProfessional,
@@ -22,7 +70,7 @@ fn fixed_professional_snapshot_recalls_multi_part_evidence_pages() {
                 Catalog::load(
                     ProjectKey::CoremailProfessional,
                     professional_root,
-                    revision.clone(),
+                    corpus.revisions.professional.clone(),
                 )
                 .unwrap(),
                 "# professional".to_owned(),
@@ -31,37 +79,42 @@ fn fixed_professional_snapshot_recalls_multi_part_evidence_pages() {
         (
             ProjectKey::PresalesGeneral,
             ProjectIndexes::new(
-                Catalog::load(ProjectKey::PresalesGeneral, general_root, revision).unwrap(),
+                Catalog::load(
+                    ProjectKey::PresalesGeneral,
+                    general_root,
+                    corpus.revisions.general,
+                )
+                .unwrap(),
                 "# general".to_owned(),
             ),
         ),
     ])
     .unwrap();
 
-    for (query, expected_title) in [
-        ("网关POC测试要点", "网关POC测试要点"),
-        ("安全网关 POC 注意事项", "网关POC测试要点"),
-        ("安全网关 POC 售前口径 要点", "安全网关信创POC售前口径要点"),
-        ("Domino 迁移环境搭建", "Domino迁移环境搭建"),
-        ("Domino 迁移特殊注意事项", "Domino迁移特殊注意事项"),
-        ("镜像系统同步机制", "镜像系统同步机制"),
-        ("邮件系统多活与容灾设计", "邮件系统多活与容灾设计"),
-    ] {
-        let result = service
-            .search(ProjectKey::CoremailProfessional, query, 10)
-            .unwrap();
-        assert!(
-            result
-                .hits
-                .iter()
-                .any(|hit| compact_title(&hit.title) == compact_title(expected_title)),
-            "query {query:?} did not recall {expected_title:?}; got {:?}",
-            result
-                .hits
-                .iter()
-                .map(|hit| hit.title.as_str())
-                .collect::<Vec<_>>()
-        );
+    for case in corpus
+        .cases
+        .iter()
+        .filter(|case| case.expected_scope == "professional")
+    {
+        for requirement in &case.requirements {
+            let mut recalled = BTreeSet::new();
+            for query in &requirement.queries {
+                let result = service
+                    .search(ProjectKey::CoremailProfessional, query, 10)
+                    .unwrap();
+                recalled.extend(result.hits.into_iter().map(|hit| hit.path));
+            }
+            for expected_path in &requirement.expected_evidence_pages {
+                assert!(
+                    recalled.contains(expected_path),
+                    "case {} requirement {} did not recall {:?}; got {:?}",
+                    case.id,
+                    requirement.id,
+                    expected_path,
+                    recalled
+                );
+            }
+        }
     }
 }
 
@@ -69,10 +122,12 @@ fn configured_root(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).map(PathBuf::from)
 }
 
-fn compact_title(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>()
-        .to_lowercase()
+fn git_head(root: &Path) -> String {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "failed to read git revision");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }

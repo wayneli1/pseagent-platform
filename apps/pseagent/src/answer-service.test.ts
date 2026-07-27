@@ -4,6 +4,7 @@ import { AnswerService, PSE_ACTIVE_DEADLINE_MS } from "./answer-service.js";
 import type { AnswerResult, HistoricalAnswer } from "./contracts.js";
 import { HISTORICAL_ANSWER_WARNING } from "./contracts.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
+import type { DiagnosticEvent, DiagnosticTrace } from "./diagnostics.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { KnowledgePlanner } from "./knowledge-planner.js";
 import type { ModelClient } from "./model-client.js";
@@ -253,6 +254,51 @@ describe("AnswerService", () => {
       references: [],
     });
     expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it("records route, plan, and a content-free finish summary when diagnostics are enabled", async () => {
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "request-1",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: createPlanner(),
+      diagnostics: { start: () => trace },
+      knowledge: {
+        open: vi.fn(async () => ({
+          schema: "专业库 schema",
+          overview: "专业库用途",
+        }) as KnowledgeSession),
+      },
+      runAgent: vi.fn<AgentRunner>(async (input) => {
+        expect(input.trace).toBe(trace);
+        return {
+          scope: "professional",
+          status: "answered",
+          answer: "不应写入诊断的完整回答",
+          references: [formalReference],
+        };
+      }),
+    });
+
+    await service.answer("不应直接写入诊断的完整问题");
+
+    expect(events.map((event) => event.event)).toEqual(["route", "plan", "finish"]);
+    expect(events[1]).toMatchObject({ event: "plan", subject: "Coremail" });
+    expect(events[2]).toMatchObject({
+      event: "finish",
+      scope: "professional",
+      status: "answered",
+      citationCount: 1,
+      historicalUsed: false,
+    });
+    expect(JSON.stringify(events)).not.toContain("不应写入诊断的完整回答");
+    expect(JSON.stringify(events)).not.toContain("不应直接写入诊断的完整问题");
   });
 
   it("keeps the exact formal result when the historical provider has no answer", async () => {
