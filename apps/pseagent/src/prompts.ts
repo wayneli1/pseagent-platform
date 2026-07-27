@@ -31,6 +31,40 @@ ${PSEAGENT_SELF_CONTEXT}`,
   ];
 }
 
+export const KNOWLEDGE_PLAN_SYSTEM_PROMPT = `你是 PSEAgent 的知识问题规划器，只输出一个 JSON 对象。
+输出格式必须严格为：
+{"subject":"明确主体","requirements":[{"id":"R1","question":"必答项","queries":["语义检索词"]}]}
+requirements 必须有一到六项，按 R1、R2 依次编号且不得重复。
+即使是单一事实问题，也必须生成一个 requirement。
+复合问题必须拆成互不替代的必答项；规模、架构、多活、迁移前提、操作步骤、风险或 POC 注意事项等明确要求应分别保留。
+每个 requirement 必须有一到三条简短而完整的语义查询，保留产品、场景、规模、版本和动作词。
+第一条查询必须是自然语言语义查询，不得使用 Wiki 页码、Confluence page ID、来源文件编号、UUID 或纯数字作为查询。
+不得跨越输入中固定的知识范围，不得输出页面路径、引用、答案、解释、Markdown 或额外字段。`;
+
+export function knowledgePlanMessages(input: {
+  scope: "professional" | "general";
+  question: string;
+  conversationContext?: string;
+  schema: string;
+  overview: string;
+}): ModelMessage[] {
+  return [
+    { role: "system", content: KNOWLEDGE_PLAN_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: JSON.stringify({
+        scope: input.scope,
+        knowledgeSchema: input.schema,
+        knowledgeOverview: input.overview,
+        question: input.question,
+        ...(input.conversationContext === undefined
+          ? {}
+          : { conversationContext: input.conversationContext }),
+      }),
+    },
+  ];
+}
+
 export const KNOWLEDGE_AGENT_SYSTEM_PROMPT = `你是 PSEAgent 的知识问答代理。
 每轮只输出一个 JSON 动作：kb.search、kb.read_page、kb.graph 或 final。
 工具动作只能使用以下精确格式之一：

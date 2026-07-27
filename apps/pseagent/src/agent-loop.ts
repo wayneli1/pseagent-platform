@@ -1,4 +1,10 @@
-import { agentActionSchema, finalOnlyActionSchema, type AnswerResult, type ToolAction } from "./contracts.js";
+import {
+  agentActionSchema,
+  finalOnlyActionSchema,
+  type AnswerResult,
+  type KnowledgePlan,
+  type ToolAction,
+} from "./contracts.js";
 import type {
   KnowledgeGraphResult,
   KnowledgePage,
@@ -28,6 +34,7 @@ export interface KnowledgeAgentInput {
   readonly scope: "professional" | "general";
   readonly question: string;
   readonly conversationContext?: string;
+  readonly plan: KnowledgePlan;
   readonly model: ModelClient;
   readonly session: KnowledgeAgentSession;
   readonly signal?: AbortSignal;

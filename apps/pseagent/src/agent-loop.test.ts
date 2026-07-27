@@ -125,7 +125,16 @@ function fakeSession(options: { alwaysNew?: boolean; noHits?: boolean } = {}) {
 }
 
 function agentInput(model: ModelClient, session: ReturnType<typeof fakeSession>) {
-  return { scope: "professional" as const, question: "Coremail AI 是什么？", model, session };
+  return {
+    scope: "professional" as const,
+    question: "Coremail AI 是什么？",
+    plan: {
+      subject: "Coremail AI",
+      requirements: [{ id: "R1" as const, question: "Coremail AI 是什么", queries: ["Coremail AI"] }],
+    },
+    model,
+    session,
+  };
 }
 
 describe("runKnowledgeAgent", () => {

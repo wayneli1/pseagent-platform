@@ -4,6 +4,8 @@ import { normalAnswerMessages } from "./prompts.js";
 import type { ScopeRouter } from "./router.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
+import type { KnowledgePlan } from "./contracts.js";
+import type { KnowledgePlanner } from "./knowledge-planner.js";
 
 export interface KnowledgeSessionFactory {
   open(scope: Exclude<Scope, "normal">, signal?: AbortSignal): Promise<KnowledgeSession>;
@@ -12,6 +14,7 @@ export type AgentRunner = (input: {
   scope: Exclude<Scope, "normal">;
   question: string;
   conversationContext?: string;
+  plan: KnowledgePlan;
   model: ModelClient;
   session: KnowledgeSession;
   signal?: AbortSignal;
@@ -21,6 +24,7 @@ export class AnswerService {
   constructor(private readonly dependencies: {
     readonly model: ModelClient;
     readonly router: Pick<ScopeRouter, "route">;
+    readonly planner: KnowledgePlanner;
     readonly knowledge: KnowledgeSessionFactory;
     readonly runAgent: AgentRunner;
     readonly historicalProvider?: HistoricalAnswerProvider;
@@ -38,9 +42,18 @@ export class AnswerService {
         return { scope, status: "answered", answer, references: [] };
       }
       const session = await this.dependencies.knowledge.open(scope, signal);
+      const plan = await this.dependencies.planner.plan({
+        scope,
+        question,
+        schema: session.schema,
+        overview: session.overview,
+        ...(conversationContext === undefined ? {} : { conversationContext }),
+        ...(signal === undefined ? {} : { signal }),
+      });
       const input = {
         scope,
         question,
+        plan,
         model: this.dependencies.model,
         session,
         ...(conversationContext === undefined ? {} : { conversationContext }),

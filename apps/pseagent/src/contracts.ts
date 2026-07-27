@@ -4,6 +4,50 @@ export const scopeSchema = z.enum(["professional", "general", "normal"]);
 export const answerStatusSchema = z.enum(["answered", "partially_answered", "not_covered", "temporarily_unavailable"]);
 export const coverageSchema = z.enum(["complete", "partial", "none"]);
 export const routeActionSchema = z.object({ action: z.literal("route"), scope: scopeSchema }).strict();
+export const knowledgeRequirementSchema = z.object({
+  id: z.string().regex(/^R[1-6]$/u),
+  question: z.string().trim().min(1).max(1_024),
+  queries: z.array(z.string().trim().min(1).max(1_024)).min(1).max(3),
+}).strict().superRefine((requirement, context) => {
+  const normalizedQueries = requirement.queries.map((query) =>
+    query.toLocaleLowerCase("zh-CN").replace(/\s+/gu, " ").trim());
+  if (new Set(normalizedQueries).size !== normalizedQueries.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["queries"],
+      message: "duplicate_queries",
+    });
+  }
+  if (looksLikeOpaqueKnowledgeIdentifier(requirement.queries[0] ?? "")) {
+    context.addIssue({
+      code: "custom",
+      path: ["queries", 0],
+      message: "primary_query_must_be_semantic",
+    });
+  }
+});
+export const knowledgePlanSchema = z.object({
+  subject: z.string().trim().min(1).max(1_024),
+  requirements: z.array(knowledgeRequirementSchema).min(1).max(6),
+}).strict().superRefine((plan, context) => {
+  const ids = plan.requirements.map((requirement) => requirement.id);
+  if (new Set(ids).size !== ids.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["requirements"],
+      message: "duplicate_requirement_ids",
+    });
+  }
+  plan.requirements.forEach((requirement, index) => {
+    if (requirement.id !== `R${index + 1}`) {
+      context.addIssue({
+        code: "custom",
+        path: ["requirements", index, "id"],
+        message: "requirement_ids_must_be_sequential",
+      });
+    }
+  });
+});
 const searchActionSchema = z.object({
   action: z.literal("tool"),
   tool: z.literal("kb.search"),
@@ -75,6 +119,8 @@ export const answerResultSchema = z.object({
 }).strict();
 export type Scope = z.infer<typeof scopeSchema>;
 export type RouteAction = z.infer<typeof routeActionSchema>;
+export type KnowledgeRequirement = z.infer<typeof knowledgeRequirementSchema>;
+export type KnowledgePlan = z.infer<typeof knowledgePlanSchema>;
 export type AgentAction = z.infer<typeof agentActionSchema>;
 export type ToolAction = z.infer<typeof toolActionSchema>;
 export type FinalAction = z.infer<typeof finalActionSchema>;
@@ -84,3 +130,10 @@ export type HistoricalReference = z.infer<typeof historicalReferenceSchema>;
 export type HistoricalAnswer = z.infer<typeof historicalAnswerSchema>;
 export type Coverage = z.infer<typeof coverageSchema>;
 export type AnswerStatus = z.infer<typeof answerStatusSchema>;
+
+function looksLikeOpaqueKnowledgeIdentifier(query: string): boolean {
+  const normalized = query.trim();
+  return /^(?:(?:page|wiki|confluence|source|页面|来源|附件)\s*(?:id|编号)?\s*[:#_-]?\s*)?\d{6,}(?:\s*[-_:#]|$)/iu
+    .test(normalized)
+    || /^(?:[a-f\d]{8}-){3,}[a-f\d-]+$/iu.test(normalized);
+}

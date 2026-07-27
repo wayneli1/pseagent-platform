@@ -5,8 +5,18 @@ import type { AnswerResult, HistoricalAnswer } from "./contracts.js";
 import { HISTORICAL_ANSWER_WARNING } from "./contracts.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
+import type { KnowledgePlanner } from "./knowledge-planner.js";
 import type { ModelClient } from "./model-client.js";
 import { ScopeRouter } from "./router.js";
+
+const knowledgePlan = {
+  subject: "Coremail",
+  requirements: [{ id: "R1" as const, question: "产品问题", queries: ["Coremail 产品问题"] }],
+};
+
+function createPlanner() {
+  return { plan: vi.fn(async () => knowledgePlan) } satisfies KnowledgePlanner;
+}
 
 const historicalAnswer: HistoricalAnswer = {
   provider: "coremail_mcp",
@@ -36,17 +46,23 @@ function createProfessionalService(
 ) {
   const model = {} as ModelClient;
   const router = { route: vi.fn(async () => "professional" as const) };
-  const session = { project: "coremail-professional" } as KnowledgeSession;
+  const session = {
+    project: "coremail-professional",
+    schema: "专业库 schema",
+    overview: "专业库用途",
+  } as KnowledgeSession;
   const knowledge = { open: vi.fn(async () => session) };
+  const planner = createPlanner();
   const runAgent = vi.fn<AgentRunner>(async () => primary);
   const service = new AnswerService({
     model,
     router,
+    planner,
     knowledge,
     runAgent,
     historicalProvider,
   });
-  return { service, runAgent };
+  return { service, planner, runAgent };
 }
 
 describe("AnswerService", () => {
@@ -56,6 +72,7 @@ describe("AnswerService", () => {
     } as unknown as ModelClient;
     const router = { route: vi.fn(async () => "normal" as const) };
     const knowledge = { open: vi.fn() };
+    const planner = createPlanner();
     const runAgent = vi.fn();
     const historicalProvider = {
       answer: vi.fn(async () => historicalAnswer),
@@ -64,6 +81,7 @@ describe("AnswerService", () => {
     const service = new AnswerService({
       model,
       router,
+      planner,
       knowledge,
       runAgent,
       historicalProvider,
@@ -76,6 +94,7 @@ describe("AnswerService", () => {
       references: [],
     });
     expect(knowledge.open).not.toHaveBeenCalled();
+    expect(planner.plan).not.toHaveBeenCalled();
     expect(historicalProvider.answer).not.toHaveBeenCalled();
   });
 
@@ -89,10 +108,12 @@ describe("AnswerService", () => {
       }),
     } as unknown as ModelClient;
     const knowledge = { open: vi.fn() };
+    const planner = createPlanner();
     const runAgent = vi.fn();
     const service = new AnswerService({
       model,
       router: new ScopeRouter(model),
+      planner,
       knowledge,
       runAgent,
     });
@@ -108,6 +129,7 @@ describe("AnswerService", () => {
     });
     expect(completeJson).not.toHaveBeenCalled();
     expect(knowledge.open).not.toHaveBeenCalled();
+    expect(planner.plan).not.toHaveBeenCalled();
     expect(runAgent).not.toHaveBeenCalled();
   });
 
@@ -163,6 +185,61 @@ describe("AnswerService", () => {
     });
     expect(historicalProvider.answer).toHaveBeenCalledOnce();
     expect(historicalProvider.answer).toHaveBeenCalledWith("产品问题", undefined);
+  });
+
+  it("plans a knowledge question before running the agent and passes the exact plan through", async () => {
+    const primary: AnswerResult = {
+      scope: "professional",
+      status: "answered",
+      answer: "正式回答",
+      references: [formalReference],
+    };
+    const historicalProvider = {
+      answer: vi.fn(async () => historicalAnswer),
+      close: vi.fn(async () => undefined),
+    } satisfies HistoricalAnswerProvider;
+    const { service, planner, runAgent } = createProfessionalService(primary, historicalProvider);
+
+    await expect(service.answer("产品问题", "有限上下文")).resolves.toBe(primary);
+    expect(planner.plan).toHaveBeenCalledWith({
+      scope: "professional",
+      question: "产品问题",
+      conversationContext: "有限上下文",
+      schema: "专业库 schema",
+      overview: "专业库用途",
+    });
+    expect(runAgent.mock.calls[0]?.[0].plan).toEqual(knowledgePlan);
+    expect(planner.plan.mock.invocationCallOrder[0]).toBeLessThan(
+      runAgent.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("returns temporarily unavailable without running the agent when planning fails", async () => {
+    const model = {} as ModelClient;
+    const runAgent = vi.fn<AgentRunner>();
+    const service = new AnswerService({
+      model,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: {
+        plan: vi.fn(async () => {
+          throw new Error("invalid plan after repair");
+        }),
+      },
+      knowledge: {
+        open: vi.fn(async () => ({
+          schema: "专业库 schema",
+          overview: "专业库用途",
+        }) as KnowledgeSession),
+      },
+      runAgent,
+    });
+
+    await expect(service.answer("产品问题")).resolves.toMatchObject({
+      scope: "professional",
+      status: "temporarily_unavailable",
+      references: [],
+    });
+    expect(runAgent).not.toHaveBeenCalled();
   });
 
   it("keeps the exact formal result when the historical provider has no answer", async () => {

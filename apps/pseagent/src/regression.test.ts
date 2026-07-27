@@ -210,6 +210,16 @@ describe("fixed 40-question regression", () => {
     const service = new AnswerService({
       model,
       router: { route: vi.fn(async () => routed) },
+      planner: {
+        plan: vi.fn(async () => ({
+          subject: testCase.question,
+          requirements: [{
+            id: "R1" as const,
+            question: testCase.question,
+            queries: [testCase.question],
+          }],
+        })),
+      },
       knowledge,
       runAgent: runKnowledgeAgent,
     });

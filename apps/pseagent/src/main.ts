@@ -10,6 +10,7 @@ import {
 } from "./coremail-mcp-client.js";
 import { KnowledgeSession } from "./knowledge-session.js";
 import { StdioKnowledgeToolCaller, type KnowledgeToolCaller } from "./knowledge-tool-caller.js";
+import { ModelKnowledgePlanner, type KnowledgePlanner } from "./knowledge-planner.js";
 import { createPseMcpServer } from "./mcp-server.js";
 import { OpenAiCompatibleModelClient, type ModelClient } from "./model-client.js";
 import { ScopeRouter } from "./router.js";
@@ -18,6 +19,7 @@ export interface PseRuntimeDependencies {
   readonly createModel?: (config: AppConfig) => ModelClient;
   readonly createKnowledgeCaller?: (config: AppConfig, env: NodeJS.ProcessEnv) => KnowledgeToolCaller;
   readonly createRouter?: (model: ModelClient) => Pick<ScopeRouter, "route">;
+  readonly createKnowledgePlanner?: (model: ModelClient) => KnowledgePlanner;
   readonly createKnowledgeSessionFactory?: (caller: KnowledgeToolCaller) => KnowledgeSessionFactory;
   readonly runAgent?: AgentRunner;
   readonly createServer?: (answer: AnswerService["answer"]) => McpServer;
@@ -51,10 +53,15 @@ export async function createPseAgentRuntime(
     }
     await caller.connect();
     const router = (dependencies.createRouter ?? ((value) => new ScopeRouter(value)))(model);
+    const planner = (
+      dependencies.createKnowledgePlanner ??
+      ((value) => new ModelKnowledgePlanner(value))
+    )(model);
     const knowledge = (dependencies.createKnowledgeSessionFactory ?? defaultKnowledgeSessionFactory)(caller);
     const service = new AnswerService({
       model,
       router,
+      planner,
       knowledge,
       runAgent: dependencies.runAgent ?? runKnowledgeAgent,
       ...(historicalProvider === undefined ? {} : { historicalProvider }),

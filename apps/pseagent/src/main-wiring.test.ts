@@ -5,6 +5,7 @@ import type { AnswerResult } from "./contracts.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { KnowledgeToolCaller } from "./knowledge-tool-caller.js";
+import type { KnowledgePlanner } from "./knowledge-planner.js";
 import type { ModelClient } from "./model-client.js";
 import { createPseAgentRuntime } from "./main.js";
 
@@ -25,8 +26,13 @@ const enabledConfigEnv = {
   COREMAIL_MCP_TIMEOUT_MS: "30000",
 };
 
+const plan = {
+  subject: "Coremail",
+  requirements: [{ id: "R1" as const, question: "产品问题", queries: ["Coremail 产品问题"] }],
+};
+
 describe("main wiring", () => {
-  it("uses one model for routing, normal answers, and the knowledge agent", async () => {
+  it("uses one model for routing, planning, normal answers, and the knowledge agent", async () => {
     const model = {
       completeJson: vi.fn(),
       completeText: vi.fn(async () => "普通回答"),
@@ -44,6 +50,11 @@ describe("main wiring", () => {
     } satisfies KnowledgeToolCaller;
     const session = { project: "coremail-professional" } as KnowledgeSession;
     const knowledge = { open: vi.fn(async () => session) };
+    const planner = { plan: vi.fn(async () => plan) } satisfies KnowledgePlanner;
+    const createKnowledgePlanner = vi.fn((received: ModelClient) => {
+      expect(received).toBe(model);
+      return planner;
+    });
     const agentResult: AnswerResult = {
       scope: "professional", status: "not_covered", answer: "未覆盖", references: [],
     };
@@ -55,6 +66,7 @@ describe("main wiring", () => {
     const runtime = await createPseAgentRuntime(configEnv, {
       createModel,
       createRouter,
+      createKnowledgePlanner,
       createKnowledgeCaller: () => caller,
       createKnowledgeSessionFactory: () => knowledge,
       runAgent,
@@ -65,7 +77,10 @@ describe("main wiring", () => {
     await expect(runtime.answer("普通问题")).resolves.toMatchObject({ scope: "normal", answer: "普通回答" });
     await expect(runtime.answer("产品问题")).resolves.toBe(agentResult);
     expect(createModel).toHaveBeenCalledOnce();
+    expect(createKnowledgePlanner).toHaveBeenCalledOnce();
     expect(model.completeText).toHaveBeenCalledOnce();
+    expect(planner.plan).toHaveBeenCalledOnce();
+    expect(runAgent.mock.calls[0]?.[0].plan).toEqual(plan);
     expect(runAgent.mock.calls[0]?.[0].model).toBe(model);
     expect(caller.connect).toHaveBeenCalledOnce();
     expect(createHistoricalProvider).not.toHaveBeenCalled();
@@ -88,6 +103,7 @@ describe("main wiring", () => {
     } satisfies KnowledgeToolCaller;
     const session = { project: "coremail-professional" } as KnowledgeSession;
     const knowledge = { open: vi.fn(async () => session) };
+    const planner = { plan: vi.fn(async () => plan) } satisfies KnowledgePlanner;
     const runAgent = vi.fn<AgentRunner>(async () => ({
       scope: "professional",
       status: "not_covered",
@@ -109,6 +125,7 @@ describe("main wiring", () => {
       createRouter: () => ({
         route: vi.fn(async () => "normal" as const),
       }),
+      createKnowledgePlanner: () => planner,
       createKnowledgeCaller: () => caller,
       createKnowledgeSessionFactory: () => knowledge,
       runAgent,
