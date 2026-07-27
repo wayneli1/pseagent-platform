@@ -2,11 +2,13 @@ import type { Scope } from "./contracts.js";
 import { routeActionSchema } from "./contracts.js";
 import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { routeMessages } from "./prompts.js";
+import { isPseAgentSelfQuestion } from "./self-context.js";
 
 export class ScopeRouter {
   constructor(private readonly model: ModelClient) {}
 
   async route(question: string, conversationContext?: string, signal?: AbortSignal): Promise<Scope> {
+    if (isPseAgentSelfQuestion(question)) return "normal";
     const messages = routeMessages(question, conversationContext);
     try {
       return (await this.model.completeJson({

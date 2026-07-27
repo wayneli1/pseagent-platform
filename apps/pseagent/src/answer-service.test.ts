@@ -6,6 +6,7 @@ import { HISTORICAL_ANSWER_WARNING } from "./contracts.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { ModelClient } from "./model-client.js";
+import { ScopeRouter } from "./router.js";
 
 const historicalAnswer: HistoricalAnswer = {
   provider: "coremail_mcp",
@@ -76,6 +77,38 @@ describe("AnswerService", () => {
     });
     expect(knowledge.open).not.toHaveBeenCalled();
     expect(historicalProvider.answer).not.toHaveBeenCalled();
+  });
+
+  it("answers PSEAgent architecture as normal even when Coremail dominates history", async () => {
+    const completeJson = vi.fn();
+    const model = {
+      completeJson,
+      completeText: vi.fn(async (input: { messages: { content: string }[] }) => {
+        expect(input.messages[0]?.content).toContain("PSEAgent 是 Coremail 售前问答统一入口");
+        return "PSEAgent 负责路由、知识检索和引用；Lunkr 只负责消息收发。";
+      }),
+    } as unknown as ModelClient;
+    const knowledge = { open: vi.fn() };
+    const runAgent = vi.fn();
+    const service = new AnswerService({
+      model,
+      router: new ScopeRouter(model),
+      knowledge,
+      runAgent,
+    });
+
+    await expect(service.answer(
+      "请介绍一下 PSEAgent 项目的目标和整体架构",
+      "前面讨论了 Coremail AI、十万用户部署、Domino 迁移和安全网关。",
+    )).resolves.toEqual({
+      scope: "normal",
+      status: "answered",
+      answer: "PSEAgent 负责路由、知识检索和引用；Lunkr 只负责消息收发。",
+      references: [],
+    });
+    expect(completeJson).not.toHaveBeenCalled();
+    expect(knowledge.open).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
   });
 
   it.each([

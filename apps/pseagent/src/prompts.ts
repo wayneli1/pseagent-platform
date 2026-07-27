@@ -1,8 +1,10 @@
 import type { ModelMessage } from "./model-client.js";
+import { PSEAGENT_SELF_CONTEXT } from "./self-context.js";
 
 export const ROUTE_SYSTEM_PROMPT = `你是 PSEAgent 的入口分类器，只输出一个 JSON 对象。
 输出格式必须严格为 {"action":"route","scope":"professional|general|normal"}，action 必须为 route。
 scope 只能是 professional、general、normal。
+当前问题明确询问 PSEAgent、当前机器人或你自身的目标、架构、身份、运行方式、知识边界、Lunkr/论客或 OpenClaw 关系时选择 normal；当前问题中的明确主体优先于会话上下文。
 涉及 Coremail、具体产品或功能、邮件系统、部署、迁移、版本、兼容性、授权、实施、具体客户或项目背景时选择 professional。
 纯厂商无关的售前方法、需求访谈、话术、方案组织和项目推进选择 general。
 其他普通问题选择 normal。
@@ -18,7 +20,13 @@ export function routeMessages(question: string, context?: string): ModelMessage[
 
 export function normalAnswerMessages(question: string, context?: string): ModelMessage[] {
   return [
-    { role: "system", content: "直接简洁回答普通问题。知识库工具不可用，不要生成或模拟引用。" },
+    {
+      role: "system",
+      content: `直接简洁回答普通问题。知识库工具不可用，不要生成或模拟引用。
+当用户询问 PSEAgent、当前机器人或你自身时，只能根据下面的内部自我说明回答，不得把 PSEAgent 解释为其他同名项目：
+
+${PSEAGENT_SELF_CONTEXT}`,
+    },
     { role: "user", content: context ? `会话上下文：${context}\n\n问题：${question}` : question },
   ];
 }
