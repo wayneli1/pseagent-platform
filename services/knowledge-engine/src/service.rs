@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use serde::Serialize;
 
@@ -14,6 +17,7 @@ use crate::{
 const MAX_TOP_K: usize = 10;
 const MAX_QUERY_BYTES: usize = 16 * 1024;
 const MAX_SNIPPET_CHARS: usize = 500;
+const MAX_CONTEXT_CHARS: usize = 8_000;
 
 #[derive(Debug)]
 pub struct ProjectIndexes {
@@ -134,14 +138,16 @@ impl KnowledgeService {
 
     pub fn context(&self, project: ProjectKey) -> Result<ProjectContext, EngineError> {
         let indexes = self.indexes(project)?;
-        let overview_path = indexes.catalog.root().join("wiki").join("overview.md");
-        let overview =
-            std::fs::read_to_string(overview_path).map_err(|_| EngineError::CatalogUnavailable)?;
+        let purpose_path = indexes.catalog.root().join("purpose.md");
+        let fallback_path = indexes.catalog.root().join("wiki").join("overview.md");
+        let overview = std::fs::read_to_string(&purpose_path)
+            .or_else(|_| std::fs::read_to_string(fallback_path))
+            .map_err(|_| EngineError::CatalogUnavailable)?;
         Ok(ProjectContext {
             project,
             revision: indexes.catalog.revision().to_owned(),
             schema: indexes.schema.to_string(),
-            overview,
+            overview: overview.chars().take(MAX_CONTEXT_CHARS).collect(),
         })
     }
 
@@ -153,12 +159,10 @@ impl KnowledgeService {
     ) -> Result<SearchResponse, EngineError> {
         validate_query(query, top_k)?;
         let indexes = self.indexes(project)?;
-        let hits = indexes
+        let lexical_hits = indexes
             .lexical
-            .search(query, top_k)
-            .into_iter()
-            .map(|hit| search_observation(indexes, hit))
-            .collect::<Result<Vec<_>, _>>()?;
+            .search(query, top_k.saturating_mul(3).max(top_k));
+        let hits = blend_search_with_graph(indexes, lexical_hits, top_k)?;
         Ok(SearchResponse {
             project,
             revision: indexes.catalog.revision().to_owned(),
@@ -198,6 +202,68 @@ impl KnowledgeService {
             .map(Arc::as_ref)
             .ok_or(EngineError::ProjectUnavailable)
     }
+}
+
+fn blend_search_with_graph(
+    indexes: &ProjectIndexes,
+    lexical_hits: Vec<SearchHit>,
+    top_k: usize,
+) -> Result<Vec<SearchObservation>, EngineError> {
+    if lexical_hits.is_empty() {
+        return Ok(Vec::new());
+    }
+    let lexical_paths = lexical_hits
+        .iter()
+        .map(|hit| hit.path.clone())
+        .collect::<BTreeSet<_>>();
+    let mut graph_candidates = BTreeMap::<String, (String, f32, usize)>::new();
+    for (rank, seed) in lexical_hits.iter().take(5).enumerate() {
+        for neighbor in indexes.graph.neighbors(&seed.path, MAX_TOP_K)? {
+            if lexical_paths.contains(&neighbor.path) {
+                continue;
+            }
+            let candidate_score = seed.score / (rank as f32 + 1.0);
+            let entry = graph_candidates
+                .entry(neighbor.path)
+                .or_insert((neighbor.title, 0.0, 0));
+            entry.1 += candidate_score;
+            entry.2 += 1;
+        }
+    }
+    let graph_quota = if top_k < 2 {
+        0
+    } else {
+        ((top_k as f32 * 0.25).ceil() as usize).clamp(1, top_k - 1)
+    };
+    let mut ranked_graph = graph_candidates.into_iter().collect::<Vec<_>>();
+    ranked_graph.sort_by(
+        |(left_path, (_, left_score, left_seeds)), (right_path, (_, right_score, right_seeds))| {
+            right_seeds
+                .cmp(left_seeds)
+                .then_with(|| right_score.total_cmp(left_score))
+                .then_with(|| left_path.cmp(right_path))
+        },
+    );
+    ranked_graph.truncate(graph_quota);
+
+    let lexical_quota = top_k.saturating_sub(ranked_graph.len());
+    let mut observations = lexical_hits
+        .into_iter()
+        .take(lexical_quota)
+        .map(|hit| search_observation(indexes, hit))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (path, (title, score, _seed_count)) in ranked_graph {
+        observations.push(search_observation(
+            indexes,
+            SearchHit {
+                path,
+                title,
+                score: score * 0.05,
+                matched_terms: Vec::new(),
+            },
+        )?);
+    }
+    Ok(observations)
 }
 
 fn validate_query(query: &str, top_k: usize) -> Result<(), EngineError> {

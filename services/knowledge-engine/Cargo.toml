@@ -35,6 +35,10 @@ name = "service"
 path = "tests/service.rs"
 
 [[test]]
+name = "real_retrieval"
+path = "tests/real_retrieval.rs"
+
+[[test]]
 name = "http_api"
 path = "tests/http_api.rs"
 

@@ -21,6 +21,7 @@ fn root(name: &str) -> PathBuf {
     ));
     fs::create_dir_all(root.join("wiki/concepts")).unwrap();
     fs::write(root.join("schema.md"), format!("# {name} 专业规范")).unwrap();
+    fs::write(root.join("purpose.md"), format!("# {name} 知识库目标")).unwrap();
     fs::write(root.join("wiki/overview.md"), format!("# {name} 概览")).unwrap();
     root
 }
@@ -101,8 +102,55 @@ fn project_context_returns_schema_and_overview_from_same_revision() {
     let context = service.context(ProjectKey::CoremailProfessional).unwrap();
 
     assert!(context.schema.contains("专业"));
-    assert!(context.overview.contains("概览"));
+    assert!(context.overview.contains("知识库目标"));
+    assert!(!context.overview.contains("概览"));
     assert!(!context.revision.is_empty());
+    fs::remove_dir_all(professional).unwrap();
+    fs::remove_dir_all(general).unwrap();
+}
+
+#[test]
+fn search_reserves_a_candidate_for_one_hop_graph_context() {
+    let professional = root("professional-graph");
+    let general = root("general-graph");
+    fs::write(
+        professional.join("wiki/concepts/gateway.md"),
+        "---\ntype: concept\ntitle: 安全网关\ntags: []\nrelated: [网关POC测试要点]\nsources: []\n---\n# 安全网关\n安全网关功能。",
+    )
+    .unwrap();
+    fs::write(
+        professional.join("wiki/concepts/gateway-poc.md"),
+        "---\ntype: concept\ntitle: 网关POC测试要点\ntags: []\nrelated: []\nsources: []\n---\n# 网关POC测试要点\n样本准备和评分要求。",
+    )
+    .unwrap();
+    let revision = "a".repeat(40);
+    let service = KnowledgeService::new([
+        (
+            ProjectKey::CoremailProfessional,
+            ProjectIndexes::new(
+                Catalog::load(
+                    ProjectKey::CoremailProfessional,
+                    &professional,
+                    revision.clone(),
+                )
+                .unwrap(),
+                "# 专业 schema".to_owned(),
+            ),
+        ),
+        (
+            ProjectKey::PresalesGeneral,
+            ProjectIndexes::new(
+                Catalog::load(ProjectKey::PresalesGeneral, &general, revision).unwrap(),
+                "# 通用 schema".to_owned(),
+            ),
+        ),
+    ])
+    .unwrap();
+
+    let result = service
+        .search(ProjectKey::CoremailProfessional, "安全网关功能", 5)
+        .unwrap();
+    assert!(result.hits.iter().any(|hit| hit.title == "网关POC测试要点"));
     fs::remove_dir_all(professional).unwrap();
     fs::remove_dir_all(general).unwrap();
 }

@@ -1,8 +1,10 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::OnceLock};
 
 use jieba_rs::Jieba;
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
+
+static JIEBA: OnceLock<Jieba> = OnceLock::new();
 
 pub fn normalize(value: &str) -> String {
     value.nfkc().collect::<String>().to_lowercase()
@@ -10,7 +12,7 @@ pub fn normalize(value: &str) -> String {
 
 pub fn tokens(value: &str) -> Vec<String> {
     let normalized = normalize(value);
-    let jieba = Jieba::new();
+    let jieba = JIEBA.get_or_init(Jieba::new);
     let mut output = BTreeSet::new();
     for token in jieba.cut(&normalized, false) {
         let token = token.word.trim();
@@ -34,4 +36,16 @@ pub fn tokens(value: &str) -> Vec<String> {
         output.insert(pair.iter().collect());
     }
     output.into_iter().collect()
+}
+
+pub fn query_tokens(value: &str) -> Vec<String> {
+    let tokens = tokens(value);
+    let has_multi_character_term = tokens.iter().any(|token| token.chars().count() > 1);
+    if !has_multi_character_term {
+        return tokens;
+    }
+    tokens
+        .into_iter()
+        .filter(|token| token.chars().count() > 1)
+        .collect()
 }
