@@ -268,6 +268,10 @@ npm run lunkr:login
 邮箱和密码只在隐藏的交互提示中输入。程序不会把密码保存到环境变量、Session
 文件或日志。若服务端没有要求二次验证，流程直接完成；只有服务端返回
 `FA_NEED_DYNAMIC_PWD` 时才提示在其他设备完成验证，不尝试绕过服务端策略。
+该分支是 OTP/另一设备登录确认，不需要扫码，也不是邮箱验证码；确认完成后在
+PowerShell 按回车继续。部分 Coremail 部署把登录 Cookie 放在响应字段而不是
+`Set-Cookie` 响应头中，直连实现兼容两种形式，并在校验邮箱 Session 时继续携带
+该 Cookie。
 
 成功后只把 Lunkr SID 和 Cookie 以 AES-256-GCM 加密保存在：
 

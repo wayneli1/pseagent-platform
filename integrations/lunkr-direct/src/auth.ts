@@ -147,16 +147,22 @@ export class LunkrAuthService {
     if (webmailSid === undefined) {
       throw new LunkrAuthError("邮箱登录未返回 Session");
     }
+    const coremailCookie =
+      extractCookie(login.setCookies, "Coremail") ??
+      normalizeCookieValue(
+        readString(login.body.var, "Cookie.Coremail"),
+        "Coremail",
+      );
+    if (coremailCookie === undefined) {
+      throw new LunkrAuthError("邮箱登录未返回 Coremail Cookie");
+    }
     await requireSuccess(await webmail.lunkr({
       apiPath: server.apiPath,
       func: "user:getAttrs",
       sid: webmailSid,
+      cookie: `Coremail=${coremailCookie}`,
       body: { attrIds: ["true_name"] },
     }), "邮箱 Session 验证失败");
-    const coremailCookie = extractCookie(login.setCookies, "Coremail");
-    if (coremailCookie === undefined) {
-      throw new LunkrAuthError("邮箱登录未返回 Coremail Cookie");
-    }
     const lunkrSession = await exchangeLunkrSession(
       this.config,
       email,
@@ -527,6 +533,15 @@ function extractCookie(setCookies: readonly string[], name: string): string | un
     if (match?.[1]) return match[1];
   }
   return undefined;
+}
+
+function normalizeCookieValue(
+  value: string | undefined,
+  name: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  const match = value.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return match?.[1] ?? value;
 }
 
 function priority(type: string): number {

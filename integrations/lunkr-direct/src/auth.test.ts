@@ -74,6 +74,7 @@ describe("Lunkr auth", () => {
       modulus: fromBase64Url(jwk.n!),
       loginKey,
       requireOtp: false,
+      cookieInBody: true,
     });
     const save = vi.fn();
     const onOtpRequired = vi.fn<() => Promise<void>>();
@@ -93,6 +94,12 @@ describe("Lunkr auth", () => {
     expect(session.sid).toBe("lunkr-sid");
     expect(save).toHaveBeenCalledOnce();
     expect(JSON.stringify(save.mock.calls)).not.toContain("temporary-password");
+    expect(fetchImpl.cookies("user:getAttrs")).toEqual([
+      "Coremail=coremail-cookie",
+    ]);
+    expect(fetchImpl.cookies("cim.common:verify")).toEqual([
+      "Coremail=coremail-cookie",
+    ]);
   });
 
   it("only invokes OTP after the server requires it", async () => {
@@ -130,10 +137,15 @@ function createAuthFetch(options: {
   modulus: string;
   loginKey: string;
   requireOtp: boolean;
-}): typeof fetch & { calls(func: string): number } {
+  cookieInBody?: boolean;
+}): typeof fetch & {
+  calls(func: string): number;
+  cookies(func: string): string[];
+} {
   const counts = new Map<string, number>();
+  const cookies = new Map<string, string[]>();
   let webmailLogins = 0;
-  const implementation = vi.fn<typeof fetch>(async (input) => {
+  const implementation = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
     if (url.hostname === "cloud.icoremail.net") {
       return new Response(
@@ -142,6 +154,10 @@ function createAuthFetch(options: {
     }
     const func = url.searchParams.get("func") ?? "";
     counts.set(func, (counts.get(func) ?? 0) + 1);
+    const cookie = new Headers(init?.headers).get("cookie");
+    if (cookie !== null) {
+      cookies.set(func, [...(cookies.get(func) ?? []), cookie]);
+    }
     if (func === "user:getPasswordKey") {
       return json({
         code: "S_OK",
@@ -157,8 +173,18 @@ function createAuthFetch(options: {
         return json({ code: "FA_NEED_DYNAMIC_PWD", var: { sid: "temp-sid" } });
       }
       return json(
-        { code: "S_OK", var: { sid: "webmail-sid" } },
-        { "set-cookie": "Coremail=coremail-cookie; Path=/; Secure" },
+        {
+          code: "S_OK",
+          var: {
+            sid: "webmail-sid",
+            ...(options.cookieInBody
+              ? { "Cookie.Coremail": "coremail-cookie" }
+              : {}),
+          },
+        },
+        options.cookieInBody
+          ? {}
+          : { "set-cookie": "Coremail=coremail-cookie; Path=/; Secure" },
       );
     }
     if (func === "user:triggerSecondAuth") return json({ code: "S_OK" });
@@ -183,7 +209,11 @@ function createAuthFetch(options: {
   });
   return Object.assign(implementation, {
     calls: (func: string) => counts.get(func) ?? 0,
-  }) as unknown as typeof fetch & { calls(func: string): number };
+    cookies: (func: string) => cookies.get(func) ?? [],
+  }) as unknown as typeof fetch & {
+    calls(func: string): number;
+    cookies(func: string): string[];
+  };
 }
 
 function json(body: unknown, headers: Record<string, string> = {}, status = 200): Response {
