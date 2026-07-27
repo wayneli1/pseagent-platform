@@ -226,3 +226,118 @@ Test-Path ..\presales-general
 开始前必须使用 release Knowledge Engine，并记录占用 `19829` 端口的原容器 ID 与运行状态。桥接健康后才能临时停止该容器；所有成功或失败路径都必须在 `finally` 中停止本次保存 PID 的进程，并在原容器先前处于运行状态时恢复同一个容器。不要停止其他容器。
 
 验收记录只保留 scope、status、引用数量、耗时、revision 与恢复状态，不保留问题、回答、知识正文、访问令牌、Codex stderr 或会话信息。验收结束后删除 `.env.local`、系统临时目录中的桥接程序/测试/日志以及本次产生的临时输出；本步骤不把 Codex 接入加入正式运行时代码。
+
+## 10. Lunkr 私聊正式入口（Windows 前台）
+
+Lunkr 是独立的正式聊天入口，不经过 OpenCode、Codex 或任何外层 Agent
+harness。现有 `opencode.json`、`.opencode/` 和历史 OpenCode 验收资料只保留为
+旧测试入口；启动 Lunkr 时不需要运行或修改 OpenCode。
+
+运行文件边界如下：
+
+```text
+integrations/lunkr-direct/  Lunkr 登录、Session、Socket、私聊 Bridge
+scripts/lunkr-login.mts     首次交互登录
+scripts/lunkr-status.mts    非敏感 Session 状态
+scripts/lunkr-start.mts     Windows 前台机器人
+apps/pseagent/src/embedded.ts  PSEAgent 正式嵌入式接口
+```
+
+### 10.1 构建并准备 PSEAgent 环境
+
+完成本手册第 2 至 5 节，确保 `.env.local`、两个知识库 revision、Knowledge
+MCP 构建产物和监听 `127.0.0.1:19829` 的 Knowledge Engine 均已就绪。然后：
+
+```powershell
+npm install
+npm run typecheck
+npm run build
+```
+
+`lunkr:start` 读取现有 `.env.local`，因此模型和知识库配置只维护一份。Lunkr
+本身只负责私聊输入输出，不参与 PSEAgent 的路由、检索、模型调用或引用生成。
+
+### 10.2 首次登录专用账号
+
+在真实可见的 PowerShell 中执行：
+
+```powershell
+npm run lunkr:login
+```
+
+邮箱和密码只在隐藏的交互提示中输入。程序不会把密码保存到环境变量、Session
+文件或日志。若服务端没有要求二次验证，流程直接完成；只有服务端返回
+`FA_NEED_DYNAMIC_PWD` 时才提示在其他设备完成验证，不尝试绕过服务端策略。
+
+成功后只把 Lunkr SID 和 Cookie 以 AES-256-GCM 加密保存在：
+
+```text
+%USERPROFILE%\.config\pseagent-lunkr\session.json
+```
+
+密钥绑定当前 Windows 用户、主机和设备 UUID。复制到其他用户或电脑后不能解密。
+
+### 10.3 检查 Session
+
+```powershell
+npm run lunkr:status
+```
+
+预期：
+
+```json
+{
+  "configured": true,
+  "valid": true,
+  "email": "<专用账号>",
+  "selfUid": "<Lunkr UID>",
+  "lastVerifiedAt": "<ISO 时间>"
+}
+```
+
+输出不包含密码、SID 或 Cookie。`valid=false` 时重新执行 `npm run
+lunkr:login`。
+
+### 10.4 启动私聊机器人
+
+保持 Knowledge Engine 运行，在另一个 PowerShell 中执行：
+
+```powershell
+npm run lunkr:start
+```
+
+就绪顺序：
+
+```text
+lunkr.socket.connected
+lunkr.socket.authenticated
+pseagent.lunkr.ready
+```
+
+任何能私聊专用账号的用户都可直接发送文字，不需要 `/bot`。每个用户以 Lunkr
+私聊 UID 隔离上下文；同一用户的消息顺序处理，不同用户可以并行。上下文最多
+保留最近 6 轮和 12,000 字符，只存在当前进程内存中，进程重启后清空。
+
+支持命令：
+
+```text
+/help  查看使用说明
+/new   清空当前用户的连续对话上下文
+```
+
+群消息和机器人自身消息不响应。图片、文件和语音暂时只回复“当前仅支持文字私聊。”。
+长回答以不超过 1,000 字符的文本段发回同一用户。
+
+按 `Ctrl+C` 正常停止。程序会关闭 Lunkr Socket、PSEAgent、Knowledge MCP
+子进程和只读 Coremail 历史资料子进程，但不会停止单独运行的 Knowledge Engine。
+
+### 10.5 安全排障
+
+- `尚未登录 Lunkr`：执行 `npm run lunkr:login`。
+- `Lunkr Session 已失效`：重新登录，不要手工编辑 Session 文件。
+- `PSEAgent Lunkr 启动失败`：先检查 `npm run lunkr:status` 和 Knowledge
+  Engine 健康状态。
+- Socket 断开后按指数退避自动重连，最大等待时间由
+  `LUNKR_RECONNECT_MAX_MS` 控制。
+- 日志只记录连接、收到私聊、回复成功或脱敏错误，不记录消息正文、回答正文、
+  密码、SID、Cookie 或模型密钥。
