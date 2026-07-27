@@ -13,7 +13,8 @@
     "probe:coremail": "node --env-file=.env.local --import tsx scripts/probe-coremail-historical.mts",
     "test:regression": "npm exec -w @pseagent/app -- vitest run src/regression.test.ts",
     "lunkr:login": "node --import tsx scripts/lunkr-login.mts",
-    "lunkr:status": "node --import tsx scripts/lunkr-status.mts"
+    "lunkr:status": "node --import tsx scripts/lunkr-status.mts",
+    "lunkr:start": "node --env-file=.env.local --import tsx scripts/lunkr-start.mts"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
