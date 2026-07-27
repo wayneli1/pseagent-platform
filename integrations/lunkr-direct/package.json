@@ -16,6 +16,10 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "fast-xml-parser": "5.10.1"
+    "fast-xml-parser": "5.10.1",
+    "ws": "8.21.1"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
   }
 }

@@ -80,7 +80,9 @@ export class SecureHttpClient {
         sid: options.sid,
         uid: options.uid,
       },
-      body: options.body ?? {},
+      ...(options.method === "GET"
+        ? {}
+        : { body: options.body ?? {} }),
       headers: {
         ...(options.cookie === undefined ? {} : { Cookie: options.cookie }),
         ...options.headers,
