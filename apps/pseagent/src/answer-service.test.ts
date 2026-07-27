@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentRunner } from "./answer-service.js";
-import { AnswerService } from "./answer-service.js";
+import { AnswerService, PSE_ACTIVE_DEADLINE_MS } from "./answer-service.js";
 import type { AnswerResult, HistoricalAnswer } from "./contracts.js";
 import { HISTORICAL_ANSWER_WARNING } from "./contracts.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
@@ -184,7 +184,10 @@ describe("AnswerService", () => {
       historicalAnswer,
     });
     expect(historicalProvider.answer).toHaveBeenCalledOnce();
-    expect(historicalProvider.answer).toHaveBeenCalledWith("产品问题", undefined);
+    expect(historicalProvider.answer).toHaveBeenCalledWith(
+      "产品问题",
+      expect.any(AbortSignal),
+    );
   });
 
   it("plans a knowledge question before running the agent and passes the exact plan through", async () => {
@@ -200,15 +203,25 @@ describe("AnswerService", () => {
     } satisfies HistoricalAnswerProvider;
     const { service, planner, runAgent } = createProfessionalService(primary, historicalProvider);
 
+    const before = Date.now();
     await expect(service.answer("产品问题", "有限上下文")).resolves.toBe(primary);
-    expect(planner.plan).toHaveBeenCalledWith({
+    const after = Date.now();
+    expect(planner.plan).toHaveBeenCalledWith(expect.objectContaining({
       scope: "professional",
       question: "产品问题",
       conversationContext: "有限上下文",
       schema: "专业库 schema",
       overview: "专业库用途",
-    });
+      signal: expect.any(AbortSignal),
+    }));
     expect(runAgent.mock.calls[0]?.[0].plan).toEqual(knowledgePlan);
+    expect(runAgent.mock.calls[0]?.[0].deadlineAt).toBeGreaterThanOrEqual(
+      before + PSE_ACTIVE_DEADLINE_MS,
+    );
+    expect(runAgent.mock.calls[0]?.[0].deadlineAt).toBeLessThanOrEqual(
+      after + PSE_ACTIVE_DEADLINE_MS,
+    );
+    expect(runAgent.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal);
     expect(planner.plan.mock.invocationCallOrder[0]).toBeLessThan(
       runAgent.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );

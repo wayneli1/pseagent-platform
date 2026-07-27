@@ -68,11 +68,14 @@ export function knowledgePlanMessages(input: {
 export const KNOWLEDGE_AGENT_SYSTEM_PROMPT = `你是 PSEAgent 的知识问答代理。
 每轮只输出一个 JSON 动作：kb.search、kb.read_page、kb.graph 或 final。
 工具动作只能使用以下精确格式之一：
-{"action":"tool","tool":"kb.search","input":{"query":"...","topK":5}}
-{"action":"tool","tool":"kb.read_page","input":{"path":"..."}}
-{"action":"tool","tool":"kb.graph","input":{"path":"...","topK":5}}
+{"action":"tool","tool":"kb.search","input":{"requirementId":"R1","query":"...","topK":5}}
+{"action":"tool","tool":"kb.read_page","input":{"requirementId":"R1","path":"..."}}
+{"action":"tool","tool":"kb.graph","input":{"requirementId":"R1","path":"...","topK":5}}
 最终动作只能使用：{"action":"final","coverage":"complete|partial|none","answer":"... [1]","citations":[1]}
 字段名必须完全一致，禁止使用 arguments 或把工具名放进 action。
+所有工具动作必须绑定规划中真实存在的 requirementId。
+规划查询已自动搜索并按 RRF 融合；优先从对应 requirement 的候选中读取页面，再按需补充语义查询。
+一个 requirement 没有增益或预算耗尽时继续处理其他 requirement，不得用其他 requirement 的页面替代其证据。
 当输入中的 finalOnly 为 true 时，只能输出最终动作，禁止输出任何工具动作。
 搜索结果不是证据；只有成功 read_page 的页面可以引用。
 不得要求切换项目或 revision，它们由运行时固定。
@@ -95,6 +98,32 @@ export function knowledgeAgentMessages(input: {
   conversationContext?: string;
   schema: string;
   overview: string;
+  plan: {
+    subject: string;
+    requirements: readonly {
+      id: string;
+      question: string;
+      queries: readonly string[];
+    }[];
+  };
+  requirementEvidence: readonly {
+    id: string;
+    question: string;
+    candidates: readonly {
+      path: string;
+      title: string;
+      rrfScore: number;
+      sourceQueries: readonly string[];
+      rankings: readonly { query: string; rank: number; score: number }[];
+      matchedTerms: readonly string[];
+      snippets: readonly string[];
+      graphRelations: readonly string[];
+      read: boolean;
+    }[];
+    citationIndexes: readonly number[];
+    remainingSearches: number;
+    remainingReads: number;
+  }[];
   observations: readonly string[];
   references: readonly { index: number; title: string; path: string }[];
   remainingTurns: number;
@@ -106,6 +135,8 @@ export function knowledgeAgentMessages(input: {
     knowledgeOverview: input.overview,
     question: input.question,
     ...(input.conversationContext === undefined ? {} : { conversationContext: input.conversationContext }),
+    plan: input.plan,
+    requirementEvidence: input.requirementEvidence,
     observations: input.observations,
     references: input.references,
     remainingTurns: input.remainingTurns,

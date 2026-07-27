@@ -4,8 +4,9 @@ export const scopeSchema = z.enum(["professional", "general", "normal"]);
 export const answerStatusSchema = z.enum(["answered", "partially_answered", "not_covered", "temporarily_unavailable"]);
 export const coverageSchema = z.enum(["complete", "partial", "none"]);
 export const routeActionSchema = z.object({ action: z.literal("route"), scope: scopeSchema }).strict();
+export const knowledgeRequirementIdSchema = z.string().regex(/^R[1-6]$/u);
 export const knowledgeRequirementSchema = z.object({
-  id: z.string().regex(/^R[1-6]$/u),
+  id: knowledgeRequirementIdSchema,
   question: z.string().trim().min(1).max(1_024),
   queries: z.array(z.string().trim().min(1).max(1_024)).min(1).max(3),
 }).strict().superRefine((requirement, context) => {
@@ -52,6 +53,7 @@ const searchActionSchema = z.object({
   action: z.literal("tool"),
   tool: z.literal("kb.search"),
   input: z.object({
+    requirementId: knowledgeRequirementIdSchema,
     query: z.string().trim().min(1).max(16_384),
     topK: z.number().int().min(1).max(10).default(5),
   }).strict(),
@@ -59,12 +61,16 @@ const searchActionSchema = z.object({
 const readActionSchema = z.object({
   action: z.literal("tool"),
   tool: z.literal("kb.read_page"),
-  input: z.object({ path: z.string().trim().min(1).max(1_024) }).strict(),
+  input: z.object({
+    requirementId: knowledgeRequirementIdSchema,
+    path: z.string().trim().min(1).max(1_024),
+  }).strict(),
 }).strict();
 const graphActionSchema = z.object({
   action: z.literal("tool"),
   tool: z.literal("kb.graph"),
   input: z.object({
+    requirementId: knowledgeRequirementIdSchema,
     path: z.string().trim().min(1).max(1_024),
     topK: z.number().int().min(1).max(10).default(5),
   }).strict(),

@@ -142,14 +142,39 @@ export class KnowledgeSession {
 
   compactPage(page: KnowledgePage, matchedTerms: string[]): string {
     const header = `# ${page.title}\nPath: ${page.path}\nSources: ${page.sources.join(", ")}\n\nBody:\n`;
-    const headerCharacters = [...header];
-    if (headerCharacters.length >= 4_000) return headerCharacters.slice(0, 4_000).join("");
-    const bodyCharacters = [...page.body];
-    const budget = 4_000 - headerCharacters.length;
-    const earliest = earliestTermOffset(page.body, matchedTerms);
-    const center = earliest < 0 ? 0 : [...page.body.slice(0, earliest)].length;
-    const start = Math.max(0, Math.min(center - Math.floor(budget / 2), bodyCharacters.length - budget));
-    return header + bodyCharacters.slice(start, start + budget).join("");
+    const limit = 8_000;
+    if (characterLength(header) >= limit) return takeCharacters(header, limit);
+    if (characterLength(header + page.body) <= limit) return header + page.body;
+
+    const budget = limit - characterLength(header);
+    const sections = splitMarkdownSections(page.body);
+    const terms = semanticTerms(matchedTerms);
+    const ranked = sections
+      .map((section, index) => ({
+        ...section,
+        index,
+        score: sectionScore(section, terms),
+      }))
+      .sort((left, right) => right.score - left.score || left.index - right.index);
+    const hasRelevantSection = ranked.some((section) => section.score > 0);
+
+    const selected: typeof ranked = [];
+    let used = 0;
+    for (const section of ranked) {
+      if (selected.length >= 3) break;
+      if (hasRelevantSection && section.score === 0) continue;
+      const sectionLength = characterLength(section.text);
+      if (sectionLength > budget - used) continue;
+      selected.push(section);
+      used += sectionLength + 2;
+    }
+    if (selected.length === 0) {
+      const best = ranked[0];
+      const bounded = best === undefined ? "" : takeWholeParagraphs(best.text, budget);
+      return header + bounded;
+    }
+    selected.sort((left, right) => left.index - right.index);
+    return header + selected.map((section) => section.text).join("\n\n");
   }
 
   private assertSeen(path: string): void {
@@ -166,12 +191,75 @@ function assertSameSnapshot(
   if (value.revision !== revision) throw new RevisionMismatchError("knowledge_revision_mismatch");
 }
 
-function earliestTermOffset(body: string, terms: string[]): number {
-  let earliest = -1;
-  for (const term of terms) {
-    if (!term) continue;
-    const offset = body.indexOf(term);
-    if (offset >= 0 && (earliest < 0 || offset < earliest)) earliest = offset;
+type MarkdownSection = {
+  readonly heading: string;
+  readonly text: string;
+};
+
+function splitMarkdownSections(body: string): MarkdownSection[] {
+  const lines = body.split(/\r?\n/u);
+  const sections: Array<{ heading: string; lines: string[] }> = [];
+  let current = { heading: "", lines: [] as string[] };
+  for (const line of lines) {
+    const heading = /^(#{1,6})\s+(.+?)\s*$/u.exec(line);
+    if (heading) {
+      if (current.lines.length > 0) sections.push(current);
+      current = { heading: heading[2] ?? "", lines: [line] };
+    } else {
+      current.lines.push(line);
+    }
   }
-  return earliest;
+  if (current.lines.length > 0) sections.push(current);
+  return sections.map((section) => ({
+    heading: section.heading,
+    text: section.lines.join("\n").trim(),
+  })).filter((section) => section.text.length > 0);
+}
+
+function semanticTerms(values: readonly string[]): string[] {
+  const terms = new Set<string>();
+  for (const value of values) {
+    const normalized = value.trim().toLocaleLowerCase("zh-CN");
+    if (!normalized) continue;
+    terms.add(normalized);
+    for (const token of normalized.split(/[\s,，。！？、:：;；()[\]{}<>《》"'“”‘’/\\|+-]+/u)) {
+      if ([...token].length >= 2) terms.add(token);
+    }
+  }
+  return [...terms];
+}
+
+function sectionScore(section: MarkdownSection, terms: readonly string[]): number {
+  const heading = section.heading.toLocaleLowerCase("zh-CN");
+  const text = section.text.toLocaleLowerCase("zh-CN");
+  let score = 0;
+  for (const term of terms) {
+    if (heading.includes(term)) score += 8;
+    const matches = text.split(term).length - 1;
+    score += Math.min(matches, 5);
+  }
+  return score;
+}
+
+function takeWholeParagraphs(text: string, budget: number): string {
+  const paragraphs = text.split(/\n{2,}/u);
+  const selected: string[] = [];
+  let used = 0;
+  for (const paragraph of paragraphs) {
+    const length = characterLength(paragraph);
+    if (length > budget - used) break;
+    selected.push(paragraph);
+    used += length + 2;
+  }
+  if (selected.length > 0) return selected.join("\n\n");
+  const heading = text.split(/\r?\n/u)[0] ?? "";
+  return characterLength(heading) <= budget ? heading : takeCharacters(heading, budget);
+}
+
+function characterLength(value: string): number {
+  return [...value].length;
+}
+
+function takeCharacters(value: string, limit: number): string {
+  return [...value].slice(0, limit).join("");
 }

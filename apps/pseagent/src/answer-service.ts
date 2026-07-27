@@ -7,6 +7,9 @@ import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { KnowledgePlan } from "./contracts.js";
 import type { KnowledgePlanner } from "./knowledge-planner.js";
 
+export const PSE_REQUEST_TIMEOUT_MS = 300_000;
+export const PSE_ACTIVE_DEADLINE_MS = 270_000;
+
 export interface KnowledgeSessionFactory {
   open(scope: Exclude<Scope, "normal">, signal?: AbortSignal): Promise<KnowledgeSession>;
 }
@@ -17,6 +20,7 @@ export type AgentRunner = (input: {
   plan: KnowledgePlan;
   model: ModelClient;
   session: KnowledgeSession;
+  deadlineAt: number;
   signal?: AbortSignal;
 }) => Promise<AnswerResult>;
 
@@ -31,24 +35,29 @@ export class AnswerService {
   }) {}
 
   async answer(question: string, conversationContext?: string, signal?: AbortSignal): Promise<AnswerResult> {
+    const startedAt = Date.now();
+    const timeoutSignal = AbortSignal.timeout(PSE_REQUEST_TIMEOUT_MS);
+    const requestSignal = signal === undefined
+      ? timeoutSignal
+      : AbortSignal.any([signal, timeoutSignal]);
     let scope: Scope | undefined;
     try {
-      scope = await this.dependencies.router.route(question, conversationContext, signal);
+      scope = await this.dependencies.router.route(question, conversationContext, requestSignal);
       if (scope === "normal") {
         const answer = await this.dependencies.model.completeText({
           messages: normalAnswerMessages(question, conversationContext),
-          ...(signal === undefined ? {} : { signal }),
+          signal: requestSignal,
         });
         return { scope, status: "answered", answer, references: [] };
       }
-      const session = await this.dependencies.knowledge.open(scope, signal);
+      const session = await this.dependencies.knowledge.open(scope, requestSignal);
       const plan = await this.dependencies.planner.plan({
         scope,
         question,
         schema: session.schema,
         overview: session.overview,
         ...(conversationContext === undefined ? {} : { conversationContext }),
-        ...(signal === undefined ? {} : { signal }),
+        signal: requestSignal,
       });
       const input = {
         scope,
@@ -56,8 +65,9 @@ export class AnswerService {
         plan,
         model: this.dependencies.model,
         session,
+        deadlineAt: startedAt + PSE_ACTIVE_DEADLINE_MS,
         ...(conversationContext === undefined ? {} : { conversationContext }),
-        ...(signal === undefined ? {} : { signal }),
+        signal: requestSignal,
       };
       const primary = await this.dependencies.runAgent(input);
       if (
@@ -68,7 +78,7 @@ export class AnswerService {
       }
       try {
         const historicalAnswer =
-          await this.dependencies.historicalProvider.answer(question, signal);
+          await this.dependencies.historicalProvider.answer(question, requestSignal);
         return historicalAnswer === undefined
           ? primary
           : { ...primary, historicalAnswer };

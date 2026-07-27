@@ -128,8 +128,12 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
     const path = testCase.allowedSourcePages[0];
     if (!path) throw new Error("missing_allowed_source_page");
     return [
-      { action: "tool", tool: "kb.search", input: { query: testCase.question, topK: 5 } },
-      { action: "tool", tool: "kb.read_page", input: { path } },
+      {
+        action: "tool",
+        tool: "kb.search",
+        input: { requirementId: "R1", query: testCase.question, topK: 5 },
+      },
+      { action: "tool", tool: "kb.read_page", input: { requirementId: "R1", path } },
       {
         action: "final",
         coverage: "complete",
@@ -139,7 +143,11 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
     ];
   }
   return [
-    { action: "tool", tool: "kb.search", input: { query: testCase.question, topK: 5 } },
+    {
+      action: "tool",
+      tool: "kb.search",
+      input: { requirementId: "R1", query: testCase.question, topK: 5 },
+    },
     { action: "final", coverage: "none", answer: "当前资料未覆盖该问题", citations: [] },
   ];
 }
@@ -239,7 +247,10 @@ describe("fixed 40-question regression", () => {
       return;
     }
 
-    expect(knowledge.open).toHaveBeenCalledWith(testCase.expectedScope, undefined);
+    expect(knowledge.open).toHaveBeenCalledWith(
+      testCase.expectedScope,
+      expect.any(AbortSignal),
+    );
     expect(new Set(projectsCalled)).toEqual(new Set(testCase.allowedProjects));
     if (testCase.expectedStatus === "not_covered") {
       expect(result.answer).toBe(NOT_COVERED_TEXT);

@@ -117,7 +117,26 @@ describe("KnowledgeSession", () => {
     await expect(session.readPage("wiki/guide.md")).rejects.toThrow(SnapshotMismatchError);
   });
 
-  it("compacts pages around the earliest matched term without splitting Unicode", async () => {
+  it("returns a short page in full", async () => {
+    const session = await KnowledgeSession.open("professional", fakeKnowledgeCaller());
+    const page = {
+      project: "coremail-professional" as const,
+      path: "wiki/guide.md",
+      title: "短页",
+      type: "guide",
+      tags: [],
+      related: [],
+      sources: ["来源"],
+      body: "## 完整章节\n短页正文",
+      contentHash,
+    };
+
+    const compact = session.compactPage(page, ["正文"]);
+
+    expect(compact).toContain("## 完整章节\n短页正文");
+  });
+
+  it("selects complete relevant Markdown sections from a long page without a mid-section window", async () => {
     const session = await KnowledgeSession.open("professional", fakeKnowledgeCaller());
     const page = {
       project: "coremail-professional" as const,
@@ -127,16 +146,49 @@ describe("KnowledgeSession", () => {
       tags: [],
       related: [],
       sources: ["来源😀"],
-      body: `${"前".repeat(5_000)}命中词${"后".repeat(5_000)}😀`,
+      body: [
+        `## 无关章节 A\n${"甲".repeat(4_000)}`,
+        `## 目标章节😀\n开始标记\n${"命中词".repeat(500)}\n结束标记😀`,
+        `## 无关章节 B\n${"乙".repeat(4_000)}`,
+      ].join("\n\n"),
       contentHash,
     };
     const original = structuredClone(page);
 
     const compact = session.compactPage(page, ["命中词"]);
 
-    expect([...compact].length).toBeLessThanOrEqual(4_000);
-    expect(compact).toContain("命中词");
+    expect([...compact].length).toBeLessThanOrEqual(8_000);
+    expect(compact).toContain("## 目标章节😀");
+    expect(compact).toContain("开始标记");
+    expect(compact).toContain("结束标记😀");
+    expect(compact).not.toContain("## 无关章节 A");
     expect(compact).toContain("标题😀");
     expect(page).toEqual(original);
+  });
+
+  it("selects different sections for different requirement terms on the same page", async () => {
+    const session = await KnowledgeSession.open("professional", fakeKnowledgeCaller());
+    const page = {
+      project: "coremail-professional" as const,
+      path: "wiki/guide.md",
+      title: "复合页面",
+      type: "guide",
+      tags: [],
+      related: [],
+      sources: [],
+      body: [
+        `## 部署规模\n十万用户容量规划\n${"容量".repeat(2_500)}`,
+        `## 镜像同步\n镜像系统同步机制\n${"同步".repeat(2_500)}`,
+      ].join("\n\n"),
+      contentHash,
+    };
+
+    const scale = session.compactPage(page, ["十万用户", "部署规模"]);
+    const mirror = session.compactPage(page, ["镜像系统", "同步机制"]);
+
+    expect(scale).toContain("## 部署规模");
+    expect(scale).not.toContain("## 镜像同步");
+    expect(mirror).toContain("## 镜像同步");
+    expect(mirror).not.toContain("## 部署规模");
   });
 });
