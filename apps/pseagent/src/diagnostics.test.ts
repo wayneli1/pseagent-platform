@@ -43,6 +43,7 @@ describe("development diagnostic trace", () => {
       status: "answered",
       citationCount: 2,
       elapsedMs: 123,
+      historicalAttempted: false,
       historicalUsed: false,
     });
 

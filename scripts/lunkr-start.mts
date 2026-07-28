@@ -44,6 +44,8 @@ const bridge = new LunkrPseBridge(config, {
     referenceCount:
       execution.result.references.length +
       (execution.result.historicalAnswer?.references.length ?? 0),
+    historicalAttempted: execution.historicalAttempted,
+    historicalUsed: execution.historicalUsed,
   }),
   sendText: (peerUid, text) => api.sendText(peerUid, text),
   onEvent: logQuestionEvent,

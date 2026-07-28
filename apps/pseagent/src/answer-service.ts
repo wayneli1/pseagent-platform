@@ -41,6 +41,8 @@ export interface PseAnswerExecution {
   readonly result: AnswerResult;
   readonly retryable: boolean;
   readonly stopReason: PseStopReason | "final" | "unknown_unavailable";
+  readonly historicalAttempted: boolean;
+  readonly historicalUsed: boolean;
 }
 
 export class AnswerService {
@@ -85,7 +87,7 @@ export class AnswerService {
           signal: requestSignal,
         });
         const result: AnswerResult = { scope, status: "answered", answer, references: [] };
-        return finishExecution(trace, result, startedAt, false);
+        return finishExecution(trace, result, startedAt, false, false);
       }
       const session = await this.dependencies.knowledge.open(scope, requestSignal);
       const plan = await this.dependencies.planner.plan({
@@ -117,18 +119,19 @@ export class AnswerService {
         primary.status !== "not_covered" ||
         this.dependencies.historicalProvider === undefined
       ) {
-        return finishExecution(trace, primary, startedAt, false);
+        return finishExecution(trace, primary, startedAt, false, false);
       }
       try {
+        const historicalAttempted = true;
         const historicalAnswer =
           await this.dependencies.historicalProvider.answer(question, requestSignal);
         if (historicalAnswer === undefined) {
-          return finishExecution(trace, primary, startedAt, false);
+          return finishExecution(trace, primary, startedAt, historicalAttempted, false);
         }
         const result = { ...primary, historicalAnswer };
-        return finishExecution(trace, result, startedAt, true);
+        return finishExecution(trace, result, startedAt, historicalAttempted, true);
       } catch {
-        return finishExecution(trace, primary, startedAt, false);
+        return finishExecution(trace, primary, startedAt, true, false);
       }
     } catch (error) {
       const result = temporaryUnavailableResult(scope);
@@ -139,7 +142,7 @@ export class AnswerService {
             ? "invalid_model_payload"
             : "routing_or_planning_unavailable";
       recordDiagnostic(trace, { event: "stop", reason });
-      return finishExecution(trace, result, startedAt, false);
+      return finishExecution(trace, result, startedAt, false, false);
     }
   }
 }
@@ -171,6 +174,7 @@ function recordFinished(
   trace: DiagnosticTrace,
   result: AnswerResult,
   startedAt: number,
+  historicalAttempted: boolean,
   historicalUsed: boolean,
 ): void {
   recordDiagnostic(trace, {
@@ -179,6 +183,7 @@ function recordFinished(
     status: result.status,
     citationCount: result.references.length,
     elapsedMs: Math.max(0, Date.now() - startedAt),
+    historicalAttempted,
     historicalUsed,
   });
 }
@@ -187,11 +192,18 @@ function finishExecution(
   trace: OutcomeTrace,
   result: AnswerResult,
   startedAt: number,
+  historicalAttempted: boolean,
   historicalUsed: boolean,
 ): PseAnswerExecution {
-  recordFinished(trace, result, startedAt, historicalUsed);
+  recordFinished(trace, result, startedAt, historicalAttempted, historicalUsed);
   if (result.status !== "temporarily_unavailable") {
-    return { result, retryable: false, stopReason: "final" };
+    return {
+      result,
+      retryable: false,
+      stopReason: "final",
+      historicalAttempted,
+      historicalUsed,
+    };
   }
   const stopReason = trace.stopReason ?? "unknown_unavailable";
   return {
@@ -201,6 +213,8 @@ function finishExecution(
       stopReason === "seed_unavailable" ||
       stopReason === "coverage_verifier_unavailable",
     stopReason,
+    historicalAttempted,
+    historicalUsed,
   };
 }
 

@@ -14,6 +14,8 @@ export interface LunkrRuntimeLogRecord {
   readonly stopReason?: string | undefined;
   readonly elapsedMs?: number | undefined;
   readonly referenceCount?: number | undefined;
+  readonly historicalAttempted?: boolean | undefined;
+  readonly historicalUsed?: boolean | undefined;
 }
 
 export function createRuntimeLogger(

@@ -96,6 +96,7 @@ export type DiagnosticEvent =
       readonly status: AnswerStatus;
       readonly citationCount: number;
       readonly elapsedMs: number;
+      readonly historicalAttempted: boolean;
       readonly historicalUsed: boolean;
     };
 

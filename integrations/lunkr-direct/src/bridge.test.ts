@@ -27,6 +27,9 @@ type TestResult = {
   readonly status: "answered" | "temporarily_unavailable" | "not_covered";
   readonly retryable?: boolean;
   readonly stopReason?: string;
+  readonly historicalAttempted?: boolean;
+  readonly historicalUsed?: boolean;
+  readonly referenceCount?: number;
 };
 
 type Answer = (
@@ -73,6 +76,8 @@ describe("LunkrPseBridge", () => {
         retryable: result.retryable ?? false,
         stopReason: result.stopReason,
         referenceCount: 0,
+        historicalAttempted: false,
+        historicalUsed: false,
       }),
       sendText,
     });
@@ -362,6 +367,83 @@ describe("LunkrPseBridge", () => {
     ]));
   });
 
+  it("emits historical provider outcome independently from the total reference count", async () => {
+    const events: BridgeQuestionEvent[] = [];
+    const bridge = createBridge({
+      answer: async (question) => question === "历史已展示"
+        ? {
+            answer: "历史回答已附加",
+            status: "answered",
+            retryable: false,
+            stopReason: "final",
+            historicalAttempted: true,
+            historicalUsed: true,
+            referenceCount: 3,
+          }
+        : {
+            answer: "服务暂时不可用",
+            status: "temporarily_unavailable",
+            retryable: false,
+            stopReason: "invalid_final",
+            historicalAttempted: true,
+            historicalUsed: false,
+            referenceCount: 2,
+          },
+      sendText: async () => undefined,
+      onEvent: (event) => events.push(event),
+    });
+
+    await bridge.handle(message("answered", "#a#U", "历史已展示"));
+    await bridge.handle(message("failed", "#a#U", "历史未展示"));
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "answered",
+        historicalAttempted: true,
+        historicalUsed: true,
+        referenceCount: 3,
+      }),
+      expect.objectContaining({
+        type: "failed",
+        historicalAttempted: true,
+        historicalUsed: false,
+        referenceCount: 2,
+      }),
+    ]));
+  });
+
+  it("keeps the last retryable metadata when a later answer attempt throws", async () => {
+    const events: BridgeQuestionEvent[] = [];
+    const answer = vi.fn<Answer>()
+      .mockResolvedValueOnce({
+        answer: "服务暂时不可用",
+        status: "temporarily_unavailable",
+        retryable: true,
+        stopReason: "model_unavailable",
+        historicalAttempted: true,
+        historicalUsed: false,
+        referenceCount: 2,
+      })
+      .mockRejectedValueOnce(new Error("second attempt failed"));
+    const bridge = createBridge({
+      answer,
+      sendText: async () => undefined,
+      onEvent: (event) => events.push(event),
+    });
+
+    await bridge.handle(message("retry-throws", "#a#U", "重试后失败"));
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "failed",
+        stopReason: "answer_error",
+        historicalAttempted: true,
+        historicalUsed: false,
+        referenceCount: 2,
+      }),
+    ]));
+  });
+
   it("keeps another peer running when one peer starts a new session", async () => {
     const otherResult = deferred<TestResult>();
     const answer = vi.fn<Answer>(async (question) =>
@@ -546,7 +628,9 @@ function createBridge(options: {
         status: result.status,
         retryable: result.retryable ?? false,
         stopReason: result.stopReason,
-        referenceCount: 0,
+        referenceCount: result.referenceCount ?? 0,
+        historicalAttempted: result.historicalAttempted ?? false,
+        historicalUsed: result.historicalUsed ?? false,
       }),
       sendText: options.sendText,
       onEvent: options.onEvent,

@@ -25,6 +25,8 @@ export interface BridgeAnswerMetadata {
   readonly retryable: boolean;
   readonly stopReason?: string | undefined;
   readonly referenceCount: number;
+  readonly historicalAttempted: boolean;
+  readonly historicalUsed: boolean;
 }
 
 export interface BridgeQuestionEvent {
@@ -46,6 +48,8 @@ export interface BridgeQuestionEvent {
   readonly stopReason?: string | undefined;
   readonly elapsedMs?: number | undefined;
   readonly referenceCount?: number | undefined;
+  readonly historicalAttempted?: boolean | undefined;
+  readonly historicalUsed?: boolean | undefined;
 }
 
 export interface LunkrBridgeDependencies<Result> {
@@ -207,6 +211,7 @@ export class LunkrPseBridge<Result> {
           start.epoch,
           "answer_error",
           receivedAt,
+          metadata,
         );
         return;
       }
@@ -282,6 +287,8 @@ export class LunkrPseBridge<Result> {
       stopReason: metadata.stopReason,
       elapsedMs: Math.max(0, this.now() - receivedAt),
       referenceCount: metadata.referenceCount,
+      historicalAttempted: metadata.historicalAttempted,
+      historicalUsed: metadata.historicalUsed,
     });
   }
 
@@ -309,6 +316,12 @@ export class LunkrPseBridge<Result> {
       stopReason,
       elapsedMs: Math.max(0, this.now() - receivedAt),
       referenceCount: metadata?.referenceCount ?? 0,
+      ...(metadata === undefined
+        ? {}
+        : {
+            historicalAttempted: metadata.historicalAttempted,
+            historicalUsed: metadata.historicalUsed,
+          }),
     });
   }
 

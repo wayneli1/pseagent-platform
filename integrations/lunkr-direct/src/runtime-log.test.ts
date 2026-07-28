@@ -25,6 +25,8 @@ describe("createRuntimeLogger", () => {
       stopReason: "final",
       elapsedMs: 12_345,
       referenceCount: 2,
+      historicalAttempted: true,
+      historicalUsed: false,
     });
 
     const serialized = lines.join("");
@@ -33,6 +35,8 @@ describe("createRuntimeLogger", () => {
     expect(serialized).toContain('"questionId":3');
     expect(serialized).toContain('"sessionEpoch":2');
     expect(serialized).toContain('"referenceCount":2');
+    expect(serialized).toContain('"historicalAttempted":true');
+    expect(serialized).toContain('"historicalUsed":false');
     expect(serialized).toMatch(/"peer":"[0-9a-f]{16}"/u);
     expect(serialized.endsWith("\n")).toBe(true);
     expect(Object.keys(JSON.parse(serialized))).not.toEqual(
@@ -40,6 +44,8 @@ describe("createRuntimeLogger", () => {
         "question",
         "answer",
         "content",
+        "title",
+        "url",
         "uid",
         "cookie",
         "sid",

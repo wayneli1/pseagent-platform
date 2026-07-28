@@ -96,7 +96,12 @@ describe("AnswerService", () => {
       historicalProvider,
     });
 
-    await expect(service.answer("普通问题")).resolves.toEqual({
+    const noProviderExecution = await service.answerDetailed("普通问题");
+    expect(noProviderExecution).toMatchObject({
+      historicalAttempted: false,
+      historicalUsed: false,
+    });
+    expect(noProviderExecution.result).toEqual({
       scope: "normal",
       status: "answered",
       answer: "普通回答",
@@ -180,7 +185,7 @@ describe("AnswerService", () => {
       scope: "professional",
       status: "not_covered",
       answer: "正式知识未覆盖",
-      references: [],
+      references: [formalReference],
     };
     const historicalProvider = {
       answer: vi.fn(async () => historicalAnswer),
@@ -188,7 +193,15 @@ describe("AnswerService", () => {
     } satisfies HistoricalAnswerProvider;
     const { service } = createProfessionalService(primary, historicalProvider);
 
-    await expect(service.answer("产品问题", "不应传递的对话上下文")).resolves.toEqual({
+    const usedProviderExecution = await service.answerDetailed(
+      "产品问题",
+      "不应传递的对话上下文",
+    );
+    expect(usedProviderExecution).toMatchObject({
+      historicalAttempted: true,
+      historicalUsed: true,
+    });
+    expect(usedProviderExecution.result).toEqual({
       ...primary,
       historicalAnswer,
     });
@@ -302,13 +315,14 @@ describe("AnswerService", () => {
       scope: "professional",
       status: "answered",
       citationCount: 1,
+      historicalAttempted: false,
       historicalUsed: false,
     });
     expect(JSON.stringify(events)).not.toContain("不应写入诊断的完整回答");
     expect(JSON.stringify(events)).not.toContain("不应直接写入诊断的完整问题");
   });
 
-  it("keeps the exact formal result when the historical provider has no answer", async () => {
+  it("records an attempted but unused historical lookup when the provider has no answer", async () => {
     const primary: AnswerResult = {
       scope: "professional",
       status: "not_covered",
@@ -321,10 +335,16 @@ describe("AnswerService", () => {
     } satisfies HistoricalAnswerProvider;
     const { service } = createProfessionalService(primary, historicalProvider);
 
-    await expect(service.answer("产品问题")).resolves.toBe(primary);
+    const emptyProviderExecution = await service.answerDetailed("产品问题");
+
+    expect(emptyProviderExecution).toMatchObject({
+      historicalAttempted: true,
+      historicalUsed: false,
+    });
+    expect(emptyProviderExecution.result).toBe(primary);
   });
 
-  it("keeps the exact formal result when the historical provider fails", async () => {
+  it("records an attempted but unused historical lookup when the provider fails", async () => {
     const primary: AnswerResult = {
       scope: "professional",
       status: "not_covered",
@@ -339,7 +359,13 @@ describe("AnswerService", () => {
     } satisfies HistoricalAnswerProvider;
     const { service } = createProfessionalService(primary, historicalProvider);
 
-    await expect(service.answer("产品问题")).resolves.toBe(primary);
+    const failedProviderExecution = await service.answerDetailed("产品问题");
+
+    expect(failedProviderExecution).toMatchObject({
+      historicalAttempted: true,
+      historicalUsed: false,
+    });
+    expect(failedProviderExecution.result).toBe(primary);
   });
 
   it("marks model unavailability as retryable without changing the public answer", async () => {
