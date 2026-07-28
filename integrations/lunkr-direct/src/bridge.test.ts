@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LunkrDirectConfig } from "./config.js";
-import type { LunkrDirectMessage } from "./contracts.js";
+import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
 import { LunkrPseBridge } from "./bridge.js";
 
 const config: LunkrDirectConfig = {
@@ -18,122 +18,363 @@ const config: LunkrDirectConfig = {
   maxPendingPerPeer: 5,
 };
 
+type TestResult = {
+  readonly answer: string;
+  readonly status: "answered" | "temporarily_unavailable" | "not_covered";
+  readonly retryable?: boolean;
+  readonly stopReason?: string;
+};
+
+type Answer = (
+  question: string,
+  conversationContext?: string,
+  signal?: AbortSignal,
+) => Promise<TestResult>;
+
 describe("LunkrPseBridge", () => {
-  it("calls PSEAgent exactly once and passes the next-turn context", async () => {
-    const answer = vi.fn(async (question: string, context?: string) => ({
-      answer: `${question}:${context ?? "empty"}`,
-    }));
-    const sendText = vi.fn(async () => undefined);
-    const bridge = new LunkrPseBridge(config, {
-      answer,
-      formatAnswer: (result) => result.answer,
-      sendText,
+  it("sends an immediate numbered acknowledgment and stores only answer context", async () => {
+    const answer = vi.fn<Answer>(async (question, context, signal) => {
+      expect(signal).toBeInstanceOf(AbortSignal);
+      return answered(`${question}:${context ?? "empty"}`);
     });
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
     await bridge.handle(message("m1", "#a#U", "第一问"));
     await bridge.handle(message("m2", "#a#U", "第二问"));
+
     expect(answer).toHaveBeenCalledTimes(2);
     expect(answer.mock.calls[0]?.[1]).toBeUndefined();
     expect(answer.mock.calls[1]?.[1]).toContain("第一问");
-    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(answer.mock.calls[1]?.[1]).not.toContain("已收到问题");
+    expect(sentTexts(sendText)).toEqual([
+      "已收到问题 #1，正在处理。",
+      "问题 #1 的回答：\n\n第一问:empty",
+      "已收到问题 #2，正在处理。",
+      expect.stringContaining("问题 #2 的回答：\n\n第二问:"),
+    ]);
   });
 
-  it("deduplicates messages without re-answering", async () => {
-    const answer = vi.fn(async () => ({ answer: "回答" }));
-    const bridge = new LunkrPseBridge(config, {
-      answer,
-      formatAnswer: (result) => result.answer,
-      sendText: vi.fn(async () => undefined),
-    });
+  it("deduplicates before allocating an id or sending an acknowledgment", async () => {
+    const answer = vi.fn<Answer>(async () => answered("回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
     const duplicate = message("same", "#a#U", "问题");
+
     await Promise.all([bridge.handle(duplicate), bridge.handle(duplicate)]);
+
     expect(answer).toHaveBeenCalledOnce();
+    expect(sentTexts(sendText)).toEqual([
+      "已收到问题 #1，正在处理。",
+      "问题 #1 的回答：\n\n回答",
+    ]);
   });
 
-  it("serializes one peer while allowing another peer to run", async () => {
-    const order: string[] = [];
-    let releaseFirst!: () => void;
-    const first = new Promise<void>((resolve) => { releaseFirst = resolve; });
-    const answer = vi.fn(async (question: string) => {
-      order.push(`start:${question}`);
-      if (question === "A1") await first;
-      order.push(`end:${question}`);
-      return { answer: question };
-    });
-    const bridge = new LunkrPseBridge(config, {
-      answer,
-      formatAnswer: (result) => result.answer,
-      sendText: vi.fn(async () => undefined),
-    });
+  it("queues one peer in FIFO order and announces when queued work starts", async () => {
+    const first = deferred<TestResult>();
+    const answer = vi.fn<Answer>(async (question) =>
+      question === "A1" ? first.promise : answered(question));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
     const a1 = bridge.handle(message("a1", "#a#U", "A1"));
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledOnce());
     const a2 = bridge.handle(message("a2", "#a#U", "A2"));
-    const b1 = bridge.handle(message("b1", "#b#U", "B1"));
-    await vi.waitFor(() => expect(order).toContain("end:B1"));
-    expect(order).not.toContain("start:A2");
-    releaseFirst();
-    await Promise.all([a1, a2, b1]);
-    expect(order.indexOf("end:A1")).toBeLessThan(order.indexOf("start:A2"));
+    await vi.waitFor(() => expect(sentTexts(sendText)).toContain(
+      "已收到问题 #2，前面还有 1 个问题，已加入队列。",
+    ));
+    expect(answer).toHaveBeenCalledOnce();
+
+    first.resolve(answered("A1"));
+    await Promise.all([a1, a2]);
+
+    const texts = sentTexts(sendText);
+    expect(texts).toContain("问题 #2 已开始处理。");
+    expect(texts).toContain("问题 #2 的回答：\n\nA2");
+    expect(texts.indexOf("问题 #1 的回答：\n\nA1"))
+      .toBeLessThan(texts.indexOf("问题 #2 已开始处理。"));
   });
 
-  it("handles commands and attachments without calling PSEAgent", async () => {
-    const answer = vi.fn(async (_question: string, _context?: string) => ({
-      answer: "不应调用",
-    }));
-    const sendText = vi.fn(async (_peerUid: string, _text: string) => undefined);
-    const bridge = new LunkrPseBridge(config, {
-      answer,
-      formatAnswer: (result) => result.answer,
-      sendText,
-    });
-    await bridge.handle(message("help", "#a#U", "/help"));
-    await bridge.handle(message("new", "#a#U", "/new"));
+  it("runs four peers and gives a fifth peer a global busy acknowledgment", async () => {
+    const gates = new Map(
+      ["A", "B", "C", "D"].map((question) =>
+        [question, deferred<TestResult>()] as const),
+    );
+    const answer = vi.fn<Answer>(async (question) =>
+      gates.get(question)?.promise ?? answered(question));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    const running = ["A", "B", "C", "D"].map((question, index) =>
+      bridge.handle(message(`m${index}`, `#${question}#U`, question)));
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledTimes(4));
+    const fifth = bridge.handle(message("m5", "#E#U", "E"));
+    await vi.waitFor(() => expect(sentTexts(sendText)).toContain(
+      "已收到问题 #1，当前服务繁忙，已进入等待队列。",
+    ));
+    expect(answer).toHaveBeenCalledTimes(4);
+
+    gates.get("A")!.resolve(answered("A"));
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledTimes(5));
+    expect(sentTexts(sendText)).toContain("问题 #1 已开始处理。");
+    for (const question of ["B", "C", "D"]) {
+      gates.get(question)!.resolve(answered(question));
+    }
+    await Promise.all([...running, fifth]);
+  });
+
+  it("rejects a sixth pending question without consuming an id", async () => {
+    const first = deferred<TestResult>();
+    const answer = vi.fn<Answer>(async (question) =>
+      question === "Q1" ? first.promise : answered(question));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+    const handles = [bridge.handle(message("q1", "#a#U", "Q1"))];
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledOnce());
+    for (let index = 2; index <= 7; index += 1) {
+      handles.push(bridge.handle(message(`q${index}`, "#a#U", `Q${index}`)));
+    }
+
+    await vi.waitFor(() => expect(sentTexts(sendText)).toContain(
+      "当前已有较多问题等待处理，请稍后再发送。",
+    ));
+    expect(answer).toHaveBeenCalledTimes(1);
+
+    first.resolve(answered("Q1"));
+    await Promise.all(handles);
+    expect(answer).toHaveBeenCalledTimes(6);
+    expect(answer.mock.calls.some((call) => call[0] === "Q7")).toBe(false);
+  });
+
+  it("handles commands and attachments without consuming a question id", async () => {
+    const answer = vi.fn<Answer>(async () => answered("回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    await bridge.handle(message("help", "#a#U", "/help", "help"));
+    await bridge.handle(message("new", "#a#U", "/new", "new"));
     await bridge.handle({ ...message("file", "#a#U", ""), hasAttachments: true });
-    expect(answer).not.toHaveBeenCalled();
-    expect(sendText).toHaveBeenCalledTimes(3);
-    expect(sendText.mock.calls[2]?.[1]).toContain("仅支持文字");
+    await bridge.handle(message("question", "#a#U", "问题"));
+
+    expect(answer).toHaveBeenCalledOnce();
+    expect(sentTexts(sendText)).toContain("当前仅支持文字私聊。");
+    expect(sentTexts(sendText)).toContain(
+      "已开始新会话，之前处理中和排队的问题已取消。",
+    );
+    expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
   });
 
-  it("retries sending without re-answering and does not store failed answers", async () => {
-    const answer = vi.fn(async (question: string, _context?: string) => ({
-      answer: `回答:${question}`,
-    }));
-    const sendText = vi.fn(async (_peerUid: string, _text: string) => undefined)
-      .mockRejectedValueOnce(new Error("temporary"))
-      .mockResolvedValue(undefined);
-    const bridge = new LunkrPseBridge(config, {
-      answer,
-      formatAnswer: (result) => result.answer,
-      sendText,
+  it("keeps another peer running when one peer starts a new session", async () => {
+    const otherResult = deferred<TestResult>();
+    const answer = vi.fn<Answer>(async (question) =>
+      question === "B1" ? otherResult.promise : answered(question));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    const other = bridge.handle(message("b1", "#b#U", "B1"));
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledOnce());
+    await bridge.handle(message("new-a", "#a#U", "/new", "new"));
+
+    otherResult.resolve(answered("B1"));
+    await other;
+
+    expect(sentTexts(sendText)).toContain("问题 #1 的回答：\n\nB1");
+  });
+
+  it("does not cancel active work when the same peer asks for help", async () => {
+    const result = deferred<TestResult>();
+    const answer = vi.fn<Answer>(async () => result.promise);
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    const active = bridge.handle(message("a1", "#a#U", "A1"));
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledOnce());
+    await bridge.handle(message("help", "#a#U", "/help", "help"));
+    result.resolve(answered("A1"));
+    await active;
+
+    expect(answer).toHaveBeenCalledOnce();
+    expect(sentTexts(sendText)).toContain("问题 #1 的回答：\n\nA1");
+  });
+
+  it("suppresses late old-epoch results and clears pending work and context on /new", async () => {
+    const oldResult = deferred<TestResult>();
+    const oldWorkFinished = deferred<void>();
+    const answer = vi.fn<Answer>(async (question) => {
+      if (question !== "旧问题") return answered("新回答");
+      const result = await oldResult.promise;
+      oldWorkFinished.resolve();
+      return result;
     });
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    const active = bridge.handle(message("old-1", "#a#U", "旧问题"));
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledOnce());
+    const pending = bridge.handle(message("old-2", "#a#U", "旧排队问题"));
+    await bridge.handle(message("new", "#a#U", "/new", "new"));
+    expect(sentTexts(sendText).at(-1)).toBe(
+      "已开始新会话，之前处理中和排队的问题已取消。",
+    );
+    await Promise.all([active, pending]);
+
+    oldResult.resolve(answered("不应回发"));
+    await oldWorkFinished.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sentTexts(sendText).join("\n")).not.toContain("不应回发");
+
+    await bridge.handle(message("fresh", "#a#U", "新问题"));
+    expect(answer.mock.calls.at(-1)?.[1]).toBeUndefined();
+    expect(sentTexts(sendText)).toContain("已收到问题 #3，正在处理。");
+  });
+
+  it("retries one explicitly retryable result inside the shared budget", async () => {
+    const answer = vi.fn<Answer>()
+      .mockResolvedValueOnce(unavailable(true, "model_unavailable"))
+      .mockResolvedValueOnce(answered("恢复后的回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
     await bridge.handle(message("m1", "#a#U", "问题"));
-    await bridge.handle(message("m2", "#a#U", "追问"));
+
     expect(answer).toHaveBeenCalledTimes(2);
-    expect(sendText).toHaveBeenCalledTimes(3);
-    expect(answer.mock.calls[1]?.[1]).toContain("问题");
+    expect(answer.mock.calls[0]?.[2]).toBeInstanceOf(AbortSignal);
+    expect(answer.mock.calls[1]?.[2]).toBeInstanceOf(AbortSignal);
+    expect(sentTexts(sendText)).toContain(
+      "问题 #1 的回答：\n\n恢复后的回答",
+    );
   });
 
-  it("returns a fixed failure reply without adding failed context", async () => {
-    const answer = vi.fn(async (_question: string, _context?: string) => ({
-      answer: "恢复",
-    }))
-      .mockRejectedValueOnce(new Error("model unavailable"))
-      .mockResolvedValue({ answer: "恢复" });
-    const sendText = vi.fn(async (_peerUid: string, _text: string) => undefined);
-    const bridge = new LunkrPseBridge(config, {
-      answer,
-      formatAnswer: (result) => result.answer,
-      sendText,
-    });
+  it("never performs a third attempt and does not store failed context", async () => {
+    const answer = vi.fn<Answer>()
+      .mockResolvedValueOnce(unavailable(true, "model_unavailable"))
+      .mockResolvedValueOnce(unavailable(true, "model_unavailable"))
+      .mockResolvedValueOnce(answered("下一题回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
     await bridge.handle(message("m1", "#a#U", "失败问题"));
-    await bridge.handle(message("m2", "#a#U", "新问题"));
-    expect(sendText.mock.calls[0]?.[1]).toContain("暂时不可用");
-    expect(answer.mock.calls[1]?.[1]).toBeUndefined();
+    await bridge.handle(message("m2", "#a#U", "下一题"));
+
+    expect(answer).toHaveBeenCalledTimes(3);
+    expect(sentTexts(sendText)).toContain(
+      "问题 #1 处理失败：知识问答服务暂时不可用，请稍后重试。",
+    );
+    expect(answer.mock.calls[2]?.[1]).toBeUndefined();
+  });
+
+  it("does not retry a stable unavailable result", async () => {
+    const answer = vi.fn<Answer>(async () =>
+      unavailable(false, "invalid_model_payload"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    await bridge.handle(message("m1", "#a#U", "问题"));
+
+    expect(answer).toHaveBeenCalledOnce();
+    expect(sentTexts(sendText)).toContain(
+      "问题 #1 处理失败：知识问答服务暂时不可用，请稍后重试。",
+    );
+  });
+
+  it("retries Lunkr sending without re-answering", async () => {
+    const answer = vi.fn<Answer>(async () => answered("回答"));
+    const sendText = vi.fn(async () => undefined)
+      .mockRejectedValueOnce(new Error("temporary send failure"))
+      .mockResolvedValue(undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    await bridge.handle(message("m1", "#a#U", "问题"));
+
+    expect(answer).toHaveBeenCalledOnce();
+    expect(sendText).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not start PSEAgent when the immediate acknowledgment cannot be sent", async () => {
+    vi.useFakeTimers();
+    try {
+      const answer = vi.fn<Answer>(async () => answered("不应调用"));
+      const sendText = vi.fn(async () => {
+        throw new Error("send failed");
+      });
+      const bridge = createBridge({ answer, sendText });
+      const handling = bridge.handle(message("m1", "#a#U", "问题"));
+      const rejected = expect(handling).rejects.toThrow("send failed");
+
+      await vi.runAllTimersAsync();
+      await rejected;
+      expect(answer).not.toHaveBeenCalled();
+      expect(sendText).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends every long-answer chunk with the same question id", async () => {
+    const answer = vi.fn<Answer>(async () => answered("甲".repeat(200)));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer,
+      sendText,
+      config: { messageMaxChars: 40 },
+    });
+
+    await bridge.handle(message("m1", "#a#U", "问题"));
+
+    const answerChunks = sentTexts(sendText).slice(1);
+    expect(answerChunks.length).toBeGreaterThan(1);
+    answerChunks.forEach((chunk, index) => {
+      expect(chunk.startsWith(
+        `问题 #1（${index + 1}/${answerChunks.length}）\n\n`,
+      )).toBe(true);
+      expect(chunk.length).toBeLessThanOrEqual(40);
+    });
   });
 });
+
+function createBridge(options: {
+  readonly answer: Answer;
+  readonly sendText: (peerUid: string, text: string) => Promise<void>;
+  readonly config?: Partial<LunkrDirectConfig>;
+}) {
+  return new LunkrPseBridge(
+    { ...config, ...options.config },
+    {
+      answer: options.answer,
+      formatAnswer: (result) => result.answer,
+      describeResult: (result) => ({
+        status: result.status,
+        retryable: result.retryable ?? false,
+        stopReason: result.stopReason,
+        referenceCount: 0,
+      }),
+      sendText: options.sendText,
+    },
+  );
+}
+
+function answered(answer: string): TestResult {
+  return { answer, status: "answered", retryable: false, stopReason: "final" };
+}
+
+function unavailable(retryable: boolean, stopReason: string): TestResult {
+  return {
+    answer: "知识问答服务暂时不可用，请稍后重试。",
+    status: "temporarily_unavailable",
+    retryable,
+    stopReason,
+  };
+}
+
+function sentTexts(sendText: ReturnType<typeof vi.fn>): string[] {
+  return sendText.mock.calls.map((call) => String(call[1]));
+}
 
 function message(
   id: string,
   peerUid: string,
   text: string,
+  command?: DirectCommand,
 ): LunkrDirectMessage {
   return {
     id,
@@ -142,5 +383,22 @@ function message(
     timestamp: Date.now(),
     text,
     hasAttachments: false,
+    ...(command === undefined ? {} : { command }),
   };
+}
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(reason?: unknown): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: Deferred<T>["resolve"];
+  let reject!: Deferred<T>["reject"];
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }

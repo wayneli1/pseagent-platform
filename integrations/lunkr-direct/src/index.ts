@@ -9,7 +9,6 @@ export * from "./dedupe.js";
 export * from "./http-client.js";
 export * from "./lunkr-api.js";
 export * from "./message-normalizer.js";
-export * from "./peer-queue.js";
 export * from "./peer-scheduler.js";
 export * from "./redaction.js";
 export * from "./session-store.js";

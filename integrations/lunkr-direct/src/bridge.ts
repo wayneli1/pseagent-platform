@@ -1,38 +1,72 @@
+import { presentAnswer } from "./answer-presenter.js";
 import type { LunkrDirectConfig } from "./config.js";
-import type { LunkrDirectMessage } from "./contracts.js";
 import { ConversationStore } from "./conversation-store.js";
+import type { LunkrDirectMessage } from "./contracts.js";
 import { MessageDedupe } from "./dedupe.js";
-import { PeerQueue } from "./peer-queue.js";
+import {
+  PeerScheduler,
+  type AdmissionNotice,
+  type QuestionStart,
+} from "./peer-scheduler.js";
+
+const QUESTION_BUDGET_MS = 300_000;
+const FAILURE_TEXT = "知识问答服务暂时不可用，请稍后重试。";
 
 const HELP_TEXT = [
   "我是 PSEAgent 论客私聊机器人。",
   "直接发送文字即可提问，不需要 /bot。",
-  "发送 /new 可清空当前私聊的连续对话上下文。",
+  "发送 /new 可取消当前题和排队题，并清空连续对话上下文。",
   "当前暂不支持群聊、图片、文件或语音。",
 ].join("\n");
 
-export interface BridgeAnswerResult {
-  readonly answer: string;
-  readonly [key: string]: unknown;
+export interface BridgeAnswerMetadata {
+  readonly scope?: string | undefined;
+  readonly status?: string | undefined;
+  readonly retryable: boolean;
+  readonly stopReason?: string | undefined;
+  readonly referenceCount: number;
 }
 
-export interface LunkrBridgeDependencies<Result extends BridgeAnswerResult> {
+export interface BridgeQuestionEvent {
+  readonly type:
+    | "received"
+    | "queued"
+    | "started"
+    | "answered"
+    | "failed"
+    | "cancelled";
+  readonly peerUid: string;
+  readonly questionId?: number | undefined;
+  readonly pendingCount: number;
+  readonly activePeerCount: number;
+  readonly scope?: string | undefined;
+  readonly status?: string | undefined;
+  readonly stopReason?: string | undefined;
+  readonly elapsedMs?: number | undefined;
+  readonly referenceCount?: number | undefined;
+}
+
+export interface LunkrBridgeDependencies<Result> {
   readonly answer: (
     question: string,
     conversationContext?: string,
+    signal?: AbortSignal,
   ) => Promise<Result>;
   readonly formatAnswer: (result: Result) => string;
+  readonly describeResult: (result: Result) => BridgeAnswerMetadata;
   readonly sendText: (peerUid: string, text: string) => Promise<void>;
+  readonly onEvent?: ((event: BridgeQuestionEvent) => void) | undefined;
 }
 
-export class LunkrPseBridge<Result extends BridgeAnswerResult> {
+export class LunkrPseBridge<Result> {
   private readonly conversations: ConversationStore;
   private readonly dedupe: MessageDedupe;
-  private readonly queue = new PeerQueue();
+  private readonly scheduler: PeerScheduler;
 
   constructor(
     private readonly config: LunkrDirectConfig,
     private readonly dependencies: LunkrBridgeDependencies<Result>,
+    private readonly now: () => number = Date.now,
   ) {
     this.conversations = new ConversationStore(
       config.contextMaxTurns,
@@ -41,51 +75,247 @@ export class LunkrPseBridge<Result extends BridgeAnswerResult> {
     this.dedupe = new MessageDedupe(
       config.messageDedupeTtlMs,
       config.messageDedupeMax,
+      now,
+    );
+    this.scheduler = new PeerScheduler(
+      config.maxActivePeers,
+      config.maxPendingPerPeer,
     );
   }
 
   handle(message: LunkrDirectMessage): Promise<void> {
     if (!this.dedupe.accept(message.id)) return Promise.resolve();
-    return this.queue.enqueue(message.peerUid, () => this.process(message));
+    if (message.command === "new") return this.resetPeer(message.peerUid);
+    if (message.command === "help") {
+      return this.sendWithRetry(message.peerUid, HELP_TEXT);
+    }
+    if (message.hasAttachments) {
+      return this.sendWithRetry(message.peerUid, "当前仅支持文字私聊。");
+    }
+    if (message.text.trim() === "") return Promise.resolve();
+    return this.acceptQuestion(message);
   }
 
-  private async process(message: LunkrDirectMessage): Promise<void> {
-    if (message.hasAttachments) {
-      await this.sendWithRetry(message.peerUid, "当前仅支持文字私聊。");
-      return;
+  private acceptQuestion(message: LunkrDirectMessage): Promise<void> {
+    const receivedAt = this.now();
+    const deadlineAt = receivedAt + QUESTION_BUDGET_MS;
+    let pendingAtAdmission = 0;
+    const receipt = this.scheduler.submit(message.peerUid, {
+      accept: async (admission) => {
+        pendingAtAdmission = admission.ahead;
+        await this.sendAdmissionReply(message.peerUid, admission);
+        this.emitAdmission(message.peerUid, admission);
+      },
+      work: (start) => this.processQuestion(
+        message,
+        start,
+        deadlineAt,
+        receivedAt,
+        pendingAtAdmission,
+      ),
+    });
+    return receipt.completion;
+  }
+
+  private async sendAdmissionReply(
+    peerUid: string,
+    admission: AdmissionNotice,
+  ): Promise<void> {
+    let text: string;
+    switch (admission.kind) {
+      case "started":
+        text = `已收到问题 #${admission.questionId}，正在处理。`;
+        break;
+      case "peer_queued":
+        text =
+          `已收到问题 #${admission.questionId}，前面还有 ${admission.ahead} 个问题，已加入队列。`;
+        break;
+      case "global_queued":
+        text =
+          `已收到问题 #${admission.questionId}，当前服务繁忙，已进入等待队列。`;
+        break;
+      case "peer_full":
+        text = "当前已有较多问题等待处理，请稍后再发送。";
+        break;
     }
-    const question = message.text.trim();
-    if (question === "/new") {
-      this.conversations.clear(message.peerUid);
-      await this.sendWithRetry(message.peerUid, "当前私聊的上下文已清空。");
-      return;
-    }
-    if (question === "/help") {
-      await this.sendWithRetry(message.peerUid, HELP_TEXT);
-      return;
-    }
-    if (question === "") return;
-    const context = this.conversations.context(message.peerUid);
-    let result: Result;
-    try {
-      result = await this.dependencies.answer(question, context);
-    } catch {
+    await this.sendWithRetry(peerUid, text);
+  }
+
+  private emitAdmission(peerUid: string, admission: AdmissionNotice): void {
+    this.emit({
+      type: admission.kind === "started" ? "received" : "queued",
+      peerUid,
+      questionId: admission.questionId,
+      pendingCount: admission.ahead,
+      activePeerCount: this.scheduler.activePeerCount,
+    });
+  }
+
+  private async processQuestion(
+    message: LunkrDirectMessage,
+    start: QuestionStart,
+    deadlineAt: number,
+    receivedAt: number,
+    pendingAtAdmission: number,
+  ): Promise<void> {
+    if (start.startedFromQueue) {
+      if (!this.isCurrent(start)) return;
       await this.sendWithRetry(
         message.peerUid,
-        "问答服务暂时不可用，请稍后重试。",
+        `问题 #${start.questionId} 已开始处理。`,
+      );
+      if (!this.isCurrent(start)) return;
+      this.emit({
+        type: "started",
+        peerUid: message.peerUid,
+        questionId: start.questionId,
+        pendingCount: Math.max(0, pendingAtAdmission - 1),
+        activePeerCount: this.scheduler.activePeerCount,
+      });
+    }
+
+    if (!this.isCurrent(start)) return;
+    const question = message.text.trim();
+    const context = this.conversations.context(message.peerUid);
+    let result: Result | undefined;
+    let metadata: BridgeAnswerMetadata | undefined;
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const remainingMs = deadlineAt - this.now();
+      if (remainingMs <= 0) break;
+      const signal = AbortSignal.any([
+        start.signal,
+        AbortSignal.timeout(Math.max(1, remainingMs)),
+      ]);
+      try {
+        result = await this.dependencies.answer(question, context, signal);
+      } catch {
+        if (!this.isCurrent(start)) return;
+        await this.sendFailure(
+          message.peerUid,
+          start.questionId,
+          "answer_error",
+          receivedAt,
+        );
+        return;
+      }
+      if (!this.isCurrent(start)) return;
+      metadata = this.dependencies.describeResult(result);
+      if (
+        metadata.status !== "temporarily_unavailable" ||
+        !metadata.retryable ||
+        attempt === 2
+      ) {
+        break;
+      }
+    }
+
+    if (!this.isCurrent(start)) return;
+    if (
+      result === undefined ||
+      metadata === undefined ||
+      metadata.status === "temporarily_unavailable"
+    ) {
+      await this.sendFailure(
+        message.peerUid,
+        start.questionId,
+        metadata?.stopReason ?? "question_budget_exhausted",
+        receivedAt,
+        metadata,
       );
       return;
     }
+
     const answer = this.dependencies.formatAnswer(result).trim();
     if (answer === "") {
-      await this.sendWithRetry(
+      await this.sendFailure(
         message.peerUid,
-        "问答服务暂时不可用，请稍后重试。",
+        start.questionId,
+        "empty_answer",
+        receivedAt,
+        metadata,
       );
       return;
     }
-    await this.sendWithRetry(message.peerUid, answer);
+
+    const chunks = presentAnswer(
+      start.questionId,
+      answer,
+      this.config.messageMaxChars,
+    );
+    for (const chunk of chunks) {
+      if (!this.isCurrent(start)) return;
+      await this.sendWithRetry(message.peerUid, chunk);
+      if (!this.isCurrent(start)) return;
+    }
     this.conversations.append(message.peerUid, { question, answer });
+    this.emit({
+      type: "answered",
+      peerUid: message.peerUid,
+      questionId: start.questionId,
+      pendingCount: 0,
+      activePeerCount: this.scheduler.activePeerCount,
+      scope: metadata.scope,
+      status: metadata.status,
+      stopReason: metadata.stopReason,
+      elapsedMs: Math.max(0, this.now() - receivedAt),
+      referenceCount: metadata.referenceCount,
+    });
+  }
+
+  private async sendFailure(
+    peerUid: string,
+    questionId: number,
+    stopReason: string,
+    receivedAt: number,
+    metadata?: BridgeAnswerMetadata,
+  ): Promise<void> {
+    await this.sendWithRetry(
+      peerUid,
+      `问题 #${questionId} 处理失败：${FAILURE_TEXT}`,
+    );
+    this.emit({
+      type: "failed",
+      peerUid,
+      questionId,
+      pendingCount: 0,
+      activePeerCount: this.scheduler.activePeerCount,
+      scope: metadata?.scope,
+      status: metadata?.status ?? "temporarily_unavailable",
+      stopReason,
+      elapsedMs: Math.max(0, this.now() - receivedAt),
+      referenceCount: metadata?.referenceCount ?? 0,
+    });
+  }
+
+  private async resetPeer(peerUid: string): Promise<void> {
+    const reset = this.scheduler.reset(peerUid);
+    this.conversations.clear(peerUid);
+    this.emit({
+      type: "cancelled",
+      peerUid,
+      pendingCount: reset.pendingCancelled,
+      activePeerCount: this.scheduler.activePeerCount,
+    });
+    await this.sendWithRetry(
+      peerUid,
+      "已开始新会话，之前处理中和排队的问题已取消。",
+    );
+  }
+
+  private isCurrent(start: QuestionStart): boolean {
+    return (
+      !start.signal.aborted &&
+      this.scheduler.isCurrent(start.peerUid, start.epoch)
+    );
+  }
+
+  private emit(event: BridgeQuestionEvent): void {
+    try {
+      this.dependencies.onEvent?.(event);
+    } catch {
+      // Runtime observation must not affect message delivery.
+    }
   }
 
   private async sendWithRetry(peerUid: string, text: string): Promise<void> {
