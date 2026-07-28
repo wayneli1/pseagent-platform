@@ -225,7 +225,7 @@ describe("LunkrPseBridge", () => {
 
     await bridge.handle(message("fresh", "#a#U", "新问题"));
     expect(answer.mock.calls.at(-1)?.[1]).toBeUndefined();
-    expect(sentTexts(sendText)).toContain("已收到问题 #3，正在处理。");
+    expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
   });
 
   it("retries one explicitly retryable result inside the shared budget", async () => {

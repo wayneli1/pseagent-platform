@@ -158,7 +158,7 @@ describe("PeerScheduler", () => {
     expect(scheduler.activePeerCount).toBe(0);
   });
 
-  it("increments epoch, aborts active work, drops pending work, and keeps numbering", async () => {
+  it("increments epoch, resets numbering, aborts active work, and drops pending work", async () => {
     const scheduler = new PeerScheduler(1, 5);
     let activeSignal!: AbortSignal;
     let pendingStarted = false;
@@ -194,7 +194,7 @@ describe("PeerScheduler", () => {
       accept: async () => undefined,
       work: async () => undefined,
     });
-    expect(next).toMatchObject({ questionId: 3, epoch: 1 });
+    expect(next).toMatchObject({ questionId: 1, epoch: 1 });
     await next.completion;
   });
 

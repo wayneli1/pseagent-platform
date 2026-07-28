@@ -127,6 +127,7 @@ export class PeerScheduler {
   reset(peerUid: string): PeerResetResult {
     const state = this.peerState(peerUid);
     state.epoch += 1;
+    state.nextQuestionId = 1;
     const pendingCancelled = state.pending.length;
     for (const question of state.pending.splice(0)) {
       question.cancelled = true;
