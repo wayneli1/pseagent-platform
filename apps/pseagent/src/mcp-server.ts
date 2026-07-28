@@ -41,9 +41,9 @@ export function formatMcpText(result: AnswerResult): string {
   const historical = result.historicalAnswer;
   return [
     result.answer,
-    "Jira/Wiki 历史资料辅助回答",
+    "⚠️ Coremail MCP 低可信历史线索（可能不正确）",
     historical.warning,
-    `可信度：${confidenceLabels[historical.confidence]}`,
+    `MCP 自报置信度：${confidenceLabels[historical.confidence]}（不代表内容正确）`,
     historical.answer,
     "历史来源：",
     ...historical.references.map(formatHistoricalReference),

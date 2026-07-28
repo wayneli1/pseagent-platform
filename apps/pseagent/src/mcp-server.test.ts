@@ -88,12 +88,14 @@ describe("PSEAgent MCP", () => {
     const text = formatMcpText(result);
 
     expect(text).toContain(result.answer);
-    expect(text).toContain("Jira/Wiki 历史资料辅助回答");
+    expect(text).toContain("⚠️ Coremail MCP 低可信历史线索（可能不正确）");
     expect(text).toContain(HISTORICAL_ANSWER_WARNING);
-    expect(text).toContain("可信度：低");
+    expect(text).toContain("MCP 自报置信度：低（不代表内容正确）");
     expect(text).toContain(rawHistoricalAnswer);
     expect(text).toContain("版本：5.0、5.1");
     expect(text.indexOf(result.answer)).toBeLessThan(text.indexOf(rawHistoricalAnswer));
+    expect(text).not.toContain("Jira/Wiki 历史资料辅助回答");
+    expect(text).not.toContain("\n\n可信度：低\n\n");
     expect(result.references).toEqual([]);
   });
 });

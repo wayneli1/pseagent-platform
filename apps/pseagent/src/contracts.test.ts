@@ -27,6 +27,12 @@ const historical = {
 } as const;
 
 describe("PSEAgent contracts", () => {
+  it("states that Coremail MCP history may contain many errors and is clues only", () => {
+    expect(HISTORICAL_ANSWER_WARNING).toBe(
+      "以下内容由 Coremail MCP 根据 Jira/Wiki 历史资料自动整理，并非正式知识库答案，也未经过产品或售前人员验证。内容可能存在较多错误、过时信息、资料缺失或版本不匹配，请仅作为继续检索的线索，不能直接用于客户答复、投标、部署、升级或变更决策。",
+    );
+  });
+
   it("accepts only professional, general, and normal routes", () => {
     for (const scope of ["professional", "general", "normal"] as const) {
       expect(routeActionSchema.parse({ action: "route", scope })).toEqual({ action: "route", scope });
