@@ -6,6 +6,14 @@ import type {
   Scope,
 } from "./contracts.js";
 
+export type PseStopReason =
+  | "seed_unavailable"
+  | "routing_or_planning_unavailable"
+  | "model_unavailable"
+  | "invalid_model_payload"
+  | "invalid_final"
+  | "turn_budget_exhausted";
+
 export type DiagnosticEvent =
   | { readonly event: "route"; readonly scope: Scope }
   | {
@@ -72,13 +80,7 @@ export type DiagnosticEvent =
     }
   | {
       readonly event: "stop";
-      readonly reason:
-        | "seed_unavailable"
-        | "routing_or_planning_unavailable"
-        | "model_unavailable"
-        | "invalid_model_payload"
-        | "invalid_final"
-        | "turn_budget_exhausted";
+      readonly reason: PseStopReason;
     }
   | {
       readonly event: "finish";

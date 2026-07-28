@@ -1,5 +1,4 @@
 import type { AnswerResult, Scope } from "./contracts.js";
-import type { ModelClient } from "./model-client.js";
 import { normalAnswerMessages } from "./prompts.js";
 import type { ScopeRouter } from "./router.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
@@ -9,9 +8,16 @@ import type { KnowledgePlanner } from "./knowledge-planner.js";
 import {
   NOOP_DIAGNOSTIC_TRACE,
   recordDiagnostic,
+  type DiagnosticEvent,
   type DiagnosticTrace,
   type DiagnosticTraceFactory,
+  type PseStopReason,
 } from "./diagnostics.js";
+import {
+  InvalidModelPayloadError,
+  ModelUnavailableError,
+  type ModelClient,
+} from "./model-client.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -31,6 +37,12 @@ export type AgentRunner = (input: {
   signal?: AbortSignal;
 }) => Promise<AnswerResult>;
 
+export interface PseAnswerExecution {
+  readonly result: AnswerResult;
+  readonly retryable: boolean;
+  readonly stopReason: PseStopReason | "final" | "unknown_unavailable";
+}
+
 export class AnswerService {
   constructor(private readonly dependencies: {
     readonly model: ModelClient;
@@ -42,13 +54,27 @@ export class AnswerService {
     readonly historicalProvider?: HistoricalAnswerProvider;
   }) {}
 
-  async answer(question: string, conversationContext?: string, signal?: AbortSignal): Promise<AnswerResult> {
+  async answer(
+    question: string,
+    conversationContext?: string,
+    signal?: AbortSignal,
+  ): Promise<AnswerResult> {
+    return (await this.answerDetailed(question, conversationContext, signal)).result;
+  }
+
+  async answerDetailed(
+    question: string,
+    conversationContext?: string,
+    signal?: AbortSignal,
+  ): Promise<PseAnswerExecution> {
     const startedAt = Date.now();
     const timeoutSignal = AbortSignal.timeout(PSE_REQUEST_TIMEOUT_MS);
     const requestSignal = signal === undefined
       ? timeoutSignal
       : AbortSignal.any([signal, timeoutSignal]);
-    const trace = startDiagnosticTrace(this.dependencies.diagnostics);
+    const trace = new OutcomeTrace(
+      startDiagnosticTrace(this.dependencies.diagnostics),
+    );
     let scope: Scope | undefined;
     try {
       scope = await this.dependencies.router.route(question, conversationContext, requestSignal);
@@ -59,8 +85,7 @@ export class AnswerService {
           signal: requestSignal,
         });
         const result: AnswerResult = { scope, status: "answered", answer, references: [] };
-        recordFinished(trace, result, startedAt, false);
-        return result;
+        return finishExecution(trace, result, startedAt, false);
       }
       const session = await this.dependencies.knowledge.open(scope, requestSignal);
       const plan = await this.dependencies.planner.plan({
@@ -92,29 +117,45 @@ export class AnswerService {
         primary.status !== "not_covered" ||
         this.dependencies.historicalProvider === undefined
       ) {
-        recordFinished(trace, primary, startedAt, false);
-        return primary;
+        return finishExecution(trace, primary, startedAt, false);
       }
       try {
         const historicalAnswer =
           await this.dependencies.historicalProvider.answer(question, requestSignal);
         if (historicalAnswer === undefined) {
-          recordFinished(trace, primary, startedAt, false);
-          return primary;
+          return finishExecution(trace, primary, startedAt, false);
         }
         const result = { ...primary, historicalAnswer };
-        recordFinished(trace, result, startedAt, true);
-        return result;
+        return finishExecution(trace, result, startedAt, true);
       } catch {
-        recordFinished(trace, primary, startedAt, false);
-        return primary;
+        return finishExecution(trace, primary, startedAt, false);
       }
-    } catch {
+    } catch (error) {
       const result = temporaryUnavailableResult(scope);
-      recordDiagnostic(trace, { event: "stop", reason: "routing_or_planning_unavailable" });
-      recordFinished(trace, result, startedAt, false);
-      return result;
+      const reason: PseStopReason =
+        error instanceof ModelUnavailableError
+          ? "model_unavailable"
+          : error instanceof InvalidModelPayloadError
+            ? "invalid_model_payload"
+            : "routing_or_planning_unavailable";
+      recordDiagnostic(trace, { event: "stop", reason });
+      return finishExecution(trace, result, startedAt, false);
     }
+  }
+}
+
+class OutcomeTrace implements DiagnosticTrace {
+  stopReason?: PseStopReason;
+
+  constructor(private readonly delegate: DiagnosticTrace) {}
+
+  get requestId(): string {
+    return this.delegate.requestId;
+  }
+
+  record(event: DiagnosticEvent): void {
+    if (event.event === "stop") this.stopReason = event.reason;
+    this.delegate.record(event);
   }
 }
 
@@ -140,6 +181,26 @@ function recordFinished(
     elapsedMs: Math.max(0, Date.now() - startedAt),
     historicalUsed,
   });
+}
+
+function finishExecution(
+  trace: OutcomeTrace,
+  result: AnswerResult,
+  startedAt: number,
+  historicalUsed: boolean,
+): PseAnswerExecution {
+  recordFinished(trace, result, startedAt, historicalUsed);
+  if (result.status !== "temporarily_unavailable") {
+    return { result, retryable: false, stopReason: "final" };
+  }
+  const stopReason = trace.stopReason ?? "unknown_unavailable";
+  return {
+    result,
+    retryable:
+      stopReason === "model_unavailable" ||
+      stopReason === "seed_unavailable",
+    stopReason,
+  };
 }
 
 export function temporaryUnavailableResult(scope?: Scope): AnswerResult {

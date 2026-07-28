@@ -4,4 +4,5 @@ export {
   type PseRuntimeDependencies,
 } from "./main.js";
 export { formatMcpText } from "./mcp-server.js";
+export type { PseAnswerExecution } from "./answer-service.js";
 export type { AnswerResult } from "./contracts.js";

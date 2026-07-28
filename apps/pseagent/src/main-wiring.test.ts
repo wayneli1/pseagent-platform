@@ -76,9 +76,14 @@ describe("main wiring", () => {
 
     await expect(runtime.answer("普通问题")).resolves.toMatchObject({ scope: "normal", answer: "普通回答" });
     await expect(runtime.answer("产品问题")).resolves.toBe(agentResult);
+    await expect(runtime.answerDetailed("普通问题")).resolves.toMatchObject({
+      retryable: false,
+      stopReason: "final",
+      result: { scope: "normal", answer: "普通回答" },
+    });
     expect(createModel).toHaveBeenCalledOnce();
     expect(createKnowledgePlanner).toHaveBeenCalledOnce();
-    expect(model.completeText).toHaveBeenCalledOnce();
+    expect(model.completeText).toHaveBeenCalledTimes(2);
     expect(planner.plan).toHaveBeenCalledOnce();
     expect(runAgent.mock.calls[0]?.[0].plan).toEqual(plan);
     expect(runAgent.mock.calls[0]?.[0].model).toBe(model);

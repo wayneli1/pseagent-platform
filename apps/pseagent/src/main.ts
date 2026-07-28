@@ -36,6 +36,7 @@ export interface PseRuntimeDependencies {
 export interface PseAgentRuntime {
   readonly server: McpServer;
   readonly answer: AnswerService["answer"];
+  readonly answerDetailed: AnswerService["answerDetailed"];
   close(): Promise<void>;
 }
 
@@ -53,6 +54,7 @@ export async function createPseAgentRuntime(
   let historicalProvider: HistoricalAnswerProvider | undefined;
   let server: McpServer;
   let answer: AnswerService["answer"];
+  let answerDetailed: AnswerService["answerDetailed"];
   try {
     if (config.coremailMcp.enabled) {
       historicalProvider = (
@@ -77,6 +79,7 @@ export async function createPseAgentRuntime(
       ...(historicalProvider === undefined ? {} : { historicalProvider }),
     });
     answer = service.answer.bind(service);
+    answerDetailed = service.answerDetailed.bind(service);
     server = (dependencies.createServer ?? ((handler) => createPseMcpServer({ answer: handler })))(answer);
   } catch (error) {
     const providerToClose = historicalProvider;
@@ -92,6 +95,7 @@ export async function createPseAgentRuntime(
   return {
     server,
     answer,
+    answerDetailed,
     close() {
       const providerToClose = historicalProvider;
       closePromise ??= (async () => {

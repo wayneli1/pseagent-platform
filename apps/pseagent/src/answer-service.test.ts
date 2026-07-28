@@ -1,13 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentRunner } from "./answer-service.js";
-import { AnswerService, PSE_ACTIVE_DEADLINE_MS } from "./answer-service.js";
+import {
+  AnswerService,
+  PSE_ACTIVE_DEADLINE_MS,
+  temporaryUnavailableResult,
+} from "./answer-service.js";
 import type { AnswerResult, HistoricalAnswer } from "./contracts.js";
 import { HISTORICAL_ANSWER_WARNING } from "./contracts.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { DiagnosticEvent, DiagnosticTrace } from "./diagnostics.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { KnowledgePlanner } from "./knowledge-planner.js";
-import type { ModelClient } from "./model-client.js";
+import {
+  InvalidModelPayloadError,
+  ModelUnavailableError,
+  type ModelClient,
+} from "./model-client.js";
 import { ScopeRouter } from "./router.js";
 
 const knowledgePlan = {
@@ -276,7 +284,6 @@ describe("AnswerService", () => {
         }) as KnowledgeSession),
       },
       runAgent: vi.fn<AgentRunner>(async (input) => {
-        expect(input.trace).toBe(trace);
         return {
           scope: "professional",
           status: "answered",
@@ -334,4 +341,86 @@ describe("AnswerService", () => {
 
     await expect(service.answer("产品问题")).resolves.toBe(primary);
   });
+
+  it("marks model unavailability as retryable without changing the public answer", async () => {
+    const model = {
+      completeText: vi.fn(async () => {
+        throw new ModelUnavailableError("model_unavailable_503");
+      }),
+    } as unknown as ModelClient;
+    const service = new AnswerService({
+      model,
+      router: { route: vi.fn(async () => "normal" as const) },
+      planner: createPlanner(),
+      knowledge: { open: vi.fn() },
+      runAgent: vi.fn(),
+    });
+
+    await expect(service.answerDetailed("普通问题")).resolves.toMatchObject({
+      retryable: true,
+      stopReason: "model_unavailable",
+      result: { status: "temporarily_unavailable" },
+    });
+    await expect(service.answer("普通问题")).resolves.toEqual({
+      scope: "normal",
+      status: "temporarily_unavailable",
+      answer: "问答服务暂时不可用，请稍后重试。",
+      references: [],
+    });
+  });
+
+  it("does not retry a stable invalid model payload", async () => {
+    const model = {
+      completeText: vi.fn(async () => {
+        throw new InvalidModelPayloadError("invalid_schema");
+      }),
+    } as unknown as ModelClient;
+    const service = new AnswerService({
+      model,
+      router: { route: vi.fn(async () => "normal" as const) },
+      planner: createPlanner(),
+      knowledge: { open: vi.fn() },
+      runAgent: vi.fn(),
+    });
+
+    await expect(service.answerDetailed("普通问题")).resolves.toMatchObject({
+      retryable: false,
+      stopReason: "invalid_model_payload",
+      result: { status: "temporarily_unavailable" },
+    });
+  });
+
+  it.each([
+    ["model_unavailable", true],
+    ["seed_unavailable", true],
+    ["invalid_model_payload", false],
+    ["invalid_final", false],
+    ["turn_budget_exhausted", false],
+  ] as const)(
+    "maps agent stop %s to retryable=%s",
+    async (reason, retryable) => {
+      const service = new AnswerService({
+        model: {} as ModelClient,
+        router: { route: vi.fn(async () => "professional" as const) },
+        planner: createPlanner(),
+        knowledge: {
+          open: vi.fn(async () => ({
+            project: "coremail-professional",
+            schema: "专业库 schema",
+            overview: "专业库用途",
+          }) as KnowledgeSession),
+        },
+        runAgent: vi.fn<AgentRunner>(async (input) => {
+          input.trace.record({ event: "stop", reason });
+          return temporaryUnavailableResult("professional");
+        }),
+      });
+
+      await expect(service.answerDetailed("产品问题")).resolves.toMatchObject({
+        retryable,
+        stopReason: reason,
+        result: { status: "temporarily_unavailable" },
+      });
+    },
+  );
 });
