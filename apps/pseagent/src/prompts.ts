@@ -74,7 +74,7 @@ export const KNOWLEDGE_AGENT_SYSTEM_PROMPT = `你是 PSEAgent 的知识问答代
 {"action":"tool","tool":"kb.read_pages","input":{"pages":[{"requirementId":"R1","path":"..."},{"requirementId":"R2","path":"..."}]}}
 {"action":"tool","tool":"kb.graph","input":{"requirementId":"R1","path":"...","topK":5}}
 最终动作只能使用：
-{"action":"final","requirements":[{"id":"R1","coverage":"complete|partial|none","answer":"该必答项的具体答案 [1]","citations":[1]}],"citations":[1]}
+{"action":"final","requirements":[{"id":"R1","coverage":"none","answer":"正式知识库未提及目标协议，无法确认是否支持。","citations":[],"relatedContext":[{"statement":"正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1][2]。","citations":[1,2]}]}],"citations":[1,2]}
 字段名必须完全一致，禁止使用 arguments 或把工具名放进 action。
 所有工具动作必须绑定规划中真实存在的 requirementId。
 规划查询已自动搜索并按 RRF 融合；优先从对应 requirement 的候选中读取页面，再按需补充语义查询。
@@ -102,10 +102,13 @@ export const KNOWLEDGE_AGENT_SYSTEM_PROMPT = `你是 PSEAgent 的知识问答代
 证据只能支持部分内容时，应明确区分已确认内容与待确认内容，并使用 partial。
 没有可靠知识证据时使用 none，不得依靠模型先验补充答案。
 每个 requirement 的 complete/partial answer 必须包含属于该项的 [n] 内联标记，其 citations 必须按相同顺序列出完全相同的编号；没有可靠读页时使用 coverage=none，并在该项 answer 中说明未覆盖内容。
+支持性、存在性和列表问题必须按正文的直接语义判断：正文未提及目标只能得到“未覆盖、无法确认”，不能得到“不支持/尚未支持”。正文明确支持才能回答支持，正文明确否定才能回答不支持；同义词、缩略词或等价表达只有确认等价关系时才能作为证据。“支持哪些/有哪些”只能列出正文明确项目，非穷尽列表不得声称完整。
+例如，问题为“Coremail 是否已经支持 2035 年量子卫星邮件协议？”而正文只列 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 时，目标必须是 coverage=none、answer 说明“正式知识库未提及目标协议，无法确认是否支持”、target citations 为 []；不能由未提及推导“不支持”，也不能把现有协议当成量子卫星协议的同义或等价表达。正文明确写“支持 IMAP”时才可回答支持 IMAP；明确写“暂不支持 IMAP”时才可回答不支持 IMAP；仅列出部分已支持协议时不得宣称这是全部支持协议。正文明确支持 SMTP、但未提及 IMAP 时，对“是否支持 SMTP 和 IMAP”只能标记 partial，并写明 IMAP 待确认。
+仅在 coverage=none 时可以补充最多三项、每项一到四个引用的 relatedContext。每个 statement 只能陈述正文直接确认的相邻事实，且其内联 [n] 必须与 citations 一致；相关信息不得提升 coverage，目标 citations 仍必须为空，也不得声称相关事实证明被遗漏的目标。顶层 citations 必须按 requirements 顺序合并 target citations 后再合并 relatedContext citations 并去重。
 最终 requirements 必须按规划顺序完整列出每个 requirement，不能遗漏、重复或增加。
-每项 complete/partial 只能引用为该 requirement 实际读取的页面；none 不得引用。
+每项 complete/partial 的 target citations 只能引用为该 requirement 实际读取的页面；none 的 target citations 必须为空，只有符合上述约束的 relatedContext 可以引用该 requirement 实际读取的页面。
 只要任一项是 partial 或 none，回答必须明确指出对应的未覆盖内容。
-顶层 citations 必须等于逐项 citations 按 requirements 顺序合并去重后的结果。
+顶层 citations 必须等于逐项 target citations 后接 relatedContext citations、按 requirements 顺序合并去重后的结果。
 不要重复完全相同的工具和参数。`;
 
 export function knowledgeAgentMessages(input: {
@@ -168,13 +171,14 @@ export const COVERAGE_VERIFICATION_SYSTEM_PROMPT = `你是 PSEAgent 的正文证
 输出 action 必须是 verify，逐项保留规划中的 requirement ID、coverage、answer、citations，并给出固定 reason。
 你只能审计输入中的草稿和实际读页正文，禁止搜索、调用工具、增加引用或使用模型先验。
 页面主题相关、介绍相邻概念或只列出基础协议，不等于正文支持用户询问的目标命题。
-正文没有提及某项能力，不能推导该能力不受支持；只有正文明确写明不支持、尚未提供或等价结论时，才能支持否定回答。
+正文未提及目标只能保留为 none 和“未覆盖、无法确认”，不得改写成“不支持/尚未支持”；只有明确支持才保留肯定结论，只有明确否定才保留否定结论。同义词、缩略词或等价表达必须有正文确认的等价关系；非穷尽列表不得审计为完整清单。
+删除无直接证据的目标主张，但可仅保留正文直接确认且不证明目标的 relatedContext。relatedContext 只能用于 coverage=none，最多三项且每项一到四个引用；相关引用不得提升 target coverage，目标 citations 必须为空。量子卫星邮件协议问题中，正文只列 SMTP、POP3、IMAP 等协议时，应移除任何“支持/不支持量子卫星协议”的目标主张，仅保留其直接列出的协议事实作为 relatedContext。正文仅明确支持 SMTP、未提及 IMAP 时，双目标支持问题只能保留 partial，并必须写明 IMAP 未覆盖。
 如果用户询问的是资料是否覆盖或信息是否明确，正文明确列出的资料缺口可以直接支持该判断。
 每个保留的事实结论都必须由该 requirement 的保留引用直接支持。
 complete 表示核心问题全部有直接证据；partial 表示只有可独立使用的一部分有直接证据且答案明确剩余缺口；none 表示没有足以回答目标问题的直接证据且 citations 必须为空。
 审计 coverage 不得高于草稿 coverage；citations 必须是草稿逐项 citations 的子集。
 reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed。
-顶层 citations 必须等于逐项 citations 按 requirement 顺序合并去重后的结果。
+顶层 citations 必须等于逐项 target citations 后接 relatedContext citations、按 requirement 顺序合并去重后的结果。
 禁止输出 Markdown、解释或额外字段。`;
 
 export function coverageVerificationMessages(input: {

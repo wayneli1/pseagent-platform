@@ -32,7 +32,7 @@ it("puts requirement-bound strict knowledge action shapes in the model prompt", 
     '{"action":"tool","tool":"kb.graph","input":{"requirementId":"R1","path":"...","topK":5}}',
   );
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
-    '{"action":"final","requirements":[{"id":"R1","coverage":"complete|partial|none","answer":"该必答项的具体答案 [1]","citations":[1]}],"citations":[1]}',
+    '{"action":"final","requirements":[{"id":"R1","coverage":"none","answer":"正式知识库未提及目标协议，无法确认是否支持。","citations":[],"relatedContext":[{"statement":"正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1][2]。","citations":[1,2]}]}],"citations":[1,2]}',
   );
 });
 
@@ -388,6 +388,71 @@ describe("runKnowledgeAgent", () => {
       expect.objectContaining({ stage: "draft", citations: [1] }),
       expect.objectContaining({ stage: "verified", citations: [1] }),
     ]);
+  });
+
+  it("keeps an omitted quantum-satellite target separate from cited related protocols", async () => {
+    const question = "Coremail 是否已经支持 2035 年量子卫星邮件协议？";
+    const plan: KnowledgePlan = {
+      subject: "Coremail 协议支持",
+      requirements: [{
+        id: "R1",
+        question,
+        queries: ["Coremail 2035 年量子卫星邮件协议支持"],
+      }],
+    };
+    const session = fakeSession({
+      hits: { "Coremail 2035 年量子卫星邮件协议支持": [{ path: "wiki/protocols.md" }] },
+    });
+    session.compactPage.mockReturnValue("支持 SMTP、POP3、IMAP、HTTP/HTTPS 与 CMSP/CMTP。");
+    const model = scriptedAgentModel([
+      read("R1", "wiki/protocols.md"),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "正式知识库未提及目标协议，无法确认是否支持。",
+          citations: [],
+          relatedContext: [{
+            statement: "正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1]。",
+            citations: [1],
+          }],
+        }],
+        citations: [1],
+      },
+    ]);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
+      expect(input.draft).toMatchObject({
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          citations: [],
+          relatedContext: [{
+            statement: "正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1]。",
+            citations: [1],
+          }],
+        }],
+        citations: [1],
+      });
+      expect(input.evidence).toEqual([expect.objectContaining({
+        requirementId: "R1",
+        citation: 1,
+        path: "wiki/protocols.md",
+        content: "支持 SMTP、POP3、IMAP、HTTP/HTTPS 与 CMSP/CMTP。",
+      })]);
+      return input.draft;
+    });
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question,
+      verifyCoverage,
+    });
+
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(result.status).toBe("not_covered");
+    expect(result.status).not.toBe("temporarily_unavailable");
+    expect(result.references).toEqual([]);
   });
 
   it.each([
