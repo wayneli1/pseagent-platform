@@ -390,6 +390,52 @@ describe("runKnowledgeAgent", () => {
     ]);
   });
 
+  it.each([
+    ["removes every marker", "资料明确列出 SMTP、POP3 和 IMAP 协议能力。"],
+    ["expands one metadata citation to five markers", "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2][3][4][5]。"],
+  ])("rejects a schema-valid related item when normalization %s", async (_name, statement) => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/protocols.md" }] },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/protocols.md"),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "正式资料未提及目标协议，无法确认是否支持。",
+          citations: [],
+          relatedContext: [{ statement, citations: [1] }],
+        }],
+        citations: [],
+      },
+    ]);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "normalized-related-citation-count",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      verifyCoverage,
+      trace,
+    });
+
+    expect(result.status).toBe("temporarily_unavailable");
+    expect(verifyCoverage).not.toHaveBeenCalled();
+    expect(events).toContainEqual({
+      event: "validation",
+      result: "rejected",
+      reason: "related_citation_count",
+      repairAttempt: 1,
+    });
+  });
+
   it("automatically searches every seed query and fuses candidates with RRF", async () => {
     const plan: KnowledgePlan = {
       subject: "网关",

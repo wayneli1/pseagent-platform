@@ -83,6 +83,14 @@ export class ReferenceRegistry {
     if (new Set(requirementIds).size !== requirementIds.length) {
       return { ok: false, reason: "duplicate_requirement_coverage" };
     }
+    for (const item of action.requirements) {
+      const invalidRelatedContext = (item.relatedContext ?? []).find(
+        (related) => related.citations.length < 1 || related.citations.length > 4,
+      );
+      if (invalidRelatedContext !== undefined) {
+        return { ok: false, reason: "related_citation_count" };
+      }
+    }
     const requirementCitations = stableUnique(action.requirements.flatMap(
       (item) => [
         ...item.citations,

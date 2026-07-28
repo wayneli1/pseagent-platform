@@ -202,6 +202,51 @@ describe("verifyKnowledgeCoverage", () => {
     });
   });
 
+  it.each(["complete", "partial"] as const)(
+    "rejects related context when draft and audited coverage both remain %s",
+    async (coverage) => {
+      const draft = {
+        action: "final" as const,
+        requirements: [{
+          id: "R1" as const,
+          coverage,
+          answer: coverage === "complete" ? "草稿结论[1]。" : "草稿仅确认部分内容[1]，其余待确认。",
+          citations: [1],
+          relatedContext: [{
+            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
+            citations: [1],
+          }],
+        }],
+        citations: [1],
+      } as unknown as FinalAction;
+      const verified = {
+        action: "verify" as const,
+        requirements: [{
+          id: "R1" as const,
+          coverage,
+          answer: coverage === "complete" ? "审核结论[1]。" : "审核仅确认部分内容[1]，其余待确认。",
+          citations: [1],
+          relatedContext: [{
+            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
+            citations: [1],
+          }],
+          reason: coverage === "complete" ? "direct_support" : "partial_support",
+        }],
+        citations: [1],
+      } as unknown as CoverageVerificationAction;
+
+      await expect(verifyKnowledgeCoverage({
+        question: "Coremail 是否支持目标协议",
+        plan: singleRequirementPlan,
+        draft,
+        evidence: directEvidence,
+        model: scriptedVerifier(verified),
+      })).rejects.toMatchObject({
+        code: "related_context_requires_none_coverage:R1",
+      });
+    },
+  );
+
   it.each([
     ["a new related fact", {
       coverage: "none",
