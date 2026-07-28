@@ -10,6 +10,7 @@ describe("loadLunkrConfig", () => {
     expect(config.messageMaxChars).toBe(1_000);
     expect(config.maxActivePeers).toBe(4);
     expect(config.maxPendingPerPeer).toBe(5);
+    expect(config.sessionIdleMs).toBe(86_400_000);
   });
 
   it("rejects insecure base URLs and invalid numbers", () => {
@@ -32,6 +33,15 @@ describe("loadLunkrConfig", () => {
     expect(() => loadLunkrConfig({ LUNKR_MAX_ACTIVE_PEERS: "0" }))
       .toThrow("正整数");
     expect(() => loadLunkrConfig({ LUNKR_MAX_PENDING_PER_PEER: "-1" }))
+      .toThrow("正整数");
+  });
+
+  it("loads a positive session idle duration", () => {
+    expect(loadLunkrConfig({ LUNKR_SESSION_IDLE_MS: "2500" }).sessionIdleMs)
+      .toBe(2_500);
+    expect(() => loadLunkrConfig({ LUNKR_SESSION_IDLE_MS: "0" }))
+      .toThrow("正整数");
+    expect(() => loadLunkrConfig({ LUNKR_SESSION_IDLE_MS: "1.5" }))
       .toThrow("正整数");
   });
 });

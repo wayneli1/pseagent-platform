@@ -14,6 +14,7 @@ export interface LunkrDirectConfig {
   readonly messageMaxChars: number;
   readonly maxActivePeers: number;
   readonly maxPendingPerPeer: number;
+  readonly sessionIdleMs: number;
 }
 
 export function loadLunkrConfig(
@@ -43,6 +44,7 @@ export function loadLunkrConfig(
     messageMaxChars: positiveInteger(env, "LUNKR_MESSAGE_MAX_CHARS", 1_000),
     maxActivePeers: positiveInteger(env, "LUNKR_MAX_ACTIVE_PEERS", 4),
     maxPendingPerPeer: positiveInteger(env, "LUNKR_MAX_PENDING_PER_PEER", 5),
+    sessionIdleMs: positiveInteger(env, "LUNKR_SESSION_IDLE_MS", 86_400_000),
   };
 }
 

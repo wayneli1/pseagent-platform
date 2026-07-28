@@ -16,6 +16,7 @@ const config: LunkrDirectConfig = {
   messageMaxChars: 10,
   maxActivePeers: 4,
   maxPendingPerPeer: 5,
+  sessionIdleMs: 86_400_000,
 };
 const session: LunkrSession = {
   email: "bot@example.test",
