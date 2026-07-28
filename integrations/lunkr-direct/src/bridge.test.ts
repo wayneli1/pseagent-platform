@@ -165,6 +165,127 @@ describe("LunkrPseBridge", () => {
     expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
   });
 
+  it("silently starts at #1 when accepted-question inactivity reaches the limit", async () => {
+    let now = 1_000;
+    const answer = vi.fn<Answer>(async () => answered("回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer,
+      sendText,
+      config: { sessionIdleMs: 1_000 },
+      now: () => now,
+    });
+
+    await bridge.handle(message("m1", "#a#U", "第一问"));
+    now = 1_999;
+    await bridge.handle(message("m2", "#a#U", "第二问"));
+    now = 2_999;
+    await bridge.handle(message("m3", "#a#U", "第三问"));
+
+    expect(sentTexts(sendText)).toContain("已收到问题 #2，正在处理。");
+    expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
+    expect(sentTexts(sendText)).not.toContain(
+      "已开始新会话，之前处理中和排队的问题已取消。",
+    );
+    expect(answer.mock.calls[2]?.[1]).toBeUndefined();
+  });
+
+  it("does not extend idle activity for help attachments blank or duplicate events", async () => {
+    let now = 0;
+    const answer = vi.fn<Answer>(async () => answered("回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer,
+      sendText,
+      config: { sessionIdleMs: 1_000 },
+      now: () => now,
+    });
+
+    await bridge.handle(message("q1", "#a#U", "第一问"));
+    now = 400;
+    await bridge.handle(message("help", "#a#U", "/help", "help"));
+    now = 600;
+    await bridge.handle({ ...message("file", "#a#U", ""), hasAttachments: true });
+    now = 800;
+    await bridge.handle(message("blank", "#a#U", "   "));
+    now = 900;
+    await bridge.handle(message("q1", "#a#U", "重复事件"));
+    now = 1_000;
+    await bridge.handle(message("q2", "#a#U", "第二问"));
+
+    const receipts = sentTexts(sendText).filter((text) =>
+      text.startsWith("已收到问题"));
+    expect(receipts).toEqual([
+      "已收到问题 #1，正在处理。",
+      "已收到问题 #1，正在处理。",
+    ]);
+    expect(answer.mock.calls[1]?.[1]).toBeUndefined();
+  });
+
+  it("expires each peer independently", async () => {
+    let now = 0;
+    const answer = vi.fn<Answer>(async () => answered("回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer,
+      sendText,
+      config: { sessionIdleMs: 1_000 },
+      now: () => now,
+    });
+
+    await bridge.handle(message("a1", "#a#U", "A1"));
+    now = 600;
+    await bridge.handle(message("b1", "#b#U", "B1"));
+    now = 1_000;
+    await bridge.handle(message("a2", "#a#U", "A2"));
+    now = 1_100;
+    await bridge.handle(message("b2", "#b#U", "B2"));
+
+    const receipts = sentTexts(sendText).filter((text) =>
+      text.startsWith("已收到问题"));
+    expect(receipts).toEqual([
+      "已收到问题 #1，正在处理。",
+      "已收到问题 #1，正在处理。",
+      "已收到问题 #1，正在处理。",
+      "已收到问题 #2，正在处理。",
+    ]);
+  });
+
+  it("does not refresh idle activity when a full peer queue rejects a question", async () => {
+    let now = 0;
+    const first = deferred<TestResult>();
+    const answer = vi.fn<Answer>(async (question) =>
+      question === "Q1" ? first.promise : answered(question));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer,
+      sendText,
+      config: { sessionIdleMs: 1_000 },
+      now: () => now,
+    });
+
+    const handles = [bridge.handle(message("q1", "#a#U", "Q1"))];
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledOnce());
+    for (let index = 2; index <= 6; index += 1) {
+      handles.push(bridge.handle(message(`q${index}`, "#a#U", `Q${index}`)));
+    }
+    now = 900;
+    handles.push(bridge.handle(message("q7", "#a#U", "Q7")));
+    await vi.waitFor(() => expect(sentTexts(sendText)).toContain(
+      "当前已有较多问题等待处理，请稍后再发送。",
+    ));
+    now = 1_000;
+    const fresh = bridge.handle(message("q8", "#a#U", "Q8"));
+
+    first.resolve(answered("Q1"));
+    await Promise.all([...handles, fresh]);
+    expect(sentTexts(sendText)).toContain(
+      "已收到问题 #1，前面还有 1 个问题，已加入队列。",
+    );
+    expect(answer.mock.calls.some((call) => call[0] === "Q7")).toBe(false);
+    expect(answer.mock.calls.some((call) => call[0] === "Q8")).toBe(true);
+  });
+
   it("keeps another peer running when one peer starts a new session", async () => {
     const otherResult = deferred<TestResult>();
     const answer = vi.fn<Answer>(async (question) =>
@@ -337,6 +458,7 @@ function createBridge(options: {
   readonly answer: Answer;
   readonly sendText: (peerUid: string, text: string) => Promise<void>;
   readonly config?: Partial<LunkrDirectConfig>;
+  readonly now?: () => number;
 }) {
   return new LunkrPseBridge(
     { ...config, ...options.config },
@@ -351,6 +473,7 @@ function createBridge(options: {
       }),
       sendText: options.sendText,
     },
+    options.now,
   );
 }
 

@@ -62,6 +62,7 @@ export class LunkrPseBridge<Result> {
   private readonly conversations: ConversationStore;
   private readonly dedupe: MessageDedupe;
   private readonly scheduler: PeerScheduler;
+  private readonly lastAcceptedQuestionAt = new Map<string, number>();
 
   constructor(
     private readonly config: LunkrDirectConfig,
@@ -98,6 +99,7 @@ export class LunkrPseBridge<Result> {
 
   private acceptQuestion(message: LunkrDirectMessage): Promise<void> {
     const receivedAt = this.now();
+    this.expireIdleSession(message.peerUid, receivedAt);
     const deadlineAt = receivedAt + QUESTION_BUDGET_MS;
     let pendingAtAdmission = 0;
     const receipt = this.scheduler.submit(message.peerUid, {
@@ -114,6 +116,9 @@ export class LunkrPseBridge<Result> {
         pendingAtAdmission,
       ),
     });
+    if (receipt.questionId !== undefined) {
+      this.lastAcceptedQuestionAt.set(message.peerUid, receivedAt);
+    }
     return receipt.completion;
   }
 
@@ -289,18 +294,34 @@ export class LunkrPseBridge<Result> {
   }
 
   private async resetPeer(peerUid: string): Promise<void> {
+    this.resetPeerState(peerUid);
+    await this.sendWithRetry(
+      peerUid,
+      "已开始新会话，之前处理中和排队的问题已取消。",
+    );
+  }
+
+  private resetPeerState(peerUid: string): void {
     const reset = this.scheduler.reset(peerUid);
     this.conversations.clear(peerUid);
+    this.lastAcceptedQuestionAt.delete(peerUid);
     this.emit({
       type: "cancelled",
       peerUid,
       pendingCount: reset.pendingCancelled,
       activePeerCount: this.scheduler.activePeerCount,
     });
-    await this.sendWithRetry(
-      peerUid,
-      "已开始新会话，之前处理中和排队的问题已取消。",
-    );
+  }
+
+  private expireIdleSession(peerUid: string, now: number): void {
+    const lastAcceptedAt = this.lastAcceptedQuestionAt.get(peerUid);
+    if (
+      lastAcceptedAt === undefined ||
+      now - lastAcceptedAt < this.config.sessionIdleMs
+    ) {
+      return;
+    }
+    this.resetPeerState(peerUid);
   }
 
   private isCurrent(start: QuestionStart): boolean {
