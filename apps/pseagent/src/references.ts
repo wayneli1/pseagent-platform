@@ -83,9 +83,12 @@ export class ReferenceRegistry {
     if (new Set(requirementIds).size !== requirementIds.length) {
       return { ok: false, reason: "duplicate_requirement_coverage" };
     }
-    const requirementCitations = stableUnique(
-      action.requirements.flatMap((item) => item.citations),
-    );
+    const requirementCitations = stableUnique(action.requirements.flatMap(
+      (item) => [
+        ...item.citations,
+        ...(item.relatedContext ?? []).flatMap((related) => related.citations),
+      ],
+    ));
     if (!sameNumbers(requirementCitations, action.citations)) {
       return { ok: false, reason: "requirement_citation_union_mismatch" };
     }
@@ -109,6 +112,29 @@ export class ReferenceRegistry {
       );
       if (!sameNumberSet(answerCitations, item.citations)) {
         return { ok: false, reason: "requirement_citation_metadata_mismatch" };
+      }
+      if (item.relatedContext !== undefined && item.coverage !== "none") {
+        return { ok: false, reason: "related_context_requires_none_coverage" };
+      }
+      for (const related of item.relatedContext ?? []) {
+        if (stableUnique([...related.citations]).length !== related.citations.length) {
+          return { ok: false, reason: "duplicate_related_citation" };
+        }
+        const unsupportedRelatedCitation = related.citations.find(
+          (citation) => !evidence.has(citation),
+        );
+        if (unsupportedRelatedCitation !== undefined) {
+          return {
+            ok: false,
+            reason: `citation_not_read_for_requirement:${item.id}:${unsupportedRelatedCitation}`,
+          };
+        }
+        const relatedCitations = stableUnique(
+          [...related.statement.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+        );
+        if (!sameNumberSet(relatedCitations, related.citations)) {
+          return { ok: false, reason: "related_citation_metadata_mismatch" };
+        }
       }
       if (item.coverage === "complete" || item.coverage === "partial") {
         if (item.citations.length === 0) {

@@ -845,7 +845,7 @@ function coverageEvidence(
   state: AgentState,
 ): CoverageEvidenceDocument[] {
   return draft.requirements.flatMap((requirement) =>
-    requirement.citations.flatMap((citation) => {
+    requirementEvidenceCitations(requirement).flatMap((citation) => {
       const document = state.evidenceDocuments.get(requirement.id)?.get(citation);
       return document === undefined
         ? []
@@ -873,7 +873,7 @@ function recordCoverage(
     requirements: action.requirements.map((requirement) => ({
       id: requirement.id,
       coverage: requirement.coverage,
-      citations: requirement.citations,
+      citations: requirementEvidenceCitations(requirement),
     })),
     ...(reasons === undefined ? {} : { reasons }),
     citations: action.citations,
@@ -888,14 +888,34 @@ function normalizeFinalCitationMetadata(action: FinalAction): FinalAction {
       [...requirement.answer.matchAll(/\[(\d+)\]/gu)]
         .map((match) => Number(match[1])),
     ),
+    ...(requirement.relatedContext === undefined
+      ? {}
+      : {
+          relatedContext: requirement.relatedContext.map((related) => ({
+            ...related,
+            citations: stableUniqueNumbers(
+              [...related.statement.matchAll(/\[(\d+)\]/gu)]
+                .map((match) => Number(match[1])),
+            ),
+          })),
+        }),
   }));
   return {
     ...action,
     requirements,
     citations: stableUniqueNumbers(
-      requirements.flatMap((requirement) => requirement.citations),
+      requirements.flatMap((requirement) => requirementEvidenceCitations(requirement)),
     ),
   };
+}
+
+function requirementEvidenceCitations(
+  requirement: FinalAction["requirements"][number],
+): number[] {
+  return stableUniqueNumbers([
+    ...requirement.citations,
+    ...(requirement.relatedContext ?? []).flatMap((item) => item.citations),
+  ]);
 }
 
 function stableUniqueNumbers(values: readonly number[]): number[] {

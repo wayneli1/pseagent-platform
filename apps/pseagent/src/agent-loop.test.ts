@@ -337,6 +337,59 @@ describe("runKnowledgeAgent", () => {
     });
   });
 
+  it("passes related-context citations through final normalization, verifier evidence, and diagnostics", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/protocols.md" }] },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/protocols.md"),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "正式资料未提及目标协议，无法确认是否支持。",
+          citations: [],
+          relatedContext: [{
+            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
+            citations: [1],
+          }],
+        }],
+        citations: [],
+      },
+    ]);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "related-context-evidence",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
+      expect(input.draft).toMatchObject({
+        requirements: [{ citations: [], relatedContext: [{ citations: [1] }] }],
+        citations: [1],
+      });
+      expect(input.evidence).toEqual([expect.objectContaining({
+        requirementId: "R1",
+        citation: 1,
+      })]);
+      return input.draft;
+    });
+
+    await runKnowledgeAgent({
+      ...agentInput(model, session),
+      verifyCoverage,
+      trace,
+    });
+
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(events.filter((event) => event.event === "coverage")).toEqual([
+      expect.objectContaining({ stage: "draft", citations: [1] }),
+      expect.objectContaining({ stage: "verified", citations: [1] }),
+    ]);
+  });
+
   it("automatically searches every seed query and fuses candidates with RRF", async () => {
     const plan: KnowledgePlan = {
       subject: "网关",

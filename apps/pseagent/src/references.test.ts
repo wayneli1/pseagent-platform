@@ -4,6 +4,7 @@ import type {
   KnowledgeRequirement,
   RequirementCoverage,
 } from "./contracts.js";
+import { finalActionSchema } from "./contracts.js";
 import { ReferenceRegistry, ReferenceValidationError, type ReadEvidence } from "./references.js";
 
 const revision = "a".repeat(40);
@@ -172,6 +173,163 @@ describe("ReferenceRegistry", () => {
       requirements,
       evidence([["R1", [1]], ["R2", []]]),
     )).toEqual({ ok: true });
+  });
+
+  it("accepts related evidence only for an uncovered requirement and unions it deterministically", () => {
+    const registry = new ReferenceRegistry("coremail-professional", revision);
+    registry.register(readEvidence("wiki/protocols.md"));
+    registry.register(readEvidence("wiki/transport.md"));
+    const action = finalActionSchema.parse({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "正式资料未提及目标协议，无法确认是否支持。",
+        citations: [],
+        relatedContext: [{
+          statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
+          citations: [1, 2],
+        }],
+      }, {
+        id: "R2",
+        coverage: "none",
+        answer: "正式资料未覆盖 POC。",
+        citations: [],
+      }],
+      citations: [1, 2],
+    });
+
+    expect(registry.validateFinal(
+      action,
+      requirements,
+      evidence([["R1", [1, 2]], ["R2", []]]),
+    )).toEqual({ ok: true });
+  });
+
+  it.each([
+    {
+      name: "complete requirement with related context",
+      action: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: "目标已确认[1]。",
+          citations: [1],
+          relatedContext: [{ statement: "旁证[2]。", citations: [2] }],
+        }, { id: "R2", coverage: "none", answer: "未覆盖。", citations: [] }],
+        citations: [1, 2],
+      },
+      itemEvidence: evidence([["R1", [1, 2]], ["R2", []]]),
+    },
+    {
+      name: "partial requirement with related context",
+      action: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "partial",
+          answer: "目标仅部分确认[1]，其余待确认。",
+          citations: [1],
+          relatedContext: [{ statement: "旁证[2]。", citations: [2] }],
+        }, { id: "R2", coverage: "none", answer: "未覆盖。", citations: [] }],
+        citations: [1, 2],
+      },
+      itemEvidence: evidence([["R1", [1, 2]], ["R2", []]]),
+    },
+    {
+      name: "related citation not read for the same requirement",
+      action: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "目标未覆盖。",
+          citations: [],
+          relatedContext: [{ statement: "旁证[2]。", citations: [2] }],
+        }, { id: "R2", coverage: "none", answer: "未覆盖。", citations: [] }],
+        citations: [2],
+      },
+      itemEvidence: evidence([["R1", [1]], ["R2", [2]]]),
+    },
+    {
+      name: "related inline markers differ from metadata",
+      action: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "目标未覆盖。",
+          citations: [],
+          relatedContext: [{ statement: "旁证[1]。", citations: [2] }],
+        }, { id: "R2", coverage: "none", answer: "未覆盖。", citations: [] }],
+        citations: [2],
+      },
+      itemEvidence: evidence([["R1", [1, 2]], ["R2", []]]),
+    },
+    {
+      name: "related citation promoted into target citations",
+      action: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "目标未覆盖[1]。",
+          citations: [1],
+          relatedContext: [{ statement: "旁证[1]。", citations: [1] }],
+        }, { id: "R2", coverage: "none", answer: "未覆盖。", citations: [] }],
+        citations: [1],
+      },
+      itemEvidence: evidence([["R1", [1]], ["R2", []]]),
+    },
+    {
+      name: "top-level citations are not the stable target-plus-related union",
+      action: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "目标未覆盖。",
+          citations: [],
+          relatedContext: [{ statement: "旁证[1][2]。", citations: [1, 2] }],
+        }, { id: "R2", coverage: "none", answer: "未覆盖。", citations: [] }],
+        citations: [2, 1],
+      },
+      itemEvidence: evidence([["R1", [1, 2]], ["R2", []]]),
+    },
+  ] as const)("rejects related context when $name", ({ action, itemEvidence }) => {
+    const registry = new ReferenceRegistry("coremail-professional", revision);
+    registry.register(readEvidence("wiki/one.md"));
+    registry.register(readEvidence("wiki/two.md"));
+
+    expect(registry.validateFinal(
+      action as unknown as FinalAction,
+      requirements,
+      itemEvidence,
+    ).ok).toBe(false);
+  });
+
+  it("rejects related context outside its item bounds", () => {
+    const base = {
+      id: "R1",
+      coverage: "none",
+      answer: "目标未覆盖。",
+      citations: [],
+      relatedContext: [{ statement: "旁证[1]。", citations: [1] }],
+    };
+    expect(() => finalActionSchema.parse({
+      action: "final",
+      requirements: [{ ...base, relatedContext: Array.from({ length: 4 }, () => base.relatedContext[0]) }],
+      citations: [1],
+    })).toThrow();
+    expect(() => finalActionSchema.parse({
+      action: "final",
+      requirements: [{
+        ...base,
+        relatedContext: [{ statement: "旁证[1][2][3][4][5]。", citations: [1, 2, 3, 4, 5] }],
+      }],
+      citations: [1, 2, 3, 4, 5],
+    })).toThrow();
   });
 
   it("rejects unknown citations and citation metadata mismatches", () => {

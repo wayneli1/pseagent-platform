@@ -56,7 +56,7 @@ export async function verifyKnowledgeCoverage(
       ? [...messages, {
           role: "user" as const,
           content:
-            "上一次输出不符合 Schema。只输出合法 verify JSON；逐项保持规划 ID，coverage 不得升级，citations 只能删减且顶层必须等于逐项并集。",
+            "上一次输出不符合 Schema。只输出合法 verify JSON；逐项保持规划 ID，coverage 不得升级，目标和相关 citations 都只能删减，顶层必须等于逐项目标后接相关信息的稳定并集。",
         }]
       : messages,
     schema: coverageVerificationActionSchema,
@@ -92,6 +92,9 @@ export async function verifyKnowledgeCoverage(
       coverage: requirement.coverage,
       answer: requirement.answer,
       citations: requirement.citations,
+      ...(requirement.relatedContext === undefined
+        ? {}
+        : { relatedContext: requirement.relatedContext }),
     })),
     citations: verified.citations,
   };
@@ -154,10 +157,49 @@ function validateVerification(
     if (audited.coverage !== "none" && audited.citations.length === 0) {
       return `covered_without_citation:${audited.id}`;
     }
+    if (audited.relatedContext !== undefined && audited.coverage !== "none") {
+      return `related_context_requires_none_coverage:${audited.id}`;
+    }
+    let lastDraftRelatedIndex = -1;
+    for (const related of audited.relatedContext ?? []) {
+      if (related.citations.length < 1 || related.citations.length > 4) {
+        return `related_citation_count:${audited.id}`;
+      }
+      if (stableUnique(related.citations).length !== related.citations.length) {
+        return `duplicate_related_citation:${audited.id}`;
+      }
+      const draftRelated = draft.relatedContext ?? [];
+      const matchingDraftIndex = draftRelated.findIndex(
+        (candidate) => normalizedStatement(candidate.statement) === normalizedStatement(related.statement),
+      );
+      if (matchingDraftIndex < 0 || matchingDraftIndex <= lastDraftRelatedIndex) {
+        return `related_fact_not_in_draft:${audited.id}`;
+      }
+      lastDraftRelatedIndex = matchingDraftIndex;
+      const matchingDraft = draftRelated[matchingDraftIndex]!;
+      const draftRelatedCitations = new Set(matchingDraft.citations);
+      for (const citation of related.citations) {
+        if (!draftRelatedCitations.has(citation)) {
+          return `related_citation_not_in_draft:${audited.id}:${citation}`;
+        }
+        if (!evidenceCitations.has(citation)) {
+          return `related_citation_not_in_evidence:${audited.id}:${citation}`;
+        }
+      }
+      const inlineCitations = stableUnique(
+        [...related.statement.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+      );
+      if (!sameNumberSet(inlineCitations, related.citations)) {
+        return `related_citation_metadata_mismatch:${audited.id}`;
+      }
+    }
   }
 
   const expectedCitations = stableUnique(
-    verified.requirements.flatMap((requirement) => requirement.citations),
+    verified.requirements.flatMap((requirement) => [
+      ...requirement.citations,
+      ...(requirement.relatedContext ?? []).flatMap((related) => related.citations),
+    ]),
   );
   if (!sameNumbers(expectedCitations, verified.citations)) {
     return "citation_union_mismatch";
@@ -177,4 +219,16 @@ function stableUnique(values: readonly number[]): number[] {
 function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
   return left.length === right.length &&
     left.every((value, index) => value === right[index]);
+}
+
+function sameNumberSet(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
+}
+
+function normalizedStatement(statement: string): string {
+  return statement
+    .replace(/\[\d+\]/gu, "")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/\s+/gu, " ")
+    .trim();
 }

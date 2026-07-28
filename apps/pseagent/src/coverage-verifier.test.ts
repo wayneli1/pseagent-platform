@@ -45,6 +45,21 @@ const partialDraft: FinalAction = {
   citations: [1],
 };
 
+const relatedOnlyDraft: FinalAction = {
+  action: "final",
+  requirements: [{
+    id: "R1",
+    coverage: "none",
+    answer: "正式资料未提及目标协议，无法确认是否支持。",
+    citations: [],
+    relatedContext: [{
+      statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
+      citations: [1, 2],
+    }],
+  }],
+  citations: [1, 2],
+};
+
 const directEvidence = [{
   requirementId: "R1",
   citation: 1,
@@ -122,6 +137,144 @@ describe("verifyKnowledgeCoverage", () => {
       answer: "Coremail 支持 SMTP[1]。",
       citations: [1],
     });
+  });
+
+  it("retains a draft related fact or removes one of its citations without promoting it", async () => {
+    const retained = await verifyKnowledgeCoverage({
+      question: "Coremail 是否支持目标协议",
+      plan: singleRequirementPlan,
+      draft: relatedOnlyDraft,
+      evidence: [
+        { ...directEvidence[0], citation: 1 },
+        { ...directEvidence[0], citation: 2 },
+      ],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "正式资料未提及目标协议，无法确认是否支持。",
+          citations: [],
+          relatedContext: [{
+            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
+            citations: [1, 2],
+          }],
+          reason: "related_only",
+        }],
+        citations: [1, 2],
+      } as CoverageVerificationAction),
+    });
+    const reduced = await verifyKnowledgeCoverage({
+      question: "Coremail 是否支持目标协议",
+      plan: singleRequirementPlan,
+      draft: relatedOnlyDraft,
+      evidence: [
+        { ...directEvidence[0], citation: 1 },
+        { ...directEvidence[0], citation: 2 },
+      ],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "正式资料未提及目标协议，无法确认是否支持。",
+          citations: [],
+          relatedContext: [{
+            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
+            citations: [1],
+          }],
+          reason: "related_only",
+        }],
+        citations: [1],
+      } as CoverageVerificationAction),
+    });
+
+    expect(retained.requirements[0]?.relatedContext).toEqual(
+      relatedOnlyDraft.requirements[0]?.relatedContext,
+    );
+    expect(reduced).toMatchObject({
+      requirements: [{
+        coverage: "none",
+        citations: [],
+        relatedContext: [{ citations: [1] }],
+      }],
+      citations: [1],
+    });
+  });
+
+  it.each([
+    ["a new related fact", {
+      coverage: "none",
+      citations: [],
+      relatedContext: [{ statement: "新增的相关事实[1]。", citations: [1] }],
+      topLevel: [1],
+    }],
+    ["a duplicated related fact", {
+      coverage: "none",
+      citations: [],
+      relatedContext: [
+        { statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。", citations: [1, 2] },
+        { statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。", citations: [1, 2] },
+      ],
+      topLevel: [1, 2],
+    }],
+    ["a new related citation", {
+      coverage: "none",
+      citations: [],
+      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [3]。", citations: [3] }],
+      topLevel: [3],
+    }],
+    ["a citation from another requirement", {
+      coverage: "none",
+      citations: [],
+      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [2]。", citations: [2] }],
+      topLevel: [2],
+      evidence: [{ ...directEvidence[0], requirementId: "R2", citation: 2 }],
+    }],
+    ["a related citation moved into target citations", {
+      coverage: "none",
+      citations: [1],
+      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。", citations: [1] }],
+      topLevel: [1],
+    }],
+    ["related context for complete coverage", {
+      coverage: "complete",
+      citations: [1],
+      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。", citations: [1] }],
+      topLevel: [1],
+    }],
+    ["related context for partial coverage", {
+      coverage: "partial",
+      citations: [1],
+      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。", citations: [1] }],
+      topLevel: [1],
+    }],
+  ] as const)("rejects %s", async (_name, output) => {
+    const verified = {
+      action: "verify" as const,
+      requirements: [{
+        id: "R1" as const,
+        coverage: output.coverage,
+        answer: output.coverage === "none"
+          ? "正式资料未提及目标协议，无法确认是否支持。"
+          : `审核目标结论[${output.citations[0]}]。`,
+        citations: output.citations,
+        relatedContext: output.relatedContext,
+        reason: "related_only" as const,
+      }],
+      citations: output.topLevel,
+    } as unknown as CoverageVerificationAction;
+    await expect(verifyKnowledgeCoverage({
+      question: "Coremail 是否支持目标协议",
+      plan: singleRequirementPlan,
+      draft: relatedOnlyDraft,
+      evidence: ("evidence" in output ? output.evidence : undefined) ?? [
+        { ...directEvidence[0], citation: 1 },
+        { ...directEvidence[0], citation: 2 },
+        { ...directEvidence[0], citation: 3 },
+      ],
+      model: scriptedVerifier(verified),
+    })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
   });
 
   it.each([

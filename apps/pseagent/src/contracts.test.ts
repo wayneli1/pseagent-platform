@@ -5,6 +5,7 @@ import {
   answerResultSchema,
   coverageVerificationActionSchema,
   historicalAnswerSchema,
+  requirementCoverageSchema,
   routeActionSchema,
 } from "./contracts.js";
 
@@ -144,6 +145,33 @@ describe("PSEAgent contracts", () => {
         reason: "invented_reason",
       }],
       citations: [1],
+    })).toThrow();
+  });
+
+  it("accepts bounded related context only for uncovered requirements", () => {
+    const noneWithContext = {
+      id: "R1",
+      coverage: "none" as const,
+      answer: "正式资料未提及目标协议，无法确认是否支持。",
+      citations: [],
+      relatedContext: [{
+        statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
+        citations: [1, 2],
+      }],
+    };
+
+    expect(requirementCoverageSchema.parse(noneWithContext)).toEqual(noneWithContext);
+    expect(() => requirementCoverageSchema.parse({
+      ...noneWithContext,
+      relatedContext: Array.from({ length: 4 }, () => noneWithContext.relatedContext[0]),
+    })).toThrow();
+    expect(() => requirementCoverageSchema.parse({
+      ...noneWithContext,
+      relatedContext: [{ statement: "没有引用", citations: [] }],
+    })).toThrow();
+    expect(() => requirementCoverageSchema.parse({
+      ...noneWithContext,
+      coverage: "complete",
     })).toThrow();
   });
 

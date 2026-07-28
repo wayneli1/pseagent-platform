@@ -100,11 +100,24 @@ export const toolActionSchema = z.discriminatedUnion("tool", [
   readPagesActionSchema,
   graphActionSchema,
 ]);
+export const relatedContextItemSchema = z.object({
+  statement: z.string().trim().min(1).max(16_384),
+  citations: z.array(z.number().int().positive()).min(1).max(4),
+}).strict();
 export const requirementCoverageSchema = z.object({
   id: knowledgeRequirementIdSchema,
   coverage: coverageSchema,
   answer: z.string().trim().min(1).max(16_384),
   citations: z.array(z.number().int().positive()).max(20),
+  relatedContext: z.array(relatedContextItemSchema).max(3).optional(),
+}).superRefine((requirement, context) => {
+  if (requirement.coverage !== "none" && requirement.relatedContext !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["relatedContext"],
+      message: "related_context_requires_none_coverage",
+    });
+  }
 });
 export const finalActionSchema = z.object({
   action: z.literal("final"),
@@ -124,8 +137,17 @@ const coverageVerificationRequirementSchema = z.object({
   coverage: coverageSchema,
   answer: z.string().trim().min(1).max(16_384),
   citations: z.array(z.number().int().positive()).max(20),
+  relatedContext: z.array(relatedContextItemSchema).max(3).optional(),
   reason: coverageVerificationReasonSchema,
-}).strict();
+}).strict().superRefine((requirement, context) => {
+  if (requirement.coverage !== "none" && requirement.relatedContext !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["relatedContext"],
+      message: "related_context_requires_none_coverage",
+    });
+  }
+});
 export const coverageVerificationActionSchema = z.object({
   action: z.literal("verify"),
   requirements: z.array(coverageVerificationRequirementSchema).min(1).max(6),
@@ -176,6 +198,10 @@ export type Scope = z.infer<typeof scopeSchema>;
 export type RouteAction = z.infer<typeof routeActionSchema>;
 export type KnowledgeRequirement = z.infer<typeof knowledgeRequirementSchema>;
 export type KnowledgePlan = z.infer<typeof knowledgePlanSchema>;
+export type RelatedContextItem = {
+  readonly statement: string;
+  readonly citations: readonly number[];
+};
 export type RequirementCoverage = z.infer<typeof requirementCoverageSchema>;
 export type AgentAction = z.infer<typeof agentActionSchema>;
 export type ToolAction = z.infer<typeof toolActionSchema>;
