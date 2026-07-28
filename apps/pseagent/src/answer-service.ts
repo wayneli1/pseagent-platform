@@ -198,7 +198,8 @@ function finishExecution(
     result,
     retryable:
       stopReason === "model_unavailable" ||
-      stopReason === "seed_unavailable",
+      stopReason === "seed_unavailable" ||
+      stopReason === "coverage_verifier_unavailable",
     stopReason,
   };
 }

@@ -2,6 +2,7 @@ import {
   agentActionSchema,
   finalOnlyActionSchema,
   type AnswerResult,
+  type CoverageVerificationReason,
   type FinalAction,
   type KnowledgePlan,
   type KnowledgeRequirement,
@@ -13,6 +14,11 @@ import type {
   KnowledgeSearchResult,
   ProjectKey,
 } from "./knowledge-session.js";
+import {
+  verifyKnowledgeCoverage,
+  type CoverageEvidenceDocument,
+  type CoverageVerifierInput,
+} from "./coverage-verifier.js";
 import {
   InvalidModelPayloadError,
   ModelUnavailableError,
@@ -55,6 +61,9 @@ export interface KnowledgeAgentInput {
   readonly deadlineAt?: number;
   readonly trace?: DiagnosticTrace;
   readonly signal?: AbortSignal;
+  readonly verifyCoverage?: (
+    input: CoverageVerifierInput,
+  ) => Promise<FinalAction>;
 }
 
 type Candidate = {
@@ -86,6 +95,10 @@ type AgentState = {
   readonly actionFingerprints: Set<string>;
   readonly requirements: Map<string, RequirementState>;
   readonly references: ReferenceRegistry;
+  readonly evidenceDocuments: Map<
+    string,
+    Map<number, Omit<CoverageEvidenceDocument, "requirementId" | "citation">>
+  >;
   readonly observations: string[];
   citationRepairAttempts: number;
   forceFinal: boolean;
@@ -151,20 +164,67 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         recordDiagnostic(input.trace, { event: "stop", reason: "invalid_final" });
         return unavailableResult(input.scope);
       }
-      recordDiagnostic(input.trace, {
-        event: "coverage",
-        requirements: normalizedAction.requirements.map((requirement) => ({
-          id: requirement.id,
-          coverage: requirement.coverage,
-          citations: requirement.citations,
-        })),
-        citations: normalizedAction.citations,
-        stopReason: deadlineReached(input) ? "deadline" : "final",
-      });
+      recordCoverage(
+        input,
+        normalizedAction,
+        "draft",
+        deadlineReached(input) ? "deadline" : "final",
+      );
+      let auditedAction: FinalAction;
+      let verifiedReasons: readonly {
+        readonly id: string;
+        readonly reason: CoverageVerificationReason;
+      }[] | undefined;
+      try {
+        auditedAction = await (
+          input.verifyCoverage ?? verifyKnowledgeCoverage
+        )({
+          question: input.question,
+          plan: input.plan,
+          draft: normalizedAction,
+          evidence: coverageEvidence(normalizedAction, state),
+          model: input.model,
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+          onVerified(reasons) {
+            verifiedReasons = reasons;
+          },
+        });
+      } catch (error) {
+        const reason = error instanceof ModelUnavailableError
+          ? "coverage_verifier_unavailable"
+          : "coverage_verifier_invalid";
+        recordDiagnostic(input.trace, { event: "stop", reason });
+        return unavailableResult(input.scope);
+      }
+      const auditedValidation = state.references.validateFinal(
+        auditedAction,
+        input.plan.requirements,
+        evidenceByRequirement(state),
+      );
+      if (!auditedValidation.ok) {
+        recordDiagnostic(input.trace, {
+          event: "validation",
+          result: "rejected",
+          reason: auditedValidation.reason,
+          repairAttempt: 1,
+        });
+        recordDiagnostic(input.trace, {
+          event: "stop",
+          reason: "coverage_verifier_invalid",
+        });
+        return unavailableResult(input.scope);
+      }
+      recordCoverage(
+        input,
+        auditedAction,
+        "verified",
+        deadlineReached(input) ? "deadline" : "final",
+        verifiedReasons,
+      );
       return formatKnowledgeFinal(
         input.scope,
-        normalizedAction,
-        state.references.resolve(normalizedAction.citations),
+        auditedAction,
+        state.references.resolve(auditedAction.citations),
       );
     }
     if (finalOnly) {
@@ -227,6 +287,10 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
       },
     ])),
     references: new ReferenceRegistry(input.session.project, input.session.revision),
+    evidenceDocuments: new Map(input.plan.requirements.map((requirement) => [
+      requirement.id,
+      new Map(),
+    ])),
     observations: [],
     citationRepairAttempts: 0,
     forceFinal: false,
@@ -552,6 +616,14 @@ async function executeRead(
     ...(candidate === undefined ? [] : candidate.matchedTerms),
   ];
   const content = input.session.compactPage(page, terms);
+  state.evidenceDocuments.get(requirementState.requirement.id)?.set(
+    reference.index,
+    {
+      title: page.title,
+      path: page.path,
+      content,
+    },
+  );
   observe(state, {
     type: "read_page",
     requirementId: requirementState.requirement.id,
@@ -572,6 +644,7 @@ async function executeRead(
     requirementState.requirement.id,
     page.path,
     reference.index,
+    content,
   );
 }
 
@@ -581,6 +654,7 @@ function shareReadEvidence(
   fromRequirementId: string,
   path: string,
   citation: number,
+  content: string,
 ): void {
   for (const [toRequirementId, requirementState] of state.requirements) {
     const targetCandidate = requirementState.candidatePaths.get(path);
@@ -593,6 +667,14 @@ function shareReadEvidence(
     }
     requirementState.readPaths.add(path);
     requirementState.citationIndexes.add(citation);
+    const reference = state.references.resolve([citation])[0];
+    if (reference !== undefined) {
+      state.evidenceDocuments.get(toRequirementId)?.set(citation, {
+        title: reference.title,
+        path: reference.path,
+        content,
+      });
+    }
     observe(state, {
       type: "evidence_shared",
       fromRequirementId,
@@ -756,6 +838,47 @@ function evidenceByRequirement(state: AgentState): ReadonlyMap<string, ReadonlyS
     id,
     requirementState.citationIndexes,
   ]));
+}
+
+function coverageEvidence(
+  draft: FinalAction,
+  state: AgentState,
+): CoverageEvidenceDocument[] {
+  return draft.requirements.flatMap((requirement) =>
+    requirement.citations.flatMap((citation) => {
+      const document = state.evidenceDocuments.get(requirement.id)?.get(citation);
+      return document === undefined
+        ? []
+        : [{
+            requirementId: requirement.id,
+            citation,
+            ...document,
+          }];
+    }));
+}
+
+function recordCoverage(
+  input: KnowledgeAgentInput,
+  action: FinalAction,
+  stage: "draft" | "verified",
+  stopReason: "final" | "deadline",
+  reasons?: readonly {
+    readonly id: string;
+    readonly reason: CoverageVerificationReason;
+  }[],
+): void {
+  recordDiagnostic(input.trace, {
+    event: "coverage",
+    stage,
+    requirements: action.requirements.map((requirement) => ({
+      id: requirement.id,
+      coverage: requirement.coverage,
+      citations: requirement.citations,
+    })),
+    ...(reasons === undefined ? {} : { reasons }),
+    citations: action.citations,
+    stopReason,
+  });
 }
 
 function normalizeFinalCitationMetadata(action: FinalAction): FinalAction {

@@ -396,6 +396,8 @@ describe("AnswerService", () => {
     ["invalid_model_payload", false],
     ["invalid_final", false],
     ["turn_budget_exhausted", false],
+    ["coverage_verifier_unavailable", true],
+    ["coverage_verifier_invalid", false],
   ] as const)(
     "maps agent stop %s to retryable=%s",
     async (reason, retryable) => {

@@ -181,6 +181,7 @@ export type AgentAction = z.infer<typeof agentActionSchema>;
 export type ToolAction = z.infer<typeof toolActionSchema>;
 export type FinalAction = z.infer<typeof finalActionSchema>;
 export type CoverageVerificationAction = z.infer<typeof coverageVerificationActionSchema>;
+export type CoverageVerificationReason = z.infer<typeof coverageVerificationReasonSchema>;
 export type AnswerResult = z.infer<typeof answerResultSchema>;
 export type Reference = z.infer<typeof referenceSchema>;
 export type HistoricalReference = z.infer<typeof historicalReferenceSchema>;

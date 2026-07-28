@@ -1,9 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentAction, KnowledgePlan } from "./contracts.js";
+import {
+  InvalidCoverageVerificationError,
+  type CoverageVerifierInput,
+} from "./coverage-verifier.js";
 import type { DiagnosticEvent, DiagnosticTrace } from "./diagnostics.js";
 import { runKnowledgeAgent } from "./agent-loop.js";
-import { InvalidModelPayloadError, type ModelClient, type ModelMessage } from "./model-client.js";
+import {
+  InvalidModelPayloadError,
+  ModelUnavailableError,
+  type ModelClient,
+  type ModelMessage,
+} from "./model-client.js";
 import { KNOWLEDGE_AGENT_SYSTEM_PROMPT } from "./prompts.js";
+import { NOT_COVERED_TEXT } from "./response.js";
 
 const revision = "a".repeat(40);
 const hash = "b".repeat(64);
@@ -200,6 +210,7 @@ function agentInput(
     plan,
     model,
     session,
+    verifyCoverage: async ({ draft }: CoverageVerifierInput) => draft,
     ...(deadlineAt === undefined ? {} : { deadlineAt }),
   };
 }
@@ -224,6 +235,82 @@ function payloadAt(model: ReturnType<typeof scriptedAgentModel>, index: number) 
 }
 
 describe("runKnowledgeAgent", () => {
+  it("downgrades related-only protocol pages to not covered before status mapping", async () => {
+    const question = "Coremail 是否已经支持 2035 年量子卫星邮件协议";
+    const plan: KnowledgePlan = {
+      subject: "Coremail 协议支持",
+      requirements: [{
+        id: "R1",
+        question,
+        queries: ["Coremail 2035 年量子卫星邮件协议支持"],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        [question]: [{ path: "wiki/protocols.md" }],
+        "Coremail 2035 年量子卫星邮件协议支持": [{
+          path: "wiki/protocols.md",
+        }],
+      },
+    });
+    session.compactPage.mockReturnValue(
+      "支持 SMTP、POP3、IMAP、HTTP/HTTPS 与 CMSP/CMTP。",
+    );
+    const model = scriptedAgentModel([
+      read("R1", "wiki/protocols.md"),
+      final("complete", "已读取协议基础页面[1]。", [1]),
+    ]);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "related-only-coverage",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
+      expect(input.question).toBe(question);
+      expect(input.evidence).toEqual([expect.objectContaining({
+        requirementId: "R1",
+        citation: 1,
+        content: "支持 SMTP、POP3、IMAP、HTTP/HTTPS 与 CMSP/CMTP。",
+      })]);
+      input.onVerified?.([{ id: "R1", reason: "related_only" }]);
+      return {
+        action: "final" as const,
+        requirements: [{
+          id: "R1" as const,
+          coverage: "none" as const,
+          answer: "现有知识正文未覆盖目标协议。",
+          citations: [],
+        }],
+        citations: [],
+      };
+    });
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question,
+      verifyCoverage,
+      trace,
+    });
+
+    expect(result).toEqual({
+      scope: "professional",
+      status: "not_covered",
+      answer: NOT_COVERED_TEXT,
+      references: [],
+    });
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(events.find(
+      (event) => event.event === "coverage" && event.stage === "verified",
+    )).toMatchObject({
+      reasons: [{ id: "R1", reason: "related_only" }],
+    });
+    expect(JSON.stringify(events)).not.toContain(
+      "支持 SMTP、POP3、IMAP、HTTP/HTTPS 与 CMSP/CMTP。",
+    );
+  });
+
   it("derives requirement citation metadata from inline citations before provenance validation", async () => {
     const model = scriptedAgentModel([
       read("R1", "wiki/r1.md"),
@@ -892,15 +979,60 @@ describe("runKnowledgeAgent", () => {
       "candidates",
       "read",
       "coverage",
+      "coverage",
     ]);
     expect(events.find((event) => event.event === "read")).toMatchObject({
       requirementId: "R1",
       path: "wiki/r1.md",
       citation: 1,
     });
+    expect(events.filter((event) => event.event === "coverage")).toEqual([
+      expect.objectContaining({ stage: "draft" }),
+      expect.objectContaining({ stage: "verified" }),
+    ]);
     expect(JSON.stringify(events)).not.toContain("body:wiki/r1.md");
     expect(JSON.stringify(events)).not.toContain("读取后确认");
   });
+
+  it.each([
+    [
+      new ModelUnavailableError(),
+      "coverage_verifier_unavailable",
+    ],
+    [
+      new InvalidCoverageVerificationError(),
+      "coverage_verifier_invalid",
+    ],
+  ] as const)(
+    "fails closed when coverage verification fails with %s",
+    async (error, reason) => {
+      const session = fakeSession({
+        hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
+      });
+      const model = scriptedAgentModel([
+        read("R1", "wiki/r1.md"),
+        final("complete", "正式草稿[1]。", [1]),
+      ]);
+      const events: DiagnosticEvent[] = [];
+      const trace = {
+        requestId: "coverage-failure",
+        record(event: DiagnosticEvent) {
+          events.push(event);
+        },
+      } satisfies DiagnosticTrace;
+
+      const result = await runKnowledgeAgent({
+        ...agentInput(model, session),
+        trace,
+        verifyCoverage: async () => {
+          throw error;
+        },
+      });
+
+      expect(result.status).toBe("temporarily_unavailable");
+      expect(events).toContainEqual({ event: "stop", reason });
+    },
+  );
 
   it("requests a final-only action after the active deadline", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });

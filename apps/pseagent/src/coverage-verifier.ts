@@ -2,6 +2,7 @@ import {
   coverageVerificationActionSchema,
   type Coverage,
   type CoverageVerificationAction,
+  type CoverageVerificationReason,
   type FinalAction,
   type KnowledgePlan,
 } from "./contracts.js";
@@ -26,6 +27,12 @@ export interface CoverageVerifierInput {
   readonly evidence: readonly CoverageEvidenceDocument[];
   readonly model: ModelClient;
   readonly signal?: AbortSignal;
+  readonly onVerified?: (
+    reasons: readonly {
+      readonly id: string;
+      readonly reason: CoverageVerificationReason;
+    }[],
+  ) => void;
 }
 
 export class InvalidCoverageVerificationError extends Error {
@@ -74,6 +81,10 @@ export async function verifyKnowledgeCoverage(
   if (invalidReason !== undefined) {
     throw new InvalidCoverageVerificationError(invalidReason);
   }
+  input.onVerified?.(verified.requirements.map((requirement) => ({
+    id: requirement.id,
+    reason: requirement.reason,
+  })));
   return {
     action: "final",
     requirements: verified.requirements.map((requirement) => ({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   CoverageVerificationAction,
   FinalAction,
@@ -247,6 +247,32 @@ describe("verifyKnowledgeCoverage", () => {
       evidence: directEvidence,
       model: scriptedVerifier(unavailable),
     })).rejects.toBe(unavailable);
+  });
+
+  it("reports only validated requirement reasons to diagnostics", async () => {
+    const onVerified = vi.fn();
+    await verifyKnowledgeCoverage({
+      question: "Coremail 是否已经支持 2035 年量子卫星邮件协议",
+      plan: singleRequirementPlan,
+      draft: completeDraft,
+      evidence: directEvidence,
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "现有知识正文未覆盖目标协议。",
+          citations: [],
+          reason: "related_only",
+        }],
+        citations: [],
+      }),
+      onVerified,
+    });
+
+    expect(onVerified).toHaveBeenCalledWith([
+      { id: "R1", reason: "related_only" },
+    ]);
   });
 });
 

@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AnswerStatus,
+  CoverageVerificationReason,
   Scope,
 } from "./contracts.js";
 
@@ -12,7 +13,9 @@ export type PseStopReason =
   | "model_unavailable"
   | "invalid_model_payload"
   | "invalid_final"
-  | "turn_budget_exhausted";
+  | "turn_budget_exhausted"
+  | "coverage_verifier_unavailable"
+  | "coverage_verifier_invalid";
 
 export type DiagnosticEvent =
   | { readonly event: "route"; readonly scope: Scope }
@@ -58,10 +61,15 @@ export type DiagnosticEvent =
     }
   | {
       readonly event: "coverage";
+      readonly stage: "draft" | "verified";
       readonly requirements: readonly {
         readonly id: string;
         readonly coverage: "complete" | "partial" | "none";
         readonly citations: readonly number[];
+      }[];
+      readonly reasons?: readonly {
+        readonly id: string;
+        readonly reason: CoverageVerificationReason;
       }[];
       readonly citations: readonly number[];
       readonly stopReason: "final" | "deadline";

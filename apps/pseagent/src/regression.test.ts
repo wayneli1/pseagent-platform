@@ -247,7 +247,10 @@ describe("fixed 40-question scripted protocol regression", () => {
         })),
       },
       knowledge,
-      runAgent: runKnowledgeAgent,
+      runAgent: (input) => runKnowledgeAgent({
+        ...input,
+        verifyCoverage: async ({ draft }) => draft,
+      }),
     });
 
     const result = await service.answer(testCase.question);
