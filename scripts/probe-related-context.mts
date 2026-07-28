@@ -18,7 +18,9 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { z } from "zod";
 import {
+  answerStatusSchema,
   answerResultSchema,
+  scopeSchema,
   type AnswerResult,
 } from "../apps/pseagent/src/contracts.js";
 
@@ -58,8 +60,8 @@ const probeCase = {
 
 const finishEventSchema = z.object({
   event: z.literal("finish"),
-  scope: z.literal("professional"),
-  status: z.literal("not_covered"),
+  scope: scopeSchema,
+  status: answerStatusSchema,
   citationCount: z.number().int().nonnegative(),
   elapsedMs: z.number().int().nonnegative(),
   historicalAttempted: z.boolean(),
@@ -123,7 +125,12 @@ export function validateRelatedContextAcceptance(
 ) {
   const result = answerResultSchema.parse(resultInput);
   const finish = finishEventSchema.parse(finishInput);
-  if (result.scope !== "professional" || result.status !== "not_covered") {
+  if (
+    result.scope !== "professional" ||
+    result.status !== "not_covered" ||
+    finish.scope !== "professional" ||
+    finish.status !== "not_covered"
+  ) {
     throw new Error("unexpected_scope_or_status");
   }
   if (result.references.length === 0) {

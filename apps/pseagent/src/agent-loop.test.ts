@@ -1197,6 +1197,68 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
+  it("nudges once per direct-read count before auditing a repeated none final", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/concepts/first.md" },
+          { path: "wiki/concepts/second.md" },
+          { path: "wiki/concepts/third.md" },
+        ],
+      },
+    });
+    const repeatedFinal = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "正式知识库未覆盖目标能力，无法确认。",
+        citations: [],
+        relatedContext: [{
+          statement: "正文明确列出两项相关能力 [1][2]。",
+          citations: [1, 2],
+        }],
+      }],
+      citations: [1, 2],
+    } satisfies AgentAction;
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/first.md"),
+      read("R1", "wiki/concepts/second.md"),
+      ...Array.from({ length: 7 }, () => repeatedFinal),
+    ]);
+    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "repeated-final-after-evidence-nudge",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      verifyCoverage,
+      trace,
+    });
+
+    expect({
+      status: result.status,
+      stops: events.filter((event) => event.event === "stop"),
+    }).toEqual({
+      status: "not_covered",
+      stops: [],
+    });
+    expect(payloadAt(model, 3).observations?.join("\n")).toContain(
+      "coverage_gate_requires_read",
+    );
+    expect(model.calls).toBe(4);
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(result.references.map((reference) => reference.path)).toEqual([
+      "wiki/concepts/first.md",
+      "wiki/concepts/second.md",
+    ]);
+  });
+
   it("emits a content-free search-to-coverage diagnostic trail", async () => {
     const session = fakeSession({
       hits: { "seed-r1": [{ path: "wiki/r1.md" }] },

@@ -547,6 +547,51 @@ describe("related-context acceptance probe", () => {
     expect(existsSync(directory)).toBe(false);
   });
 
+  it("reads a valid unavailable finish before acceptance rejects its outcome", async () => {
+    const {
+      createProbeDiagnosticsDirectory,
+      readProbeFinishEvents,
+      removeProbeDiagnosticsDirectory,
+      validateRelatedContextAcceptance,
+    } = await loadProbeAcceptance();
+    const { directory, ownershipToken } = createProbeDiagnosticsDirectory();
+    try {
+      writeFileSync(
+        join(directory, "pseagent-2026-07-28-unavailable.jsonl"),
+        `${JSON.stringify({
+          event: "finish",
+          requestId: "request-unavailable",
+          scope: "professional",
+          status: "temporarily_unavailable",
+          citationCount: 0,
+          elapsedMs: 123,
+          historicalAttempted: false,
+          historicalUsed: false,
+        })}\n`,
+        "utf8",
+      );
+
+      const finishEvents = readProbeFinishEvents(directory);
+      expect(finishEvents).toEqual([
+        expect.objectContaining({
+          event: "finish",
+          requestId: "request-unavailable",
+          scope: "professional",
+          status: "temporarily_unavailable",
+        }),
+      ]);
+      expect(() => validateRelatedContextAcceptance(
+        pseFixture,
+        finishEvents[0],
+        supportedRelatedFacts,
+        allowedSourcePages,
+      )).toThrow("unexpected_scope_or_status");
+    } finally {
+      removeProbeDiagnosticsDirectory(directory, ownershipToken);
+    }
+    expect(existsSync(directory)).toBe(false);
+  });
+
   it("rejects a finish record containing content fields", async () => {
     const {
       createProbeDiagnosticsDirectory,

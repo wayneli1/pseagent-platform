@@ -89,6 +89,7 @@ type RequirementState = {
   graphActions: number;
   noGainRounds: number;
   searchStopped: boolean;
+  lastCoverageGateDirectReadCount?: number;
 };
 
 type AgentState = {
@@ -135,6 +136,13 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       const normalizedAction = normalizeFinalCitationMetadata(action);
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
       if (pendingReviews.length > 0 && !deadlineReached(input)) {
+        for (const requirementId of pendingReviews) {
+          const requirementState = state.requirements.get(requirementId);
+          if (requirementState) {
+            requirementState.lastCoverageGateDirectReadCount =
+              requirementState.directReadPaths.size;
+          }
+        }
         observe(state, {
           type: "coverage_gate_requires_read",
           requirements: pendingReviews,
@@ -937,7 +945,9 @@ function pendingEvidenceReviews(
     const requirementState = state.requirements.get(result.id);
     if (
       !requirementState ||
-      requirementState.directReadPaths.size >= MAX_READS_PER_REQUIREMENT
+      requirementState.directReadPaths.size >= MAX_READS_PER_REQUIREMENT ||
+      requirementState.lastCoverageGateDirectReadCount ===
+        requirementState.directReadPaths.size
     ) {
       continue;
     }
