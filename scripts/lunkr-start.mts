@@ -4,6 +4,7 @@ import {
   LunkrPseBridge,
   LunkrSocketClient,
   SessionStore,
+  createRuntimeLogger,
   loadLunkrConfig,
   normalizeDirectMessage,
   safeError,
@@ -28,10 +29,23 @@ if (!(await auth.verify(session))) {
 
 const runtime = await createPseAgentRuntime(process.env);
 const api = new LunkrApi(config, session);
+const logQuestionEvent = createRuntimeLogger(
+  (line) => process.stderr.write(line),
+);
 const bridge = new LunkrPseBridge(config, {
-  answer: runtime.answer,
-  formatAnswer: formatMcpText,
+  answer: runtime.answerDetailed,
+  formatAnswer: (execution) => formatMcpText(execution.result),
+  describeResult: (execution) => ({
+    scope: execution.result.scope,
+    status: execution.result.status,
+    retryable: execution.retryable,
+    stopReason: execution.stopReason,
+    referenceCount:
+      execution.result.references.length +
+      (execution.result.historicalAnswer?.references.length ?? 0),
+  }),
   sendText: (peerUid, text) => api.sendText(peerUid, text),
+  onEvent: logQuestionEvent,
 });
 const socket = new LunkrSocketClient(config, session, {
   onState(state) {
@@ -41,11 +55,9 @@ const socket = new LunkrSocketClient(config, session, {
     if (name !== "message") return;
     const message = normalizeDirectMessage(data, session.selfUid);
     if (message === undefined) return;
-    process.stderr.write("lunkr.dm.received\n");
     void bridge.handle(message)
-      .then(() => process.stderr.write("lunkr.dm.replied\n"))
-      .catch((error) => {
-        process.stderr.write(`lunkr.dm.failed ${safeError(error)}\n`);
+      .catch(() => {
+        process.stderr.write("lunkr.dm.failed\n");
       });
   },
 });

@@ -11,6 +11,7 @@ export * from "./lunkr-api.js";
 export * from "./message-normalizer.js";
 export * from "./peer-scheduler.js";
 export * from "./redaction.js";
+export * from "./runtime-log.js";
 export * from "./session-store.js";
 export * from "./socket-client.js";
 export * from "./socket-protocol.js";
