@@ -55,6 +55,7 @@ export interface LunkrBridgeDependencies<Result> {
     signal?: AbortSignal,
   ) => Promise<Result>;
   readonly formatAnswer: (result: Result) => string;
+  readonly formatContextAnswer?: ((result: Result) => string) | undefined;
   readonly describeResult: (result: Result) => BridgeAnswerMetadata;
   readonly sendText: (peerUid: string, text: string) => Promise<void>;
   readonly onEvent?: ((event: BridgeQuestionEvent) => void) | undefined;
@@ -260,7 +261,15 @@ export class LunkrPseBridge<Result> {
       await this.sendWithRetry(message.peerUid, chunk);
       if (!this.isCurrent(start)) return;
     }
-    this.conversations.append(message.peerUid, { question, answer });
+    const contextAnswer = (
+      this.dependencies.formatContextAnswer?.(result) ?? answer
+    ).trim();
+    if (contextAnswer !== "") {
+      this.conversations.append(message.peerUid, {
+        question,
+        answer: contextAnswer,
+      });
+    }
     this.emit({
       type: "answered",
       peerUid: message.peerUid,

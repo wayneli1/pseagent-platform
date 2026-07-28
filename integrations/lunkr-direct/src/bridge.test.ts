@@ -59,6 +59,32 @@ describe("LunkrPseBridge", () => {
     ]);
   });
 
+  it("shows low-trust history but stores only the formal answer in later context", async () => {
+    const formalAnswer = "当前知识库暂未覆盖该问题，暂时无法给出可靠答案。";
+    const historicalClue = "⚠️ Coremail MCP 低可信历史线索（可能不正确）";
+    const answer = vi.fn<Answer>(async () => answered(formalAnswer));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = new LunkrPseBridge(config, {
+      answer,
+      formatAnswer: (result) => `${result.answer}\n\n${historicalClue}`,
+      formatContextAnswer: (result) => result.answer,
+      describeResult: (result) => ({
+        status: result.status,
+        retryable: result.retryable ?? false,
+        stopReason: result.stopReason,
+        referenceCount: 0,
+      }),
+      sendText,
+    });
+
+    await bridge.handle(message("m1", "#a#U", "未知能力"));
+    await bridge.handle(message("m2", "#a#U", "继续说明"));
+
+    expect(sentTexts(sendText)[1]).toContain(historicalClue);
+    expect(answer.mock.calls[1]?.[1]).toContain(formalAnswer);
+    expect(answer.mock.calls[1]?.[1]).not.toContain(historicalClue);
+  });
+
   it("deduplicates before allocating an id or sending an acknowledgment", async () => {
     const answer = vi.fn<Answer>(async () => answered("回答"));
     const sendText = vi.fn(async () => undefined);

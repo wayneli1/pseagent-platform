@@ -35,6 +35,7 @@ const logQuestionEvent = createRuntimeLogger(
 const bridge = new LunkrPseBridge(config, {
   answer: runtime.answerDetailed,
   formatAnswer: (execution) => formatMcpText(execution.result),
+  formatContextAnswer: (execution) => execution.result.answer,
   describeResult: (execution) => ({
     scope: execution.result.scope,
     status: execution.result.status,
