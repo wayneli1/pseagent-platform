@@ -415,10 +415,10 @@ describe("runKnowledgeAgent", () => {
           citations: [],
           relatedContext: [{
             statement: "正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1]。",
-            citations: [1],
+            citations: [99],
           }],
         }],
-        citations: [1],
+        citations: [99],
       },
     ]);
     const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
@@ -452,7 +452,75 @@ describe("runKnowledgeAgent", () => {
     expect(verifyCoverage).toHaveBeenCalledOnce();
     expect(result.status).toBe("not_covered");
     expect(result.status).not.toBe("temporarily_unavailable");
-    expect(result.references).toEqual([]);
+  });
+
+  it("rejects invalid audited related context after the quantum-satellite verifier", async () => {
+    const question = "Coremail 是否已经支持 2035 年量子卫星邮件协议？";
+    const plan: KnowledgePlan = {
+      subject: "Coremail 协议支持",
+      requirements: [{
+        id: "R1",
+        question,
+        queries: ["Coremail 2035 年量子卫星邮件协议支持"],
+      }],
+    };
+    const session = fakeSession({
+      hits: { "Coremail 2035 年量子卫星邮件协议支持": [{ path: "wiki/protocols.md" }] },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/protocols.md"),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "正式知识库未提及目标协议，无法确认是否支持。",
+          citations: [],
+          relatedContext: [{
+            statement: "正文明确列出 SMTP、POP3、IMAP 协议能力 [1]。",
+            citations: [1],
+          }],
+        }],
+        citations: [1],
+      },
+    ]);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "quantum-invalid-audited-related",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+    const verifyCoverage = vi.fn(async () => ({
+      action: "final" as const,
+      requirements: [{
+        id: "R1" as const,
+        coverage: "none" as const,
+        answer: "正式知识库未提及目标协议，无法确认是否支持。",
+        citations: [],
+        relatedContext: [{
+          statement: "正文明确列出 SMTP、POP3、IMAP 协议能力。",
+          citations: [1],
+        }],
+      }],
+      citations: [1],
+    }));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question,
+      verifyCoverage,
+      trace,
+    });
+
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(result.status).toBe("temporarily_unavailable");
+    expect(events).toContainEqual(expect.objectContaining({
+      event: "validation",
+      result: "rejected",
+      reason: "related_citation_metadata_mismatch",
+    }));
+    expect(events).toContainEqual({ event: "stop", reason: "coverage_verifier_invalid" });
   });
 
   it.each([

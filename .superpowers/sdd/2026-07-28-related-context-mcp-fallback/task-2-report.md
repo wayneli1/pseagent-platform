@@ -36,3 +36,19 @@ npm run typecheck -w @pseagent/app
 
 - 只修改了提示词、提示词/代理循环测试和本任务报告；未引入词法或嵌入式生产硬门，也未添加运行时字符串特判。
 - 未修改、暂存或提交 `docs/local-runbook.md`、`.sisyphus/`、环境或运行时数据。
+
+## 复审修复（Task 2）
+
+### 完成内容
+
+- 为知识代理提示补充三个独立断言：`relatedContext` 仅允许用于 `coverage=none`、每个 statement 只能陈述正文直接确认的事实、相关事实不得声称证明被遗漏目标。删除任一提示规则都会使对应断言失败。
+- 量子卫星用例的模型草稿改为故意过期的 related/top-level citation 元数据（`[99]`），以 statement 的 `[1]` 为权威来源，并断言进入 verifier 的草稿、顶层引用和正式正文证据均已归一化为 `[1]`。
+- 增加量子卫星审校器返回非法 related statement 的回归：post-verifier `ReferenceRegistry.validateFinal` 必须以 `related_citation_metadata_mismatch` 拒绝并返回暂时不可用，不能静默返回该草稿。
+- 移除了会固化当前响应格式的 `result.references === []` 断言；本任务只校验 verifier 草稿与证据，最终参考文献可见性留给 Task 3。
+
+### RED / GREEN 证据
+
+- RED（提示规则）：临时删除三个 relatedContext 规则后，`npm exec -w @pseagent/app -- vitest run src/prompts.test.ts` 失败，缺少受限相关信息契约。
+- RED（归一化）：临时跳过 related/top-level citation 归一化后，`npm exec -w @pseagent/app -- vitest run src/agent-loop.test.ts` 失败 6 项，其中量子卫星用例未进入 verifier。
+- RED（审校后校验）：临时跳过 audited final 校验后，同一 agent-loop 命令失败；量子卫星非法审校结果从预期的 `temporarily_unavailable` 错误地变为 `not_covered`。
+- GREEN：恢复实现后执行 `npm exec -w @pseagent/app -- vitest run src/prompts.test.ts src/agent-loop.test.ts`，2 files / 41 tests passed；`npm run typecheck -w @pseagent/app` 通过；`git diff --check` 无输出。

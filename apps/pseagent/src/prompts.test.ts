@@ -36,6 +36,9 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain("同义词、缩略词或等价表达只有确认等价关系时才能作为证据");
     expect(prompt).toContain("“支持哪些/有哪些”只能列出正文明确项目，非穷尽列表不得声称完整");
     expect(prompt).toContain("最多三项、每项一到四个引用的 relatedContext");
+    expect(prompt).toContain("仅在 coverage=none 时可以补充");
+    expect(prompt).toContain("每个 statement 只能陈述正文直接确认的相邻事实");
+    expect(prompt).toContain("也不得声称相关事实证明被遗漏的目标");
     expect(prompt).toContain("相关信息不得提升 coverage，目标 citations 仍必须为空");
     expect(prompt).toContain("量子卫星邮件协议");
     expect(prompt).toContain("正文只列 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP");
