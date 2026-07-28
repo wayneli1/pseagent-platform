@@ -11,6 +11,7 @@
     "test:rust": "cargo test --manifest-path services/knowledge-engine/Cargo.toml",
     "probe:live": "node --env-file=.env.local --import tsx scripts/probe-live.mts",
     "probe:coremail": "node --env-file=.env.local --import tsx scripts/probe-coremail-historical.mts",
+    "probe:related-context": "node --env-file=.env.local --import tsx scripts/probe-related-context.mts",
     "test:regression": "npm exec -w @pseagent/app -- vitest run src/regression.test.ts",
     "lunkr:login": "node --import tsx scripts/lunkr-login.mts",
     "lunkr:status": "node --import tsx scripts/lunkr-status.mts",

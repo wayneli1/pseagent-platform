@@ -22,6 +22,7 @@ const regressionCaseSchema = z.object({
   expectedStatus: answerStatusSchema,
   allowedProjects: z.array(projectSchema),
   requiredFacts: z.array(z.string().trim().min(1)),
+  relatedFacts: z.array(z.string().trim().min(1)).default([]),
   forbiddenFacts: z.array(z.string().trim().min(1)).min(1),
   allowedSourcePages: z.array(z.string().trim().min(1)),
 }).strict().superRefine((item, context) => {
@@ -40,8 +41,20 @@ const regressionCaseSchema = z.object({
   if (coveredKnowledgeCase && (item.requiredFacts.length === 0 || item.allowedSourcePages.length === 0)) {
     context.addIssue({ code: "custom", path: ["allowedSourcePages"], message: "covered_case_requires_evidence" });
   }
-  if (item.expectedStatus === "not_covered" && (item.requiredFacts.length !== 0 || item.allowedSourcePages.length !== 0)) {
-    context.addIssue({ code: "custom", path: ["expectedStatus"], message: "not_covered_must_not_declare_evidence" });
+  if (item.expectedStatus === "not_covered" && item.requiredFacts.length !== 0) {
+    context.addIssue({ code: "custom", path: ["requiredFacts"], message: "not_covered_must_not_declare_target_facts" });
+  }
+  if (item.expectedStatus !== "not_covered" && item.relatedFacts.length !== 0) {
+    context.addIssue({ code: "custom", path: ["relatedFacts"], message: "related_facts_require_not_covered" });
+  }
+  const relatedEvidenceDeclared = item.relatedFacts.length > 0 || (
+    item.expectedStatus === "not_covered" && item.allowedSourcePages.length > 0
+  );
+  if (
+    relatedEvidenceDeclared &&
+    (item.relatedFacts.length === 0 || item.allowedSourcePages.length === 0)
+  ) {
+    context.addIssue({ code: "custom", path: ["relatedFacts"], message: "related_evidence_requires_facts_and_pages" });
   }
 });
 type RegressionCase = z.infer<typeof regressionCaseSchema>;
@@ -82,7 +95,9 @@ function fakeSession(
 ) {
   const project = scope === "professional" ? "coremail-professional" as const : "presales-general" as const;
   const path = evidence?.allowedSourcePages[0] ?? "wiki/not-covered.md";
-  const body = evidence?.requiredFacts.join("；") ?? "";
+  const body = evidence === undefined
+    ? ""
+    : [...evidence.requiredFacts, ...evidence.relatedFacts].join("；");
   return {
     project,
     revision,
@@ -94,7 +109,13 @@ function fakeSession(
         project,
         revision,
         hits: evidence
-          ? [{ path, title: evidence.id, score: 1, matchedTerms: evidence.requiredFacts, snippet: body }]
+          ? [{
+              path,
+              title: evidence.id,
+              score: 1,
+              matchedTerms: [...evidence.requiredFacts, ...evidence.relatedFacts],
+              snippet: body,
+            }]
           : [],
       };
     }),
@@ -146,6 +167,32 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
       },
     ];
   }
+  if (testCase.relatedFacts.length > 0) {
+    const path = testCase.allowedSourcePages[0];
+    if (!path) throw new Error("missing_related_source_page");
+    return [
+      {
+        action: "tool",
+        tool: "kb.search",
+        input: { requirementId: "R1", query: testCase.question, topK: 5 },
+      },
+      { action: "tool", tool: "kb.read_page", input: { requirementId: "R1", path } },
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+          citations: [],
+          relatedContext: [{
+            statement: `正文明确列出 ${testCase.relatedFacts.join("、")} 协议能力 [1]。`,
+            citations: [1],
+          }],
+        }],
+        citations: [1],
+      },
+    ];
+  }
   return [
     {
       action: "tool",
@@ -191,6 +238,12 @@ describe("fixed 41-question scripted protocol regression", () => {
         expect(item.requiredFacts.length).toBeGreaterThan(0);
         expect(item.allowedSourcePages.length).toBeGreaterThan(0);
       }
+      if (item.expectedStatus === "not_covered") {
+        expect(item.requiredFacts).toEqual([]);
+        expect(item.relatedFacts.length === 0).toBe(
+          item.allowedSourcePages.length === 0,
+        );
+      }
     }
   });
 
@@ -216,15 +269,26 @@ describe("fixed 41-question scripted protocol regression", () => {
     });
   });
 
+  it("keeps P11 uncovered while declaring only formal related protocol evidence", () => {
+    expect(cases.find((item) => item.id === "P11")).toMatchObject({
+      expectedScope: "professional",
+      expectedStatus: "not_covered",
+      requiredFacts: [],
+      relatedFacts: ["SMTP", "POP3", "IMAP", "HTTP/HTTPS"],
+      forbiddenFacts: ["已经支持", "明确不支持", "尚未支持"],
+      allowedSourcePages: ["wiki/concepts/邮件系统协议基础.md"],
+    });
+  });
+
   it.each(cases)("routes and handles $id", async (testCase) => {
     const routeModel = routingModel();
     const routed = await new ScopeRouter(routeModel).route(testCase.question);
     expect(routed).toBe(testCase.expectedScope);
     expect(routeModel.completeJson).toHaveBeenCalledOnce();
 
-    const evidence = testCase.expectedScope !== "normal" && testCase.expectedStatus === "answered"
-      ? testCase
-      : undefined;
+    const evidence = testCase.expectedScope !== "normal" && (
+      testCase.expectedStatus === "answered" || testCase.relatedFacts.length > 0
+    ) ? testCase : undefined;
     const textAnswer = testCase.requiredFacts.join("；");
     const model = scriptedModel(actionsFor(testCase), textAnswer);
     const projectsCalled: string[] = [];
@@ -258,6 +322,7 @@ describe("fixed 41-question scripted protocol regression", () => {
     expect(result.scope).toBe(testCase.expectedScope);
     expect(result.status).toBe(testCase.expectedStatus);
     for (const fact of testCase.requiredFacts) expect(result.answer).toContain(fact);
+    for (const fact of testCase.relatedFacts) expect(result.answer).toContain(fact);
     for (const fact of testCase.forbiddenFacts) expect(result.answer).not.toContain(fact);
 
     if (testCase.expectedScope === "normal") {
@@ -274,9 +339,16 @@ describe("fixed 41-question scripted protocol regression", () => {
     );
     expect(new Set(projectsCalled)).toEqual(new Set(testCase.allowedProjects));
     if (testCase.expectedStatus === "not_covered") {
-      expect(result.answer).toBe(NOT_COVERED_TEXT);
-      expect(result.references).toEqual([]);
-      expect(pagesRead).toEqual([]);
+      if (testCase.relatedFacts.length === 0) {
+        expect(result.answer).toBe(NOT_COVERED_TEXT);
+        expect(result.references).toEqual([]);
+        expect(pagesRead).toEqual([]);
+      } else {
+        expect(result.answer).toContain("无法根据正式知识库确认");
+        expect(pagesRead).toEqual([testCase.allowedSourcePages[0]]);
+        expect(result.references).toHaveLength(1);
+        expect(testCase.allowedSourcePages).toContain(result.references[0]?.path);
+      }
       return;
     }
 
