@@ -452,6 +452,16 @@ describe("runKnowledgeAgent", () => {
     expect(verifyCoverage).toHaveBeenCalledOnce();
     expect(result.status).toBe("not_covered");
     expect(result.status).not.toBe("temporarily_unavailable");
+    expect(result.answer).toContain("正式知识库相关信息：");
+    expect(result.answer).toContain(
+      "正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1]。",
+    );
+    expect(result.answer).toContain("覆盖结论：");
+    expect(result.references).toEqual([expect.objectContaining({
+      index: 1,
+      title: "wiki/protocols.md",
+      path: "wiki/protocols.md",
+    })]);
   });
 
   it("rejects invalid audited related context after the quantum-satellite verifier", async () => {

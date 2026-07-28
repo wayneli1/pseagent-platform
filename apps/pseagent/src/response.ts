@@ -14,9 +14,9 @@ export const PARTIAL_LIMITATION_TEXT = "知识库尚未覆盖问题的其余部�
 
 export function deriveStatus(
   requirementCoverages: readonly Coverage[],
-  referenceCount: number,
+  _referenceCount: number,
 ): AnswerStatus {
-  if (referenceCount === 0 || requirementCoverages.every((coverage) => coverage === "none")) {
+  if (requirementCoverages.every((coverage) => coverage === "none")) {
     return "not_covered";
   }
   return requirementCoverages.every((coverage) => coverage === "complete")
@@ -29,18 +29,42 @@ export function formatKnowledgeFinal(
   action: FinalAction,
   references: readonly Reference[],
 ): AnswerResult {
+  const status = deriveStatus(
+    action.requirements.map((requirement) => requirement.coverage),
+    references.length,
+  );
+  const relatedContext = action.requirements
+    .flatMap((requirement) => requirement.relatedContext ?? [])
+    .map((item) => item.statement.trim())
+    .filter(Boolean);
+  if (status === "not_covered" && relatedContext.length > 0 && references.length > 0) {
+    const conclusion = action.requirements
+      .map((requirement) => requirement.answer.trim())
+      .filter(Boolean)
+      .join("\n\n");
+    return {
+      scope,
+      status,
+      answer: [
+        "正式知识库相关信息：",
+        relatedContext.join("\n\n"),
+        "覆盖结论：",
+        conclusion,
+        "正式知识库资料来源：",
+        formatSources(references),
+      ].join("\n\n"),
+      references: [...references],
+    };
+  }
   const answer = action.requirements
     .map((requirement) => requirement.answer.trim())
     .filter(Boolean)
     .join("\n\n");
   return formatAnswerResult({
     scope,
-    status: deriveStatus(
-      action.requirements.map((requirement) => requirement.coverage),
-      references.length,
-    ),
-    answer,
-    references,
+    status,
+    answer: status === "not_covered" ? "" : answer,
+    references: status === "not_covered" ? [] : references,
   });
 }
 
@@ -55,7 +79,15 @@ export function formatAnswerResult(input: {
   readonly references: readonly Reference[];
 }): AnswerResult {
   if (input.status === "not_covered") {
-    return { scope: input.scope, status: input.status, answer: NOT_COVERED_TEXT, references: [] };
+    if (!input.answer.trim() || input.references.length === 0) {
+      return { scope: input.scope, status: input.status, answer: NOT_COVERED_TEXT, references: [] };
+    }
+    return {
+      scope: input.scope,
+      status: input.status,
+      answer: input.answer.trim(),
+      references: [...input.references],
+    };
   }
   if (input.status === "temporarily_unavailable") {
     return {
@@ -79,6 +111,12 @@ export function formatAnswerResult(input: {
     answer: `${answer}\n\n资料来源：\n${sources}`,
     references: [...input.references],
   };
+}
+
+function formatSources(references: readonly Reference[]): string {
+  return references
+    .map((reference) => `[${reference.index}] ${reference.title} — ${reference.project}/${reference.path}`)
+    .join("\n");
 }
 
 function hasLimitation(answer: string): boolean {

@@ -98,4 +98,36 @@ describe("PSEAgent MCP", () => {
     expect(text).not.toContain("\n\n可信度：低\n\n");
     expect(result.references).toEqual([]);
   });
+
+  it("leaves formal related-context sections intact when no historical answer exists", () => {
+    const result: AnswerResult = {
+      scope: "professional",
+      status: "not_covered",
+      answer: [
+        "正式知识库相关信息：",
+        "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
+        "覆盖结论：",
+        "正式资料未提及目标协议，无法确认 Coremail 是否支持。",
+        "正式知识库资料来源：",
+        "[1] Coremail 协议能力 — coremail-professional/wiki/protocols.md",
+        "[2] Coremail 邮件协议 — coremail-professional/wiki/mail-protocols.md",
+      ].join("\n\n"),
+      references: [{
+        ...fixture.references[0]!,
+        path: "wiki/protocols.md",
+      }, {
+        ...fixture.references[0]!,
+        index: 2,
+        title: "Coremail 邮件协议",
+        path: "wiki/mail-protocols.md",
+        contentHash: "c".repeat(64),
+      }],
+    };
+
+    const text = formatMcpText(result);
+
+    expect(text).toBe(result.answer);
+    expect(text.match(/正式知识库资料来源：/gu)).toHaveLength(1);
+    expect(text).not.toContain("历史来源：");
+  });
 });
