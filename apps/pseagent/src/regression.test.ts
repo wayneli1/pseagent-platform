@@ -47,7 +47,7 @@ const regressionCaseSchema = z.object({
 type RegressionCase = z.infer<typeof regressionCaseSchema>;
 
 const datasetPath = fileURLToPath(new URL("../../../tests/regression/questions.json", import.meta.url));
-const cases = z.array(regressionCaseSchema).length(40).parse(JSON.parse(readFileSync(datasetPath, "utf8")));
+const cases = z.array(regressionCaseSchema).length(41).parse(JSON.parse(readFileSync(datasetPath, "utf8")));
 const revision = "a".repeat(40);
 const contentHash = "b".repeat(64);
 
@@ -165,15 +165,15 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
   ];
 }
 
-describe("fixed 40-question scripted protocol regression", () => {
+describe("fixed 41-question scripted protocol regression", () => {
   it("is explicitly a protocol harness rather than a real retrieval quality test", () => {
     expect(scriptedModel).toBeTypeOf("function");
     expect(fakeSession).toBeTypeOf("function");
   });
 
-  it("contains exactly 40 unique stable IDs", () => {
-    expect(cases).toHaveLength(40);
-    expect(new Set(cases.map((item) => item.id)).size).toBe(40);
+  it("contains exactly 41 unique stable IDs", () => {
+    expect(cases).toHaveLength(41);
+    expect(new Set(cases.map((item) => item.id)).size).toBe(41);
   });
 
   it("declares complete acceptance expectations for every case", () => {
