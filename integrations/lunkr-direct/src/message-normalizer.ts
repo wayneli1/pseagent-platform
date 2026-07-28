@@ -42,7 +42,10 @@ export function normalizeDirectMessage(
   ) {
     return undefined;
   }
-  const text = firstString(payload, ["subject", "content", "text", "body"]) ?? "";
+  const subject = firstString(payload, ["subject"]);
+  const text = subject === undefined
+    ? firstString(payload, ["content", "text", "body"]) ?? ""
+    : decodeLunkrSubject(subject);
   const hasAttachments = detectsAttachments(payload);
   if (text.trim() === "" && !hasAttachments) return undefined;
   const timestamp = parseTimestamp(payload.time ?? payload.timestamp, now);
@@ -71,6 +74,14 @@ export function recognizeDirectCommand(text: string): DirectCommand | undefined 
   if (normalized === "/new") return "new";
   if (normalized === "/help") return "help";
   return undefined;
+}
+
+function decodeLunkrSubject(subject: string): string {
+  try {
+    return decodeURIComponent(subject.replace(/\+/gu, " "));
+  } catch {
+    return subject;
+  }
 }
 
 function parsePayload(value: unknown): Record<string, unknown> | undefined {

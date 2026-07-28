@@ -106,4 +106,52 @@ describe("normalizeDirectMessage", () => {
       }),
     }, "#bot#U")).toMatchObject({ command: "new" });
   });
+
+  it.each([
+    ["%2Fnew", "/new", "new"],
+    ["%2Fhelp", "/help", "help"],
+    ["%EF%BC%8Fnew", "／new", "new"],
+  ] as const)(
+    "decodes the documented form-encoded subject %j before recognizing commands",
+    (subject, text, command) => {
+      expect(normalizeDirectMessage({
+        topic: "inbox",
+        payload: JSON.stringify({
+          mid: `encoded-${command}`,
+          uid: "#peer#U",
+          from: { uid: "#peer#U" },
+          subject,
+        }),
+      }, "#bot#U")).toMatchObject({ text, command });
+    },
+  );
+
+  it("decodes ordinary form-encoded subject text exactly once", () => {
+    expect(normalizeDirectMessage({
+      topic: "inbox",
+      payload: JSON.stringify({
+        mid: "encoded-question",
+        uid: "#peer#U",
+        from: { uid: "#peer#U" },
+        subject: "%E5%AE%A2%E6%88%B7+%E9%9C%80%E6%B1%82",
+      }),
+    }, "#bot#U")).toMatchObject({
+      text: "客户 需求",
+    });
+  });
+
+  it.each(["%252Fnew", "%2Fnew+please", "%E0%A4%A"])(
+    "does not widen encoded command matching for %j",
+    (subject) => {
+      expect(normalizeDirectMessage({
+        topic: "inbox",
+        payload: JSON.stringify({
+          mid: `encoded-ordinary-${subject}`,
+          uid: "#peer#U",
+          from: { uid: "#peer#U" },
+          subject,
+        }),
+      }, "#bot#U")).not.toHaveProperty("command");
+    },
+  );
 });
