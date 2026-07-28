@@ -1,5 +1,7 @@
+import { z } from "zod";
 import {
   coverageVerificationActionSchema,
+  coverageVerificationReasonSchema,
   type Coverage,
   type CoverageVerificationAction,
   type CoverageVerificationReason,
@@ -51,15 +53,16 @@ export async function verifyKnowledgeCoverage(
     draft: input.draft,
     evidence: input.evidence,
   });
+  const modelResponseSchema = coverageVerificationModelResponseSchema(input.draft);
   const request = (repair: boolean) => input.model.completeJson({
     messages: repair
       ? [...messages, {
           role: "user" as const,
           content:
-            "上一次输出不符合 Schema。只输出合法 verify JSON；逐项保持规划 ID，coverage 不得升级，目标和相关 citations 都只能删减，顶层必须等于逐项目标后接相关信息的稳定并集。",
+            "上一次输出不符合 Schema。只输出合法 verify JSON；reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed；逐项保持规划 ID，coverage 不得升级，目标和相关 citations 都只能删减，顶层必须等于逐项目标后接相关信息的稳定并集。",
         }]
       : messages,
-    schema: coverageVerificationActionSchema,
+    schema: modelResponseSchema,
     schemaDescription: "pse_coverage_verification",
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
@@ -98,6 +101,56 @@ export async function verifyKnowledgeCoverage(
     })),
     citations: verified.citations,
   };
+}
+
+function coverageVerificationModelResponseSchema(draft: FinalAction) {
+  return z.preprocess(
+    (value) => normalizeModelReasons(value, draft),
+    coverageVerificationActionSchema,
+  );
+}
+
+function normalizeModelReasons(value: unknown, draft: FinalAction): unknown {
+  if (!isRecord(value) || !Array.isArray(value.requirements)) return value;
+  return {
+    ...value,
+    requirements: value.requirements.map((requirement) => {
+      if (!isRecord(requirement)) return requirement;
+      if (coverageVerificationReasonSchema.safeParse(requirement.reason).success) {
+        return requirement;
+      }
+      const matchingDraft = typeof requirement.id === "string"
+        ? draft.requirements.find((candidate) => candidate.id === requirement.id)
+        : undefined;
+      return {
+        ...requirement,
+        reason: deriveModelReason(requirement, matchingDraft),
+      };
+    }),
+  };
+}
+
+function deriveModelReason(
+  audited: Readonly<Record<string, unknown>>,
+  draft: FinalAction["requirements"][number] | undefined,
+): CoverageVerificationReason {
+  if (audited.coverage === "complete") return "direct_support";
+  if (audited.coverage === "partial") return "partial_support";
+  if (
+    audited.coverage === "none" &&
+    Array.isArray(audited.relatedContext) &&
+    audited.relatedContext.length > 0
+  ) {
+    return "related_only";
+  }
+  if (audited.coverage === "none" && draft?.coverage !== "none") {
+    return "unsupported_claim_removed";
+  }
+  return "target_omitted";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const COVERAGE_RANK: Readonly<Record<Coverage, number>> = {
