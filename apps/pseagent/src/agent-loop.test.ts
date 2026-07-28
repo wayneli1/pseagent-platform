@@ -1259,6 +1259,238 @@ describe("runKnowledgeAgent", () => {
     ]);
   });
 
+  it("tracks coverage-gate read counts independently across requirements", async () => {
+    const plan: KnowledgePlan = {
+      subject: "复合能力",
+      requirements: [
+        { id: "R1", question: "能力一", queries: ["seed-r1"] },
+        { id: "R2", question: "能力二", queries: ["seed-r2"] },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/r1-first.md" },
+          { path: "wiki/r1-second.md" },
+          { path: "wiki/r1-third.md" },
+        ],
+        "seed-r2": [
+          { path: "wiki/r2-first.md" },
+          { path: "wiki/r2-second.md" },
+          { path: "wiki/r2-third.md" },
+        ],
+      },
+    });
+    const firstFinal = {
+      action: "final",
+      requirements: [
+        {
+          id: "R1",
+          coverage: "none",
+          answer: "能力一未覆盖。",
+          citations: [],
+          relatedContext: [{
+            statement: "能力一相关正文 [1]。",
+            citations: [1],
+          }],
+        },
+        {
+          id: "R2",
+          coverage: "none",
+          answer: "能力二未覆盖。",
+          citations: [],
+          relatedContext: [{
+            statement: "能力二相关正文 [2][3]。",
+            citations: [2, 3],
+          }],
+        },
+      ],
+      citations: [1, 2, 3],
+    } satisfies AgentAction;
+    const finalAfterR1Read = {
+      action: "final",
+      requirements: [
+        {
+          id: "R1",
+          coverage: "none",
+          answer: "能力一仍未覆盖。",
+          citations: [],
+          relatedContext: [{
+            statement: "能力一两页相关正文 [1][4]。",
+            citations: [1, 4],
+          }],
+        },
+        {
+          id: "R2",
+          coverage: "none",
+          answer: "能力二仍未覆盖。",
+          citations: [],
+          relatedContext: [{
+            statement: "能力二相关正文 [2][3]。",
+            citations: [2, 3],
+          }],
+        },
+      ],
+      citations: [1, 4, 2, 3],
+    } satisfies AgentAction;
+    const model = scriptedAgentModel([
+      read("R1", "wiki/r1-first.md"),
+      readPages(
+        { requirementId: "R2", path: "wiki/r2-first.md" },
+        { requirementId: "R2", path: "wiki/r2-second.md" },
+      ),
+      firstFinal,
+      read("R1", "wiki/r1-second.md"),
+      finalAfterR1Read,
+      finalAfterR1Read,
+    ]);
+    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(model.calls).toBe(6);
+    const gateObservations = (payloadAt(model, 5).observations ?? [])
+      .map((observation) => JSON.parse(observation) as {
+        type?: string;
+        requirements?: string[];
+      })
+      .filter((observation) => observation.type === "coverage_gate_requires_read");
+    expect(gateObservations).toEqual([
+      {
+        type: "coverage_gate_requires_read",
+        requirements: ["R1", "R2"],
+      },
+      {
+        type: "coverage_gate_requires_read",
+        requirements: ["R1"],
+      },
+    ]);
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(result.status).toBe("not_covered");
+    expect(result.references.map((reference) => reference.path)).toEqual([
+      "wiki/r1-first.md",
+      "wiki/r1-second.md",
+      "wiki/r2-first.md",
+      "wiki/r2-second.md",
+    ]);
+  });
+
+  it("validates and repairs invalid citations after the same-count gate nudge", async () => {
+    const plan: KnowledgePlan = {
+      subject: "复合能力",
+      requirements: [
+        { id: "R1", question: "能力一", queries: ["seed-r1"] },
+        { id: "R2", question: "能力二", queries: ["seed-r2"] },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/r1-first.md" },
+          { path: "wiki/r1-unread.md" },
+        ],
+        "seed-r2": [
+          { path: "wiki/r2-first.md" },
+          { path: "wiki/r2-unread.md" },
+        ],
+      },
+    });
+    const invalidFinal = {
+      action: "final",
+      requirements: [
+        {
+          id: "R1",
+          coverage: "none",
+          answer: "能力一未覆盖。",
+          citations: [],
+          relatedContext: [{
+            statement: "错误引用了能力二正文 [2]。",
+            citations: [2],
+          }],
+        },
+        {
+          id: "R2",
+          coverage: "none",
+          answer: "能力二未覆盖。",
+          citations: [],
+          relatedContext: [{
+            statement: "能力二相关正文 [2]。",
+            citations: [2],
+          }],
+        },
+      ],
+      citations: [2],
+    } satisfies AgentAction;
+    const repairedFinal = {
+      action: "final",
+      requirements: [
+        {
+          id: "R1",
+          coverage: "none",
+          answer: "能力一未覆盖。",
+          citations: [],
+          relatedContext: [{
+            statement: "能力一相关正文 [1]。",
+            citations: [1],
+          }],
+        },
+        {
+          id: "R2",
+          coverage: "none",
+          answer: "能力二未覆盖。",
+          citations: [],
+          relatedContext: [{
+            statement: "能力二相关正文 [2]。",
+            citations: [2],
+          }],
+        },
+      ],
+      citations: [1, 2],
+    } satisfies AgentAction;
+    const model = scriptedAgentModel([
+      read("R1", "wiki/r1-first.md"),
+      read("R2", "wiki/r2-first.md"),
+      invalidFinal,
+      invalidFinal,
+      repairedFinal,
+    ]);
+    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "invalid-final-after-evidence-nudge",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+      trace,
+    });
+
+    expect(events).toContainEqual({
+      event: "validation",
+      result: "rejected",
+      reason: "citation_not_read_for_requirement:R1:2",
+      repairAttempt: 1,
+    });
+    expect(payloadAt(model, 4).observations?.join("\n")).toContain(
+      "invalid_citations",
+    );
+    expect(model.calls).toBe(5);
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(verifyCoverage.mock.calls[0]?.[0].draft).toEqual(repairedFinal);
+    expect(result.status).toBe("not_covered");
+    expect(result.references.map((reference) => reference.path)).toEqual([
+      "wiki/r1-first.md",
+      "wiki/r2-first.md",
+    ]);
+  });
+
   it("emits a content-free search-to-coverage diagnostic trail", async () => {
     const session = fakeSession({
       hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
