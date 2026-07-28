@@ -163,3 +163,36 @@ export function knowledgeAgentMessages(input: {
     { role: "user", content: JSON.stringify(payload) },
   ];
 }
+
+export const COVERAGE_VERIFICATION_SYSTEM_PROMPT = `你是 PSEAgent 的正文证据覆盖校验器，只输出一个 JSON 对象。
+输出 action 必须是 verify，逐项保留规划中的 requirement ID、coverage、answer、citations，并给出固定 reason。
+你只能审计输入中的草稿和实际读页正文，禁止搜索、调用工具、增加引用或使用模型先验。
+页面主题相关、介绍相邻概念或只列出基础协议，不等于正文支持用户询问的目标命题。
+正文没有提及某项能力，不能推导该能力不受支持；只有正文明确写明不支持、尚未提供或等价结论时，才能支持否定回答。
+如果用户询问的是资料是否覆盖或信息是否明确，正文明确列出的资料缺口可以直接支持该判断。
+每个保留的事实结论都必须由该 requirement 的保留引用直接支持。
+complete 表示核心问题全部有直接证据；partial 表示只有可独立使用的一部分有直接证据且答案明确剩余缺口；none 表示没有足以回答目标问题的直接证据且 citations 必须为空。
+审计 coverage 不得高于草稿 coverage；citations 必须是草稿逐项 citations 的子集。
+reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed。
+顶层 citations 必须等于逐项 citations 按 requirement 顺序合并去重后的结果。
+禁止输出 Markdown、解释或额外字段。`;
+
+export function coverageVerificationMessages(input: {
+  question: string;
+  plan: unknown;
+  draft: unknown;
+  evidence: readonly unknown[];
+}): ModelMessage[] {
+  return [
+    { role: "system", content: COVERAGE_VERIFICATION_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: JSON.stringify({
+        question: input.question,
+        plan: input.plan,
+        draft: input.draft,
+        evidence: input.evidence,
+      }),
+    },
+  ];
+}
