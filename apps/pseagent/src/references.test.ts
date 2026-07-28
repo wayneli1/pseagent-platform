@@ -33,11 +33,21 @@ function readEvidence(path = "wiki/concepts/coremail-ai助手.md", overrides: Pa
 }
 
 function final(
-  requirementResults: RequirementCoverage[],
+  requirementResults: Array<Omit<RequirementCoverage, "answer"> & { answer?: string }>,
   answer: string,
   citations: number[],
 ): FinalAction {
-  return { action: "final", requirements: requirementResults, answer, citations };
+  return {
+    action: "final",
+    requirements: requirementResults.map((item) => ({
+      ...item,
+      answer: item.answer ?? [
+        answer.replace(/\[\d+\]/gu, "").trim() || "当前资料未覆盖",
+        ...item.citations.map((citation) => `[${citation}]`),
+      ].join(" ").trim(),
+    })),
+    citations,
+  };
 }
 
 function evidence(entries: Array<[string, number[]]>): ReadonlyMap<string, ReadonlySet<number>> {
@@ -75,6 +85,22 @@ describe("ReferenceRegistry", () => {
       { id: "R1", coverage: "complete", citations: [1] },
       { id: "R2", coverage: "complete", citations: [2] },
     ], "功能结论[1]；POC 结论[2]", [1, 2]);
+
+    expect(registry.validateFinal(
+      action,
+      requirements,
+      evidence([["R1", [1]], ["R2", [2]]]),
+    )).toEqual({ ok: true });
+  });
+
+  it("accepts a different inline citation order when the supported citation set is identical", () => {
+    const registry = new ReferenceRegistry("coremail-professional", revision);
+    registry.register(readEvidence("wiki/feature.md"));
+    registry.register(readEvidence("wiki/poc.md"));
+    const action = final([
+      { id: "R1", coverage: "complete", citations: [1] },
+      { id: "R2", coverage: "complete", citations: [2] },
+    ], "先说明 POC[2]，再说明功能[1]", [1, 2]);
 
     expect(registry.validateFinal(
       action,
@@ -160,9 +186,44 @@ describe("ReferenceRegistry", () => {
       singleEvidence,
     ).ok).toBe(false);
     expect(registry.validateFinal(
-      final([{ id: "R1", coverage: "complete", citations: [1] }], "结论", [1]),
+      final([{ id: "R1", coverage: "complete", answer: "结论", citations: [1] }], "结论", [1]),
       singleRequirement,
       singleEvidence,
     ).ok).toBe(false);
+  });
+
+  it("identifies the requirement and citation when provenance validation fails", () => {
+    const registry = new ReferenceRegistry("coremail-professional", revision);
+    registry.register(readEvidence());
+
+    expect(registry.validateFinal(
+      final([{
+        id: "R1",
+        coverage: "complete",
+        answer: "结论 [1]",
+        citations: [1],
+      }], "结论 [1]", [1]),
+      requirements.slice(0, 1),
+      evidence([["R1", []]]),
+    )).toEqual({
+      ok: false,
+      reason: "citation_not_read_for_requirement:R1:1",
+    });
+  });
+
+  it("rejects a requirement that delegates its conclusion to a citation", () => {
+    const registry = new ReferenceRegistry("coremail-professional", revision);
+    registry.register(readEvidence());
+
+    expect(registry.validateFinal(
+      final([{
+        id: "R1",
+        coverage: "complete",
+        answer: "具体配置如 [1] 所列。",
+        citations: [1],
+      }], "具体配置如 [1] 所列。", [1]),
+      requirements.slice(0, 1),
+      evidence([["R1", [1]]]),
+    )).toEqual({ ok: false, reason: "requirement_answer_delegates_to_citation" });
   });
 });

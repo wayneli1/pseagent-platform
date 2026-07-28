@@ -7,22 +7,34 @@
   "cases": [
     {
       "id": "EC01",
-      "questions": [
-        "请介绍一下 PSEAgent 项目的目标和整体架构",
-        "这个机器人自身负责什么，和 Lunkr、OpenClaw 分别是什么关系？"
+      "variants": [
+        {
+          "question": "请介绍一下 PSEAgent 项目的目标和整体架构",
+          "requiredFacts": [["Coremail 售前问答统一入口", "Coremail 售前问答的统一入口"], "普通问题", "专业知识库", "通用售前知识库"]
+        },
+        {
+          "question": "这个机器人自身负责什么，和 Lunkr、OpenClaw 分别是什么关系？",
+          "requiredFacts": ["PSEAgent", "Lunkr", "消息", "路由", "不使用 OpenClaw"]
+        }
       ],
       "expectedScope": "normal",
       "expectedStatus": "answered",
       "requirements": [],
-      "requiredFacts": ["Coremail 售前问答统一入口", "Lunkr 只是消息通道", "不使用 OpenClaw"],
+      "requiredFacts": ["Coremail 售前问答统一入口", "Lunkr", "消息输入", "路由", "不使用 OpenClaw"],
       "forbiddenFacts": ["同时搜索两个知识库", "PSEAgent 是外部同名项目"],
       "maxElapsedMs": 300000
     },
     {
       "id": "EC02",
-      "questions": [
-        "列出 Coremail AI 助手的新功能特性，并说明当前资料没有覆盖什么",
-        "Coremail 的智能助手能做哪些事？版本和授权信息是否明确？"
+      "variants": [
+        {
+          "question": "列出 Coremail AI 助手的新功能特性，并说明当前资料没有覆盖什么",
+          "requiredFacts": ["多语言", "翻译", "邮件内容总结", "智能检索", "辅助写作", "适用版本"]
+        },
+        {
+          "question": "Coremail 的智能助手能做哪些事？版本和授权信息是否明确？",
+          "requiredFacts": ["多语言", "翻译", "邮件内容总结", "智能检索", "辅助写作", "适用版本", "授权"]
+        }
       ],
       "expectedScope": "professional",
       "expectedStatus": "answered",
@@ -41,9 +53,15 @@
     },
     {
       "id": "EC03",
-      "questions": [
-        "十万用户规模的 Coremail 邮件系统，如何规划多活、容灾和镜像同步？",
-        "如果客户有 10 万用户，请分别说明容量参考、本地多活边界以及镜像数据怎样同步。"
+      "variants": [
+        {
+          "question": "十万用户规模的 Coremail 邮件系统，如何规划多活、容灾和镜像同步？",
+          "requiredFacts": [["约30台服务器", "30台左右服务器", "共30台服务器", "30台服务器", "约32台服务器", "32台服务器"], ["约378TB", "378TB"], ["两副本", "双副本", "两机互备", "两两互备", "双机互备", "双机多活"], ["实时同步", "实时复制"], ["强同步", "强一致同步"], ["定时同步", "定期同步", "周期同步"]]
+        },
+        {
+          "question": "如果客户有 10 万用户，请分别说明容量参考、本地多活边界以及镜像数据怎样同步。",
+          "requiredFacts": [["约30台服务器", "30台左右服务器", "共30台服务器", "30台服务器", "约32台服务器", "32台服务器"], ["约378TB", "378TB"], ["两副本", "双副本", "两机互备", "两两互备", "双机互备", "双机多活"], ["实时同步", "实时复制"], ["强同步", "强一致同步"], ["定时同步", "定期同步", "周期同步"]]
+        }
       ],
       "expectedScope": "professional",
       "expectedStatus": "answered",
@@ -53,32 +71,41 @@
           "question": "十万用户规模和容量参考",
           "queries": ["10万用户 信创邮件系统 容灾节点 硬件配置", "十万用户 邮件系统 容量规划"],
           "expectedEvidencePages": ["wiki/findings/10万用户级信创邮件系统容灾节点硬件配置参考.md"],
-          "requiredFacts": ["约30台服务器", "约378TB"]
+          "requiredFacts": [["约30台服务器", "30台左右服务器", "共30台服务器", "30台服务器", "约32台服务器", "32台服务器"], ["约378TB", "378TB"]]
         },
         {
           "id": "R2",
           "question": "多活和容灾设计边界",
           "queries": ["邮件系统多活与容灾设计", "Coremail 同机房多活 跨机房多活 边界"],
-          "expectedEvidencePages": ["wiki/concepts/邮件系统多活与容灾设计.md"],
-          "requiredFacts": ["两副本", "跨机房多活"]
+          "expectedEvidencePages": [
+            "wiki/concepts/邮件系统多活与容灾设计.md",
+            "wiki/synthesis/邮件系统多活与容灾设计.md"
+          ],
+          "requiredFacts": [["两副本", "双副本", "两机互备", "两两互备", "双机互备", "双机多活"], "跨机房多活"]
         },
         {
           "id": "R3",
           "question": "镜像系统同步机制",
           "queries": ["镜像系统同步机制", "Coremail 镜像 实时同步 强同步 定时同步"],
           "expectedEvidencePages": ["wiki/concepts/镜像系统同步机制.md"],
-          "requiredFacts": ["实时同步", "强同步", "定时同步"]
+          "requiredFacts": [["实时同步", "实时复制"], ["强同步", "强一致同步"], ["定时同步", "定期同步", "周期同步"]]
         }
       ],
-      "requiredFacts": ["约30台服务器", "约378TB", "两副本", "实时同步", "强同步", "定时同步"],
+      "requiredFacts": [["约30台服务器", "30台左右服务器", "共30台服务器", "30台服务器", "约32台服务器", "32台服务器"], ["约378TB", "378TB"], ["两副本", "双副本", "两机互备", "两两互备", "双机互备", "双机多活"], ["实时同步", "实时复制"], ["强同步", "强一致同步"], ["定时同步", "定期同步", "周期同步"]],
       "forbiddenFacts": ["跨机房多活默认推荐", "配置无需按客户情况调整"],
       "maxElapsedMs": 300000
     },
     {
       "id": "EC04",
-      "questions": [
-        "从 Domino 迁移到 Coremail，需要怎样搭建环境、执行迁移，并注意哪些特殊问题？",
-        "请给一份 Domino 邮件迁移准备清单，覆盖工具流程、Windows/JDK 前提和账号差异。"
+      "variants": [
+        {
+          "question": "从 Domino 迁移到 Coremail，需要怎样搭建环境、执行迁移，并注意哪些特殊问题？",
+          "requiredFacts": [["migrateX", "DTS", "domino-migrate.jar"], "Notes客户端", "Windows服务器", ["32位JDK", "JDK必须使用32位", "32位版本"], ".id文件", "补充邮件地址", "中文名", "主次机构"]
+        },
+        {
+          "question": "请给一份 Domino 邮件迁移准备清单，覆盖工具流程、Windows/JDK 前提和账号差异。",
+          "requiredFacts": [["migrateX", "DTS", "domino-migrate.jar"], "Notes客户端", "Windows服务器", ["32位JDK", "JDK必须使用32位", "32位版本"], ".id文件", "补充邮件地址", "中文名", "主次机构"]
+        }
       ],
       "expectedScope": "professional",
       "expectedStatus": "answered",
@@ -87,15 +114,22 @@
           "id": "R1",
           "question": "Domino 迁移工具和流程",
           "queries": ["Exchange迁移与Domino迁移对比 Domino 流程", "Domino migrateX 迁移流程"],
-          "expectedEvidencePages": ["wiki/comparisons/Exchange迁移与Domino迁移对比.md"],
-          "requiredFacts": ["migrateX", "Notes客户端"]
+          "expectedEvidencePages": [
+            "wiki/comparisons/Exchange迁移与Domino迁移对比.md",
+            "wiki/entities/Coremail迁移工具-migrateX.md",
+            "wiki/concepts/Domino到Coremail并行迁移路由方案.md"
+          ],
+          "requiredFacts": [["migrateX", "DTS", "domino-migrate.jar"], "Notes客户端"]
         },
         {
           "id": "R2",
           "question": "Domino 迁移环境前提",
           "queries": ["Domino迁移环境搭建", "Domino 迁移 Windows 32位JDK id文件"],
-          "expectedEvidencePages": ["wiki/concepts/Domino迁移环境搭建.md"],
-          "requiredFacts": ["Windows服务器", "32位JDK", ".id文件"]
+          "expectedEvidencePages": [
+            "wiki/concepts/Domino迁移环境搭建.md",
+            "wiki/comparisons/Exchange迁移与Domino迁移对比.md"
+          ],
+          "requiredFacts": ["Windows服务器", ["32位JDK", "JDK必须使用32位", "32位版本"], ".id文件"]
         },
         {
           "id": "R3",
@@ -105,15 +139,21 @@
           "requiredFacts": ["补充邮件地址", "中文名", "主次机构"]
         }
       ],
-      "requiredFacts": ["migrateX", "Notes客户端", "Windows服务器", "32位JDK", ".id文件", "补充邮件地址", "中文名", "主次机构"],
+      "requiredFacts": [["migrateX", "DTS", "domino-migrate.jar"], "Notes客户端", "Windows服务器", ["32位JDK", "JDK必须使用32位", "32位版本"], ".id文件", "补充邮件地址", "中文名", "主次机构"],
       "forbiddenFacts": ["64位JDK 可以直接运行", "无需客户提供权限"],
       "maxElapsedMs": 300000
     },
     {
       "id": "EC05",
-      "questions": [
-        "详细介绍 CACTER 邮件安全网关的功能，并说明做 POC 测试时的关键注意事项。",
-        "Coremail 安全网关有哪些核心能力？客户做网关选型测试时要重点防哪些坑？"
+      "variants": [
+        {
+          "question": "详细介绍 CACTER 邮件安全网关的功能，并说明做 POC 测试时的关键注意事项。",
+          "requiredFacts": [["反垃圾", "垃圾邮件过滤", "垃圾邮件检测"], ["反钓鱼", "钓鱼邮件", "钓鱼检测"], ["防病毒", "病毒邮件", "病毒扫描"], ["域内安全检测", "域内邮件检测", "域内检测"], ["高权重项", "高权重功能", "高分值功能", "关键评分项"], ["样本测试", "样本进行测试", "样本验证"], ["信创合规", "全栈信创", "全栈国产化"]]
+        },
+        {
+          "question": "Coremail 安全网关有哪些核心能力？客户做网关选型测试时要重点防哪些坑？",
+          "requiredFacts": [["反垃圾", "垃圾邮件过滤", "垃圾邮件检测"], ["反钓鱼", "钓鱼邮件", "钓鱼检测"], ["防病毒", "病毒邮件", "病毒扫描"], ["域内安全检测", "域内邮件检测", "域内检测"], ["高权重项", "高权重功能", "高分值功能", "关键评分项"], ["样本测试", "样本进行测试", "样本验证"], ["信创合规", "全栈信创", "全栈国产化"]]
+        }
       ],
       "expectedScope": "professional",
       "expectedStatus": "answered",
@@ -123,17 +163,17 @@
           "question": "CACTER 邮件安全网关核心功能",
           "queries": ["CACTER邮件安全网关 核心功能", "Coremail 安全网关 反垃圾 反钓鱼 防病毒 域内检测"],
           "expectedEvidencePages": ["wiki/entities/CACTER邮件安全网关.md"],
-          "requiredFacts": ["反垃圾", "反钓鱼", "防病毒", "域内安全检测"]
+          "requiredFacts": [["反垃圾", "垃圾邮件过滤", "垃圾邮件检测"], ["反钓鱼", "钓鱼邮件", "钓鱼检测"], ["防病毒", "病毒邮件", "病毒扫描"], ["域内安全检测", "域内邮件检测", "域内检测"]]
         },
         {
           "id": "R2",
           "question": "网关 POC 测试注意事项",
           "queries": ["网关POC测试要点", "邮件安全网关 选型测试 评分 高权重项 样本"],
           "expectedEvidencePages": ["wiki/concepts/网关POC测试要点.md"],
-          "requiredFacts": ["评分标准", "高权重项", "样本测试", "信创合规"]
+          "requiredFacts": [["评分标准", "评分体系"], ["高权重项", "高权重功能", "高分值功能", "关键评分项"], ["样本测试", "样本进行测试", "样本验证"], ["信创合规", "全栈信创", "全栈国产化"]]
         }
       ],
-      "requiredFacts": ["反垃圾", "反钓鱼", "防病毒", "域内安全检测", "高权重项", "样本测试", "信创合规"],
+      "requiredFacts": [["反垃圾", "垃圾邮件过滤", "垃圾邮件检测"], ["反钓鱼", "钓鱼邮件", "钓鱼检测"], ["防病毒", "病毒邮件", "病毒扫描"], ["域内安全检测", "域内邮件检测", "域内检测"], ["高权重项", "高权重功能", "高分值功能", "关键评分项"], ["样本测试", "样本进行测试", "样本验证"], ["信创合规", "全栈信创", "全栈国产化"]],
       "forbiddenFacts": ["样本测试代表生产表现", "准确率在任何条件下都是 99.8%"],
       "maxElapsedMs": 300000
     }

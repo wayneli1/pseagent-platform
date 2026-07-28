@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
@@ -10,16 +10,22 @@ import {
   KNOWLEDGE_UNAVAILABLE_TEXT,
   NOT_COVERED_TEXT,
 } from "../apps/pseagent/src/response.js";
+import { selectProbeVariants } from "./probe-selection.js";
+
+type FactExpectation = string | readonly string[];
 
 type GoldenCase = {
   readonly id: string;
-  readonly questions: readonly [string, string];
+  readonly variants: readonly [
+    { readonly question: string; readonly requiredFacts: readonly FactExpectation[] },
+    { readonly question: string; readonly requiredFacts: readonly FactExpectation[] },
+  ];
   readonly expectedScope: "professional" | "general" | "normal";
   readonly expectedStatus: "answered" | "partially_answered" | "not_covered" | "temporarily_unavailable";
   readonly requirements: readonly {
     readonly expectedEvidencePages: readonly string[];
   }[];
-  readonly requiredFacts: readonly string[];
+  readonly requiredFacts: readonly FactExpectation[];
   readonly forbiddenFacts: readonly string[];
   readonly maxElapsedMs: number;
 };
@@ -29,19 +35,24 @@ const corpusPath = fileURLToPath(
 const corpus = JSON.parse(readFileSync(corpusPath, "utf8")) as {
   readonly cases: readonly GoldenCase[];
 };
-const probes = corpus.cases.flatMap((item) => {
-  const questions = process.env.PSE_PROBE_INCLUDE_PARAPHRASES === "1"
-    ? item.questions
-    : item.questions.slice(0, 1);
-  return questions.map((question, variant) => ({
+const selectedCases = process.env.PSE_PROBE_CASE === undefined
+  ? corpus.cases
+  : corpus.cases.filter((item) => item.id === process.env.PSE_PROBE_CASE);
+const probes = selectedCases.flatMap((item) => {
+  const variants = selectProbeVariants(
+    item.variants,
+    process.env.PSE_PROBE_VARIANT,
+    process.env.PSE_PROBE_INCLUDE_PARAPHRASES === "1",
+  );
+  return variants.map(({ value: probeVariant, index: variant }) => ({
     id: `${item.id}.${variant + 1}`,
-    question,
+    question: probeVariant.question,
     expectedScope: item.expectedScope,
     expectedStatus: item.expectedStatus,
-    expectedEvidencePages: item.requirements.flatMap(
+    expectedEvidenceGroups: item.requirements.map(
       (requirement) => requirement.expectedEvidencePages,
     ),
-    requiredFacts: item.requiredFacts,
+    requiredFacts: probeVariant.requiredFacts,
     forbiddenFacts: item.forbiddenFacts,
     maxElapsedMs: item.maxElapsedMs,
   }));
@@ -53,7 +64,7 @@ const unavailableProbe = [
     question: "列出 Coremail AI 助手的新功能特性",
     expectedScope: "professional",
     expectedStatus: "temporarily_unavailable",
-    expectedEvidencePages: [],
+    expectedEvidenceGroups: [],
     requiredFacts: [],
     forbiddenFacts: [],
     maxElapsedMs: 300_000,
@@ -120,6 +131,7 @@ async function probe(): Promise<void> {
       throw new Error("unexpected_outer_tool_list");
     }
     const activeProbes = process.env.PSE_PROBE_EXPECT_UNAVAILABLE === "1" ? unavailableProbe : probes;
+    if (activeProbes.length === 0) throw new Error("unexpected_probe_result");
     for (const [index, item] of activeProbes.entries()) {
       activeProbe = item.id;
       lastResultSummary = "";
@@ -130,6 +142,14 @@ async function probe(): Promise<void> {
         { timeout: 310_000 },
       );
       const result = answerResultSchema.parse(raw.structuredContent);
+      const capturePath = process.env.PSE_PROBE_CAPTURE_RESULT_PATH;
+      if (capturePath !== undefined) {
+        writeFileSync(
+          capturePath,
+          `${JSON.stringify({ probe: item.id, result }, null, 2)}\n`,
+          "utf8",
+        );
+      }
       lastResultSummary = `scope=${result.scope} status=${result.status} refs=${result.references.length}`;
       if (result.scope !== item.expectedScope || result.status !== item.expectedStatus) {
         throw new Error("unexpected_probe_result");
@@ -155,15 +175,25 @@ async function probe(): Promise<void> {
         throw new Error("unexpected_reference");
       }
       const elapsedMs = Math.round(performance.now() - started);
-      for (const fact of item.requiredFacts) {
-        if (!includesNormalized(result.answer, fact)) throw new Error("missing_required_fact");
+      for (const [factIndex, expectation] of item.requiredFacts.entries()) {
+        const alternatives = typeof expectation === "string" ? [expectation] : expectation;
+        if (!alternatives.some((fact) => includesNormalized(result.answer, fact))) {
+          lastResultSummary += ` missing_fact=${factIndex + 1}`;
+          throw new Error("missing_required_fact");
+        }
       }
-      for (const fact of item.forbiddenFacts) {
-        if (includesNormalized(result.answer, fact)) throw new Error("forbidden_fact_present");
+      for (const [factIndex, fact] of item.forbiddenFacts.entries()) {
+        if (includesNormalized(result.answer, fact)) {
+          lastResultSummary += ` forbidden_fact=${factIndex + 1}`;
+          throw new Error("forbidden_fact_present");
+        }
       }
       const referencePaths = new Set(result.references.map((reference) => reference.path));
-      for (const path of item.expectedEvidencePages) {
-        if (!referencePaths.has(path)) throw new Error("missing_expected_evidence_page");
+      for (const [groupIndex, paths] of item.expectedEvidenceGroups.entries()) {
+        if (!paths.some((path) => referencePaths.has(path))) {
+          lastResultSummary += ` missing_page_group=${groupIndex + 1}`;
+          throw new Error("missing_expected_evidence_page");
+        }
       }
       if (elapsedMs > item.maxElapsedMs) throw new Error("probe_deadline_exceeded");
       process.stdout.write(

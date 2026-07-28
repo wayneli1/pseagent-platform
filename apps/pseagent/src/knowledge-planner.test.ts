@@ -95,6 +95,50 @@ describe("ModelKnowledgePlanner", () => {
     expect(completeJson).toHaveBeenCalledOnce();
   });
 
+  it("splits an explicit user scale into its own capacity requirement", async () => {
+    const bundledPlan = {
+      subject: "十万用户 Coremail 邮件系统多活、容灾和镜像同步规划",
+      requirements: [
+        {
+          id: "R1" as const,
+          question: "十万用户规模下如何规划多活架构",
+          queries: ["Coremail 十万用户 多活架构"],
+        },
+        {
+          id: "R2" as const,
+          question: "如何规划容灾方案",
+          queries: ["Coremail 十万用户 容灾方案"],
+        },
+        {
+          id: "R3" as const,
+          question: "镜像同步机制如何实现",
+          queries: ["Coremail 镜像同步机制"],
+        },
+      ],
+    };
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse(bundledPlan));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({
+      ...plannerInput(),
+      question: "十万用户规模的 Coremail 邮件系统，如何规划多活、容灾和镜像同步？",
+    });
+
+    expect(result.requirements).toHaveLength(4);
+    expect(result.requirements[0]).toMatchObject({
+      id: "R1",
+      question: expect.stringMatching(/十万用户.*(?:服务器|存储|容量|硬件)/u),
+    });
+    expect(result.requirements[0]?.queries.join(" ")).toMatch(/十万用户.*Coremail.*(?:容量|硬件)/u);
+    expect(result.requirements.slice(1).map((requirement) => requirement.id))
+      .toEqual(["R2", "R3", "R4"]);
+  });
+
   it("repairs an invalid model payload exactly once", async () => {
     const completeJson = vi.fn()
       .mockRejectedValueOnce(new InvalidModelPayloadError())

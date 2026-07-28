@@ -3,7 +3,6 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AnswerStatus,
-  RequirementCoverage,
   Scope,
 } from "./contracts.js";
 
@@ -43,16 +42,40 @@ export type DiagnosticEvent =
       readonly sectionHeadings: readonly string[];
     }
   | {
+      readonly event: "evidence_shared";
+      readonly fromRequirementId: string;
+      readonly toRequirementId: string;
+      readonly path: string;
+      readonly citation: number;
+    }
+  | {
       readonly event: "coverage";
-      readonly requirements: readonly RequirementCoverage[];
+      readonly requirements: readonly {
+        readonly id: string;
+        readonly coverage: "complete" | "partial" | "none";
+        readonly citations: readonly number[];
+      }[];
       readonly citations: readonly number[];
       readonly stopReason: "final" | "deadline";
+    }
+  | {
+      readonly event: "validation";
+      readonly result: "rejected";
+      readonly reason: string;
+      readonly repairAttempt: number;
+    }
+  | {
+      readonly event: "model_payload";
+      readonly result: "rejected";
+      readonly reason: string;
+      readonly repairAttempt: number;
     }
   | {
       readonly event: "stop";
       readonly reason:
         | "seed_unavailable"
         | "routing_or_planning_unavailable"
+        | "model_unavailable"
         | "invalid_model_payload"
         | "invalid_final"
         | "turn_budget_exhausted";

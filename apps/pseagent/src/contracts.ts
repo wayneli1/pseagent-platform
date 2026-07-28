@@ -66,6 +66,25 @@ const readActionSchema = z.object({
     path: z.string().trim().min(1).max(1_024),
   }).strict(),
 }).strict();
+const readPagesActionSchema = z.object({
+  action: z.literal("tool"),
+  tool: z.literal("kb.read_pages"),
+  input: z.object({
+    pages: z.array(z.object({
+      requirementId: knowledgeRequirementIdSchema,
+      path: z.string().trim().min(1).max(1_024),
+    }).strict()).min(1).max(12),
+}).strict(),
+}).strict().superRefine((action, context) => {
+  const keys = action.input.pages.map((page) => `${page.requirementId}\u0000${page.path}`);
+  if (new Set(keys).size !== keys.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["input", "pages"],
+      message: "batch_read_requires_distinct_requirement_paths",
+    });
+  }
+});
 const graphActionSchema = z.object({
   action: z.literal("tool"),
   tool: z.literal("kb.graph"),
@@ -75,16 +94,21 @@ const graphActionSchema = z.object({
     topK: z.number().int().min(1).max(10).default(5),
   }).strict(),
 }).strict();
-export const toolActionSchema = z.discriminatedUnion("tool", [searchActionSchema, readActionSchema, graphActionSchema]);
+export const toolActionSchema = z.discriminatedUnion("tool", [
+  searchActionSchema,
+  readActionSchema,
+  readPagesActionSchema,
+  graphActionSchema,
+]);
 export const requirementCoverageSchema = z.object({
   id: knowledgeRequirementIdSchema,
   coverage: coverageSchema,
+  answer: z.string().trim().min(1).max(16_384),
   citations: z.array(z.number().int().positive()).max(20),
-}).strict();
+});
 export const finalActionSchema = z.object({
   action: z.literal("final"),
   requirements: z.array(requirementCoverageSchema).min(1).max(6),
-  answer: z.string().max(32_768),
   citations: z.array(z.number().int().positive()).max(20),
 }).strict();
 export const agentActionSchema = z.union([toolActionSchema, finalActionSchema]);

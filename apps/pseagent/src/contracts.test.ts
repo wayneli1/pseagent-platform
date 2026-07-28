@@ -43,6 +43,74 @@ describe("PSEAgent contracts", () => {
     })).toThrow();
   });
 
+  it("accepts parallel reads for distinct pages and rejects an exact duplicate pair", () => {
+    expect(agentActionSchema.parse({
+      action: "tool",
+      tool: "kb.read_pages",
+      input: {
+        pages: [
+          { requirementId: "R1", path: "wiki/one.md" },
+          { requirementId: "R1", path: "wiki/two.md" },
+        ],
+      },
+    })).toMatchObject({ tool: "kb.read_pages" });
+
+    expect(() => agentActionSchema.parse({
+      action: "tool",
+      tool: "kb.read_pages",
+      input: {
+        pages: [
+          { requirementId: "R1", path: "wiki/one.md" },
+          { requirementId: "R1", path: "wiki/one.md" },
+        ],
+      },
+    })).toThrow();
+  });
+
+  it("accepts two parallel reads for each of four planned requirements", () => {
+    expect(agentActionSchema.parse({
+      action: "tool",
+      tool: "kb.read_pages",
+      input: {
+        pages: [
+          { requirementId: "R1", path: "wiki/r1-primary.md" },
+          { requirementId: "R1", path: "wiki/r1-secondary.md" },
+          { requirementId: "R2", path: "wiki/r2-primary.md" },
+          { requirementId: "R2", path: "wiki/r2-secondary.md" },
+          { requirementId: "R3", path: "wiki/r3-primary.md" },
+          { requirementId: "R3", path: "wiki/r3-secondary.md" },
+          { requirementId: "R4", path: "wiki/r4-primary.md" },
+          { requirementId: "R4", path: "wiki/r4-secondary.md" },
+        ],
+      },
+    })).toMatchObject({ tool: "kb.read_pages" });
+  });
+
+  it("strips harmless per-requirement explanation fields while keeping final citation fields strict", () => {
+    const parsed = agentActionSchema.parse({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "结论[1]",
+        citations: [1],
+        explanation: "模型附带说明",
+      }],
+      citations: [1],
+    });
+    expect(parsed).toEqual({
+      action: "final",
+      requirements: [{ id: "R1", coverage: "complete", answer: "结论[1]", citations: [1] }],
+      citations: [1],
+    });
+    expect(() => agentActionSchema.parse({
+      action: "final",
+      requirements: [{ id: "R1", coverage: "complete", answer: "结论[1]", citations: [1] }],
+      citations: [1],
+      project: "coremail-professional",
+    })).toThrow();
+  });
+
   it("keeps historical answers separate and requires verifiable Jira/Wiki sources", () => {
     const parsed = answerResultSchema.parse({
       scope: "professional",

@@ -29,13 +29,17 @@ export function formatKnowledgeFinal(
   action: FinalAction,
   references: readonly Reference[],
 ): AnswerResult {
+  const answer = action.requirements
+    .map((requirement) => requirement.answer.trim())
+    .filter(Boolean)
+    .join("\n\n");
   return formatAnswerResult({
     scope,
     status: deriveStatus(
       action.requirements.map((requirement) => requirement.coverage),
       references.length,
     ),
-    answer: action.answer,
+    answer,
     references,
   });
 }

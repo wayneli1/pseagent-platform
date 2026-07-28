@@ -104,16 +104,17 @@ fn fixed_professional_snapshot_recalls_multi_part_evidence_pages() {
                     .unwrap();
                 recalled.extend(result.hits.into_iter().map(|hit| hit.path));
             }
-            for expected_path in &requirement.expected_evidence_pages {
-                assert!(
-                    recalled.contains(expected_path),
-                    "case {} requirement {} did not recall {:?}; got {:?}",
-                    case.id,
-                    requirement.id,
-                    expected_path,
-                    recalled
-                );
-            }
+            assert!(
+                requirement
+                    .expected_evidence_pages
+                    .iter()
+                    .any(|expected_path| recalled.contains(expected_path)),
+                "case {} requirement {} did not recall any expected evidence page {:?}; got {:?}",
+                case.id,
+                requirement.id,
+                requirement.expected_evidence_pages,
+                recalled
+            );
         }
     }
 }

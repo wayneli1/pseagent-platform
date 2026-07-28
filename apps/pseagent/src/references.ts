@@ -89,12 +89,6 @@ export class ReferenceRegistry {
     if (!sameNumbers(requirementCitations, action.citations)) {
       return { ok: false, reason: "requirement_citation_union_mismatch" };
     }
-    const answerCitations = stableUnique(
-      [...action.answer.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
-    );
-    if (!sameNumbers(answerCitations, action.citations)) {
-      return { ok: false, reason: "citation_metadata_mismatch" };
-    }
     if (action.citations.some((index) => this.entries[index - 1] === undefined)) {
       return { ok: false, reason: "unknown_citation" };
     }
@@ -103,24 +97,32 @@ export class ReferenceRegistry {
         return { ok: false, reason: "duplicate_requirement_citation" };
       }
       const evidence = evidenceByRequirement.get(item.id) ?? new Set<number>();
-      if (item.citations.some((citation) => !evidence.has(citation))) {
-        return { ok: false, reason: "citation_not_read_for_requirement" };
+      const unsupportedCitation = item.citations.find((citation) => !evidence.has(citation));
+      if (unsupportedCitation !== undefined) {
+        return {
+          ok: false,
+          reason: `citation_not_read_for_requirement:${item.id}:${unsupportedCitation}`,
+        };
+      }
+      const answerCitations = stableUnique(
+        [...item.answer.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+      );
+      if (!sameNumberSet(answerCitations, item.citations)) {
+        return { ok: false, reason: "requirement_citation_metadata_mismatch" };
       }
       if (item.coverage === "complete" || item.coverage === "partial") {
         if (item.citations.length === 0) {
           return { ok: false, reason: "covered_requirement_without_citation" };
         }
+        if (delegatesConclusionToCitation(item.answer)) {
+          return { ok: false, reason: "requirement_answer_delegates_to_citation" };
+        }
       } else if (item.citations.length > 0) {
         return { ok: false, reason: "none_requirement_with_citation" };
       }
-    }
-    const incomplete = action.requirements.some((item) => item.coverage !== "complete");
-    const draft = action.answer.trim();
-    if (action.citations.length > 0 && !draft) {
-      return { ok: false, reason: "covered_answer_without_text" };
-    }
-    if (incomplete && draft && !hasCoverageLimitation(draft)) {
-      return { ok: false, reason: "incomplete_without_limitation" };
+      if (item.coverage !== "complete" && !hasCoverageLimitation(item.answer)) {
+        return { ok: false, reason: "incomplete_without_limitation" };
+      }
     }
     return { ok: true };
   }
@@ -139,6 +141,14 @@ function sameNumbers(left: readonly number[], right: readonly number[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function sameNumberSet(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
+}
+
 function hasCoverageLimitation(answer: string): boolean {
   return /(未覆盖|待确认|暂无|无法|不足|没有|缺少|有限|其余|尚未|仅能|只能)/u.test(answer);
+}
+
+function delegatesConclusionToCitation(answer: string): boolean {
+  return /(?:见|如|参考|详见).{0,12}\[\d+\].{0,12}(?:所列|所示|资料|内容|说明)/u.test(answer);
 }

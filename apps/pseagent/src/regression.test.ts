@@ -136,8 +136,12 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
       { action: "tool", tool: "kb.read_page", input: { requirementId: "R1", path } },
       {
         action: "final",
-        requirements: [{ id: "R1", coverage: "complete", citations: [1] }],
-        answer: `${testCase.requiredFacts.join("；")} [1]`,
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: `${testCase.requiredFacts.join("；")} [1]`,
+          citations: [1],
+        }],
         citations: [1],
       },
     ];
@@ -150,8 +154,12 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
     },
     {
       action: "final",
-      requirements: [{ id: "R1", coverage: "none", citations: [] }],
-      answer: "当前资料未覆盖该问题",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "当前资料未覆盖该问题",
+        citations: [],
+      }],
       citations: [],
     },
   ];

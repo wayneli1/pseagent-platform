@@ -16,10 +16,13 @@ it("puts requirement-bound strict knowledge action shapes in the model prompt", 
     '{"action":"tool","tool":"kb.read_page","input":{"requirementId":"R1","path":"..."}}',
   );
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    '{"action":"tool","tool":"kb.read_pages","input":{"pages":[{"requirementId":"R1","path":"..."},{"requirementId":"R2","path":"..."}]}}',
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
     '{"action":"tool","tool":"kb.graph","input":{"requirementId":"R1","path":"...","topK":5}}',
   );
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
-    '{"action":"final","requirements":[{"id":"R1","coverage":"complete|partial|none","citations":[1]}],"answer":"... [1]","citations":[1]}',
+    '{"action":"final","requirements":[{"id":"R1","coverage":"complete|partial|none","answer":"该必答项的具体答案 [1]","citations":[1]}],"citations":[1]}',
   );
 });
 
@@ -28,7 +31,22 @@ it("defines evidence-bounded adaptive answer depth in the knowledge prompt", () 
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain("事实查询应直接、简洁地回答");
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain("方法类问题应说明关键步骤和注意事项");
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "必须显式覆盖证据中的主要能力、测试方式、评分或高权重项、合规门槛和结论限制",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "禁止用“见引用”“如某页所列”“参考资料”或仅给宽泛建议代替结论",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "证据的概述或摘要明确给出总量时，必须直接写出该总量",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
     "方案、部署和架构类问题应适当展开，分别说明方案组成、实施思路、主要风险与待确认项",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "必须写出证据明确给出的拓扑、冗余或副本数量及适用边界",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "证据的概述、表格或不同页面之间存在数值口径冲突时",
   );
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
     "其中某一项缺少知识证据时不得省略或编造，应明确标记为待确认",
@@ -38,6 +56,9 @@ it("defines evidence-bounded adaptive answer depth in the knowledge prompt", () 
   );
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
     "没有可靠知识证据时使用 none，不得依靠模型先验补充答案",
+  );
+  expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
+    "特定客户、旧版本、截图或单项目操作指南只能作为补充",
   );
 });
 
@@ -51,6 +72,11 @@ const read = (requirementId: string, path: string): AgentAction => ({
   tool: "kb.read_page",
   input: { requirementId, path },
 });
+const readPages = (...pages: Array<{ requirementId: string; path: string }>): AgentAction => ({
+  action: "tool",
+  tool: "kb.read_pages",
+  input: { pages },
+});
 const graph = (requirementId: string, path: string, topK = 5): AgentAction => ({
   action: "tool",
   tool: "kb.graph",
@@ -63,8 +89,13 @@ const final = (
   requirements = [{ id: "R1", coverage, citations }],
 ): AgentAction => ({
   action: "final",
-  requirements,
-  answer,
+  requirements: requirements.map((requirement) => ({
+    ...requirement,
+    answer: [
+      answer.replace(/\[\d+\]/gu, "").trim() || "当前资料未覆盖",
+      ...requirement.citations.map((citation) => `[${citation}]`),
+    ].join(" ").trim(),
+  })),
   citations,
 });
 
@@ -186,12 +217,39 @@ function payloadAt(model: ReturnType<typeof scriptedAgentModel>, index: number) 
         read: boolean;
       }>;
       citationIndexes: number[];
+      remainingReads: number;
     }>;
     observations?: string[];
   };
 }
 
 describe("runKnowledgeAgent", () => {
+  it("derives requirement citation metadata from inline citations before provenance validation", async () => {
+    const model = scriptedAgentModel([
+      read("R1", "wiki/r1.md"),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: "读取后确认 [1]",
+          citations: [],
+        }],
+        citations: [],
+      },
+    ]);
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
+    });
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(result).toMatchObject({
+      status: "answered",
+      references: [{ index: 1, path: "wiki/r1.md" }],
+    });
+  });
+
   it("automatically searches every seed query and fuses candidates with RRF", async () => {
     const plan: KnowledgePlan = {
       subject: "网关",
@@ -220,7 +278,8 @@ describe("runKnowledgeAgent", () => {
 
     await runKnowledgeAgent(agentInput(model, session, plan));
 
-    expect(session.search).toHaveBeenCalledTimes(2);
+    expect(session.search).toHaveBeenCalledTimes(3);
+    expect(session.search).toHaveBeenCalledWith("测试问题", 10, undefined);
     expect(session.search).toHaveBeenCalledWith("功能查询", 10, undefined);
     expect(session.search).toHaveBeenCalledWith("POC 查询", 10, undefined);
     const candidates = payloadAt(model, 0).requirementEvidence?.[0]?.candidates ?? [];
@@ -233,6 +292,202 @@ describe("runKnowledgeAgent", () => {
       ],
     });
     expect(candidates[0]?.rrfScore).toBeGreaterThan(candidates[1]?.rrfScore ?? 0);
+  });
+
+  it("shares candidates from the original full-question search with every requirement", async () => {
+    const session = fakeSession({
+      hits: {
+        "测试问题": [{ path: "wiki/concepts/full-question-hit.md" }],
+        "seed-r1": [],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/full-question-hit.md"),
+      final("complete", "完整问题召回了证据[1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]).toMatchObject({
+      path: "wiki/concepts/full-question-hit.md",
+      sourceQueries: ["测试问题"],
+    });
+    expect(session.readPage).toHaveBeenCalledWith(
+      "wiki/concepts/full-question-hit.md",
+      undefined,
+    );
+    expect(result.status).toBe("answered");
+  });
+
+  it("adds controlled lexical variants for seed-query wording gaps", async () => {
+    const plan: KnowledgePlan = {
+      subject: "网关 POC",
+      requirements: [{
+        id: "R1",
+        question: "POC 注意事项",
+        queries: ["POC测试关键注意事项 范围控制 压测 资源建议 信创"],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "POC测试关键注意事项 范围控制 压测 资源建议 信创": [{
+          path: "wiki/concepts/broad-poc.md",
+          title: "安全网关信创 POC 售前口径要点",
+        }],
+        "POC测试要点": [{
+          path: "wiki/concepts/gateway-poc.md",
+          title: "网关POC测试要点",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/gateway-poc.md"),
+      final("complete", "POC 要点[1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.search).toHaveBeenCalledWith(
+      "POC测试关键注意事项 范围控制 压测 资源建议 信创",
+      10,
+      undefined,
+    );
+    expect(session.search).toHaveBeenCalledWith("POC测试要点", 10, undefined);
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe("wiki/concepts/gateway-poc.md");
+    expect(result.status).toBe("answered");
+  });
+
+  it("adds a tool-focused seed query for migration execution questions", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Domino 迁移",
+      requirements: [{
+        id: "R1",
+        question: "Domino 迁移执行步骤",
+        queries: ["Domino 迁移 Coremail 执行步骤"],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Domino 迁移 Coremail 执行步骤": [],
+        "Domino 迁移 Coremail 工具": [{
+          path: "wiki/entities/Coremail迁移工具-migrateX.md",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/entities/Coremail迁移工具-migrateX.md"),
+      final("complete", "使用 migrateX 执行迁移 [1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.search).toHaveBeenCalledWith(
+      "Domino 迁移 Coremail 工具",
+      10,
+      undefined,
+    );
+    expect(result.status).toBe("answered");
+  });
+
+  it("ranks curated knowledge pages ahead of query indexes and raw source pages", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/queries/query-index.md" },
+          { path: "wiki/sources/raw.md" },
+          { path: "wiki/concepts/curated.md" },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/curated.md"),
+      final("complete", "结论[1]", [1]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session));
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe("wiki/concepts/curated.md");
+  });
+
+  it("ranks a title covering more requirement terms ahead of a broader RRF result", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Coremail 镜像同步",
+      requirements: [{
+        id: "R1",
+        question: "镜像同步机制在多活和容灾场景中如何实现",
+        queries: [
+          "Coremail 镜像 同步 机制 多活 容灾",
+          "镜像 多活 容灾 规划",
+        ],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Coremail 镜像 同步 机制 多活 容灾": [
+          {
+            path: "wiki/synthesis/general.md",
+            title: "邮件系统多活与容灾设计",
+          },
+          {
+            path: "wiki/concepts/mirror-sync.md",
+            title: "镜像系统同步机制",
+          },
+        ],
+        "镜像 多活 容灾 规划": [{
+          path: "wiki/synthesis/general.md",
+          title: "邮件系统多活与容灾设计",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/mirror-sync.md"),
+      final("complete", "实时、强制和定时同步 [1]", [1]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe("wiki/concepts/mirror-sync.md");
+  });
+
+  it("ranks a product entity first for an overall capability requirement", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Coremail 安全网关",
+      requirements: [{
+        id: "R1",
+        question: "Coremail 安全网关有哪些核心能力",
+        queries: ["Coremail 安全网关核心能力", "CACTER邮件安全网关功能"],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Coremail 安全网关核心能力": [
+          {
+            path: "wiki/concepts/gateway-test.md",
+            title: "Coremail 安全网关核心能力专项测试",
+          },
+          {
+            path: "wiki/entities/gateway.md",
+            title: "CACTER 邮件安全网关",
+          },
+        ],
+        "CACTER邮件安全网关功能": [{
+          path: "wiki/concepts/gateway-test.md",
+          title: "Coremail 安全网关核心能力专项测试",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/entities/gateway.md"),
+      final("complete", "网关核心能力 [1]", [1]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe("wiki/entities/gateway.md");
   });
 
   it("uses dynamic per-requirement budgets instead of a global four-action cap", async () => {
@@ -268,9 +523,114 @@ describe("runKnowledgeAgent", () => {
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
 
     expect(model.calls).toBe(7);
-    expect(session.totalToolCalls()).toBe(8);
+    expect(session.totalToolCalls()).toBe(9);
     expect(result.status).toBe("answered");
     expect(result.references.map((reference) => reference.path)).toEqual(["wiki/r1.md", "wiki/r2.md"]);
+  });
+
+  it("reads one candidate per requirement in parallel with a single model action", async () => {
+    const plan: KnowledgePlan = {
+      subject: "复合问题",
+      requirements: [
+        { id: "R1", question: "容量", queries: ["seed-r1"] },
+        { id: "R2", question: "多活", queries: ["seed-r2"] },
+        { id: "R3", question: "同步", queries: ["seed-r3"] },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{ path: "wiki/r1.md" }],
+        "seed-r2": [{ path: "wiki/r2.md" }],
+        "seed-r3": [{ path: "wiki/r3.md" }],
+      },
+    });
+    const model = scriptedAgentModel([
+      readPages(
+        { requirementId: "R1", path: "wiki/r1.md" },
+        { requirementId: "R2", path: "wiki/r2.md" },
+        { requirementId: "R3", path: "wiki/r3.md" },
+      ),
+      final("complete", "容量[1]，多活[2]，同步[3]", [1, 2, 3], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [2] },
+        { id: "R3", coverage: "complete", citations: [3] },
+      ]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(model.calls).toBe(2);
+    expect(session.readPage).toHaveBeenCalledTimes(3);
+    expect(result.status).toBe("answered");
+    expect(result.references.map((reference) => reference.path)).toEqual([
+      "wiki/r1.md",
+      "wiki/r2.md",
+      "wiki/r3.md",
+    ]);
+  });
+
+  it("reads up to two pages per requirement and defers the rest to a later turn", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/one.md" },
+          { path: "wiki/two.md" },
+          { path: "wiki/three.md" },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      readPages(
+        { requirementId: "R1", path: "wiki/one.md" },
+        { requirementId: "R1", path: "wiki/two.md" },
+        { requirementId: "R1", path: "wiki/three.md" },
+      ),
+      read("R1", "wiki/three.md"),
+      final("complete", "联合证据[1][2][3]", [1, 2, 3]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(model.calls).toBe(3);
+    expect(session.readPage).toHaveBeenCalledTimes(3);
+    expect(payloadAt(model, 1).observations?.join("\n"))
+      .toContain("batch_read_deferred_for_requirement");
+    expect(result.status).toBe("answered");
+  });
+
+  it("keeps the per-requirement read budget when a batch contains too many pages", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/one.md" },
+          { path: "wiki/two.md" },
+          { path: "wiki/three.md" },
+          { path: "wiki/four.md" },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      readPages(
+        { requirementId: "R1", path: "wiki/one.md" },
+        { requirementId: "R1", path: "wiki/two.md" },
+      ),
+      readPages(
+        { requirementId: "R1", path: "wiki/two.md" },
+        { requirementId: "R1", path: "wiki/three.md" },
+      ),
+      readPages(
+        { requirementId: "R1", path: "wiki/three.md" },
+        { requirementId: "R1", path: "wiki/four.md" },
+      ),
+      read("R1", "wiki/four.md"),
+      final("complete", "三页证据[1][2][3]", [1, 2, 3]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(session.readPage).toHaveBeenCalledTimes(3);
+    expect(result.references).toHaveLength(3);
+    expect(result.status).toBe("answered");
   });
 
   it("rejects reading a candidate through a different requirement", async () => {
@@ -304,6 +664,104 @@ describe("runKnowledgeAgent", () => {
     expect(session.readPage).toHaveBeenNthCalledWith(2, "wiki/r1.md", undefined);
     expect(payloadAt(model, 1).observations?.join("\n"))
       .toContain("path_not_candidate_for_requirement");
+  });
+
+  it("shares one read citation only with other requirements that retrieved the same page", async () => {
+    const plan: KnowledgePlan = {
+      subject: "共享证据",
+      requirements: [
+        { id: "R1", question: "架构", queries: ["seed-r1"] },
+        { id: "R2", question: "容灾", queries: ["seed-r2"] },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{ path: "wiki/shared.md" }],
+        "seed-r2": [{ path: "wiki/shared.md" }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/shared.md"),
+      final("complete", "架构和容灾均由同页支持[1]", [1], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [1] },
+      ]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.readPage).toHaveBeenCalledOnce();
+    expect(payloadAt(model, 1).requirementEvidence?.[1]?.citationIndexes).toEqual([1]);
+    expect(payloadAt(model, 1).observations?.join("\n")).toContain("evidence_shared");
+    expect(result.status).toBe("answered");
+  });
+
+  it("does not charge shared evidence against the target requirement's direct-read budget", async () => {
+    const plan: KnowledgePlan = {
+      subject: "共享证据预算",
+      requirements: [
+        { id: "R1", question: "共享事实", queries: ["seed-r1"] },
+        { id: "R2", question: "三个独立事实", queries: ["seed-r2"] },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{ path: "wiki/shared.md" }],
+        "seed-r2": [
+          { path: "wiki/shared.md" },
+          { path: "wiki/r2-a.md" },
+          { path: "wiki/r2-b.md" },
+          { path: "wiki/r2-c.md" },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/shared.md"),
+      read("R2", "wiki/r2-a.md"),
+      read("R2", "wiki/r2-b.md"),
+      read("R2", "wiki/r2-c.md"),
+      final("complete", "共享事实[1]，三个独立事实[2][3][4]", [1, 2, 3, 4], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [1, 2, 3, 4] },
+      ]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.readPage).toHaveBeenCalledTimes(4);
+    expect(payloadAt(model, 1).requirementEvidence?.[1]?.remainingReads).toBe(3);
+    expect(result.status).toBe("answered");
+  });
+
+  it("does not consume another requirement's read budget for a global-only candidate", async () => {
+    const plan: KnowledgePlan = {
+      subject: "全局召回",
+      requirements: [
+        { id: "R1", question: "环境", queries: ["seed-r1"] },
+        { id: "R2", question: "步骤", queries: ["seed-r2"] },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "测试问题": [{ path: "wiki/global-only.md" }],
+        "seed-r1": [],
+        "seed-r2": [],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/global-only.md"),
+      read("R2", "wiki/global-only.md"),
+      final("complete", "环境和步骤都由同一页支持[1]", [1], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [1] },
+      ]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(payloadAt(model, 1).requirementEvidence?.[1]?.citationIndexes).toEqual([]);
+    expect(session.readPage).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("answered");
   });
 
   it("stops a no-gain requirement without preventing evidence reads for another", async () => {
@@ -345,7 +803,7 @@ describe("runKnowledgeAgent", () => {
 
     await runKnowledgeAgent(agentInput(model, session));
 
-    expect(session.search).toHaveBeenCalledOnce();
+    expect(session.search).toHaveBeenCalledTimes(2);
     expect(payloadAt(model, 1).observations?.join("\n")).toContain("duplicate_query");
   });
 
@@ -385,6 +843,31 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
+  it("does not accept partial while a requirement still has unread candidates and read budget", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/concepts/first.md" },
+          { path: "wiki/concepts/second.md" },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/first.md"),
+      final("partial", "当前仅确认部分内容[1]，其余待确认。", [1]),
+      read("R1", "wiki/concepts/second.md"),
+      final("complete", "两页共同确认[1][2]", [1, 2]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "coverage_gate_requires_read",
+    );
+    expect(session.readPage).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("answered");
+  });
+
   it("emits a content-free search-to-coverage diagnostic trail", async () => {
     const session = fakeSession({
       hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
@@ -404,6 +887,7 @@ describe("runKnowledgeAgent", () => {
     await runKnowledgeAgent({ ...agentInput(model, session), trace });
 
     expect(events.map((event) => event.event)).toEqual([
+      "search",
       "search",
       "candidates",
       "read",
@@ -438,19 +922,21 @@ describe("runKnowledgeAgent", () => {
     expect(model.calls).toBe(0);
   });
 
-  it("records one invalid action as a bounded observation", async () => {
+  it("repairs one invalid action with an explicit schema instruction", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([
       new InvalidModelPayloadError(),
       final("none", "当前资料未覆盖该问题"),
     ]);
 
-    await runKnowledgeAgent(agentInput(model, session));
+    const result = await runKnowledgeAgent(agentInput(model, session));
 
-    expect(payloadAt(model, 1).observations?.join("\n")).toContain("invalid_model_payload");
+    expect(model.prompts[1]?.at(-1)?.content).toContain("上一次输出不符合 Schema");
+    expect(model.calls).toBe(2);
+    expect(result.status).toBe("not_covered");
   });
 
-  it("returns unavailable after two consecutive invalid actions", async () => {
+  it("returns unavailable when the explicit action repair is still invalid", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([
       new InvalidModelPayloadError(),
@@ -473,6 +959,41 @@ describe("runKnowledgeAgent", () => {
     expect(model.calls).toBe(2);
     expect(model.lastSchemaName()).toBe("pse_final_action");
     expect(result.status).toBe("temporarily_unavailable");
+  });
+
+  it("normalizes harmless top-level citation ordering before strict validation", async () => {
+    const plan: KnowledgePlan = {
+      subject: "复合问题",
+      requirements: [
+        { id: "R1", question: "功能", queries: ["seed-r1"] },
+        { id: "R2", question: "POC", queries: ["seed-r2"] },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{ path: "wiki/r1.md" }],
+        "seed-r2": [{ path: "wiki/r2.md" }],
+      },
+    });
+    const model = scriptedAgentModel([
+      readPages(
+        { requirementId: "R1", path: "wiki/r1.md" },
+        { requirementId: "R2", path: "wiki/r2.md" },
+      ),
+      final("complete", "功能[1]，POC[2]", [2, 1], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [2] },
+      ]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(model.calls).toBe(2);
+    expect(result.status).toBe("answered");
+    expect(result.references.map((reference) => reference.path)).toEqual([
+      "wiki/r1.md",
+      "wiki/r2.md",
+    ]);
   });
 
   it("never answers a covered final without a read-page reference", async () => {

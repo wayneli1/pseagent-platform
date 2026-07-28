@@ -38,8 +38,19 @@ export class OpenAiCompatibleModelClient implements ModelClient {
     signal?: AbortSignal;
   }): Promise<T> {
     const content = await this.complete(input.messages, true, input.signal);
-    try { return input.schema.parse(JSON.parse(content)); }
-    catch { throw new InvalidModelPayloadError(); }
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(content);
+    } catch {
+      throw new InvalidModelPayloadError("invalid_json");
+    }
+    const parsed = input.schema.safeParse(decoded);
+    if (!parsed.success) {
+      throw new InvalidModelPayloadError(
+        `invalid_schema:${summarizeIssueTree(parsed.error.issues)}`,
+      );
+    }
+    return parsed.data;
   }
 
   async completeText(input: { messages: readonly ModelMessage[]; signal?: AbortSignal }): Promise<string> {
@@ -75,4 +86,26 @@ export class OpenAiCompatibleModelClient implements ModelClient {
       throw new ModelUnavailableError();
     }
   }
+}
+
+function summarizeIssueTree(value: unknown): string {
+  const summaries: string[] = [];
+  const visit = (current: unknown): void => {
+    if (summaries.length >= 8) return;
+    if (Array.isArray(current)) {
+      for (const item of current) visit(item);
+      return;
+    }
+    if (!current || typeof current !== "object") return;
+    const issue = current as Record<string, unknown>;
+    if (typeof issue.code === "string") {
+      const path = Array.isArray(issue.path)
+        ? issue.path.filter((part) => typeof part === "string" || typeof part === "number").join(".")
+        : "";
+      summaries.push(`${path || "root"}:${issue.code}`);
+    }
+    if (Array.isArray(issue.errors)) visit(issue.errors);
+  };
+  visit(value);
+  return summaries.join("|").slice(0, 512) || "unknown";
 }
