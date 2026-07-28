@@ -221,6 +221,20 @@ describe("fixed 41-question scripted protocol regression", () => {
   it("contains exactly 41 unique stable IDs", () => {
     expect(cases).toHaveLength(41);
     expect(new Set(cases.map((item) => item.id)).size).toBe(41);
+    expect(cases.map((item) => item.id)).toEqual([
+      "P01", "P02", "P03", "P04", "P05", "P06", "P07", "P08", "P09", "P10", "P11",
+      "G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10",
+      "N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09", "N10",
+      "M01", "M02", "M03", "M04", "M05",
+      "X01", "X02", "X03", "X04", "X05",
+    ]);
+  });
+
+  it("declares formal related evidence only for P11", () => {
+    expect(cases.filter((item) =>
+      item.expectedStatus === "not_covered" &&
+      (item.relatedFacts.length > 0 || item.allowedSourcePages.length > 0)
+    ).map((item) => item.id)).toEqual(["P11"]);
   });
 
   it("declares complete acceptance expectations for every case", () => {

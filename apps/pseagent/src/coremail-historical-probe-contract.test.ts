@@ -161,6 +161,9 @@ describe("validateHistoricalProbe", () => {
 });
 
 describe("related-context acceptance probe", () => {
+  const supportedRelatedFacts = ["SMTP", "POP3", "IMAP", "HTTP/HTTPS"] as const;
+  const allowedSourcePages = ["wiki/concepts/邮件系统协议基础.md"] as const;
+
   async function loadProbeAcceptance() {
     const probeModuleUrl = new URL(
       "../../../scripts/probe-related-context.mts",
@@ -185,7 +188,8 @@ describe("related-context acceptance probe", () => {
     expect(validateRelatedContextAcceptance(
       pseFixture,
       finishFixture,
-      ["SMTP", "POP3", "IMAP", "HTTP/HTTPS"],
+      supportedRelatedFacts,
+      allowedSourcePages,
     )).toEqual({
       formalRefs: 1,
       historyRefs: 1,
@@ -225,6 +229,55 @@ describe("related-context acceptance probe", () => {
           "SMTP、POP3、IMAP 和 HTTP/HTTPS",
           "SMTP、QUANTUM-MAIL",
         ),
+      },
+      finishFixture,
+    ],
+    [
+      "negative relation attached to all allowed protocol tokens",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+          "SMTP、POP3、IMAP 和 HTTP/HTTPS 都不受支持 [1]。",
+        ),
+      },
+      finishFixture,
+    ],
+    [
+      "uncertain relation attached to all allowed protocol tokens",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+          "是否支持 SMTP、POP3、IMAP 和 HTTP/HTTPS，正式知识库无法确认 [1]。",
+        ),
+      },
+      finishFixture,
+    ],
+    [
+      "negated support relation hidden behind positive keywords",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+          "系统并非支持 SMTP、POP3、IMAP 和 HTTP/HTTPS 的全部协议能力 [1]。",
+        ),
+      },
+      finishFixture,
+    ],
+    [
+      "allowed protocol tokens cited to an unrelated professional page",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "[1] 邮件系统协议基础 — coremail-professional/wiki/concepts/邮件系统协议基础.md",
+          "[1] Coremail AI 助手 — coremail-professional/wiki/concepts/coremail-ai助手.md",
+        ),
+        references: [{
+          ...formalReference,
+          title: "Coremail AI 助手",
+          path: "wiki/concepts/coremail-ai助手.md",
+        }],
       },
       finishFixture,
     ],
@@ -291,6 +344,72 @@ describe("related-context acceptance probe", () => {
       finishFixture,
     ],
     [
+      "unsupported target claim appended with only a comma",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+          "正式知识库无法确认目标协议是否支持，目标协议能够正常通信。",
+        ),
+      },
+      finishFixture,
+    ],
+    [
+      "implicit positive target claim appended without repeating the target",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+          "正式知识库无法确认目标协议是否支持，系统运行正常。",
+        ),
+      },
+      finishFixture,
+    ],
+    [
+      "extra target assertion hidden in the same uncertainty clause",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+          "正式知识库无法确认目标协议是否支持却已证实该协议能够正常通信。",
+        ),
+      },
+      finishFixture,
+    ],
+    [
+      "positive target modifier hidden inside an uncertainty clause",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+          "正式知识库无法确认正常工作的目标协议是否支持。",
+        ),
+      },
+      finishFixture,
+    ],
+    [
+      "target uncertainty appears only in the related-information section",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer
+          .replace(
+            "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+            [
+              "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+              "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+            ].join("\n"),
+          )
+          .replace(
+            [
+              "覆盖结论：",
+              "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+            ].join("\n\n"),
+            ["覆盖结论：", "正式知识库没有更多结论。"].join("\n\n"),
+          ),
+      },
+      finishFixture,
+    ],
+    [
       "missing formal reference",
       { ...pseFixture, references: [] },
       { ...finishFixture, citationCount: 0 },
@@ -310,8 +429,31 @@ describe("related-context acceptance probe", () => {
     expect(() => validateRelatedContextAcceptance(
       result,
       finish,
-      ["SMTP", "POP3", "IMAP", "HTTP/HTTPS"],
+      supportedRelatedFacts,
+      allowedSourcePages,
     )).toThrow();
+  });
+
+  it.each([
+    "对于 2035 年量子卫星邮件协议是否受支持，无法依据正式知识库作出确认。",
+    "目标协议的支持情况，现有正式知识库无法确认。",
+    "正式知识库不足以判断目标协议能否获得支持。",
+  ])("accepts target-oriented uncertainty wording: %s", async (conclusion) => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const answer = pseFixture.answer.replace(
+      "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+      conclusion,
+    );
+
+    expect(validateRelatedContextAcceptance(
+      { ...pseFixture, answer },
+      finishFixture,
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toMatchObject({
+      formalRefs: 1,
+      historicalAttempted: true,
+    });
   });
 
   it("accepts an attempted historical lookup that returned no historical answer", async () => {
@@ -319,7 +461,8 @@ describe("related-context acceptance probe", () => {
     expect(validateRelatedContextAcceptance(
       { ...pseFixture, historicalAnswer: undefined },
       { ...finishFixture, historicalUsed: false },
-      ["SMTP", "POP3", "IMAP", "HTTP/HTTPS"],
+      supportedRelatedFacts,
+      allowedSourcePages,
     )).toMatchObject({
       historyRefs: 0,
       historicalAttempted: true,

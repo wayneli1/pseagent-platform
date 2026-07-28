@@ -34,6 +34,7 @@ const regressionCaseSchema = z.object({
   id: z.string(),
   question: z.string().trim().min(1),
   relatedFacts: z.array(z.string().trim().min(1)).optional(),
+  allowedSourcePages: z.array(z.string().trim().min(1)).optional(),
 }).passthrough();
 const regressionCases = z.array(regressionCaseSchema).parse(JSON.parse(
   readFileSync(
@@ -42,12 +43,17 @@ const regressionCases = z.array(regressionCaseSchema).parse(JSON.parse(
   ),
 ));
 const selectedProbeCase = regressionCases.find((item) => item.id === "P11");
-if (!selectedProbeCase || !selectedProbeCase.relatedFacts?.length) {
+if (
+  !selectedProbeCase ||
+  !selectedProbeCase.relatedFacts?.length ||
+  !selectedProbeCase.allowedSourcePages?.length
+) {
   throw new Error("missing_related_context_probe_case");
 }
 const probeCase = {
   question: selectedProbeCase.question,
   relatedFacts: selectedProbeCase.relatedFacts,
+  allowedSourcePages: selectedProbeCase.allowedSourcePages,
 } as const;
 
 const finishEventSchema = z.object({
@@ -94,9 +100,11 @@ const safeFailureCodes = new Set([
   "unsupported_target_claim",
   "missing_formal_related_section",
   "unsupported_related_protocol",
+  "unsupported_related_relation",
   "missing_formal_reference",
   "formal_reference_partition_mismatch",
   "formal_reference_not_visible",
+  "unexpected_formal_reference_page",
   "historical_attempt_not_confirmed",
   "historical_use_mismatch",
   "diagnostic_citation_count_mismatch",
@@ -110,30 +118,33 @@ export function validateRelatedContextAcceptance(
   resultInput: unknown,
   finishInput: unknown,
   supportedRelatedFacts: readonly string[],
+  allowedSourcePages: readonly string[],
 ) {
   const result = answerResultSchema.parse(resultInput);
   const finish = finishEventSchema.parse(finishInput);
   if (result.scope !== "professional" || result.status !== "not_covered") {
     throw new Error("unexpected_scope_or_status");
   }
-  if (
-    !result.answer.includes("正式知识库") ||
-    !/(?:无法|不能)[\s\S]{0,32}(?:确认|判断)/u.test(result.answer)
-  ) {
-    throw new Error("missing_formal_uncertainty");
-  }
-  if (
-    hasUnsupportedTargetClaim(result.answer)
-  ) {
-    throw new Error("unsupported_target_claim");
-  }
   if (result.references.length === 0) {
     throw new Error("missing_formal_reference");
   }
 
-  const relatedSection = extractFormalRelatedSection(result.answer);
+  const {
+    relatedSection,
+    conclusionSection,
+    sourcesSection,
+  } = extractFormalSections(result.answer);
   validateRelatedProtocols(relatedSection, supportedRelatedFacts);
-  validateVisibleFormalReferences(result, relatedSection);
+  validateTargetConclusion(conclusionSection);
+  if (containsTargetClaim(relatedSection) || containsTargetClaim(sourcesSection)) {
+    throw new Error("unsupported_target_claim");
+  }
+  validateVisibleFormalReferences(
+    result,
+    relatedSection,
+    sourcesSection,
+    allowedSourcePages,
+  );
 
   if (!finish.historicalAttempted) {
     throw new Error("historical_attempt_not_confirmed");
@@ -230,7 +241,11 @@ export async function runRelatedContextAttempts(
   }
 }
 
-function extractFormalRelatedSection(answer: string): string {
+function extractFormalSections(answer: string): {
+  readonly relatedSection: string;
+  readonly conclusionSection: string;
+  readonly sourcesSection: string;
+} {
   const relatedStart = answer.indexOf(formalRelatedHeading);
   const conclusionStart = answer.indexOf(formalConclusionHeading);
   const sourcesStart = answer.indexOf(formalSourcesHeading);
@@ -241,10 +256,17 @@ function extractFormalRelatedSection(answer: string): string {
   ) {
     throw new Error("missing_formal_related_section");
   }
-  return answer.slice(
-    relatedStart + formalRelatedHeading.length,
-    conclusionStart,
-  );
+  return {
+    relatedSection: answer.slice(
+      relatedStart + formalRelatedHeading.length,
+      conclusionStart,
+    ),
+    conclusionSection: answer.slice(
+      conclusionStart + formalConclusionHeading.length,
+      sourcesStart,
+    ),
+    sourcesSection: answer.slice(sourcesStart + formalSourcesHeading.length),
+  };
 }
 
 function validateRelatedProtocols(
@@ -276,44 +298,197 @@ function validateRelatedProtocols(
   ) {
     throw new Error("unsupported_related_protocol");
   }
+  const disallowedRelation =
+    /(?:不|非|未|无|否|尚|仅|部分|某些|缺乏|拒绝|禁用|排除|无法|不能|不足以|难以|是否|能否)/u;
+  if (disallowedRelation.test(relatedSection)) {
+    throw new Error("unsupported_related_relation");
+  }
+  const supportedStatement = relatedSection
+    .split(/[。！？；;\n]+/gu)
+    .some((statement) => {
+      const normalized = statement
+        .replace(/\[\d+\]/gu, "")
+        .replace(/\s+/gu, "")
+        .replace(/[。.!！]+$/gu, "")
+        .toLocaleUpperCase("en-US");
+      const protocolList =
+        "(?:(?:SMTP|POP3|IMAP|HTTP/HTTPS)(?:、|，|,|和|及|以及|与)?){4}";
+      const source = "(?:正文|正式知识库(?:正文)?|资料|页面)";
+      const subject = "(?:COREMAIL|系统|邮件系统)";
+      const relation = "(?:支持|遵循|兼容|具备|提供|采用)";
+      const positiveEvidence = [
+        `^${source}(?:明确)?(?:列出|记载|说明|显示)${protocolList}` +
+          "(?:等)?(?:受支持的|支持的)?(?:协议|协议能力)?$",
+        `^${source}(?:明确)?(?:表明|确认|说明|显示)${subject}` +
+          `(?:明确)?${relation}${protocolList}(?:等)?(?:协议|协议能力)?$`,
+        `^${subject}(?:明确)?${relation}(?:的协议(?:包括|包含|有)?)?` +
+          `${protocolList}(?:等)?(?:协议|协议能力)?$`,
+        `^${protocolList}(?:等)?(?:协议)?(?:均|都)(?:受支持|可用)$`,
+      ].some((pattern) => new RegExp(pattern, "u").test(normalized));
+      return [...requiredTokens].every((token) => normalized.includes(token)) &&
+        positiveEvidence;
+    });
+  if (!supportedStatement) {
+    throw new Error("unsupported_related_relation");
+  }
 }
 
-function hasUnsupportedTargetClaim(answer: string): boolean {
-  const normalized = answer.replace(/\s+/gu, "");
-  const targetSentences = answer
-    .split(/[。！？\n]+/gu)
-    .map((sentence) => sentence.replace(/\s+/gu, ""))
-    .filter((sentence) =>
-      /(?:目标协议|该协议|此协议|量子卫星|2035)/u.test(sentence));
-  const unsupportedTargetSentence = targetSentences.some(
-    (sentence) => !isAllowedTargetSentence(sentence),
+function validateTargetConclusion(conclusionSection: string): void {
+  const normalized = conclusionSection.replace(/\s+/gu, "");
+  if (!containsOnlyUncertaintyVocabulary(normalized)) {
+    throw new Error("unsupported_target_claim");
+  }
+  const targetCount = countMatches(
+    normalized,
+    /(?:(?:2035年?)?量子卫星邮件协议|目标协议|该协议|此协议)/gu,
   );
-  return unsupportedTargetSentence ||
-    /不支持|尚未支持|暂未支持|明确不兼容|无法兼容/u.test(normalized) ||
-    /(?:支持|兼容)(?:该|此|目标|量子卫星|2035)/u.test(normalized) ||
-    /(?:该|此|目标|量子卫星|2035)[^。！？\n]{0,12}(?:受支持|获支持|已支持|支持|兼容)/u
-      .test(normalized);
+  const abilityCount = countMatches(
+    normalized,
+    /(?:支持|兼容|可用|通信|运行)/gu,
+  );
+  const uncertaintyCount = countMatches(
+    normalized,
+    /(?:无法|不能|不足以|难以)/gu,
+  );
+  const determinationCount = countMatches(
+    normalized,
+    /(?:作出确认|得出结论|确认|判断|确定|证实|证明)/gu,
+  );
+  if (
+    !normalized.includes("正式知识库") ||
+    targetCount !== 1 ||
+    abilityCount !== 1 ||
+    uncertaintyCount !== 1 ||
+    determinationCount !== 1
+  ) {
+    throw new Error("missing_formal_uncertainty");
+  }
+
+  const clauses = conclusionSection
+    .split(
+      /(?:[。！？；;，,\n]+|(?:但|但是|然而|不过|可是|却|而|反而|同时|此外|另外|并且|以及|且|还))/gu,
+    )
+    .map((clause) => clause.replace(/\s+/gu, ""))
+    .filter(Boolean);
+  const negativeAssertion =
+    /(?:不受支持|不支持|未受支持|未支持|尚未支持|不兼容|不可用|无法使用)/u;
+  for (const clause of clauses) {
+    if (negativeAssertion.test(clause)) {
+      throw new Error("unsupported_target_claim");
+    }
+    if (
+      !isUncertaintyClause(clause) &&
+      !isNeutralOmissionClause(clause) &&
+      !isTargetQuestionClause(clause) &&
+      !isFormalConfirmationClause(clause) &&
+      !isFormalBasisClause(clause)
+    ) {
+      throw new Error("unsupported_target_claim");
+    }
+  }
 }
 
-function isAllowedTargetSentence(sentence: string): boolean {
-  const target =
-    "(?:目标协议|该协议|此协议|(?:2035年?)?量子卫星邮件协议)";
-  const omitted =
-    "(?:未|尚未)(?:提及|覆盖|收录|包含)";
-  const uncertainty =
-    "(?:无法|不能)(?:根据|基于)?正式知识库(?:确认|判断)" +
-    `(?:${target})?(?:是否)?(?:支持|兼容)?`;
-  return new RegExp(
-    `^正式知识库(?:中)?${omitted}(?:有关|关于)?${target}` +
-      `(?:的)?(?:资料|信息|内容)?(?:[，,](?:因此|所以)?${uncertainty})?$`,
-    "u",
-  ).test(sentence) ||
-    new RegExp(
-      `^${target}(?:在)?正式知识库(?:中)?${omitted}` +
-        "(?:的)?(?:资料|信息|内容)?$",
-      "u",
-    ).test(sentence) ||
-    new RegExp(`^(?:当前)?${uncertainty}$`, "u").test(sentence);
+function containsOnlyUncertaintyVocabulary(value: string): boolean {
+  let remaining = value.replace(/[。！？；;，,：:\n]/gu, "");
+  const vocabulary = [
+    "2035年量子卫星邮件协议",
+    "量子卫星邮件协议",
+    "正式知识库",
+    "得出结论",
+    "作出确认",
+    "支持情况",
+    "兼容情况",
+    "目标协议",
+    "该协议",
+    "此协议",
+    "未提及",
+    "未覆盖",
+    "未收录",
+    "未包含",
+    "不足以",
+    "无法",
+    "不能",
+    "难以",
+    "确认",
+    "判断",
+    "确定",
+    "是否",
+    "能否",
+    "获得",
+    "支持",
+    "兼容",
+    "可用",
+    "通信",
+    "对于",
+    "关于",
+    "依据",
+    "根据",
+    "基于",
+    "现有",
+    "目前",
+    "当前",
+    "资料",
+    "信息",
+    "证据",
+    "因此",
+    "所以",
+    "尚",
+    "从",
+    "在",
+    "中",
+    "对",
+    "其",
+    "受",
+    "的",
+  ].sort((left, right) => right.length - left.length);
+  for (const token of vocabulary) {
+    remaining = remaining.split(token).join("");
+  }
+  return remaining.length === 0;
+}
+
+function countMatches(value: string, pattern: RegExp): number {
+  return [...value.matchAll(pattern)].length;
+}
+
+function containsTargetClaim(value: string): boolean {
+  return /(?:目标协议|该协议|此协议|量子卫星|2035)/u.test(value);
+}
+
+function isUncertaintyClause(clause: string): boolean {
+  return (
+    /(?:无法|不能|难以)[\s\S]{0,64}(?:确认|判断|确定|得出结论)$/u
+      .test(clause) ||
+    /(?:无法|不能|不足以|难以)[\s\S]{0,64}(?:确认|判断|确定)[\s\S]{0,32}(?:是否|能否)[\s\S]{0,20}(?:支持|兼容|可用|通信)$/u
+      .test(clause) ||
+    /不足以[\s\S]{0,64}(?:判断|确定)[\s\S]{0,32}(?:是否|能否)[\s\S]{0,20}(?:支持|兼容|可用|通信)$/u
+      .test(clause)
+  );
+}
+
+function isNeutralOmissionClause(clause: string): boolean {
+  return clause.includes("正式知识库") &&
+    containsTargetClaim(clause) &&
+    /(?:未|尚未)(?:提及|覆盖|收录|包含)/u.test(clause) &&
+    !/(?:支持|兼容|可用|通信|证实|能够|可以)/u.test(clause);
+}
+
+function isTargetQuestionClause(clause: string): boolean {
+  return containsTargetClaim(clause) && (
+    /(?:是否|能否)[\s\S]{0,20}(?:支持|兼容|可用|通信)$/u.test(clause) ||
+    /(?:支持情况|兼容情况)$/u.test(clause)
+  );
+}
+
+function isFormalConfirmationClause(clause: string): boolean {
+  return clause.includes("正式知识库") &&
+    /(?:无法|不能|不足以|难以)/u.test(clause) &&
+    /(?:确认|判断|确定|得出结论)$/u.test(clause);
+}
+
+function isFormalBasisClause(clause: string): boolean {
+  return /^(?:根据|基于|依据)?(?:现有)?正式知识库(?:资料|信息|证据)?$/u
+    .test(clause);
 }
 
 function readOwnershipToken(directory: string): string | undefined {
@@ -327,11 +502,9 @@ function readOwnershipToken(directory: string): string | undefined {
 function validateVisibleFormalReferences(
   result: AnswerResult,
   relatedSection: string,
+  sourcesSection: string,
+  allowedSourcePages: readonly string[],
 ): void {
-  const sourcesStart = result.answer.indexOf(formalSourcesHeading);
-  const sourcesSection = result.answer.slice(
-    sourcesStart + formalSourcesHeading.length,
-  );
   const relatedCitations = new Set(
     [...relatedSection.matchAll(/\[(\d+)\]/gu)].map((match) =>
       Number.parseInt(match[1] ?? "", 10)),
@@ -345,6 +518,14 @@ function validateVisibleFormalReferences(
     [...referenceIndexes].some((index) => !relatedCitations.has(index))
   ) {
     throw new Error("formal_reference_partition_mismatch");
+  }
+  const actualPaths = result.references.map((reference) => reference.path);
+  if (
+    actualPaths.length !== allowedSourcePages.length ||
+    new Set(actualPaths).size !== actualPaths.length ||
+    allowedSourcePages.some((path) => !actualPaths.includes(path))
+  ) {
+    throw new Error("unexpected_formal_reference_page");
   }
   for (const reference of result.references) {
     if (
@@ -421,6 +602,7 @@ async function probe(): Promise<void> {
         result,
         finish,
         probeCase.relatedFacts,
+        probeCase.allowedSourcePages,
       );
       process.stdout.write(
         `run=${run} scope=${result.scope} status=${result.status}` +
