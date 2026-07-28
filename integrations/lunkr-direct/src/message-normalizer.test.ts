@@ -60,4 +60,50 @@ describe("normalizeDirectMessage", () => {
       hasAttachments: true,
     });
   });
+
+  it.each([
+    ["/new", "new"],
+    ["  /new  ", "new"],
+    ["\uFEFF/new", "new"],
+    ["/\u200Bnew", "new"],
+    ["／new", "new"],
+    ["/help", "help"],
+  ] as const)("recognizes exact normalized command %j", (subject, command) => {
+    expect(normalizeDirectMessage({
+      topic: "inbox",
+      payload: {
+        msgId: `command-${command}-${subject.length}`,
+        sourceId: "#peer#U",
+        from: { uid: "#peer#U" },
+        subject,
+      },
+    }, "#bot#U")).toMatchObject({ command });
+  });
+
+  it.each(["/new 请继续", "前缀/new", "/newer", "```/new```"])(
+    "does not widen command matching for %j",
+    (subject) => {
+      expect(normalizeDirectMessage({
+        topic: "inbox",
+        payload: {
+          msgId: `ordinary-${subject}`,
+          sourceId: "#peer#U",
+          from: { uid: "#peer#U" },
+          subject,
+        },
+      }, "#bot#U")).not.toHaveProperty("command");
+    },
+  );
+
+  it("recognizes /new from the documented string payload content field", () => {
+    expect(normalizeDirectMessage({
+      topic: "inbox",
+      payload: JSON.stringify({
+        msgId: "documented-new",
+        sourceId: "#peer#U",
+        from: "#peer#U",
+        content: "/new",
+      }),
+    }, "#bot#U")).toMatchObject({ command: "new" });
+  });
 });

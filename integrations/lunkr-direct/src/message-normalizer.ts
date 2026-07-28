@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import type { LunkrDirectMessage } from "./contracts.js";
+import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
+
+const INVISIBLE_COMMAND_CHARACTERS = /[\u200B-\u200D\u2060\uFEFF]/gu;
 
 export function normalizeDirectMessage(
   event: unknown,
@@ -49,6 +51,7 @@ export function normalizeDirectMessage(
     createHash("sha256")
       .update(`${peerUid}:${timestamp}:${text}:${JSON.stringify(payload)}`)
       .digest("hex");
+  const command = recognizeDirectCommand(text);
   return {
     id,
     peerUid,
@@ -56,7 +59,18 @@ export function normalizeDirectMessage(
     timestamp,
     text: text.trim(),
     hasAttachments,
+    ...(command === undefined ? {} : { command }),
   };
+}
+
+export function recognizeDirectCommand(text: string): DirectCommand | undefined {
+  const normalized = text
+    .normalize("NFKC")
+    .replace(INVISIBLE_COMMAND_CHARACTERS, "")
+    .trim();
+  if (normalized === "/new") return "new";
+  if (normalized === "/help") return "help";
+  return undefined;
 }
 
 function parsePayload(value: unknown): Record<string, unknown> | undefined {

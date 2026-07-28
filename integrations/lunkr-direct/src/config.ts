@@ -12,6 +12,8 @@ export interface LunkrDirectConfig {
   readonly contextMaxTurns: number;
   readonly contextMaxChars: number;
   readonly messageMaxChars: number;
+  readonly maxActivePeers: number;
+  readonly maxPendingPerPeer: number;
 }
 
 export function loadLunkrConfig(
@@ -39,6 +41,8 @@ export function loadLunkrConfig(
     contextMaxTurns: positiveInteger(env, "LUNKR_CONTEXT_MAX_TURNS", 6),
     contextMaxChars: positiveInteger(env, "LUNKR_CONTEXT_MAX_CHARS", 12_000),
     messageMaxChars: positiveInteger(env, "LUNKR_MESSAGE_MAX_CHARS", 1_000),
+    maxActivePeers: positiveInteger(env, "LUNKR_MAX_ACTIVE_PEERS", 4),
+    maxPendingPerPeer: positiveInteger(env, "LUNKR_MAX_PENDING_PER_PEER", 5),
   };
 }
 

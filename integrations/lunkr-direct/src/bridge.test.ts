@@ -14,6 +14,8 @@ const config: LunkrDirectConfig = {
   contextMaxTurns: 6,
   contextMaxChars: 12_000,
   messageMaxChars: 1_000,
+  maxActivePeers: 4,
+  maxPendingPerPeer: 5,
 };
 
 describe("LunkrPseBridge", () => {

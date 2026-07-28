@@ -25,6 +25,8 @@ export interface StoredLunkrSession {
   readonly lastVerifiedAt: string;
 }
 
+export type DirectCommand = "help" | "new";
+
 export interface LunkrDirectMessage {
   readonly id: string;
   readonly peerUid: string;
@@ -32,6 +34,7 @@ export interface LunkrDirectMessage {
   readonly timestamp: number;
   readonly text: string;
   readonly hasAttachments: boolean;
+  readonly command?: DirectCommand;
 }
 
 export interface LunkrApiEnvelope<T = unknown> {
