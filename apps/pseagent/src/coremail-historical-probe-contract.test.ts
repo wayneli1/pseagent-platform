@@ -266,6 +266,20 @@ describe("related-context acceptance probe", () => {
       finishFixture,
     ],
     [
+      "valid protocol fact followed by an unsupported related fact",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+          [
+            "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+            "系统具备量子加密能力。",
+          ].join("\n\n"),
+        ),
+      },
+      finishFixture,
+    ],
+    [
       "allowed protocol tokens cited to an unrelated professional page",
       {
         ...pseFixture,
@@ -410,6 +424,22 @@ describe("related-context acceptance probe", () => {
       finishFixture,
     ],
     [
+      "positive target assertion before the related-information heading",
+      {
+        ...pseFixture,
+        answer: `目标协议已受支持。\n\n${pseFixture.answer}`,
+      },
+      finishFixture,
+    ],
+    [
+      "negative target assertion before the related-information heading",
+      {
+        ...pseFixture,
+        answer: `目标协议不受支持。\n\n${pseFixture.answer}`,
+      },
+      finishFixture,
+    ],
+    [
       "missing formal reference",
       { ...pseFixture, references: [] },
       { ...finishFixture, citationCount: 0 },
@@ -438,6 +468,7 @@ describe("related-context acceptance probe", () => {
     "对于 2035 年量子卫星邮件协议是否受支持，无法依据正式知识库作出确认。",
     "目标协议的支持情况，现有正式知识库无法确认。",
     "正式知识库不足以判断目标协议能否获得支持。",
+    "正式知识库无法确认是否支持目标协议。",
   ])("accepts target-oriented uncertainty wording: %s", async (conclusion) => {
     const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
     const answer = pseFixture.answer.replace(

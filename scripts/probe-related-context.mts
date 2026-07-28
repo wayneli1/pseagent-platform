@@ -99,6 +99,7 @@ const safeFailureCodes = new Set([
   "missing_formal_uncertainty",
   "unsupported_target_claim",
   "missing_formal_related_section",
+  "unexpected_answer_framing",
   "unsupported_related_protocol",
   "unsupported_related_relation",
   "missing_formal_reference",
@@ -130,10 +131,14 @@ export function validateRelatedContextAcceptance(
   }
 
   const {
+    prefixSection,
     relatedSection,
     conclusionSection,
     sourcesSection,
   } = extractFormalSections(result.answer);
+  if (prefixSection.trim().length > 0) {
+    throw new Error("unexpected_answer_framing");
+  }
   validateRelatedProtocols(relatedSection, supportedRelatedFacts);
   validateTargetConclusion(conclusionSection);
   if (containsTargetClaim(relatedSection) || containsTargetClaim(sourcesSection)) {
@@ -242,6 +247,7 @@ export async function runRelatedContextAttempts(
 }
 
 function extractFormalSections(answer: string): {
+  readonly prefixSection: string;
   readonly relatedSection: string;
   readonly conclusionSection: string;
   readonly sourcesSection: string;
@@ -257,6 +263,7 @@ function extractFormalSections(answer: string): {
     throw new Error("missing_formal_related_section");
   }
   return {
+    prefixSection: answer.slice(0, relatedStart),
     relatedSection: answer.slice(
       relatedStart + formalRelatedHeading.length,
       conclusionStart,
@@ -303,9 +310,14 @@ function validateRelatedProtocols(
   if (disallowedRelation.test(relatedSection)) {
     throw new Error("unsupported_related_relation");
   }
-  const supportedStatement = relatedSection
+  const statements = relatedSection
     .split(/[。！？；;\n]+/gu)
-    .some((statement) => {
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+  const allStatementsSupported = statements.length > 0 &&
+    statements.every((statement) => {
+      const citations =
+        [...statement.matchAll(/\[(\d+)\]/gu)].map((match) => match[1]);
       const normalized = statement
         .replace(/\[\d+\]/gu, "")
         .replace(/\s+/gu, "")
@@ -325,10 +337,11 @@ function validateRelatedProtocols(
           `${protocolList}(?:等)?(?:协议|协议能力)?$`,
         `^${protocolList}(?:等)?(?:协议)?(?:均|都)(?:受支持|可用)$`,
       ].some((pattern) => new RegExp(pattern, "u").test(normalized));
-      return [...requiredTokens].every((token) => normalized.includes(token)) &&
+      return citations.length > 0 &&
+        [...requiredTokens].every((token) => normalized.includes(token)) &&
         positiveEvidence;
     });
-  if (!supportedStatement) {
+  if (!allStatementsSupported) {
     throw new Error("unsupported_related_relation");
   }
 }
@@ -456,14 +469,9 @@ function containsTargetClaim(value: string): boolean {
 }
 
 function isUncertaintyClause(clause: string): boolean {
-  return (
-    /(?:无法|不能|难以)[\s\S]{0,64}(?:确认|判断|确定|得出结论)$/u
-      .test(clause) ||
-    /(?:无法|不能|不足以|难以)[\s\S]{0,64}(?:确认|判断|确定)[\s\S]{0,32}(?:是否|能否)[\s\S]{0,20}(?:支持|兼容|可用|通信)$/u
-      .test(clause) ||
-    /不足以[\s\S]{0,64}(?:判断|确定)[\s\S]{0,32}(?:是否|能否)[\s\S]{0,20}(?:支持|兼容|可用|通信)$/u
-      .test(clause)
-  );
+  return /(?:无法|不能|不足以|难以)/u.test(clause) &&
+    /(?:确认|判断|确定|得出结论)/u.test(clause) &&
+    /(?:支持|兼容|可用|通信)/u.test(clause);
 }
 
 function isNeutralOmissionClause(clause: string): boolean {
@@ -526,6 +534,18 @@ function validateVisibleFormalReferences(
     allowedSourcePages.some((path) => !actualPaths.includes(path))
   ) {
     throw new Error("unexpected_formal_reference_page");
+  }
+  const sourceLines = sourcesSection
+    .split(/\r?\n/gu)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const expectedSourceLines = result.references.map((reference) =>
+    `[${reference.index}] ${reference.title} — ${reference.project}/${reference.path}`);
+  if (
+    sourceLines.length !== expectedSourceLines.length ||
+    expectedSourceLines.some((line) => !sourceLines.includes(line))
+  ) {
+    throw new Error("unexpected_answer_framing");
   }
   for (const reference of result.references) {
     if (
