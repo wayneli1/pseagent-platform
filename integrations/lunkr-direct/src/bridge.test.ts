@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LunkrDirectConfig } from "./config.js";
 import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
-import { LunkrPseBridge } from "./bridge.js";
+import {
+  LunkrPseBridge,
+  type BridgeQuestionEvent,
+} from "./bridge.js";
 
 const config: LunkrDirectConfig = {
   baseUrl: "https://lunkr.example.test",
@@ -286,6 +289,53 @@ describe("LunkrPseBridge", () => {
     expect(answer.mock.calls.some((call) => call[0] === "Q8")).toBe(true);
   });
 
+  it("emits hidden epochs and distinguishes manual from idle resets", async () => {
+    let now = 0;
+    const events: BridgeQuestionEvent[] = [];
+    const bridge = createBridge({
+      answer: async () => answered("回答"),
+      sendText: async () => undefined,
+      config: { sessionIdleMs: 1_000 },
+      now: () => now,
+      onEvent: (event) => events.push(event),
+    });
+
+    await bridge.handle(message("q1", "#a#U", "第一问"));
+    await bridge.handle(message("new", "#a#U", "/new", "new"));
+    now = 100;
+    await bridge.handle(message("q2", "#a#U", "第二问"));
+    now = 1_100;
+    await bridge.handle(message("q3", "#a#U", "第三问"));
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "received",
+        questionId: 1,
+        sessionEpoch: 0,
+      }),
+      expect.objectContaining({
+        type: "cancelled",
+        sessionEpoch: 1,
+        resetReason: "manual",
+      }),
+      expect.objectContaining({
+        type: "received",
+        questionId: 1,
+        sessionEpoch: 1,
+      }),
+      expect.objectContaining({
+        type: "cancelled",
+        sessionEpoch: 2,
+        resetReason: "idle",
+      }),
+      expect.objectContaining({
+        type: "received",
+        questionId: 1,
+        sessionEpoch: 2,
+      }),
+    ]));
+  });
+
   it("keeps another peer running when one peer starts a new session", async () => {
     const otherResult = deferred<TestResult>();
     const answer = vi.fn<Answer>(async (question) =>
@@ -459,6 +509,7 @@ function createBridge(options: {
   readonly sendText: (peerUid: string, text: string) => Promise<void>;
   readonly config?: Partial<LunkrDirectConfig>;
   readonly now?: () => number;
+  readonly onEvent?: (event: BridgeQuestionEvent) => void;
 }) {
   return new LunkrPseBridge(
     { ...config, ...options.config },
@@ -472,6 +523,7 @@ function createBridge(options: {
         referenceCount: 0,
       }),
       sendText: options.sendText,
+      onEvent: options.onEvent,
     },
     options.now,
   );

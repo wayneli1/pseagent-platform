@@ -37,6 +37,8 @@ export interface BridgeQuestionEvent {
     | "cancelled";
   readonly peerUid: string;
   readonly questionId?: number | undefined;
+  readonly sessionEpoch?: number | undefined;
+  readonly resetReason?: "manual" | "idle" | undefined;
   readonly pendingCount: number;
   readonly activePeerCount: number;
   readonly scope?: string | undefined;
@@ -151,6 +153,7 @@ export class LunkrPseBridge<Result> {
       type: admission.kind === "started" ? "received" : "queued",
       peerUid,
       questionId: admission.questionId,
+      sessionEpoch: admission.epoch,
       pendingCount: admission.ahead,
       activePeerCount: this.scheduler.activePeerCount,
     });
@@ -174,6 +177,7 @@ export class LunkrPseBridge<Result> {
         type: "started",
         peerUid: message.peerUid,
         questionId: start.questionId,
+        sessionEpoch: start.epoch,
         pendingCount: Math.max(0, pendingAtAdmission - 1),
         activePeerCount: this.scheduler.activePeerCount,
       });
@@ -199,6 +203,7 @@ export class LunkrPseBridge<Result> {
         await this.sendFailure(
           message.peerUid,
           start.questionId,
+          start.epoch,
           "answer_error",
           receivedAt,
         );
@@ -224,6 +229,7 @@ export class LunkrPseBridge<Result> {
       await this.sendFailure(
         message.peerUid,
         start.questionId,
+        start.epoch,
         metadata?.stopReason ?? "question_budget_exhausted",
         receivedAt,
         metadata,
@@ -236,6 +242,7 @@ export class LunkrPseBridge<Result> {
       await this.sendFailure(
         message.peerUid,
         start.questionId,
+        start.epoch,
         "empty_answer",
         receivedAt,
         metadata,
@@ -258,6 +265,7 @@ export class LunkrPseBridge<Result> {
       type: "answered",
       peerUid: message.peerUid,
       questionId: start.questionId,
+      sessionEpoch: start.epoch,
       pendingCount: 0,
       activePeerCount: this.scheduler.activePeerCount,
       scope: metadata.scope,
@@ -271,6 +279,7 @@ export class LunkrPseBridge<Result> {
   private async sendFailure(
     peerUid: string,
     questionId: number,
+    sessionEpoch: number,
     stopReason: string,
     receivedAt: number,
     metadata?: BridgeAnswerMetadata,
@@ -283,6 +292,7 @@ export class LunkrPseBridge<Result> {
       type: "failed",
       peerUid,
       questionId,
+      sessionEpoch,
       pendingCount: 0,
       activePeerCount: this.scheduler.activePeerCount,
       scope: metadata?.scope,
@@ -294,20 +304,25 @@ export class LunkrPseBridge<Result> {
   }
 
   private async resetPeer(peerUid: string): Promise<void> {
-    this.resetPeerState(peerUid);
+    this.resetPeerState(peerUid, "manual");
     await this.sendWithRetry(
       peerUid,
       "已开始新会话，之前处理中和排队的问题已取消。",
     );
   }
 
-  private resetPeerState(peerUid: string): void {
+  private resetPeerState(
+    peerUid: string,
+    resetReason: "manual" | "idle",
+  ): void {
     const reset = this.scheduler.reset(peerUid);
     this.conversations.clear(peerUid);
     this.lastAcceptedQuestionAt.delete(peerUid);
     this.emit({
       type: "cancelled",
       peerUid,
+      sessionEpoch: reset.epoch,
+      resetReason,
       pendingCount: reset.pendingCancelled,
       activePeerCount: this.scheduler.activePeerCount,
     });
@@ -321,7 +336,7 @@ export class LunkrPseBridge<Result> {
     ) {
       return;
     }
-    this.resetPeerState(peerUid);
+    this.resetPeerState(peerUid, "idle");
   }
 
   private isCurrent(start: QuestionStart): boolean {

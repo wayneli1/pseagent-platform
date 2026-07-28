@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { BridgeQuestionEvent } from "./bridge.js";
-import { createRuntimeLogger } from "./runtime-log.js";
+import {
+  createRuntimeLogger,
+  type LunkrRuntimeLogRecord,
+} from "./runtime-log.js";
 
 describe("createRuntimeLogger", () => {
   it("hashes peers and never serializes message content or credentials", () => {
@@ -14,6 +17,7 @@ describe("createRuntimeLogger", () => {
       type: "answered",
       peerUid: "#secret-peer#U",
       questionId: 3,
+      sessionEpoch: 2,
       pendingCount: 1,
       activePeerCount: 4,
       scope: "general",
@@ -27,6 +31,7 @@ describe("createRuntimeLogger", () => {
     expect(serialized).not.toContain("#secret-peer#U");
     expect(serialized).not.toContain("password");
     expect(serialized).toContain('"questionId":3');
+    expect(serialized).toContain('"sessionEpoch":2');
     expect(serialized).toContain('"referenceCount":2');
     expect(serialized).toMatch(/"peer":"[0-9a-f]{16}"/u);
     expect(serialized.endsWith("\n")).toBe(true);
@@ -82,16 +87,21 @@ describe("createRuntimeLogger", () => {
     log({
       type: "cancelled",
       peerUid: "#peer#U",
+      sessionEpoch: 3,
+      resetReason: "idle",
       pendingCount: 2,
       activePeerCount: 1,
     });
 
-    expect(JSON.parse(lines[0]!)).toEqual({
+    const expected: LunkrRuntimeLogRecord = {
       event: "cancelled",
       peer: expect.stringMatching(/^[0-9a-f]{16}$/u),
+      sessionEpoch: 3,
+      resetReason: "idle",
       pendingCount: 2,
       activePeerCount: 1,
-    });
+    };
+    expect(JSON.parse(lines[0]!)).toEqual(expected);
   });
 });
 

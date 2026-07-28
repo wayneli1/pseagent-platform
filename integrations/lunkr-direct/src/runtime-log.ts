@@ -5,6 +5,8 @@ export interface LunkrRuntimeLogRecord {
   readonly event: BridgeQuestionEvent["type"];
   readonly peer: string;
   readonly questionId?: number | undefined;
+  readonly sessionEpoch?: number | undefined;
+  readonly resetReason?: "manual" | "idle" | undefined;
   readonly pendingCount: number;
   readonly activePeerCount: number;
   readonly scope?: string | undefined;
