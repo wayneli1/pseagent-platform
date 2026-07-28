@@ -3,6 +3,7 @@ import {
   HISTORICAL_ANSWER_WARNING,
   agentActionSchema,
   answerResultSchema,
+  coverageVerificationActionSchema,
   historicalAnswerSchema,
   routeActionSchema,
 } from "./contracts.js";
@@ -108,6 +109,35 @@ describe("PSEAgent contracts", () => {
       requirements: [{ id: "R1", coverage: "complete", answer: "结论[1]", citations: [1] }],
       citations: [1],
       project: "coremail-professional",
+    })).toThrow();
+  });
+
+  it("accepts only strict per-requirement coverage verification results", () => {
+    expect(coverageVerificationActionSchema.parse({
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "现有正文未覆盖目标协议。",
+        citations: [],
+        reason: "related_only",
+      }],
+      citations: [],
+    })).toMatchObject({
+      action: "verify",
+      requirements: [{ id: "R1", coverage: "none" }],
+    });
+
+    expect(() => coverageVerificationActionSchema.parse({
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "支持[1]",
+        citations: [1],
+        reason: "invented_reason",
+      }],
+      citations: [1],
     })).toThrow();
   });
 

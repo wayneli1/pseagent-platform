@@ -111,6 +111,26 @@ export const finalActionSchema = z.object({
   requirements: z.array(requirementCoverageSchema).min(1).max(6),
   citations: z.array(z.number().int().positive()).max(20),
 }).strict();
+export const coverageVerificationReasonSchema = z.enum([
+  "direct_support",
+  "explicit_negative_support",
+  "partial_support",
+  "related_only",
+  "target_omitted",
+  "unsupported_claim_removed",
+]);
+const coverageVerificationRequirementSchema = z.object({
+  id: knowledgeRequirementIdSchema,
+  coverage: coverageSchema,
+  answer: z.string().trim().min(1).max(16_384),
+  citations: z.array(z.number().int().positive()).max(20),
+  reason: coverageVerificationReasonSchema,
+}).strict();
+export const coverageVerificationActionSchema = z.object({
+  action: z.literal("verify"),
+  requirements: z.array(coverageVerificationRequirementSchema).min(1).max(6),
+  citations: z.array(z.number().int().positive()).max(20),
+}).strict();
 export const agentActionSchema = z.union([toolActionSchema, finalActionSchema]);
 export const finalOnlyActionSchema = finalActionSchema;
 export const pseAnswerInputSchema = z.object({
@@ -160,6 +180,7 @@ export type RequirementCoverage = z.infer<typeof requirementCoverageSchema>;
 export type AgentAction = z.infer<typeof agentActionSchema>;
 export type ToolAction = z.infer<typeof toolActionSchema>;
 export type FinalAction = z.infer<typeof finalActionSchema>;
+export type CoverageVerificationAction = z.infer<typeof coverageVerificationActionSchema>;
 export type AnswerResult = z.infer<typeof answerResultSchema>;
 export type Reference = z.infer<typeof referenceSchema>;
 export type HistoricalReference = z.infer<typeof historicalReferenceSchema>;
