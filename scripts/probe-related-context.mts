@@ -383,7 +383,7 @@ function validateTargetConclusion(conclusionSection: string): void {
 
   const clauses = conclusionSection
     .split(
-      /(?:[。！？；;，,\n]+|(?:但|但是|然而|不过|可是|却|而|反而|同时|此外|另外|并且|并|以及|且|还))/gu,
+      /(?:[。！？；;，,\n]+|(?:但|但是|然而|不过|可是|却|而|反而|同时|此外|另外|并且|以及|且|还))/gu,
     )
     .map((clause) => clause.replace(/\s+/gu, ""))
     .filter(Boolean);
@@ -391,8 +391,14 @@ function validateTargetConclusion(conclusionSection: string): void {
     /(?:不受支持|不支持|未受支持|未支持|尚未支持|不兼容|不可用|无法使用|禁用|禁止|废弃|弃用|停用|淘汰|过时|下线)/u;
   const positiveAssertion =
     /(?:(?:已经|已|明确)(?:受)?(?:支持|兼容|可用)|(?:能够|可以)?正常(?:工作|运行|通信|使用))/u;
+  const positiveTargetModifier =
+    /(?:(?:已经|已|目前|当前|现已)?(?:受)?(?:支持|兼容|可用)|(?:已经|已|目前|当前|现已|正在)?(?:能够|可以)?(?:正常)?(?:工作|运行|通信|使用))的(?:(?:2035年?)?量子卫星邮件协议|目标协议|该协议|此协议)/u;
   for (const clause of clauses) {
-    if (negativeAssertion.test(clause) || positiveAssertion.test(clause)) {
+    if (
+      negativeAssertion.test(clause) ||
+      positiveAssertion.test(clause) ||
+      positiveTargetModifier.test(clause)
+    ) {
       throw new Error("unsupported_target_claim");
     }
     if (

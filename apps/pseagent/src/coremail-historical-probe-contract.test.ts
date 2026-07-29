@@ -581,6 +581,7 @@ describe("related-context acceptance probe", () => {
     "正式知识库无法确认是否支持目标协议。",
     "根据现有正式知识库，暂时无法确认 Coremail 是否支持目标协议。",
     "正式知识库没有提到目标协议，因此无法确认 Coremail 是否支持。",
+    "正式知识库并没有提到目标协议，因此无法确认 Coremail 是否支持。",
   ])("accepts target-oriented uncertainty wording: %s", async (conclusion) => {
     const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
     const answer = pseFixture.answer.replace(
@@ -605,6 +606,7 @@ describe("related-context acceptance probe", () => {
     "正式知识库记载目标协议已被禁用，无法确认 Coremail 是否支持。",
     "正式知识库无法确认 Coremail 是否支持目标协议，另外产品已正式上市。",
     "正式知识库无法确认 Coremail 是否支持目标协议并已发布其他产品。",
+    "正式知识库无法确认 Coremail 是否支持目前可用的目标协议。",
     "暂时无法确认 Coremail 是否支持目标协议。",
   ])("rejects an unsafe uncertainty mutation: %s", async (conclusion) => {
     const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
