@@ -287,6 +287,7 @@ function validateRelatedProtocols(
   relatedSection: string,
   supportedRelatedFacts: readonly string[],
 ): void {
+  const allowedContextTokens = new Set(["COREMAIL"]);
   const supportedTokens = new Set(
     supportedRelatedFacts.flatMap((fact) =>
       fact.toLocaleUpperCase("en-US").match(/[A-Z][A-Z0-9]*(?:[/-][A-Z0-9]+)*/gu) ?? []
@@ -306,6 +307,7 @@ function validateRelatedProtocols(
   if (
     visibleTokens.size === 0 ||
     [...visibleTokens].some((token) =>
+      !allowedContextTokens.has(token) &&
       !supportedTokens.has(token) &&
       token.split(/[/-]/gu).some((part) => !supportedTokens.has(part))) ||
     [...requiredTokens].some((token) => !visibleTokens.has(token))
@@ -333,7 +335,7 @@ function validateRelatedProtocols(
       const protocolList =
         "(?:(?:SMTP|POP3|IMAP|HTTP/HTTPS)(?:、|，|,|和|及|以及|与)?){4}";
       const source = "(?:正文|正式知识库(?:正文)?|资料|页面)";
-      const subject = "(?:COREMAIL|系统|邮件系统)";
+      const subject = "(?:COREMAIL邮件系统|COREMAIL|系统|邮件系统)";
       const relation = "(?:支持|遵循|兼容|具备|提供|采用)";
       const positiveEvidence = [
         `^${source}(?:明确)?(?:列出|记载|说明|显示)${protocolList}` +

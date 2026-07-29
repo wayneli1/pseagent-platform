@@ -198,6 +198,24 @@ describe("related-context acceptance probe", () => {
     });
   });
 
+  it("treats the Coremail product subject as context instead of an extra protocol", async () => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const answer = pseFixture.answer.replace(
+      "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+      "Coremail邮件系统支持 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议 [1]。",
+    );
+
+    expect(validateRelatedContextAcceptance(
+      { ...pseFixture, answer },
+      finishFixture,
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toMatchObject({
+      formalRefs: 1,
+      historicalAttempted: true,
+    });
+  });
+
   it.each([
     [
       "unsupported positive target claim",
