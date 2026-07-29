@@ -235,6 +235,10 @@ describe("related-context acceptance probe", () => {
     "资料显示系统支持 HTTP 和 HTTPS 协议 [1]。",
     "Coremail 邮件系统具备 CMSP/CMTP 协议能力 [1]。",
     "Coremail 邮件系统具备 CMSP 和 CMTP 协议能力 [1]。",
+    "Coremail 邮件系统兼容的协议有 SMTP、POP3、IMAP、HTTP、HTTPS、CMSP 和 CMTP [1]。",
+    "Coremail 邮件系统与 SMTP、POP3、IMAP、HTTP、HTTPS、CMSP 和 CMTP 等协议兼容 [1]。",
+    "Coremail 邮件系统支持 SMTP、POP3、IMAP、HTTP、HTTPS、CMSP 和 CMTP 等多种协议 [1]。",
+    "Coremail 邮件系统兼容 SMTP、POP3、IMAP、HTTP、HTTPS、CMSP 和 CMTP 标准协议 [1]。",
     "Coremail 资料明确列出了 SMTP、POP3 和 IMAP 协议能力 [1]。",
     "正式知识库资料显示 Coremail 邮件系统支持 SMTP 和 IMAP 协议 [1]。",
   ])("accepts a body-supported protocol subset with equivalent positive wording: %s", async (

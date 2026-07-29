@@ -345,19 +345,23 @@ function validateRelatedProtocols(
         "(?:正文|COREMAIL资料|正式知识库(?:正文|资料)?|资料|页面)";
       const subject = "(?:COREMAIL邮件系统|COREMAIL|系统|邮件系统)";
       const relation = "(?:支持|遵循|兼容|提供|采用)";
+      const protocolSuffix =
+        "(?:(?:等多种协议|标准协议|(?:等)?协议能力|(?:等)?协议))?";
       const positiveEvidence = [
         `^${source}(?:明确)?(?:列出|列举|记载)(?:了)?${protocolList}` +
           "(?:等)?(?:受支持的|支持的)?(?:协议|协议能力)?$",
         `^${source}(?:明确)?(?:表明|确认|说明|显示)${subject}` +
-          `(?:明确)?${relation}${protocolList}(?:等)?(?:协议|协议能力)?$`,
+          `(?:明确)?${relation}${protocolList}${protocolSuffix}$`,
         `^${source}(?:明确)?(?:表明|确认|说明|显示)${subject}` +
           `(?:明确)?具备${protocolList}(?:等)?协议能力$`,
         `^${source}(?:明确)?(?:表明|确认|说明|显示)${protocolList}` +
           "(?:等)?(?:协议)?(?:均|都)?(?:受支持|可用)$",
-        `^${subject}(?:明确)?${relation}${protocolList}` +
-          "(?:等)?(?:协议|协议能力)?$",
+        `^${subject}(?:明确)?${relation}${protocolList}${protocolSuffix}$`,
         `^${subject}(?:明确)?具备${protocolList}(?:等)?协议能力$`,
         `^${subject}(?:的)?协议(?:包括|包含|有)${protocolList}(?:等)?$`,
+        `^${subject}(?:明确)?(?:支持|遵循|兼容|采用)的` +
+          `(?:标准)?协议(?:包括|包含|有)${protocolList}(?:等)?$`,
+        `^${subject}与${protocolList}(?:等多种|等|标准)?协议(?:兼容|相容)$`,
         `^${protocolList}(?:等)?(?:协议)?(?:均|都)(?:受支持|可用)$`,
       ].some((pattern) => new RegExp(pattern, "u").test(structured));
       return citations.length > 0 &&
