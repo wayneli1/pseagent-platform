@@ -234,6 +234,8 @@ describe("related-context acceptance probe", () => {
     "邮件系统协议包括 POP3 与 IMAP [1]。",
     "资料显示系统支持 HTTP 和 HTTPS 协议 [1]。",
     "Coremail 邮件系统具备 CMSP/CMTP 协议能力 [1]。",
+    "Coremail 资料明确列出了 SMTP、POP3 和 IMAP 协议能力 [1]。",
+    "正式知识库资料显示 Coremail 邮件系统支持 SMTP 和 IMAP 协议 [1]。",
   ])("accepts a body-supported protocol subset with equivalent positive wording: %s", async (
     relatedStatement,
   ) => {
@@ -602,6 +604,7 @@ describe("related-context acceptance probe", () => {
     "正式知识库显示 Coremail 不支持目标协议。",
     "正式知识库记载目标协议已被禁用，无法确认 Coremail 是否支持。",
     "正式知识库无法确认 Coremail 是否支持目标协议，另外产品已正式上市。",
+    "正式知识库无法确认 Coremail 是否支持目标协议并已发布其他产品。",
     "暂时无法确认 Coremail 是否支持目标协议。",
   ])("rejects an unsafe uncertainty mutation: %s", async (conclusion) => {
     const { validateRelatedContextAcceptance } = await loadProbeAcceptance();

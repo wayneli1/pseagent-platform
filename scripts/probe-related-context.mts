@@ -340,7 +340,8 @@ function validateRelatedProtocols(
         (token) => allowedContextTokens.has(token) ? token : "P",
       );
       const protocolList = "P(?:(?:、|，|,|和|及|以及|与)P)*";
-      const source = "(?:正文|正式知识库(?:正文)?|资料|页面)";
+      const source =
+        "(?:正文|COREMAIL资料|正式知识库(?:正文|资料)?|资料|页面)";
       const subject = "(?:COREMAIL邮件系统|COREMAIL|系统|邮件系统)";
       const relation = "(?:支持|遵循|兼容|提供|采用)";
       const positiveEvidence = [
@@ -382,7 +383,7 @@ function validateTargetConclusion(conclusionSection: string): void {
 
   const clauses = conclusionSection
     .split(
-      /(?:[。！？；;，,\n]+|(?:但|但是|然而|不过|可是|却|而|反而|同时|此外|另外|并且|以及|且|还))/gu,
+      /(?:[。！？；;，,\n]+|(?:但|但是|然而|不过|可是|却|而|反而|同时|此外|另外|并且|并|以及|且|还))/gu,
     )
     .map((clause) => clause.replace(/\s+/gu, ""))
     .filter(Boolean);
@@ -413,7 +414,67 @@ function containsTargetClaim(value: string): boolean {
 function isUncertaintyClause(clause: string): boolean {
   return /(?:无法|不能|不足以|难以)/u.test(clause) &&
     /(?:确认|判断|确定|得出结论)/u.test(clause) &&
-    /(?:支持|兼容|可用|通信)/u.test(clause);
+    /(?:支持|兼容|可用|通信)/u.test(clause) &&
+    hasOnlyUncertaintyClauseVocabulary(clause);
+}
+
+function hasOnlyUncertaintyClauseVocabulary(clause: string): boolean {
+  let remaining = clause;
+  const neutralVocabulary = [
+    "2035年量子卫星邮件协议",
+    "量子卫星邮件协议",
+    "Coremail邮件系统",
+    "Coremail",
+    "邮件系统",
+    "正式知识库",
+    "得出结论",
+    "作出确认",
+    "支持情况",
+    "兼容情况",
+    "目标协议",
+    "该协议",
+    "此协议",
+    "不足以",
+    "暂时",
+    "无法",
+    "不能",
+    "难以",
+    "确认",
+    "判断",
+    "确定",
+    "是否",
+    "能否",
+    "获得",
+    "支持",
+    "兼容",
+    "可用",
+    "通信",
+    "运行",
+    "对于",
+    "关于",
+    "依据",
+    "根据",
+    "基于",
+    "现有",
+    "目前",
+    "当前",
+    "资料",
+    "信息",
+    "证据",
+    "因此",
+    "所以",
+    "从",
+    "在",
+    "中",
+    "对",
+    "其",
+    "受",
+    "的",
+  ].sort((left, right) => right.length - left.length);
+  for (const token of neutralVocabulary) {
+    remaining = remaining.split(token).join("");
+  }
+  return remaining.length === 0;
 }
 
 function isNeutralOmissionClause(clause: string): boolean {
