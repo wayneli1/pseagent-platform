@@ -296,9 +296,10 @@ function validateRelatedProtocols(
       fact.toLocaleUpperCase("en-US").match(protocolTokenPattern) ?? [];
     for (const token of tokens) {
       supportedTokens.add(token);
-      if (token === "HTTP/HTTPS") {
-        supportedTokens.add("HTTP");
-        supportedTokens.add("HTTPS");
+      if (token.includes("/")) {
+        for (const component of token.split("/")) {
+          supportedTokens.add(component);
+        }
       }
     }
   }
