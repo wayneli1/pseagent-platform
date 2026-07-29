@@ -343,6 +343,21 @@ function validateRelatedProtocols(
       const positiveEvidence =
         /(?:列出|列举|记载|包括|包含|支持|受支持|兼容|相容|遵循|符合|具备|提供|采用|可用)/u
           .test(structured);
+      const source =
+        "(?:正式知识库(?:正文|资料)?|产品名资料|正文|资料|页面)";
+      const subject = "(?:产品名邮件系统|产品名|邮件系统|系统)";
+      const listingRelation = "(?:列出|列举|记载|包括|包含)";
+      const leadingRelation =
+        "(?:列出|列举|记载|包括|包含|支持|兼容|相容|遵循|符合|具备|提供|采用)";
+      const trailingRelation =
+        "(?:有支持|支持|兼容|相容|遵循|符合|受支持|可用)";
+      const passiveTail = "(?:(?:均|都)?(?:受支持|可用))";
+      const orderAwareRelation = [
+        `${source}.*${listingRelation}.*协议项`,
+        `${subject}.*${leadingRelation}.*协议项`,
+        `${subject}.*协议项.*${trailingRelation}$`,
+        `^(?:${source}.*?)?协议项.*${passiveTail}$`,
+      ].some((pattern) => new RegExp(pattern, "u").test(structured));
       let residual = structured.replace(
         /[、，,。.!！：:；;（）()“”"'《》【】\[\]]/gu,
         "",
@@ -419,6 +434,7 @@ function validateRelatedProtocols(
         statementProtocols.length > 0 &&
         statementProtocols.every((token) => supportedTokens.has(token)) &&
         positiveEvidence &&
+        orderAwareRelation &&
         residual.length === 0;
     });
   if (!allStatementsSupported) {
