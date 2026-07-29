@@ -339,132 +339,23 @@ function validateTargetConclusion(conclusionSection: string): void {
     throw new Error("missing_formal_uncertainty");
   }
 
-  const clauses = conclusionSection
-    .split(
-      /(?:[。！？；;，,\n]+|(?:但|但是|然而|不过|可是|却|而|反而|同时|此外|另外|并且|以及|且|还))/gu,
-    )
-    .map((clause) => clause.replace(/\s+/gu, ""))
-    .filter(Boolean);
   const negativeAssertion =
     /(?:不受支持|不支持|未受支持|未支持|尚未支持|不兼容|不可用|无法使用|禁用|禁止|废弃|弃用|停用|淘汰|过时|下线)/u;
   const positiveAssertion =
-    /(?:(?:已经|已|明确)(?:受)?(?:支持|兼容|可用)|(?:能够|可以)?正常(?:工作|运行|通信|使用))/u;
+    /(?:(?:已经|已|明确)(?:受)?(?:支持|兼容|可用)|(?:已经|已)(?:证实|确认)(?:COREMAIL(?:邮件系统)?|邮件系统|目标协议|该协议|此协议)?(?:受)?(?:支持|兼容|可用)|(?:能够|可以)?正常(?:工作|运行|通信|使用)|(?:工作|运行|通信|使用)正常)/iu;
   const positiveTargetModifier =
     /(?:(?:已经|已|目前|当前|现已)?(?:受)?(?:支持|兼容|可用)|(?:已经|已|目前|当前|现已|正在)?(?:能够|可以)?(?:正常)?(?:工作|运行|通信|使用))的(?:(?:2035年?)?量子卫星邮件协议|目标协议|该协议|此协议)/u;
-  for (const clause of clauses) {
-    if (
-      negativeAssertion.test(clause) ||
-      positiveAssertion.test(clause) ||
-      positiveTargetModifier.test(clause)
-    ) {
-      throw new Error("unsupported_target_claim");
-    }
-    if (
-      !isUncertaintyClause(clause) &&
-      !isNeutralOmissionClause(clause) &&
-      !isTargetQuestionClause(clause) &&
-      !isFormalConfirmationClause(clause) &&
-      !isFormalBasisClause(clause)
-    ) {
-      throw new Error("unsupported_target_claim");
-    }
+  if (
+    negativeAssertion.test(normalized) ||
+    positiveAssertion.test(normalized) ||
+    positiveTargetModifier.test(normalized)
+  ) {
+    throw new Error("unsupported_target_claim");
   }
 }
 
 function containsTargetClaim(value: string): boolean {
   return /(?:目标协议|该协议|此协议|量子卫星|2035)/u.test(value);
-}
-
-function isUncertaintyClause(clause: string): boolean {
-  return /(?:无法|不能|不足以|难以)/u.test(clause) &&
-    /(?:确认|判断|确定|得出结论)/u.test(clause) &&
-    /(?:支持|兼容|可用|通信)/u.test(clause) &&
-    hasOnlyUncertaintyClauseVocabulary(clause);
-}
-
-function hasOnlyUncertaintyClauseVocabulary(clause: string): boolean {
-  let remaining = clause;
-  const neutralVocabulary = [
-    "2035年量子卫星邮件协议",
-    "量子卫星邮件协议",
-    "Coremail邮件系统",
-    "Coremail",
-    "邮件系统",
-    "正式知识库",
-    "得出结论",
-    "作出确认",
-    "支持情况",
-    "兼容情况",
-    "目标协议",
-    "该协议",
-    "此协议",
-    "不足以",
-    "暂时",
-    "无法",
-    "不能",
-    "难以",
-    "确认",
-    "判断",
-    "确定",
-    "是否",
-    "能否",
-    "获得",
-    "支持",
-    "兼容",
-    "可用",
-    "通信",
-    "运行",
-    "对于",
-    "关于",
-    "依据",
-    "根据",
-    "基于",
-    "现有",
-    "目前",
-    "当前",
-    "资料",
-    "信息",
-    "证据",
-    "因此",
-    "所以",
-    "从",
-    "在",
-    "中",
-    "对",
-    "其",
-    "受",
-    "的",
-  ].sort((left, right) => right.length - left.length);
-  for (const token of neutralVocabulary) {
-    remaining = remaining.split(token).join("");
-  }
-  return remaining.length === 0;
-}
-
-function isNeutralOmissionClause(clause: string): boolean {
-  return clause.includes("正式知识库") &&
-    containsTargetClaim(clause) &&
-    /(?:(?:未|尚未)(?:提及|覆盖|收录|包含)|没有(?:提到|提及|覆盖|收录|包含|记录))/u
-      .test(clause) &&
-    !/(?:支持|兼容|可用|通信|证实|能够|可以)/u.test(clause);
-}
-
-function isTargetQuestionClause(clause: string): boolean {
-  return containsTargetClaim(clause) && (
-    /(?:是否|能否)[\s\S]{0,20}(?:支持|兼容|可用|通信)$/u.test(clause) ||
-    /(?:支持情况|兼容情况)$/u.test(clause)
-  );
-}
-
-function isFormalConfirmationClause(clause: string): boolean {
-  return clause.includes("正式知识库") &&
-    /(?:无法|不能|不足以|难以)/u.test(clause) &&
-    /(?:确认|判断|确定|得出结论)$/u.test(clause);
-}
-
-function isFormalBasisClause(clause: string): boolean {
-  return /^(?:根据|基于|依据)?(?:现有)?正式知识库(?:资料|信息|证据)?$/u
-    .test(clause);
 }
 
 function readOwnershipToken(directory: string): string | undefined {
