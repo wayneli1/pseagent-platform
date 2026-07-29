@@ -133,7 +133,10 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
     }
 
     if (action.action === "final") {
-      const normalizedAction = normalizeFinalCitationMetadata(action);
+      const normalizedAction = dropUnsupportedRelatedContext(
+        normalizeFinalCitationMetadata(action),
+        state,
+      );
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
       if (pendingReviews.length > 0 && !deadlineReached(input)) {
         for (const requirementId of pendingReviews) {
@@ -392,13 +395,13 @@ async function requestAgentAction(
       remainingRetrievalActions: countRemainingToolActions(state),
       finalOnly,
     });
-  const request = (repair: boolean) => input.model.completeJson({
-      messages: repair
+  const request = (repairReason?: string) => input.model.completeJson({
+      messages: repairReason !== undefined
         ? [...messages, {
             role: "user" as const,
             content: finalOnly
-              ? "上一次输出不符合 Schema。只输出合法 final JSON；必须完整列出规划中的每个 requirement 及其 coverage/citations，不要解释。"
-              : "上一次输出不符合 Schema。只输出一个合法 JSON 动作；单页/搜索/图谱工具输入必须包含 requirementId，批量读页必须使用 pages 数组且每项包含 requirementId/path，final 必须完整列出逐项 requirements，不要解释。",
+              ? `上一次输出不符合 Schema：${repairReason}。只输出合法 final JSON；必须完整列出规划中的每个 requirement 及其 coverage/citations，不要解释。`
+              : `上一次输出不符合 Schema：${repairReason}。只输出一个合法 JSON 动作；单页/搜索/图谱工具输入必须包含 requirementId，批量读页必须使用 pages 数组且每项包含 requirementId/path，final 必须完整列出逐项 requirements，不要解释。`,
           }]
         : messages,
       schema: finalOnly ? finalOnlyActionSchema : agentActionSchema,
@@ -406,7 +409,7 @@ async function requestAgentAction(
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   try {
-    return await request(false);
+    return await request();
   } catch (error) {
     if (!(error instanceof InvalidModelPayloadError)) throw error;
     recordDiagnostic(input.trace, {
@@ -416,7 +419,7 @@ async function requestAgentAction(
       repairAttempt: 1,
     });
     try {
-      return await request(true);
+      return await request(error.code);
     } catch (repairError) {
       if (repairError instanceof InvalidModelPayloadError) {
         recordDiagnostic(input.trace, {
@@ -913,6 +916,31 @@ function normalizeFinalCitationMetadata(action: FinalAction): FinalAction {
     requirements,
     citations: stableUniqueNumbers(
       requirements.flatMap((requirement) => requirementEvidenceCitations(requirement)),
+    ),
+  };
+}
+
+function dropUnsupportedRelatedContext(
+  action: FinalAction,
+  state: AgentState,
+): FinalAction {
+  const requirements = action.requirements.map((requirement) => {
+    if (requirement.relatedContext === undefined) return requirement;
+    const evidence = state.requirements.get(requirement.id)?.citationIndexes ??
+      new Set<number>();
+    const relatedContext = requirement.relatedContext.filter((related) =>
+      related.citations.every((citation) => evidence.has(citation)));
+    const { relatedContext: _relatedContext, ...rest } = requirement;
+    return relatedContext.length === 0
+      ? rest
+      : { ...rest, relatedContext };
+  });
+  return {
+    ...action,
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap((requirement) =>
+        requirementEvidenceCitations(requirement)),
     ),
   };
 }

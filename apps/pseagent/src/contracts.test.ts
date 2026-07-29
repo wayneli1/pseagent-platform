@@ -126,28 +126,65 @@ describe("PSEAgent contracts", () => {
       action: "verify",
       requirements: [{
         id: "R1",
-        coverage: "none",
-        answer: "现有正文未覆盖目标协议。",
-        citations: [],
+        targetDecision: "not_covered",
+        retainedRelatedContextIndexes: [0],
         reason: "related_only",
       }],
-      citations: [],
     })).toMatchObject({
       action: "verify",
-      requirements: [{ id: "R1", coverage: "none" }],
+      requirements: [{
+        id: "R1",
+        targetDecision: "not_covered",
+        retainedRelatedContextIndexes: [0],
+      }],
     });
 
     expect(() => coverageVerificationActionSchema.parse({
       action: "verify",
       requirements: [{
         id: "R1",
-        coverage: "complete",
-        answer: "支持[1]",
-        citations: [1],
+        targetDecision: "retain",
+        retainedRelatedContextIndexes: [],
+        answer: "模型不得重新输出正文",
         reason: "invented_reason",
       }],
-      citations: [1],
     })).toThrow();
+  });
+
+  it("drops only malformed optional related context at the model boundary", () => {
+    const parsed = agentActionSchema.parse({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "正式资料未覆盖目标协议，无法确认是否支持。",
+        citations: [],
+        relatedContext: [
+          {
+            statement: "资料明确列出 SMTP、POP3 和 IMAP [1]。",
+            citations: [1],
+          },
+          {
+            statement: "引用数组为空的可选信息。",
+            citations: [],
+          },
+          {
+            statement: "元数据有引用但正文没有内联标记。",
+            citations: [1],
+          },
+        ],
+      }],
+      citations: [1],
+    });
+
+    expect(parsed).toMatchObject({
+      requirements: [{
+        relatedContext: [{
+          statement: "资料明确列出 SMTP、POP3 和 IMAP [1]。",
+          citations: [1],
+        }],
+      }],
+    });
   });
 
   it("accepts bounded related context only for uncovered requirements", () => {

@@ -47,7 +47,7 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain("正文明确支持 SMTP、但未提及 IMAP 时，对“是否支持 SMTP 和 IMAP”只能标记 partial");
   });
 
-  it("makes the verifier remove unsupported target claims while retaining direct related facts", () => {
+  it("makes the verifier return only deterministic retain-or-drop decisions", () => {
     const prompt = systemMessage(coverageVerificationMessages({
       question: "Coremail 是否已经支持 2035 年量子卫星邮件协议？",
       plan: { requirements: [{ id: "R1" }] },
@@ -55,25 +55,27 @@ describe("support and existence semantics", () => {
       evidence: [],
     }));
 
-    expect(prompt).toContain("正文未提及目标只能保留为 none 和“未覆盖、无法确认”");
-    expect(prompt).toContain("不得改写成“不支持/尚未支持”");
-    expect(prompt).toContain("只有明确支持才保留肯定结论，只有明确否定才保留否定结论");
+    expect(prompt).toContain("正文未提及目标必须选择 not_covered");
+    expect(prompt).toContain("不得把草稿中的“不支持/尚未支持”保留下来");
+    expect(prompt).toContain("只有明确支持或明确否定");
     expect(prompt).toContain("同义词、缩略词或等价表达必须有正文确认的等价关系");
-    expect(prompt).toContain("非穷尽列表不得审计为完整清单");
-    expect(prompt).toContain("正文仅明确支持 SMTP、未提及 IMAP 时，双目标支持问题只能保留 partial");
-    expect(prompt).toContain("删除无直接证据的目标主张");
-    expect(prompt).toContain("仅保留正文直接确认且不证明目标的 relatedContext");
-    expect(prompt).toContain("relatedContext 只能用于 coverage=none，最多三项且每项一到四个引用");
-    expect(prompt).toContain("相关引用不得提升 target coverage，目标 citations 必须为空");
+    expect(prompt).toContain("非穷尽列表不得作为完整清单保留");
+    expect(prompt).toContain("targetDecision=retain");
+    expect(prompt).toContain("targetDecision=not_covered");
+    expect(prompt).toContain("retainedRelatedContextIndexes");
+    expect(prompt).toContain("索引从 0 开始，只能保留或删除，不能改写内容");
     expect(prompt).toContain("量子卫星邮件协议");
     expect(prompt).toContain("SMTP、POP3、IMAP");
-    expect(prompt).toContain("顶层只能包含 action、requirements、citations");
-    expect(prompt).toContain("每个 requirement 只能包含 id、coverage、answer、citations、relatedContext、reason");
-    expect(prompt).toContain("删除 [n] 标记后必须逐字复制草稿");
-    expect(prompt).toContain("不得改写或转述");
-    expect(prompt).toContain("内联 [n] 必须与 citations 元数据完全一致");
-    expect(prompt).toContain("顶层 citations 必须是稳定并集");
-    expect(prompt).toContain("无法原样保留时必须删除该 relatedContext 项");
+    expect(prompt).toContain("顶层只能包含 action、requirements");
+    expect(prompt).toContain(
+      "每个 requirement 只能包含 id、targetDecision、retainedRelatedContextIndexes、reason",
+    );
+    expect(prompt).toContain(
+      "不得输出或复制 coverage、answer、citations、statement、relatedContext 或顶层 citations",
+    );
+    expect(prompt).toContain(
+      '{"action":"verify","requirements":[{"id":"R1","targetDecision":"not_covered","retainedRelatedContextIndexes":[0],"reason":"related_only"}]}',
+    );
     expect(prompt).toContain("direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed");
   });
 });

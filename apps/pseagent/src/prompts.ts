@@ -168,26 +168,27 @@ export function knowledgeAgentMessages(input: {
 }
 
 export const COVERAGE_VERIFICATION_REPAIR_INSTRUCTION =
-  `顶层只能包含 action、requirements、citations，不得输出任何额外字段。
-每个 requirement 只能包含 id、coverage、answer、citations、relatedContext、reason；每个 relatedContext 项只能包含 statement、citations。
-保留 relatedContext 时，statement 删除 [n] 标记后必须逐字复制草稿，不得改写或转述；related citations 只能删除，内联 [n] 必须与 citations 元数据完全一致。
-顶层 citations 必须是稳定并集：按 requirement 顺序，先 target citations，再 relatedContext citations，合并去重。
-无法原样保留时必须删除该 relatedContext 项，不得发明替代事实。
+  `顶层只能包含 action、requirements，不得输出任何额外字段。
+每个 requirement 只能包含 id、targetDecision、retainedRelatedContextIndexes、reason。
+targetDecision 只能是 retain 或 not_covered。
+retainedRelatedContextIndexes 只能填写草稿 relatedContext 的从 0 开始索引，必须严格递增、不得重复、最多三项；不保留时输出空数组。
+不得输出或复制 coverage、answer、citations、statement、relatedContext 或顶层 citations，这些内容全部由代码从草稿确定性重建。
 reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed。`;
 
 export const COVERAGE_VERIFICATION_SYSTEM_PROMPT = `你是 PSEAgent 的正文证据覆盖校验器，只输出一个 JSON 对象。
-输出 action 必须是 verify，逐项保留规划中的 requirement ID、coverage、answer、citations，并给出固定 reason。
+输出 action 必须是 verify，并逐项保留规划中的 requirement ID，只返回目标保留决策、相关信息索引和固定 reason。
 你只能审计输入中的草稿和实际读页正文，禁止搜索、调用工具、增加引用或使用模型先验。
 页面主题相关、介绍相邻概念或只列出基础协议，不等于正文支持用户询问的目标命题。
-正文未提及目标只能保留为 none 和“未覆盖、无法确认”，不得改写成“不支持/尚未支持”；只有明确支持才保留肯定结论，只有明确否定才保留否定结论。同义词、缩略词或等价表达必须有正文确认的等价关系；非穷尽列表不得审计为完整清单。
-删除无直接证据的目标主张，但可仅保留正文直接确认且不证明目标的 relatedContext。relatedContext 只能用于 coverage=none，最多三项且每项一到四个引用；相关引用不得提升 target coverage，目标 citations 必须为空。量子卫星邮件协议问题中，正文只列 SMTP、POP3、IMAP 等协议时，应移除任何“支持/不支持量子卫星协议”的目标主张，仅保留其直接列出的协议事实作为 relatedContext。正文仅明确支持 SMTP、未提及 IMAP 时，双目标支持问题只能保留 partial，并必须写明 IMAP 未覆盖。
+正文未提及目标必须选择 not_covered，不得把草稿中的“不支持/尚未支持”保留下来；只有明确支持或明确否定且草稿 coverage 为 complete/partial 时才可选择 retain。同义词、缩略词或等价表达必须有正文确认的等价关系；非穷尽列表不得作为完整清单保留。
+选择 not_covered 时，最终 coverage、answer 和 citations 由代码安全重建。可通过 retainedRelatedContextIndexes 选择草稿中正文直接支持且不证明目标的 relatedContext；索引从 0 开始，只能保留或删除，不能改写内容。量子卫星邮件协议问题中，正文只列 SMTP、POP3、IMAP 等协议时，应选择 not_covered，并只保留直接列出的协议事实索引。
 如果用户询问的是资料是否覆盖或信息是否明确，正文明确列出的资料缺口可以直接支持该判断。
-每个保留的事实结论都必须由该 requirement 的保留引用直接支持。
-complete 表示核心问题全部有直接证据；partial 表示只有可独立使用的一部分有直接证据且答案明确剩余缺口；none 表示没有足以回答目标问题的直接证据且 citations 必须为空。
-审计 coverage 不得高于草稿 coverage；citations 必须是草稿逐项 citations 的子集。
+targetDecision=retain 表示草稿目标 coverage、answer 和 citations 整体原样保留，只适用于草稿 complete/partial 且正文直接支持其全部目标结论；此时 retainedRelatedContextIndexes 必须为空。
+targetDecision=not_covered 表示不信任草稿目标结论并由代码降为 none；草稿 coverage=none 时也必须使用 not_covered。
+retainedRelatedContextIndexes 中的每一项都必须由该 requirement 的实际正文直接支持。
 reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed。
-顶层 citations 必须等于逐项 target citations 后接 relatedContext citations、按 requirement 顺序合并去重后的结果。
 ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}
+合法示例：
+{"action":"verify","requirements":[{"id":"R1","targetDecision":"not_covered","retainedRelatedContextIndexes":[0],"reason":"related_only"}]}
 禁止输出 Markdown、解释或额外字段。`;
 
 export function coverageVerificationMessages(input: {

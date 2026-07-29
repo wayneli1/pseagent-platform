@@ -134,27 +134,34 @@ export const coverageVerificationReasonSchema = z.enum([
 ]);
 const coverageVerificationRequirementSchema = z.object({
   id: knowledgeRequirementIdSchema,
-  coverage: coverageSchema,
-  answer: z.string().trim().min(1).max(16_384),
-  citations: z.array(z.number().int().positive()).max(20),
-  relatedContext: z.array(relatedContextItemSchema).max(3).optional(),
+  targetDecision: z.enum(["retain", "not_covered"]),
+  retainedRelatedContextIndexes: z.array(z.number().int().nonnegative()).max(3),
   reason: coverageVerificationReasonSchema,
 }).strict().superRefine((requirement, context) => {
-  if (requirement.coverage !== "none" && requirement.relatedContext !== undefined) {
+  const indexes = requirement.retainedRelatedContextIndexes;
+  if (
+    new Set(indexes).size !== indexes.length ||
+    indexes.some((value, index) => index > 0 && value <= indexes[index - 1]!)
+  ) {
     context.addIssue({
       code: "custom",
-      path: ["relatedContext"],
-      message: "related_context_requires_none_coverage",
+      path: ["retainedRelatedContextIndexes"],
+      message: "related_context_indexes_must_be_unique_and_ordered",
     });
   }
 });
 export const coverageVerificationActionSchema = z.object({
   action: z.literal("verify"),
   requirements: z.array(coverageVerificationRequirementSchema).min(1).max(6),
-  citations: z.array(z.number().int().positive()).max(20),
 }).strict();
-export const agentActionSchema = z.union([toolActionSchema, finalActionSchema]);
-export const finalOnlyActionSchema = finalActionSchema;
+export const agentActionSchema = z.preprocess(
+  sanitizeModelAction,
+  z.union([toolActionSchema, finalActionSchema]),
+);
+export const finalOnlyActionSchema = z.preprocess(
+  sanitizeModelAction,
+  finalActionSchema,
+);
 export const pseAnswerInputSchema = z.object({
   question: z.string().trim().min(1).max(16_384),
   conversationContext: z.string().max(32_768).optional(),
@@ -225,6 +232,78 @@ export type HistoricalReference = z.infer<typeof historicalReferenceSchema>;
 export type HistoricalAnswer = z.infer<typeof historicalAnswerSchema>;
 export type Coverage = z.infer<typeof coverageSchema>;
 export type AnswerStatus = z.infer<typeof answerStatusSchema>;
+
+function sanitizeModelAction(value: unknown): unknown {
+  if (!isRecord(value) || value.action !== "final" || !Array.isArray(value.requirements)) {
+    return value;
+  }
+  return {
+    ...value,
+    requirements: value.requirements.map((requirement) => {
+      if (!isRecord(requirement) || requirement.relatedContext === undefined) {
+        return requirement;
+      }
+      const { relatedContext: _relatedContext, ...rest } = requirement;
+      if (requirement.coverage !== "none" || !Array.isArray(requirement.relatedContext)) {
+        return rest;
+      }
+      const retained = requirement.relatedContext
+        .flatMap((item) => sanitizeRelatedContextItem(item))
+        .slice(0, 3);
+      return retained.length === 0 ? rest : { ...rest, relatedContext: retained };
+    }),
+  };
+}
+
+function sanitizeRelatedContextItem(value: unknown): {
+  readonly statement: string;
+  readonly citations: readonly number[];
+}[] {
+  if (!isRecord(value) || typeof value.statement !== "string") return [];
+  const statement = value.statement.trim();
+  if (
+    statement.length === 0 ||
+    statement.length > 16_384 ||
+    !Array.isArray(value.citations) ||
+    value.citations.length < 1 ||
+    value.citations.length > 4
+  ) {
+    return [];
+  }
+  const citations = value.citations;
+  if (
+    !citations.every((citation): citation is number =>
+      typeof citation === "number" &&
+      Number.isInteger(citation) &&
+      citation > 0) ||
+    new Set(citations).size !== citations.length
+  ) {
+    return [];
+  }
+  const inline = stableUniqueNumbers(
+    [...statement.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+  );
+  if (!sameNumberSet(inline, citations)) return [];
+  return [{ statement, citations }];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stableUniqueNumbers(values: readonly number[]): number[] {
+  const seen = new Set<number>();
+  return values.filter((value) => {
+    if (seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
+function sameNumberSet(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length &&
+    left.every((value) => right.includes(value));
+}
 
 function looksLikeOpaqueKnowledgeIdentifier(query: string): boolean {
   const normalized = query.trim();

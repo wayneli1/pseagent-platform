@@ -228,16 +228,10 @@ function p11VerificationFor(
     action: "verify",
     requirements: [{
       id: "R1",
-      coverage: "none",
-      answer: "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
-      citations: [],
-      relatedContext: [{
-        statement: `正文明确列出 ${testCase.relatedFacts.join("、")} 协议能力 [1]。`,
-        citations: [1],
-      }],
+      targetDecision: "not_covered",
+      retainedRelatedContextIndexes: [0],
       reason: "related_only",
     }],
-    citations: [1],
   };
 }
 
@@ -372,7 +366,8 @@ describe("fixed 41-question scripted protocol regression", () => {
     expect(scriptedResponses).toEqual([]);
     if (testCase.id === "P11") {
       expect(vi.mocked(model.completeJson).mock.calls.filter(
-        ([input]) => input.schemaDescription === "pse_coverage_verification",
+        ([input]) =>
+          input.schemaDescription === "pse_coverage_verification_decision",
       )).toHaveLength(1);
     }
     expect(result.scope).toBe(testCase.expectedScope);

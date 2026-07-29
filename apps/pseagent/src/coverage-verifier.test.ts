@@ -7,7 +7,6 @@ import {
   type KnowledgePlan,
 } from "./contracts.js";
 import {
-  InvalidCoverageVerificationError,
   type CoverageVerifierInput,
   verifyKnowledgeCoverage,
 } from "./coverage-verifier.js";
@@ -55,10 +54,16 @@ const relatedOnlyDraft: FinalAction = {
     coverage: "none",
     answer: "正式资料未提及目标协议，无法确认是否支持。",
     citations: [],
-    relatedContext: [{
-      statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
-      citations: [1, 2],
-    }],
+    relatedContext: [
+      {
+        statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
+        citations: [1],
+      },
+      {
+        statement: "资料还说明 HTTP/HTTPS 用于 Webmail 访问 [2]。",
+        citations: [2],
+      },
+    ],
   }],
   citations: [1, 2],
 };
@@ -74,116 +79,101 @@ const targetOmittedDraft: FinalAction = {
   citations: [],
 };
 
-const directEvidence = [{
-  requirementId: "R1",
-  citation: 1,
-  title: "目标能力",
-  path: "wiki/concepts/目标能力.md",
-  content: "正文直接确认目标能力。",
-}] as const;
+const evidence = [
+  {
+    requirementId: "R1",
+    citation: 1,
+    title: "协议基础",
+    path: "wiki/concepts/协议基础.md",
+    content: "正文列出 SMTP、POP3 和 IMAP。",
+  },
+  {
+    requirementId: "R1",
+    citation: 2,
+    title: "Webmail",
+    path: "wiki/concepts/Webmail.md",
+    content: "正文说明 HTTP/HTTPS 用于 Webmail。",
+  },
+] as const;
 
 describe("verifyKnowledgeCoverage", () => {
   it.each([
     {
       label: "missing complete reason",
       draft: completeDraft,
-      evidence: directEvidence,
-      audited: {
+      decision: {
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "complete",
-          answer: "正文直接支持[1]。",
-          citations: [1],
+          targetDecision: "retain",
+          retainedRelatedContextIndexes: [],
         }],
-        citations: [1],
       },
       expectedReason: "direct_support",
     },
     {
       label: "unknown partial reason",
       draft: partialDraft,
-      evidence: directEvidence,
-      audited: {
+      decision: {
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "partial",
-          answer: "正文仅支持部分内容[1]。",
-          citations: [1],
+          targetDecision: "retain",
+          retainedRelatedContextIndexes: [],
           reason: "provider_partial",
         }],
-        citations: [1],
       },
       expectedReason: "partial_support",
     },
     {
       label: "missing related-only reason",
       draft: relatedOnlyDraft,
-      evidence: [
-        { ...directEvidence[0], citation: 1 },
-        { ...directEvidence[0], citation: 2 },
-      ],
-      audited: {
+      decision: {
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "none",
-          answer: "正式资料未提及目标协议，无法确认是否支持。",
-          citations: [],
-          relatedContext: [{
-            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
-            citations: [1, 2],
-          }],
+          targetDecision: "not_covered",
+          retainedRelatedContextIndexes: [0],
         }],
-        citations: [1, 2],
       },
       expectedReason: "related_only",
     },
     {
       label: "unknown downgrade reason",
       draft: completeDraft,
-      evidence: directEvidence,
-      audited: {
+      decision: {
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "none",
-          answer: "正文不足以支持草稿结论。",
-          citations: [],
+          targetDecision: "not_covered",
+          retainedRelatedContextIndexes: [],
           reason: "provider_removed_claim",
         }],
-        citations: [],
       },
       expectedReason: "unsupported_claim_removed",
     },
     {
       label: "unknown omitted-target reason",
       draft: targetOmittedDraft,
-      evidence: [],
-      audited: {
+      decision: {
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "none",
-          answer: "正式资料未覆盖目标能力。",
-          citations: [],
+          targetDecision: "not_covered",
+          retainedRelatedContextIndexes: [],
           reason: "provider_no_match",
         }],
-        citations: [],
       },
       expectedReason: "target_omitted",
     },
   ] satisfies Array<{
     label: string;
     draft: FinalAction;
-    evidence: CoverageVerifierInput["evidence"];
-    audited: unknown;
+    decision: unknown;
     expectedReason: CoverageVerificationReason;
   }>)("normalizes $label at the model boundary", async ({
     draft,
-    evidence,
-    audited,
+    decision,
     expectedReason,
   }) => {
     const onVerified = vi.fn();
@@ -193,7 +183,7 @@ describe("verifyKnowledgeCoverage", () => {
       plan: singleRequirementPlan,
       draft,
       evidence,
-      model: schemaParsingVerifier(audited),
+      model: schemaParsingVerifier(decision).model,
       onVerified,
     });
 
@@ -202,147 +192,88 @@ describe("verifyKnowledgeCoverage", () => {
     ]);
   });
 
-  it("preserves a valid fixed reason at the model boundary", async () => {
-    const onVerified = vi.fn();
+  it("keeps the exported verifier contract decision-only and strict", () => {
+    expect(coverageVerificationActionSchema.parse({
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        targetDecision: "not_covered",
+        retainedRelatedContextIndexes: [0, 2],
+        reason: "related_only",
+      }],
+    })).toMatchObject({
+      requirements: [{ retainedRelatedContextIndexes: [0, 2] }],
+    });
 
-    await verifyKnowledgeCoverage({
-      question: "问题",
-      plan: singleRequirementPlan,
-      draft: completeDraft,
-      evidence: directEvidence,
-      model: schemaParsingVerifier({
+    for (const invalid of [
+      {
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "complete",
-          answer: "正文直接支持[1]。",
-          citations: [1],
-          reason: "explicit_negative_support",
+          targetDecision: "retain",
+          retainedRelatedContextIndexes: [],
+          reason: "direct_support",
+          answer: "模型不得复制答案",
         }],
-        citations: [1],
-      }),
-      onVerified,
-    });
-
-    expect(onVerified).toHaveBeenCalledWith([
-      { id: "R1", reason: "explicit_negative_support" },
-    ]);
-  });
-
-  it("keeps the exported verifier schema strict for unknown reasons", () => {
-    expect(() => coverageVerificationActionSchema.parse({
-      action: "verify",
-      requirements: [{
-        id: "R1",
-        coverage: "complete",
-        answer: "正文直接支持[1]。",
-        citations: [1],
-        reason: "provider_direct",
-      }],
-      citations: [1],
-    })).toThrow();
-  });
-
-  it("keeps the exported verifier schema strict for extra top-level and nested keys", () => {
-    const valid = {
-      action: "verify",
-      requirements: [{
-        id: "R1",
-        coverage: "complete",
-        answer: "正文直接支持[1]。",
-        citations: [1],
-        reason: "direct_support",
-      }],
-      citations: [1],
-    };
-
-    expect(() => coverageVerificationActionSchema.parse({
-      ...valid,
-      extra: "rejected",
-    })).toThrow();
-    expect(() => coverageVerificationActionSchema.parse({
-      ...valid,
-      requirements: [{ ...valid.requirements[0], extra: "rejected" }],
-    })).toThrow();
-  });
-
-  it("rejects an unauthorized related citation after normalizing an unknown reason", async () => {
-    await expect(verifyKnowledgeCoverage({
-      question: "问题",
-      plan: singleRequirementPlan,
-      draft: relatedOnlyDraft,
-      evidence: [
-        { ...directEvidence[0], citation: 1 },
-        { ...directEvidence[0], citation: 2 },
-        { ...directEvidence[0], citation: 3 },
-      ],
-      model: schemaParsingVerifier({
+      },
+      {
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "none",
-          answer: "正式资料未提及目标协议，无法确认是否支持。",
-          citations: [],
-          relatedContext: [{
-            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [3]。",
-            citations: [3],
-          }],
-          reason: "provider_related_only",
+          targetDecision: "not_covered",
+          retainedRelatedContextIndexes: [1, 0],
+          reason: "related_only",
         }],
-        citations: [3],
-      }),
-    })).rejects.toMatchObject({
-      code: "related_citation_not_in_draft:R1:3",
-    });
+      },
+      {
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "not_covered",
+          retainedRelatedContextIndexes: [0, 0],
+          reason: "related_only",
+        }],
+      },
+    ]) {
+      expect(() => coverageVerificationActionSchema.parse(invalid)).toThrow();
+    }
   });
 
-  it("does not remove extra fields while normalizing an unknown reason", async () => {
-    const payload = {
-      action: "verify",
-      requirements: [{
-        id: "R1",
-        coverage: "complete",
-        answer: "正文直接支持[1]。",
-        citations: [1],
-        reason: "provider_direct",
-        providerDetail: "must-still-be-rejected",
-      }],
-      citations: [1],
-    };
-
-    await expect(verifyKnowledgeCoverage({
-      question: "问题",
-      plan: singleRequirementPlan,
-      draft: completeDraft,
-      evidence: directEvidence,
-      model: schemaParsingVerifier(payload),
-    })).rejects.toMatchObject({
-      code: "invalid_model_payload",
-    });
-  });
-
-  it("accepts a downgrade from complete to none and removes related-only citations", async () => {
+  it("retains a supported target by copying the draft exactly", async () => {
     const result = await verifyKnowledgeCoverage({
-      question: "Coremail 是否已经支持 2035 年量子卫星邮件协议",
+      question: "问题",
       plan: singleRequirementPlan,
       draft: completeDraft,
-      evidence: [{
-        requirementId: "R1",
-        citation: 1,
-        title: "邮件系统协议基础",
-        path: "wiki/concepts/邮件系统协议基础.md",
-        content: "正文仅介绍 SMTP、POP3、IMAP。",
-      }],
+      evidence,
       model: scriptedVerifier({
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "none",
-          answer: "现有知识正文未覆盖目标协议。",
-          citations: [],
+          targetDecision: "retain",
+          retainedRelatedContextIndexes: [],
+          reason: "direct_support",
+        }],
+      }),
+    });
+
+    expect(result).toEqual(completeDraft);
+    expect(result.requirements[0]).not.toBe(completeDraft.requirements[0]);
+  });
+
+  it("rebuilds an uncovered result from retained draft indexes without model-written text", async () => {
+    const result = await verifyKnowledgeCoverage({
+      question: "Coremail 是否支持目标协议",
+      plan: singleRequirementPlan,
+      draft: relatedOnlyDraft,
+      evidence,
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "not_covered",
+          retainedRelatedContextIndexes: [1],
           reason: "related_only",
         }],
-        citations: [],
       }),
     });
 
@@ -351,486 +282,261 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         coverage: "none",
-        answer: "现有知识正文未覆盖目标协议。",
+        answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
         citations: [],
+        relatedContext: [{
+          statement: "资料还说明 HTTP/HTTPS 用于 Webmail 访问 [2]。",
+          citations: [2],
+        }],
       }],
-      citations: [],
+      citations: [2],
     });
   });
 
-  it("keeps complete coverage when the cited text directly supports the target", async () => {
+  it("downgrades an unsupported target and removes all target text and citations", async () => {
     const result = await verifyKnowledgeCoverage({
-      question: "Coremail 是否支持 SMTP",
+      question: "问题",
       plan: singleRequirementPlan,
       draft: completeDraft,
-      evidence: [{
-        requirementId: "R1",
-        citation: 1,
-        title: "邮件系统协议基础",
-        path: "wiki/concepts/邮件系统协议基础.md",
-        content: "Coremail 邮件系统支持 SMTP。",
-      }],
+      evidence,
       model: scriptedVerifier({
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "complete",
-          answer: "Coremail 支持 SMTP[1]。",
-          citations: [1],
-          reason: "direct_support",
+          targetDecision: "not_covered",
+          retainedRelatedContextIndexes: [],
+          reason: "unsupported_claim_removed",
         }],
-        citations: [1],
       }),
     });
 
-    expect(result.requirements[0]).toEqual({
-      id: "R1",
-      coverage: "complete",
-      answer: "Coremail 支持 SMTP[1]。",
-      citations: [1],
-    });
-  });
-
-  it("retains a draft related fact or removes one of its citations without promoting it", async () => {
-    const retained = await verifyKnowledgeCoverage({
-      question: "Coremail 是否支持目标协议",
-      plan: singleRequirementPlan,
-      draft: relatedOnlyDraft,
-      evidence: [
-        { ...directEvidence[0], citation: 1 },
-        { ...directEvidence[0], citation: 2 },
-      ],
-      model: scriptedVerifier({
-        action: "verify",
-        requirements: [{
-          id: "R1",
-          coverage: "none",
-          answer: "正式资料未提及目标协议，无法确认是否支持。",
-          citations: [],
-          relatedContext: [{
-            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
-            citations: [1, 2],
-          }],
-          reason: "related_only",
-        }],
-        citations: [1, 2],
-      } as CoverageVerificationAction),
-    });
-    const reduced = await verifyKnowledgeCoverage({
-      question: "Coremail 是否支持目标协议",
-      plan: singleRequirementPlan,
-      draft: relatedOnlyDraft,
-      evidence: [
-        { ...directEvidence[0], citation: 1 },
-        { ...directEvidence[0], citation: 2 },
-      ],
-      model: scriptedVerifier({
-        action: "verify",
-        requirements: [{
-          id: "R1",
-          coverage: "none",
-          answer: "正式资料未提及目标协议，无法确认是否支持。",
-          citations: [],
-          relatedContext: [{
-            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
-            citations: [1],
-          }],
-          reason: "related_only",
-        }],
-        citations: [1],
-      } as CoverageVerificationAction),
-    });
-
-    expect(retained.requirements[0]?.relatedContext).toEqual(
-      relatedOnlyDraft.requirements[0]?.relatedContext,
-    );
-    expect(reduced).toMatchObject({
+    expect(result).toEqual({
+      action: "final",
       requirements: [{
+        id: "R1",
         coverage: "none",
+        answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
         citations: [],
-        relatedContext: [{ citations: [1] }],
       }],
-      citations: [1],
+      citations: [],
     });
-  });
-
-  it.each(["complete", "partial"] as const)(
-    "rejects related context when draft and audited coverage both remain %s",
-    async (coverage) => {
-      const draft = {
-        action: "final" as const,
-        requirements: [{
-          id: "R1" as const,
-          coverage,
-          answer: coverage === "complete" ? "草稿结论[1]。" : "草稿仅确认部分内容[1]，其余待确认。",
-          citations: [1],
-          relatedContext: [{
-            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
-            citations: [1],
-          }],
-        }],
-        citations: [1],
-      } as unknown as FinalAction;
-      const verified = {
-        action: "verify" as const,
-        requirements: [{
-          id: "R1" as const,
-          coverage,
-          answer: coverage === "complete" ? "审核结论[1]。" : "审核仅确认部分内容[1]，其余待确认。",
-          citations: [1],
-          relatedContext: [{
-            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
-            citations: [1],
-          }],
-          reason: coverage === "complete" ? "direct_support" : "partial_support",
-        }],
-        citations: [1],
-      } as unknown as CoverageVerificationAction;
-
-      await expect(verifyKnowledgeCoverage({
-        question: "Coremail 是否支持目标协议",
-        plan: singleRequirementPlan,
-        draft,
-        evidence: directEvidence,
-        model: scriptedVerifier(verified),
-      })).rejects.toMatchObject({
-        code: "related_context_requires_none_coverage:R1",
-      });
-    },
-  );
-
-  it.each([
-    ["a rewritten related fact", {
-      coverage: "none",
-      citations: [],
-      relatedContext: [{ statement: "新增的相关事实[1]。", citations: [1] }],
-      topLevel: [1],
-    }],
-    ["a duplicated related fact", {
-      coverage: "none",
-      citations: [],
-      relatedContext: [
-        { statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。", citations: [1, 2] },
-        { statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。", citations: [1, 2] },
-      ],
-      topLevel: [1, 2],
-    }],
-    ["a new related citation", {
-      coverage: "none",
-      citations: [],
-      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [3]。", citations: [3] }],
-      topLevel: [3],
-    }],
-    ["a related inline and metadata citation mismatch", {
-      coverage: "none",
-      citations: [],
-      relatedContext: [{
-        statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
-        citations: [1, 2],
-      }],
-      topLevel: [1, 2],
-    }],
-    ["a citation from another requirement", {
-      coverage: "none",
-      citations: [],
-      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [2]。", citations: [2] }],
-      topLevel: [2],
-      evidence: [{ ...directEvidence[0], requirementId: "R2", citation: 2 }],
-    }],
-    ["a related citation moved into target citations", {
-      coverage: "none",
-      citations: [1],
-      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。", citations: [1] }],
-      topLevel: [1],
-    }],
-    ["related context for complete coverage", {
-      coverage: "complete",
-      citations: [1],
-      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。", citations: [1] }],
-      topLevel: [1],
-    }],
-    ["related context for partial coverage", {
-      coverage: "partial",
-      citations: [1],
-      relatedContext: [{ statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。", citations: [1] }],
-      topLevel: [1],
-    }],
-  ] as const)("rejects %s", async (_name, output) => {
-    const verified = {
-      action: "verify" as const,
-      requirements: [{
-        id: "R1" as const,
-        coverage: output.coverage,
-        answer: output.coverage === "none"
-          ? "正式资料未提及目标协议，无法确认是否支持。"
-          : `审核目标结论[${output.citations[0]}]。`,
-        citations: output.citations,
-        relatedContext: output.relatedContext,
-        reason: "related_only" as const,
-      }],
-      citations: output.topLevel,
-    } as unknown as CoverageVerificationAction;
-    await expect(verifyKnowledgeCoverage({
-      question: "Coremail 是否支持目标协议",
-      plan: singleRequirementPlan,
-      draft: relatedOnlyDraft,
-      evidence: ("evidence" in output ? output.evidence : undefined) ?? [
-        { ...directEvidence[0], citation: 1 },
-        { ...directEvidence[0], citation: 2 },
-        { ...directEvidence[0], citation: 3 },
-      ],
-      model: scriptedVerifier(verified),
-    })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
+    expect(JSON.stringify(result)).not.toContain("草稿结论");
   });
 
   it.each([
-    ["wrong requirement", {
+    ["wrong requirement id", {
       action: "verify",
       requirements: [{
         id: "R2",
-        coverage: "complete",
-        answer: "支持[1]",
-        citations: [1],
+        targetDecision: "not_covered",
+        retainedRelatedContextIndexes: [],
+        reason: "target_omitted",
+      }],
+    }, relatedOnlyDraft, evidence],
+    ["retaining a none target", {
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        targetDecision: "retain",
+        retainedRelatedContextIndexes: [],
+        reason: "target_omitted",
+      }],
+    }, relatedOnlyDraft, evidence],
+    ["retaining related context with a target", {
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        targetDecision: "retain",
+        retainedRelatedContextIndexes: [0],
         reason: "direct_support",
       }],
-      citations: [1],
-    }],
-    ["coverage upgrade", {
+    }, completeDraft, evidence],
+    ["an out-of-range related index", {
       action: "verify",
       requirements: [{
         id: "R1",
-        coverage: "complete",
-        answer: "支持[1]",
-        citations: [1],
-        reason: "direct_support",
+        targetDecision: "not_covered",
+        retainedRelatedContextIndexes: [2],
+        reason: "related_only",
       }],
-      citations: [1],
-    }],
-    ["new citation", {
+    }, relatedOnlyDraft, evidence],
+    ["related evidence from another requirement", {
       action: "verify",
       requirements: [{
         id: "R1",
-        coverage: "partial",
-        answer: "部分支持[2]",
-        citations: [2],
-        reason: "partial_support",
+        targetDecision: "not_covered",
+        retainedRelatedContextIndexes: [0],
+        reason: "related_only",
       }],
-      citations: [2],
-    }],
-    ["wrong top-level union", {
-      action: "verify",
-      requirements: [{
-        id: "R1",
-        coverage: "partial",
-        answer: "部分支持[1]",
-        citations: [1],
-        reason: "partial_support",
-      }],
-      citations: [],
-    }],
-  ] as const)("rejects %s", async (_name, action) => {
-    await expect(verifyKnowledgeCoverage({
-      question: "问题",
-      plan: singleRequirementPlan,
-      draft: partialDraft,
-      evidence: directEvidence,
-      model: scriptedVerifier(action as unknown as CoverageVerificationAction),
-    })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
-  });
+    }, relatedOnlyDraft, [{ ...evidence[0], requirementId: "R2" }]],
+  ] as const)(
+    "falls back conservatively after three invalid decisions: %s",
+    async (_label, decision, draft, decisionEvidence) => {
+      const completeJson = vi.fn(async () =>
+        decision as unknown as CoverageVerificationAction);
+      const result = await verifyKnowledgeCoverage({
+        question: "问题",
+        plan: singleRequirementPlan,
+        draft,
+        evidence: decisionEvidence,
+        model: modelFromCompleteJson(completeJson),
+      });
 
-  it("rejects a citation that was not read for the audited requirement", async () => {
-    const action: CoverageVerificationAction = {
-      action: "verify",
-      requirements: [{
-        id: "R1",
-        coverage: "partial",
-        answer: "部分支持[1]",
-        citations: [1],
-        reason: "partial_support",
-      }],
-      citations: [1],
-    };
-    await expect(verifyKnowledgeCoverage({
-      question: "问题",
-      plan: singleRequirementPlan,
-      draft: partialDraft,
-      evidence: [{ ...directEvidence[0], requirementId: "R2" }],
-      model: scriptedVerifier(action),
-    })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
-  });
+      expect(result).toEqual({
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
+          citations: [],
+        }],
+        citations: [],
+      });
+      expect(completeJson).toHaveBeenCalledTimes(3);
+    },
+  );
 
-  it("repairs one invalid model payload", async () => {
+  it("includes the exact deterministic error in the next repair request", async () => {
+    const capture = schemaParsingVerifier(
+      {
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "not_covered",
+          retainedRelatedContextIndexes: [2],
+          reason: "related_only",
+        }],
+      },
+      {
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "not_covered",
+          retainedRelatedContextIndexes: [0],
+          reason: "related_only",
+        }],
+      },
+    );
+
     const result = await verifyKnowledgeCoverage({
       question: "问题",
       plan: singleRequirementPlan,
-      draft: completeDraft,
-      evidence: directEvidence,
-      model: scriptedVerifier(
-        new InvalidModelPayloadError("invalid_schema"),
-        {
-          action: "verify",
-          requirements: [{
-            id: "R1",
-            coverage: "complete",
-            answer: "正文直接支持[1]。",
-            citations: [1],
-            reason: "direct_support",
-          }],
-          citations: [1],
-        },
-      ),
+      draft: relatedOnlyDraft,
+      evidence,
+      model: capture.model,
     });
 
-    expect(result.requirements[0]?.answer).toBe("正文直接支持[1]。");
+    expect(result.citations).toEqual([1]);
+    expect(capture.completeJson).toHaveBeenCalledTimes(2);
+    expect(capture.completeJson.mock.calls[1]?.[0].messages.at(-1)?.content)
+      .toContain("related_context_index_out_of_range:R1:2");
   });
 
-  it("repairs two invalid attempts and states the complete strict repair contract", async () => {
-    const payloads = [
-      {
-        action: "verify",
-        requirements: [{
-          id: "R1",
-          coverage: "none",
-          answer: "正式资料未提及目标协议，无法确认是否支持。",
-          citations: [],
-          relatedContext: [{
-            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
-            citations: [1, 2],
-          }],
-          reason: "related_only",
-        }],
-        citations: [1, 2],
-        extra: "schema-invalid",
-      },
-      {
-        action: "verify",
-        requirements: [{
-          id: "R1",
-          coverage: "none",
-          answer: "正式资料未提及目标协议，无法确认是否支持。",
-          citations: [],
-          relatedContext: [{
-            statement: "资料支持 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
-            citations: [1, 2],
-          }],
-          reason: "related_only",
-        }],
-        citations: [1, 2],
-      },
-      {
-        action: "verify",
-        requirements: [{
-          id: "R1",
-          coverage: "none",
-          answer: "正式资料未提及目标协议，无法确认是否支持。",
-          citations: [],
-          relatedContext: [{
-            statement: "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2]。",
-            citations: [1, 2],
-          }],
-          reason: "related_only",
-        }],
-        citations: [1, 2],
-      },
-    ];
+  it("includes the precise model schema path in the next repair request", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],
     ) => {
-      const parsed = input.schema.safeParse(
-        payloads[completeJson.mock.calls.length - 1],
-      );
-      if (!parsed.success) throw new InvalidModelPayloadError("invalid_schema");
-      return parsed.data;
-    });
-
-    const result = await verifyKnowledgeCoverage({
-      question: "Coremail 是否支持目标协议",
-      plan: singleRequirementPlan,
-      draft: relatedOnlyDraft,
-      evidence: [
-        { ...directEvidence[0], citation: 1 },
-        { ...directEvidence[0], citation: 2 },
-      ],
-      model: {
-        completeJson: completeJson as ModelClient["completeJson"],
-        completeText: async () => {
-          throw new Error("unexpected completeText");
-        },
-      },
-    });
-
-    expect(result.requirements[0]?.relatedContext)
-      .toEqual(relatedOnlyDraft.requirements[0]?.relatedContext);
-    expect(completeJson).toHaveBeenCalledTimes(3);
-    for (const repairCall of completeJson.mock.calls.slice(1)) {
-      const repair = repairCall[0].messages.at(-1)?.content ?? "";
-      expect(repair).toContain("顶层只能包含 action、requirements、citations");
-      expect(repair).toContain("不得输出任何额外字段");
-      expect(repair).toContain("删除 [n] 标记后必须逐字复制草稿");
-      expect(repair).toContain("不得改写或转述");
-      expect(repair).toContain("内联 [n] 必须与 citations 元数据完全一致");
-      expect(repair).toContain("顶层 citations 必须是稳定并集");
-      expect(repair).toContain("无法原样保留时必须删除该 relatedContext 项");
-      expect(repair).toContain(
-        "reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed",
-      );
-    }
-  });
-
-  it("fails closed after three invalid model payloads and makes exactly three calls", async () => {
-    const completeJson = vi.fn(async () => {
-      throw new InvalidModelPayloadError("invalid_schema");
-    });
-    await expect(verifyKnowledgeCoverage({
-      question: "问题",
-      plan: singleRequirementPlan,
-      draft: completeDraft,
-      evidence: directEvidence,
-      model: {
-        completeJson: completeJson as ModelClient["completeJson"],
-        completeText: async () => {
-          throw new Error("unexpected completeText");
-        },
-      },
-    })).rejects.toMatchObject({ code: "invalid_model_payload" });
-    expect(completeJson).toHaveBeenCalledTimes(3);
-  });
-
-  it("propagates model unavailability", async () => {
-    const unavailable = new ModelUnavailableError();
-    await expect(verifyKnowledgeCoverage({
-      question: "问题",
-      plan: singleRequirementPlan,
-      draft: completeDraft,
-      evidence: directEvidence,
-      model: scriptedVerifier(unavailable),
-    })).rejects.toBe(unavailable);
-  });
-
-  it("reports only validated requirement reasons to diagnostics", async () => {
-    const onVerified = vi.fn();
-    await verifyKnowledgeCoverage({
-      question: "Coremail 是否已经支持 2035 年量子卫星邮件协议",
-      plan: singleRequirementPlan,
-      draft: completeDraft,
-      evidence: directEvidence,
-      model: scriptedVerifier({
+      if (completeJson.mock.calls.length === 1) {
+        throw new InvalidModelPayloadError(
+          "invalid_schema:requirements.0.retainedRelatedContextIndexes:invalid_type",
+        );
+      }
+      return input.schema.parse({
         action: "verify",
         requirements: [{
           id: "R1",
-          coverage: "none",
-          answer: "现有知识正文未覆盖目标协议。",
-          citations: [],
-          reason: "related_only",
+          targetDecision: "retain",
+          retainedRelatedContextIndexes: [],
+          reason: "direct_support",
         }],
-        citations: [],
-      }),
+      });
+    });
+
+    const result = await verifyKnowledgeCoverage({
+      question: "问题",
+      plan: singleRequirementPlan,
+      draft: completeDraft,
+      evidence,
+      model: modelFromCompleteJson(completeJson),
+    });
+
+    expect(result).toEqual(completeDraft);
+    expect(completeJson.mock.calls[1]?.[0].messages.at(-1)?.content)
+      .toContain(
+        "invalid_schema:requirements.0.retainedRelatedContextIndexes:invalid_type",
+      );
+  });
+
+  it("returns a deterministic uncovered result after three invalid model payloads", async () => {
+    const completeJson = vi.fn(async () => {
+      throw new InvalidModelPayloadError(
+        "invalid_schema:requirements.0.targetDecision:invalid_value",
+      );
+    });
+    const onVerified = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "问题",
+      plan: singleRequirementPlan,
+      draft: completeDraft,
+      evidence,
+      model: modelFromCompleteJson(completeJson),
       onVerified,
     });
 
+    expect(result).toMatchObject({
+      requirements: [{ coverage: "none", citations: [] }],
+      citations: [],
+    });
+    expect(completeJson).toHaveBeenCalledTimes(3);
     expect(onVerified).toHaveBeenCalledWith([
-      { id: "R1", reason: "related_only" },
+      { id: "R1", reason: "target_omitted" },
     ]);
+  });
+
+  it("still propagates model unavailability instead of claiming not covered", async () => {
+    const unavailable = new ModelUnavailableError();
+    const completeJson = vi.fn(async () => {
+      throw unavailable;
+    });
+
+    await expect(verifyKnowledgeCoverage({
+      question: "问题",
+      plan: singleRequirementPlan,
+      draft: completeDraft,
+      evidence,
+      model: modelFromCompleteJson(completeJson),
+    })).rejects.toBe(unavailable);
+    expect(completeJson).toHaveBeenCalledOnce();
+  });
+
+  it("passes the caller abort signal to every model attempt", async () => {
+    const controller = new AbortController();
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => {
+      expect(input.signal).toBe(controller.signal);
+      return input.schema.parse({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedRelatedContextIndexes: [],
+          reason: "direct_support",
+        }],
+      });
+    });
+
+    await verifyKnowledgeCoverage({
+      question: "问题",
+      plan: singleRequirementPlan,
+      draft: completeDraft,
+      evidence,
+      model: modelFromCompleteJson(completeJson),
+      signal: controller.signal,
+    });
+
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 });
 
@@ -851,22 +557,35 @@ function scriptedVerifier(
   };
 }
 
-function schemaParsingVerifier(...payloads: unknown[]): ModelClient {
+function schemaParsingVerifier(...payloads: unknown[]): {
+  readonly model: ModelClient;
+  readonly completeJson: ReturnType<typeof vi.fn>;
+} {
   let index = 0;
+  const completeJson = vi.fn(async (
+    input: Parameters<ModelClient["completeJson"]>[0],
+  ) => {
+    const payload = index < payloads.length ? payloads[index] : payloads.at(-1);
+    index += 1;
+    const parsed = input.schema.safeParse(payload);
+    if (!parsed.success) {
+      throw new InvalidModelPayloadError(
+        `invalid_schema:${parsed.error.issues[0]?.path.join(".") ?? "root"}`,
+      );
+    }
+    return parsed.data;
+  });
   return {
-    completeJson: (async (
-      input: Parameters<ModelClient["completeJson"]>[0],
-    ) => {
-      const payload = index < payloads.length
-        ? payloads[index]
-        : payloads.at(-1);
-      index += 1;
-      const parsed = input.schema.safeParse(payload);
-      if (!parsed.success) {
-        throw new InvalidModelPayloadError("invalid_schema");
-      }
-      return parsed.data;
-    }) as ModelClient["completeJson"],
+    model: modelFromCompleteJson(completeJson),
+    completeJson,
+  };
+}
+
+function modelFromCompleteJson(
+  completeJson: ReturnType<typeof vi.fn>,
+): ModelClient {
+  return {
+    completeJson: completeJson as ModelClient["completeJson"],
     completeText: async () => {
       throw new Error("unexpected completeText");
     },

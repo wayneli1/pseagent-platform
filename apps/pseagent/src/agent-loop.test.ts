@@ -415,10 +415,10 @@ describe("runKnowledgeAgent", () => {
           citations: [],
           relatedContext: [{
             statement: "正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1]。",
-            citations: [99],
+            citations: [1],
           }],
         }],
-        citations: [99],
+        citations: [1],
       },
     ]);
     const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
@@ -536,7 +536,7 @@ describe("runKnowledgeAgent", () => {
   it.each([
     ["removes every marker", "资料明确列出 SMTP、POP3 和 IMAP 协议能力。"],
     ["expands one metadata citation to five markers", "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2][3][4][5]。"],
-  ])("rejects a schema-valid related item when normalization %s", async (_name, statement) => {
+  ])("drops a malformed optional related item when normalization %s", async (_name, statement) => {
     const session = fakeSession({
       hits: { "seed-r1": [{ path: "wiki/protocols.md" }] },
     });
@@ -569,14 +569,20 @@ describe("runKnowledgeAgent", () => {
       trace,
     });
 
-    expect(result.status).toBe("temporarily_unavailable");
-    expect(verifyCoverage).not.toHaveBeenCalled();
-    expect(events).toContainEqual({
+    expect(result.status).toBe("not_covered");
+    expect(result.references).toEqual([]);
+    expect(verifyCoverage).toHaveBeenCalledWith(expect.objectContaining({
+      draft: expect.objectContaining({
+        requirements: [expect.not.objectContaining({
+          relatedContext: expect.anything(),
+        })],
+        citations: [],
+      }),
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
       event: "validation",
       result: "rejected",
-      reason: "related_citation_count",
-      repairAttempt: 1,
-    });
+    }));
   });
 
   it("automatically searches every seed query and fuses candidates with RRF", async () => {
@@ -1378,7 +1384,7 @@ describe("runKnowledgeAgent", () => {
     ]);
   });
 
-  it("validates and repairs invalid citations after the same-count gate nudge", async () => {
+  it("drops a cross-requirement related citation after the same-count gate nudge", async () => {
     const plan: KnowledgePlan = {
       subject: "复合能力",
       requirements: [
@@ -1424,38 +1430,11 @@ describe("runKnowledgeAgent", () => {
       ],
       citations: [2],
     } satisfies AgentAction;
-    const repairedFinal = {
-      action: "final",
-      requirements: [
-        {
-          id: "R1",
-          coverage: "none",
-          answer: "能力一未覆盖。",
-          citations: [],
-          relatedContext: [{
-            statement: "能力一相关正文 [1]。",
-            citations: [1],
-          }],
-        },
-        {
-          id: "R2",
-          coverage: "none",
-          answer: "能力二未覆盖。",
-          citations: [],
-          relatedContext: [{
-            statement: "能力二相关正文 [2]。",
-            citations: [2],
-          }],
-        },
-      ],
-      citations: [1, 2],
-    } satisfies AgentAction;
     const model = scriptedAgentModel([
       read("R1", "wiki/r1-first.md"),
       read("R2", "wiki/r2-first.md"),
       invalidFinal,
       invalidFinal,
-      repairedFinal,
     ]);
     const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
     const events: DiagnosticEvent[] = [];
@@ -1472,21 +1451,27 @@ describe("runKnowledgeAgent", () => {
       trace,
     });
 
-    expect(events).toContainEqual({
+    expect(events).not.toContainEqual(expect.objectContaining({
       event: "validation",
       result: "rejected",
-      reason: "citation_not_read_for_requirement:R1:2",
-      repairAttempt: 1,
-    });
-    expect(payloadAt(model, 4).observations?.join("\n")).toContain(
-      "invalid_citations",
-    );
-    expect(model.calls).toBe(5);
+    }));
+    expect(model.calls).toBe(4);
     expect(verifyCoverage).toHaveBeenCalledOnce();
-    expect(verifyCoverage.mock.calls[0]?.[0].draft).toEqual(repairedFinal);
+    expect(verifyCoverage.mock.calls[0]?.[0].draft).toEqual({
+      action: "final",
+      requirements: [
+        {
+          id: "R1",
+          coverage: "none",
+          answer: "能力一未覆盖。",
+          citations: [],
+        },
+        invalidFinal.requirements[1],
+      ],
+      citations: [2],
+    });
     expect(result.status).toBe("not_covered");
     expect(result.references.map((reference) => reference.path)).toEqual([
-      "wiki/r1-first.md",
       "wiki/r2-first.md",
     ]);
   });
@@ -1593,13 +1578,18 @@ describe("runKnowledgeAgent", () => {
   it("repairs one invalid action with an explicit schema instruction", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([
-      new InvalidModelPayloadError(),
+      new InvalidModelPayloadError(
+        "invalid_schema:requirements.0.relatedContext.1.citations:too_small",
+      ),
       final("none", "当前资料未覆盖该问题"),
     ]);
 
     const result = await runKnowledgeAgent(agentInput(model, session));
 
     expect(model.prompts[1]?.at(-1)?.content).toContain("上一次输出不符合 Schema");
+    expect(model.prompts[1]?.at(-1)?.content).toContain(
+      "requirements.0.relatedContext.1.citations:too_small",
+    );
     expect(model.calls).toBe(2);
     expect(result.status).toBe("not_covered");
   });
