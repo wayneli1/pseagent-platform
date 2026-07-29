@@ -273,6 +273,32 @@ describe("related-context acceptance probe", () => {
   });
 
   it.each([
+    "资料说明 SMTP 存在量子加密能力 [1]。",
+    "资料显示 SMTP 可能提供量子加密能力 [1]。",
+    "资料显示 SMTP+IMAP 协议可用 [1]。",
+    "资料显示 SMTP-IMAP 协议可用 [1]。",
+    "资料显示 SMTP_IMAP 协议可用 [1]。",
+    "资料显示 SMTP.IMAP 协议可用 [1]。",
+    "资料记载 SMTP 协议已废弃 [1]。",
+    "页面列出 IMAP，但禁止使用该协议 [1]。",
+  ])("rejects an unsupported or non-positive related statement: %s", async (
+    relatedStatement,
+  ) => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const answer = pseFixture.answer.replace(
+      "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+      relatedStatement,
+    );
+
+    expect(() => validateRelatedContextAcceptance(
+      { ...pseFixture, answer },
+      finishFixture,
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toThrow();
+  });
+
+  it.each([
     [
       "unsupported positive target claim",
       {
@@ -551,6 +577,8 @@ describe("related-context acceptance probe", () => {
     "目标协议的支持情况，现有正式知识库无法确认。",
     "正式知识库不足以判断目标协议能否获得支持。",
     "正式知识库无法确认是否支持目标协议。",
+    "根据现有正式知识库，暂时无法确认 Coremail 是否支持目标协议。",
+    "正式知识库没有提到目标协议，因此无法确认 Coremail 是否支持。",
   ])("accepts target-oriented uncertainty wording: %s", async (conclusion) => {
     const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
     const answer = pseFixture.answer.replace(
@@ -567,6 +595,27 @@ describe("related-context acceptance probe", () => {
       formalRefs: 1,
       historicalAttempted: true,
     });
+  });
+
+  it.each([
+    "正式知识库已确认 Coremail 支持目标协议。",
+    "正式知识库显示 Coremail 不支持目标协议。",
+    "正式知识库记载目标协议已被禁用，无法确认 Coremail 是否支持。",
+    "正式知识库无法确认 Coremail 是否支持目标协议，另外产品已正式上市。",
+    "暂时无法确认 Coremail 是否支持目标协议。",
+  ])("rejects an unsafe uncertainty mutation: %s", async (conclusion) => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const answer = pseFixture.answer.replace(
+      "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+      conclusion,
+    );
+
+    expect(() => validateRelatedContextAcceptance(
+      { ...pseFixture, answer },
+      finishFixture,
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toThrow();
   });
 
   it("accepts an attempted historical lookup that returned no historical answer", async () => {

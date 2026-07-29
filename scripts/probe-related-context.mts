@@ -288,14 +288,23 @@ function validateRelatedProtocols(
   supportedRelatedFacts: readonly string[],
 ): void {
   const allowedContextTokens = new Set(["COREMAIL"]);
-  const supportedTokens = new Set(
-    supportedRelatedFacts.flatMap((fact) =>
-      fact.toLocaleUpperCase("en-US").match(/[A-Z][A-Z0-9]*(?:[/-][A-Z0-9]+)*/gu) ?? []
-    ).flatMap((token) => [token, ...token.split(/[/-]/gu)]),
-  );
+  const protocolTokenPattern =
+    /[A-Z][A-Z0-9]*(?:[\/+_.-][A-Z0-9]+)*/gu;
+  const supportedTokens = new Set<string>();
+  for (const fact of supportedRelatedFacts) {
+    const tokens =
+      fact.toLocaleUpperCase("en-US").match(protocolTokenPattern) ?? [];
+    for (const token of tokens) {
+      supportedTokens.add(token);
+      if (token === "HTTP/HTTPS") {
+        supportedTokens.add("HTTP");
+        supportedTokens.add("HTTPS");
+      }
+    }
+  }
   const visibleTokens =
     relatedSection.toLocaleUpperCase("en-US")
-      .match(/[A-Z][A-Z0-9]*(?:[/-][A-Z0-9]+)*/gu) ?? [];
+      .match(protocolTokenPattern) ?? [];
   const visibleProtocols = visibleTokens.filter((token) =>
     !allowedContextTokens.has(token));
   if (
@@ -305,7 +314,7 @@ function validateRelatedProtocols(
     throw new Error("unsupported_related_protocol");
   }
   const disallowedRelation =
-    /(?:不|非|未|无|否|尚|仅|部分|某些|缺乏|拒绝|禁用|排除|无法|不能|不足以|难以|是否|能否)/u;
+    /(?:可能|或许|疑似|大概|也许|似乎|待确认|不确定|不|非|未|无|否|尚|仅|部分|某些|缺乏|拒绝|禁用|禁止|废弃|弃用|停用|淘汰|过时|排除|无法|不能|不足以|难以|是否|能否)/u;
   if (disallowedRelation.test(relatedSection)) {
     throw new Error("unsupported_related_relation");
   }
@@ -323,12 +332,32 @@ function validateRelatedProtocols(
         .replace(/[。.!！]+$/gu, "")
         .toLocaleUpperCase("en-US");
       const statementTokens =
-        normalized.match(/[A-Z][A-Z0-9]*(?:[/-][A-Z0-9]+)*/gu) ?? [];
+        normalized.match(protocolTokenPattern) ?? [];
       const statementProtocols = statementTokens.filter((token) =>
         !allowedContextTokens.has(token));
-      const positiveEvidence =
-        /(?:列出|列举|记载|说明|显示|表明|确认|包括|包含|支持|遵循|兼容|具备|提供|采用|受支持|可用|协议能力)/u
-          .test(normalized);
+      const structured = normalized.replace(
+        protocolTokenPattern,
+        (token) => allowedContextTokens.has(token) ? token : "P",
+      );
+      const protocolList = "P(?:(?:、|，|,|和|及|以及|与)P)*";
+      const source = "(?:正文|正式知识库(?:正文)?|资料|页面)";
+      const subject = "(?:COREMAIL邮件系统|COREMAIL|系统|邮件系统)";
+      const relation = "(?:支持|遵循|兼容|提供|采用)";
+      const positiveEvidence = [
+        `^${source}(?:明确)?(?:列出|列举|记载)(?:了)?${protocolList}` +
+          "(?:等)?(?:受支持的|支持的)?(?:协议|协议能力)?$",
+        `^${source}(?:明确)?(?:表明|确认|说明|显示)${subject}` +
+          `(?:明确)?${relation}${protocolList}(?:等)?(?:协议|协议能力)?$`,
+        `^${source}(?:明确)?(?:表明|确认|说明|显示)${subject}` +
+          `(?:明确)?具备${protocolList}(?:等)?协议能力$`,
+        `^${source}(?:明确)?(?:表明|确认|说明|显示)${protocolList}` +
+          "(?:等)?(?:协议)?(?:均|都)?(?:受支持|可用)$",
+        `^${subject}(?:明确)?${relation}${protocolList}` +
+          "(?:等)?(?:协议|协议能力)?$",
+        `^${subject}(?:明确)?具备${protocolList}(?:等)?协议能力$`,
+        `^${subject}(?:的)?协议(?:包括|包含|有)${protocolList}(?:等)?$`,
+        `^${protocolList}(?:等)?(?:协议)?(?:均|都)(?:受支持|可用)$`,
+      ].some((pattern) => new RegExp(pattern, "u").test(structured));
       return citations.length > 0 &&
         statementProtocols.length > 0 &&
         statementProtocols.every((token) => supportedTokens.has(token)) &&
@@ -341,9 +370,6 @@ function validateRelatedProtocols(
 
 function validateTargetConclusion(conclusionSection: string): void {
   const normalized = conclusionSection.replace(/\s+/gu, "");
-  if (!containsOnlyUncertaintyVocabulary(normalized)) {
-    throw new Error("unsupported_target_claim");
-  }
   if (
     !normalized.includes("正式知识库") ||
     !/(?:(?:2035年?)?量子卫星邮件协议|目标协议|该协议|此协议)/u.test(normalized) ||
@@ -361,9 +387,11 @@ function validateTargetConclusion(conclusionSection: string): void {
     .map((clause) => clause.replace(/\s+/gu, ""))
     .filter(Boolean);
   const negativeAssertion =
-    /(?:不受支持|不支持|未受支持|未支持|尚未支持|不兼容|不可用|无法使用)/u;
+    /(?:不受支持|不支持|未受支持|未支持|尚未支持|不兼容|不可用|无法使用|禁用|禁止|废弃|弃用|停用|淘汰|过时|下线)/u;
+  const positiveAssertion =
+    /(?:(?:已经|已|明确)(?:受)?(?:支持|兼容|可用)|(?:能够|可以)?正常(?:工作|运行|通信|使用))/u;
   for (const clause of clauses) {
-    if (negativeAssertion.test(clause)) {
+    if (negativeAssertion.test(clause) || positiveAssertion.test(clause)) {
       throw new Error("unsupported_target_claim");
     }
     if (
@@ -376,68 +404,6 @@ function validateTargetConclusion(conclusionSection: string): void {
       throw new Error("unsupported_target_claim");
     }
   }
-}
-
-function containsOnlyUncertaintyVocabulary(value: string): boolean {
-  let remaining = value.replace(/[。！？；;，,：:\n]/gu, "");
-  const vocabulary = [
-    "2035年量子卫星邮件协议",
-    "量子卫星邮件协议",
-    "Coremail邮件系统",
-    "Coremail",
-    "邮件系统",
-    "正式知识库",
-    "得出结论",
-    "作出确认",
-    "支持情况",
-    "兼容情况",
-    "目标协议",
-    "该协议",
-    "此协议",
-    "未提及",
-    "未覆盖",
-    "未收录",
-    "未包含",
-    "不足以",
-    "无法",
-    "不能",
-    "难以",
-    "确认",
-    "判断",
-    "确定",
-    "是否",
-    "能否",
-    "获得",
-    "支持",
-    "兼容",
-    "可用",
-    "通信",
-    "对于",
-    "关于",
-    "依据",
-    "根据",
-    "基于",
-    "现有",
-    "目前",
-    "当前",
-    "资料",
-    "信息",
-    "证据",
-    "因此",
-    "所以",
-    "尚",
-    "从",
-    "在",
-    "中",
-    "对",
-    "其",
-    "受",
-    "的",
-  ].sort((left, right) => right.length - left.length);
-  for (const token of vocabulary) {
-    remaining = remaining.split(token).join("");
-  }
-  return remaining.length === 0;
 }
 
 function containsTargetClaim(value: string): boolean {
@@ -453,7 +419,8 @@ function isUncertaintyClause(clause: string): boolean {
 function isNeutralOmissionClause(clause: string): boolean {
   return clause.includes("正式知识库") &&
     containsTargetClaim(clause) &&
-    /(?:未|尚未)(?:提及|覆盖|收录|包含)/u.test(clause) &&
+    /(?:(?:未|尚未)(?:提及|覆盖|收录|包含)|没有(?:提到|提及|覆盖|收录|包含|记录))/u
+      .test(clause) &&
     !/(?:支持|兼容|可用|通信|证实|能够|可以)/u.test(clause);
 }
 
