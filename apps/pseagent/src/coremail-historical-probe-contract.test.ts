@@ -239,6 +239,8 @@ describe("related-context acceptance probe", () => {
     "Coremail 邮件系统与 SMTP、POP3、IMAP、HTTP、HTTPS、CMSP 和 CMTP 等协议兼容 [1]。",
     "Coremail 邮件系统支持 SMTP、POP3、IMAP、HTTP、HTTPS、CMSP 和 CMTP 等多种协议 [1]。",
     "Coremail 邮件系统兼容 SMTP、POP3、IMAP、HTTP、HTTPS、CMSP 和 CMTP 标准协议 [1]。",
+    "Coremail 邮件系统对 SMTP、POP3、IMAP 等现有协议有支持 [1]。",
+    "Coremail 邮件系统遵循 SMTP、POP3、IMAP 等协议标准 [1]。",
     "Coremail 资料明确列出了 SMTP、POP3 和 IMAP 协议能力 [1]。",
     "正式知识库资料显示 Coremail 邮件系统支持 SMTP 和 IMAP 协议 [1]。",
   ])("accepts a body-supported protocol subset with equivalent positive wording: %s", async (
@@ -282,6 +284,9 @@ describe("related-context acceptance probe", () => {
   it.each([
     "资料说明 SMTP 存在量子加密能力 [1]。",
     "资料显示 SMTP 可能提供量子加密能力 [1]。",
+    "资料列出 SMTP 并发布其他产品 [1]。",
+    "资料说明 SMTP 获得专利认证 [1]。",
+    "资料说明 SMTP [1]。",
     "资料显示 SMTP+IMAP 协议可用 [1]。",
     "资料显示 SMTP-IMAP 协议可用 [1]。",
     "资料显示 SMTP_IMAP 协议可用 [1]。",

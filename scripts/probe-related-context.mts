@@ -338,36 +338,88 @@ function validateRelatedProtocols(
         !allowedContextTokens.has(token));
       const structured = normalized.replace(
         protocolTokenPattern,
-        (token) => allowedContextTokens.has(token) ? token : "P",
+        (token) => allowedContextTokens.has(token) ? "产品名" : "协议项",
       );
-      const protocolList = "P(?:(?:、|，|,|和|及|以及|与)P)*";
-      const source =
-        "(?:正文|COREMAIL资料|正式知识库(?:正文|资料)?|资料|页面)";
-      const subject = "(?:COREMAIL邮件系统|COREMAIL|系统|邮件系统)";
-      const relation = "(?:支持|遵循|兼容|提供|采用)";
-      const protocolSuffix =
-        "(?:(?:等多种协议|标准协议|(?:等)?协议能力|(?:等)?协议))?";
-      const positiveEvidence = [
-        `^${source}(?:明确)?(?:列出|列举|记载)(?:了)?${protocolList}` +
-          "(?:等)?(?:受支持的|支持的)?(?:协议|协议能力)?$",
-        `^${source}(?:明确)?(?:表明|确认|说明|显示)${subject}` +
-          `(?:明确)?${relation}${protocolList}${protocolSuffix}$`,
-        `^${source}(?:明确)?(?:表明|确认|说明|显示)${subject}` +
-          `(?:明确)?具备${protocolList}(?:等)?协议能力$`,
-        `^${source}(?:明确)?(?:表明|确认|说明|显示)${protocolList}` +
-          "(?:等)?(?:协议)?(?:均|都)?(?:受支持|可用)$",
-        `^${subject}(?:明确)?${relation}${protocolList}${protocolSuffix}$`,
-        `^${subject}(?:明确)?具备${protocolList}(?:等)?协议能力$`,
-        `^${subject}(?:的)?协议(?:包括|包含|有)${protocolList}(?:等)?$`,
-        `^${subject}(?:明确)?(?:支持|遵循|兼容|采用)的` +
-          `(?:标准)?协议(?:包括|包含|有)${protocolList}(?:等)?$`,
-        `^${subject}与${protocolList}(?:等多种|等|标准)?协议(?:兼容|相容)$`,
-        `^${protocolList}(?:等)?(?:协议)?(?:均|都)(?:受支持|可用)$`,
-      ].some((pattern) => new RegExp(pattern, "u").test(structured));
+      const positiveEvidence =
+        /(?:列出|列举|记载|包括|包含|支持|受支持|兼容|相容|遵循|符合|具备|提供|采用|可用)/u
+          .test(structured);
+      let residual = structured.replace(
+        /[、，,。.!！：:；;（）()“”"'《》【】\[\]]/gu,
+        "",
+      );
+      const neutralVocabulary = [
+        "正式知识库正文",
+        "正式知识库资料",
+        "产品名邮件系统",
+        "正式知识库",
+        "受支持的",
+        "等多种协议",
+        "协议能力",
+        "标准协议",
+        "协议标准",
+        "现有协议",
+        "列出了",
+        "受支持",
+        "有支持",
+        "邮件系统",
+        "列出",
+        "列举",
+        "记载",
+        "包括",
+        "包含",
+        "支持",
+        "兼容",
+        "相容",
+        "遵循",
+        "符合",
+        "具备",
+        "提供",
+        "采用",
+        "可用",
+        "表明",
+        "确认",
+        "说明",
+        "显示",
+        "产品名",
+        "协议项",
+        "正文",
+        "资料",
+        "页面",
+        "系统",
+        "明确",
+        "直接",
+        "当前",
+        "现有",
+        "多种",
+        "标准",
+        "基础",
+        "相关",
+        "协议",
+        "支持的",
+        "以及",
+        "并且",
+        "等",
+        "均",
+        "都",
+        "对",
+        "的",
+        "有",
+        "为",
+        "是",
+        "了",
+        "与",
+        "和",
+        "及",
+        "并",
+      ].sort((left, right) => right.length - left.length);
+      for (const token of neutralVocabulary) {
+        residual = residual.split(token).join("");
+      }
       return citations.length > 0 &&
         statementProtocols.length > 0 &&
         statementProtocols.every((token) => supportedTokens.has(token)) &&
-        positiveEvidence;
+        positiveEvidence &&
+        residual.length === 0;
     });
   if (!allStatementsSupported) {
     throw new Error("unsupported_related_relation");
