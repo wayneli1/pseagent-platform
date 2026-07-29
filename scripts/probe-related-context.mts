@@ -315,7 +315,7 @@ function validateRelatedProtocols(
     throw new Error("unsupported_related_protocol");
   }
   const disallowedRelation =
-    /(?:可能|或许|疑似|大概|也许|似乎|待确认|不确定|不|非|未|无|否|尚|仅|部分|某些|缺乏|拒绝|禁用|禁止|废弃|弃用|停用|淘汰|过时|排除|无法|不能|不足以|难以|是否|能否)/u;
+    /(?:(?:可能|或许|疑似|大概|也许|似乎|是否|能否)\s*(?:列出|列举|记载|包括|包含|受支持|支持|兼容|相容|遵循|符合|具备|提供|采用|可用|使用)|(?:不|并非|非|未|尚未)\s*(?:列出|列举|记载|包括|包含|受支持|支持|兼容|相容|遵循|符合|具备|提供|采用|可用|使用)|(?:无法|不能|不足以|难以|拒绝)\s*(?:支持|兼容|相容|使用)|(?:已|已经|被)\s*(?:禁用|废弃|弃用|停用|淘汰)|禁止\s*使用|待确认|不确定)/u;
   if (disallowedRelation.test(relatedSection)) {
     throw new Error("unsupported_related_relation");
   }

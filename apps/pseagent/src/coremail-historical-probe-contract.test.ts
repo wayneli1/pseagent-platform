@@ -244,6 +244,8 @@ describe("related-context acceptance probe", () => {
     "Coremail 资料明确列出了 SMTP、POP3 和 IMAP 协议能力 [1]。",
     "正式知识库资料显示 Coremail 邮件系统支持 SMTP 和 IMAP 协议 [1]。",
     "根据正文列出的协议能力，SMTP、POP3 和 IMAP 都是 Coremail 邮件系统明确支持的标准协议 [1]。",
+    "正文不仅列出 SMTP，还包括 POP3 和 IMAP 协议能力 [1]。",
+    "部分章节明确列出 SMTP、POP3 和 IMAP 协议能力 [1]。",
   ])("accepts a body-supported protocol subset with equivalent positive wording: %s", async (
     relatedStatement,
   ) => {
