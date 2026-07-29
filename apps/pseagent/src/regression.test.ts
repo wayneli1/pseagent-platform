@@ -8,6 +8,7 @@ import {
   answerStatusSchema,
   scopeSchema,
   type AgentAction,
+  type CoverageVerificationAction,
 } from "./contracts.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { ModelClient, ModelMessage } from "./model-client.js";
@@ -64,10 +65,15 @@ const cases = z.array(regressionCaseSchema).length(41).parse(JSON.parse(readFile
 const revision = "a".repeat(40);
 const contentHash = "b".repeat(64);
 
-function scriptedModel(actions: AgentAction[], textAnswer: string): ModelClient {
+type ScriptedJsonResponse = AgentAction | CoverageVerificationAction;
+
+function scriptedModel(
+  responses: ScriptedJsonResponse[],
+  textAnswer: string,
+): ModelClient {
   return {
     completeJson: vi.fn(async (input) => {
-      const next = actions.shift();
+      const next = responses.shift();
       if (!next) throw new Error("missing_scripted_action");
       return input.schema.parse(next);
     }),
@@ -212,6 +218,29 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
   ];
 }
 
+function p11VerificationFor(
+  testCase: RegressionCase,
+): CoverageVerificationAction {
+  if (testCase.id !== "P11" || testCase.relatedFacts.length === 0) {
+    throw new Error("p11_verification_requires_related_facts");
+  }
+  return {
+    action: "verify",
+    requirements: [{
+      id: "R1",
+      coverage: "none",
+      answer: "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+      citations: [],
+      relatedContext: [{
+        statement: `正文明确列出 ${testCase.relatedFacts.join("、")} 协议能力 [1]。`,
+        citations: [1],
+      }],
+      reason: "related_only",
+    }],
+    citations: [1],
+  };
+}
+
 describe("fixed 41-question scripted protocol regression", () => {
   it("is explicitly a protocol harness rather than a real retrieval quality test", () => {
     expect(scriptedModel).toBeTypeOf("function");
@@ -305,7 +334,11 @@ describe("fixed 41-question scripted protocol regression", () => {
       testCase.expectedStatus === "answered" || testCase.relatedFacts.length > 0
     ) ? testCase : undefined;
     const textAnswer = testCase.requiredFacts.join("；");
-    const model = scriptedModel(actionsFor(testCase), textAnswer);
+    const scriptedResponses: ScriptedJsonResponse[] = [
+      ...actionsFor(testCase),
+      ...(testCase.id === "P11" ? [p11VerificationFor(testCase)] : []),
+    ];
+    const model = scriptedModel(scriptedResponses, textAnswer);
     const projectsCalled: string[] = [];
     const pagesRead: string[] = [];
     const knowledge = {
@@ -328,12 +361,20 @@ describe("fixed 41-question scripted protocol regression", () => {
       knowledge,
       runAgent: (input) => runKnowledgeAgent({
         ...input,
-        verifyCoverage: async ({ draft }) => draft,
+        ...(testCase.id === "P11"
+          ? {}
+          : { verifyCoverage: async ({ draft }) => draft }),
       }),
     });
 
     const result = await service.answer(testCase.question);
 
+    expect(scriptedResponses).toEqual([]);
+    if (testCase.id === "P11") {
+      expect(vi.mocked(model.completeJson).mock.calls.filter(
+        ([input]) => input.schemaDescription === "pse_coverage_verification",
+      )).toHaveLength(1);
+    }
     expect(result.scope).toBe(testCase.expectedScope);
     expect(result.status).toBe(testCase.expectedStatus);
     for (const fact of testCase.requiredFacts) expect(result.answer).toContain(fact);
