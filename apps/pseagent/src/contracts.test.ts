@@ -4,6 +4,7 @@ import {
   agentActionSchema,
   answerResultSchema,
   coverageVerificationActionSchema,
+  finalOnlyActionSchema,
   historicalAnswerSchema,
   requirementCoverageSchema,
   routeActionSchema,
@@ -119,6 +120,44 @@ describe("PSEAgent contracts", () => {
       citations: [1],
       project: "coremail-professional",
     })).toThrow();
+  });
+
+  it("derives omitted aggregate final citations from valid requirement metadata", () => {
+    const parsed = agentActionSchema.parse({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "产品体系包括核心包和周边产品 [1][2]。",
+        citations: [1, 2],
+      }],
+    });
+
+    expect(parsed).toEqual({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "产品体系包括核心包和周边产品 [1][2]。",
+        citations: [1, 2],
+      }],
+      citations: [1, 2],
+    });
+  });
+
+  it("replaces a malformed aggregate final citation field with requirement metadata", () => {
+    const parsed = finalOnlyActionSchema.parse({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "partial",
+        answer: "资料仅覆盖部分产品线 [2]。",
+        citations: [2],
+      }],
+      citations: "2",
+    });
+
+    expect(parsed.citations).toEqual([2]);
   });
 
   it("accepts only strict per-requirement coverage verification results", () => {

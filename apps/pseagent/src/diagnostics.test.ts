@@ -38,6 +38,14 @@ describe("development diagnostic trace", () => {
       }],
     });
     trace.record({
+      event: "model_payload",
+      result: "rejected",
+      reason: "invalid_schema:citations:invalid_type(expected=array)",
+      repairAttempt: 1,
+      schemaDescription: "pse_final_action",
+      rawPayload: "{\"citations\":\"Bearer live-token\"}",
+    });
+    trace.record({
       event: "finish",
       scope: "professional",
       status: "answered",
@@ -60,7 +68,12 @@ describe("development diagnostic trace", () => {
       event: string;
       answer?: string;
     });
-    expect(records.map((record) => record.event)).toEqual(["route", "plan", "finish"]);
+    expect(records.map((record) => record.event)).toEqual([
+      "route",
+      "plan",
+      "model_payload",
+      "finish",
+    ]);
     expect(new Set(records.map((record) => record.requestId))).toEqual(new Set([trace.requestId]));
     expect(records.every((record) => record.answer === undefined)).toBe(true);
     expect(content.length).toBeLessThan(10_000);

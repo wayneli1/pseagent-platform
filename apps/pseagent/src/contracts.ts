@@ -237,21 +237,41 @@ function sanitizeModelAction(value: unknown): unknown {
   if (!isRecord(value) || value.action !== "final" || !Array.isArray(value.requirements)) {
     return value;
   }
+  const requirements = value.requirements.map((requirement) => {
+    if (!isRecord(requirement) || requirement.relatedContext === undefined) {
+      return requirement;
+    }
+    const { relatedContext: _relatedContext, ...rest } = requirement;
+    if (requirement.coverage !== "none" || !Array.isArray(requirement.relatedContext)) {
+      return rest;
+    }
+    const retained = requirement.relatedContext
+      .flatMap((item) => sanitizeRelatedContextItem(item))
+      .slice(0, 3);
+    return retained.length === 0 ? rest : { ...rest, relatedContext: retained };
+  });
+  const derivedCitations = stableUniqueNumbers(
+    requirements.flatMap((requirement) => {
+      if (!isRecord(requirement)) return [];
+      const direct = Array.isArray(requirement.citations)
+        ? requirement.citations.filter(isPositiveInteger)
+        : [];
+      const related = Array.isArray(requirement.relatedContext)
+        ? requirement.relatedContext.flatMap((item) =>
+            isRecord(item) && Array.isArray(item.citations)
+              ? item.citations.filter(isPositiveInteger)
+              : [])
+        : [];
+      return [...direct, ...related];
+    }),
+  );
   return {
     ...value,
-    requirements: value.requirements.map((requirement) => {
-      if (!isRecord(requirement) || requirement.relatedContext === undefined) {
-        return requirement;
-      }
-      const { relatedContext: _relatedContext, ...rest } = requirement;
-      if (requirement.coverage !== "none" || !Array.isArray(requirement.relatedContext)) {
-        return rest;
-      }
-      const retained = requirement.relatedContext
-        .flatMap((item) => sanitizeRelatedContextItem(item))
-        .slice(0, 3);
-      return retained.length === 0 ? rest : { ...rest, relatedContext: retained };
-    }),
+    requirements,
+    // This field only aggregates per-requirement metadata. Models frequently
+    // omit it even when every requirement has valid citations, so reconstruct
+    // that harmless redundancy deterministically at the schema boundary.
+    ...(!Array.isArray(value.citations) ? { citations: derivedCitations } : {}),
   };
 }
 
@@ -289,6 +309,10 @@ function sanitizeRelatedContextItem(value: unknown): {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function stableUniqueNumbers(values: readonly number[]): number[] {

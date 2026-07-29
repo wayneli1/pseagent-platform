@@ -20,7 +20,13 @@ export class ModelUnavailableError extends Error {
   constructor(readonly code = "model_unavailable") { super(code); }
 }
 export class InvalidModelPayloadError extends Error {
-  constructor(readonly code = "invalid_model_payload") { super(code); }
+  constructor(
+    readonly code = "invalid_model_payload",
+    readonly rawPayload?: string,
+    readonly schemaDescription?: string,
+  ) {
+    super(code);
+  }
 }
 
 export class OpenAiCompatibleModelClient implements ModelClient {
@@ -42,12 +48,18 @@ export class OpenAiCompatibleModelClient implements ModelClient {
     try {
       decoded = JSON.parse(content);
     } catch {
-      throw new InvalidModelPayloadError("invalid_json");
+      throw new InvalidModelPayloadError(
+        "invalid_json",
+        content,
+        input.schemaDescription,
+      );
     }
     const parsed = input.schema.safeParse(decoded);
     if (!parsed.success) {
       throw new InvalidModelPayloadError(
         `invalid_schema:${summarizeIssueTree(parsed.error.issues)}`,
+        content,
+        input.schemaDescription,
       );
     }
     return parsed.data;
@@ -102,7 +114,10 @@ function summarizeIssueTree(value: unknown): string {
       const path = Array.isArray(issue.path)
         ? issue.path.filter((part) => typeof part === "string" || typeof part === "number").join(".")
         : "";
-      summaries.push(`${path || "root"}:${issue.code}`);
+      const expected = typeof issue.expected === "string"
+        ? `(expected=${issue.expected})`
+        : "";
+      summaries.push(`${path || "root"}:${issue.code}${expected}`);
     }
     if (Array.isArray(issue.errors)) visit(issue.errors);
   };

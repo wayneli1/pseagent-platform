@@ -85,6 +85,8 @@ export type DiagnosticEvent =
       readonly result: "rejected";
       readonly reason: string;
       readonly repairAttempt: number;
+      readonly schemaDescription?: string;
+      readonly rawPayload?: string;
     }
   | {
       readonly event: "stop";

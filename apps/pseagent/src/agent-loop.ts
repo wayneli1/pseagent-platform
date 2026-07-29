@@ -418,6 +418,12 @@ async function requestAgentAction(
       result: "rejected",
       reason: error.code,
       repairAttempt: 1,
+      ...(error.schemaDescription === undefined
+        ? {}
+        : { schemaDescription: error.schemaDescription }),
+      ...(error.rawPayload === undefined
+        ? {}
+        : { rawPayload: error.rawPayload }),
     });
     try {
       return await request(error.code);
@@ -428,6 +434,12 @@ async function requestAgentAction(
           result: "rejected",
           reason: repairError.code,
           repairAttempt: 2,
+          ...(repairError.schemaDescription === undefined
+            ? {}
+            : { schemaDescription: repairError.schemaDescription }),
+          ...(repairError.rawPayload === undefined
+            ? {}
+            : { rawPayload: repairError.rawPayload }),
         });
       }
       throw repairError;
