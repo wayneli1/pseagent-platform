@@ -12,7 +12,10 @@ import {
   InvalidModelPayloadError,
   type ModelClient,
 } from "./model-client.js";
-import { coverageVerificationMessages } from "./prompts.js";
+import {
+  COVERAGE_VERIFICATION_REPAIR_INSTRUCTION,
+  coverageVerificationMessages,
+} from "./prompts.js";
 
 export interface CoverageEvidenceDocument {
   readonly requirementId: string;
@@ -58,31 +61,33 @@ export async function verifyKnowledgeCoverage(
     messages: repair
       ? [...messages, {
           role: "user" as const,
-          content:
-            "上一次输出不符合 Schema。只输出合法 verify JSON；reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed；逐项保持规划 ID，coverage 不得升级，目标和相关 citations 都只能删减，顶层必须等于逐项目标后接相关信息的稳定并集。",
+          content: `上一次输出未通过严格 Schema 或确定性校验。只输出合法 verify JSON。
+${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}
+逐项保持规划 ID，coverage 不得升级，目标和相关 citations 都只能删减。`,
         }]
       : messages,
     schema: modelResponseSchema,
     schemaDescription: "pse_coverage_verification",
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
-  let verified: CoverageVerificationAction;
-  try {
-    verified = await request(false);
-  } catch (error) {
-    if (!(error instanceof InvalidModelPayloadError)) throw error;
+  let verified: CoverageVerificationAction | undefined;
+  let lastInvalidReason = "invalid_model_payload";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      verified = await request(true);
-    } catch (repairError) {
-      if (repairError instanceof InvalidModelPayloadError) {
-        throw new InvalidCoverageVerificationError("invalid_model_payload");
+      const candidate = await request(attempt > 0);
+      const invalidReason = validateVerification(input, candidate);
+      if (invalidReason === undefined) {
+        verified = candidate;
+        break;
       }
-      throw repairError;
+      lastInvalidReason = invalidReason;
+    } catch (error) {
+      if (!(error instanceof InvalidModelPayloadError)) throw error;
+      lastInvalidReason = "invalid_model_payload";
     }
   }
-  const invalidReason = validateVerification(input, verified);
-  if (invalidReason !== undefined) {
-    throw new InvalidCoverageVerificationError(invalidReason);
+  if (verified === undefined) {
+    throw new InvalidCoverageVerificationError(lastInvalidReason);
   }
   input.onVerified?.(verified.requirements.map((requirement) => ({
     id: requirement.id,

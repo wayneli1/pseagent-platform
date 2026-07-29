@@ -167,6 +167,14 @@ export function knowledgeAgentMessages(input: {
   ];
 }
 
+export const COVERAGE_VERIFICATION_REPAIR_INSTRUCTION =
+  `顶层只能包含 action、requirements、citations，不得输出任何额外字段。
+每个 requirement 只能包含 id、coverage、answer、citations、relatedContext、reason；每个 relatedContext 项只能包含 statement、citations。
+保留 relatedContext 时，statement 删除 [n] 标记后必须逐字复制草稿，不得改写或转述；related citations 只能删除，内联 [n] 必须与 citations 元数据完全一致。
+顶层 citations 必须是稳定并集：按 requirement 顺序，先 target citations，再 relatedContext citations，合并去重。
+无法原样保留时必须删除该 relatedContext 项，不得发明替代事实。
+reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed。`;
+
 export const COVERAGE_VERIFICATION_SYSTEM_PROMPT = `你是 PSEAgent 的正文证据覆盖校验器，只输出一个 JSON 对象。
 输出 action 必须是 verify，逐项保留规划中的 requirement ID、coverage、answer、citations，并给出固定 reason。
 你只能审计输入中的草稿和实际读页正文，禁止搜索、调用工具、增加引用或使用模型先验。
@@ -179,6 +187,7 @@ complete 表示核心问题全部有直接证据；partial 表示只有可独立
 审计 coverage 不得高于草稿 coverage；citations 必须是草稿逐项 citations 的子集。
 reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed。
 顶层 citations 必须等于逐项 target citations 后接 relatedContext citations、按 requirement 顺序合并去重后的结果。
+${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}
 禁止输出 Markdown、解释或额外字段。`;
 
 export function coverageVerificationMessages(input: {

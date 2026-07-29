@@ -67,5 +67,13 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain("相关引用不得提升 target coverage，目标 citations 必须为空");
     expect(prompt).toContain("量子卫星邮件协议");
     expect(prompt).toContain("SMTP、POP3、IMAP");
+    expect(prompt).toContain("顶层只能包含 action、requirements、citations");
+    expect(prompt).toContain("每个 requirement 只能包含 id、coverage、answer、citations、relatedContext、reason");
+    expect(prompt).toContain("删除 [n] 标记后必须逐字复制草稿");
+    expect(prompt).toContain("不得改写或转述");
+    expect(prompt).toContain("内联 [n] 必须与 citations 元数据完全一致");
+    expect(prompt).toContain("顶层 citations 必须是稳定并集");
+    expect(prompt).toContain("无法原样保留时必须删除该 relatedContext 项");
+    expect(prompt).toContain("direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed");
   });
 });
