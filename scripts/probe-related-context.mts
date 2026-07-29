@@ -343,21 +343,50 @@ function validateRelatedProtocols(
       const positiveEvidence =
         /(?:列出|列举|记载|包括|包含|支持|受支持|兼容|相容|遵循|符合|具备|提供|采用|可用)/u
           .test(structured);
-      const source =
-        "(?:正式知识库(?:正文|资料)?|产品名资料|正文|资料|页面)";
-      const subject = "(?:产品名邮件系统|产品名|邮件系统|系统)";
-      const listingRelation = "(?:列出|列举|记载|包括|包含)";
-      const leadingRelation =
-        "(?:列出|列举|记载|包括|包含|支持|兼容|相容|遵循|符合|具备|提供|采用)";
-      const trailingRelation =
-        "(?:有支持|支持|兼容|相容|遵循|符合|受支持|可用)";
-      const passiveTail = "(?:(?:均|都)?(?:受支持|可用))";
+      const structuralTokens = [
+        ["正式知识库正文", "S"],
+        ["正式知识库资料", "S"],
+        ["产品名邮件系统", "U"],
+        ["正式知识库", "S"],
+        ["产品名资料", "S"],
+        ["邮件系统", "U"],
+        ["有支持", "A"],
+        ["受支持", "T"],
+        ["列出了", "L"],
+        ["产品名", "U"],
+        ["协议项", "P"],
+        ["列出", "L"],
+        ["列举", "L"],
+        ["记载", "L"],
+        ["包括", "L"],
+        ["包含", "L"],
+        ["兼容", "A"],
+        ["相容", "A"],
+        ["遵循", "A"],
+        ["符合", "A"],
+        ["具备", "A"],
+        ["提供", "A"],
+        ["采用", "A"],
+        ["支持", "A"],
+        ["可用", "T"],
+        ["正文", "S"],
+        ["资料", "S"],
+        ["页面", "S"],
+        ["系统", "U"],
+      ] as const;
+      const markerByToken: Readonly<Record<string, string>> =
+        Object.fromEntries(structuralTokens);
+      const relationSkeleton = (
+        structured.match(
+          new RegExp(structuralTokens.map(([token]) => token).join("|"), "gu"),
+        ) ?? []
+      ).map((token) => markerByToken[token] ?? "").join("");
       const orderAwareRelation = [
-        `${source}.*${listingRelation}.*协议项`,
-        `${subject}.*${leadingRelation}.*协议项`,
-        `${subject}.*协议项.*${trailingRelation}$`,
-        `^(?:${source}.*?)?协议项.*${passiveTail}$`,
-      ].some((pattern) => new RegExp(pattern, "u").test(structured));
+        /^S?U[LA]P+$/u,
+        /^SLP+T?$/u,
+        /^UP+[AT]$/u,
+        /^S?P+T$/u,
+      ].some((pattern) => pattern.test(relationSkeleton));
       let residual = structured.replace(
         /[、，,。.!！：:；;（）()“”"'《》【】\[\]]/gu,
         "",
