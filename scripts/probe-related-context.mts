@@ -336,25 +336,19 @@ function validateRelatedProtocols(
         normalized.match(protocolTokenPattern) ?? [];
       const statementProtocols = statementTokens.filter((token) =>
         !allowedContextTokens.has(token));
-      const structured = normalized.replace(
-        protocolTokenPattern,
-        (token) => allowedContextTokens.has(token) ? "产品名" : "协议项",
-      );
       const positiveEvidence =
         /(?:列出|列举|记载|包括|包含|支持|受支持|兼容|相容|遵循|符合|具备|提供|采用|可用)/u
-          .test(structured);
+          .test(normalized);
       const structuralTokens = [
         ["正式知识库正文", "S"],
         ["正式知识库资料", "S"],
-        ["产品名邮件系统", "U"],
+        ["COREMAIL邮件系统", "U"],
         ["正式知识库", "S"],
-        ["产品名资料", "S"],
+        ["COREMAIL资料", "S"],
         ["邮件系统", "U"],
         ["有支持", "A"],
         ["受支持", "T"],
         ["列出了", "L"],
-        ["产品名", "U"],
-        ["协议项", "P"],
         ["列出", "L"],
         ["列举", "L"],
         ["记载", "L"],
@@ -377,24 +371,31 @@ function validateRelatedProtocols(
       const markerByToken: Readonly<Record<string, string>> =
         Object.fromEntries(structuralTokens);
       const relationSkeleton = (
-        structured.match(
-          new RegExp(structuralTokens.map(([token]) => token).join("|"), "gu"),
+        normalized.match(
+          new RegExp(
+            [
+              ...structuralTokens.map(([token]) => token),
+              protocolTokenPattern.source,
+            ].join("|"),
+            "gu",
+          ),
         ) ?? []
-      ).map((token) => markerByToken[token] ?? "").join("");
+      ).map((token) =>
+        markerByToken[token] ??
+          (allowedContextTokens.has(token) ? "U" : "P")
+      ).join("");
       const orderAwareRelation = [
         /^S?U[LA]P+$/u,
         /^SLP+T?$/u,
         /^UP+[AT]$/u,
         /^S?P+T$/u,
       ].some((pattern) => pattern.test(relationSkeleton));
-      let residual = structured.replace(
-        /[、，,。.!！：:；;（）()“”"'《》【】\[\]]/gu,
-        "",
-      );
+      let residual = normalized
+        .replace(protocolTokenPattern, "")
+        .replace(/[、，,。.!！：:；;（）()“”"'《》【】\[\]]/gu, "");
       const neutralVocabulary = [
         "正式知识库正文",
         "正式知识库资料",
-        "产品名邮件系统",
         "正式知识库",
         "受支持的",
         "等多种协议",
@@ -424,8 +425,6 @@ function validateRelatedProtocols(
         "确认",
         "说明",
         "显示",
-        "产品名",
-        "协议项",
         "正文",
         "资料",
         "页面",
