@@ -15,6 +15,7 @@ import type {
   ProjectKey,
 } from "./knowledge-session.js";
 import {
+  NOT_COVERED_REQUIREMENT_ANSWER,
   verifyKnowledgeCoverage,
   type CoverageEvidenceDocument,
   type CoverageVerifierInput,
@@ -895,10 +896,17 @@ function recordCoverage(
 function normalizeFinalCitationMetadata(action: FinalAction): FinalAction {
   const requirements = action.requirements.map((requirement) => ({
     ...requirement,
-    citations: stableUniqueNumbers(
-      [...requirement.answer.matchAll(/\[(\d+)\]/gu)]
-        .map((match) => Number(match[1])),
-    ),
+    ...(requirement.coverage === "none"
+      ? {
+          answer: NOT_COVERED_REQUIREMENT_ANSWER,
+          citations: [],
+        }
+      : {
+          citations: stableUniqueNumbers(
+            [...requirement.answer.matchAll(/\[(\d+)\]/gu)]
+              .map((match) => Number(match[1])),
+          ),
+        }),
     ...(requirement.relatedContext === undefined
       ? {}
       : {

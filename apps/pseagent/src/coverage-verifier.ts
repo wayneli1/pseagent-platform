@@ -47,7 +47,7 @@ export class InvalidCoverageVerificationError extends Error {
   }
 }
 
-const NOT_COVERED_REQUIREMENT_ANSWER =
+export const NOT_COVERED_REQUIREMENT_ANSWER =
   "现有资料未覆盖该要求，无法根据正式知识库确认。";
 
 export async function verifyKnowledgeCoverage(

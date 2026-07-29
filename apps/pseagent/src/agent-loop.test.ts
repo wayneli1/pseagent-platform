@@ -533,6 +533,50 @@ describe("runKnowledgeAgent", () => {
     expect(events).toContainEqual({ event: "stop", reason: "coverage_verifier_invalid" });
   });
 
+  it("normalizes target citations out of an uncovered draft without rejecting the answer", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/protocols.md" }] },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/protocols.md"),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "正式资料未覆盖目标协议，但模型错误附带了目标引用 [1]。",
+          citations: [1],
+          relatedContext: [{
+            statement: "正文明确列出 SMTP、POP3 和 IMAP [1]。",
+            citations: [1],
+          }],
+        }],
+        citations: [1],
+      },
+    ]);
+    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => {
+      expect(draft).toMatchObject({
+        requirements: [{
+          coverage: "none",
+          answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
+          citations: [],
+          relatedContext: [{ citations: [1] }],
+        }],
+        citations: [1],
+      });
+      return draft;
+    });
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("not_covered");
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(result.references).toHaveLength(1);
+  });
+
   it.each([
     ["removes every marker", "资料明确列出 SMTP、POP3 和 IMAP 协议能力。"],
     ["expands one metadata citation to five markers", "资料明确列出 SMTP、POP3 和 IMAP 协议能力 [1][2][3][4][5]。"],
@@ -1463,10 +1507,13 @@ describe("runKnowledgeAgent", () => {
         {
           id: "R1",
           coverage: "none",
-          answer: "能力一未覆盖。",
+          answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
           citations: [],
         },
-        invalidFinal.requirements[1],
+        {
+          ...invalidFinal.requirements[1],
+          answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
+        },
       ],
       citations: [2],
     });
