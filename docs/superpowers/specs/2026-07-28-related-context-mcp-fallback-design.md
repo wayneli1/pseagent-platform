@@ -1,7 +1,7 @@
 # PSEAgent 未覆盖问题的相关信息与 Coremail MCP 兜底设计
 
 日期：2026-07-28
-状态：已确认，待实施计划
+状态：已确认并实施；2026-07-29 追加结构化输出稳定性修复
 
 ## 1. 背景
 
@@ -134,16 +134,30 @@ interface RequirementCoverage {
 “`not_covered` 必须 `mainRefs=0`”的旧断言改为验证正式引用与 relatedContext
 引用完全一致，同时继续验证历史引用至少有一项、原文未改写和警告完整。
 
-### 5.2 覆盖校验输出
+### 5.2 覆盖校验决策
 
-独立覆盖校验器必须返回审计后的 `relatedContext`。它只能：
+独立覆盖校验器不再重复输出 `answer`、`citations`、`statement` 或顶层引用并集，
+只返回针对已校验草稿的离散决策：
 
-- 保留或删除草稿中的相关信息；
-- 删除相关信息中的引用；
-- 降低目标 coverage；
-- 删除目标引用。
+```ts
+interface CoverageVerificationDecision {
+  readonly id: string;
+  readonly targetDecision: "retain" | "not_covered";
+  readonly retainedRelatedContextIndexes: readonly number[];
+  readonly reason: CoverageVerificationReason;
+}
+```
 
-它不得新增相关事实、新增引用、升级目标 coverage，或把相关引用移动到目标引用。
+- `targetDecision=retain`：目标 coverage、answer 和 citations 必须从草稿原样保留。
+- `targetDecision=not_covered`：目标 coverage 由代码降为 `none`，目标 citations
+  清空，answer 使用确定性的“正式知识库未覆盖、无法确认”安全文案。
+- `retainedRelatedContextIndexes` 只能按原顺序引用草稿中已有的相关信息项；
+  代码按索引原样复制 statement 和 citations，模型不得再次抄写或改写。
+- 草稿不是 `coverage=none` 时不得保留 relatedContext。
+- 顶层 citations 由代码从重建结果稳定合并，模型不再生成。
+
+这样仍然禁止新增相关事实、新增引用、升级目标 coverage 或移动引用，同时消除
+模型抄写时删除 `[n]`、修改标点或调整空格所造成的非业务失败。
 
 ## 6. 提示词设计
 
@@ -191,11 +205,12 @@ Coremail 是否支持 2035 年量子卫星邮件协议？
 
 当正文未回答目标时，校验器必须：
 
-- 把目标 coverage 降为 `none`；
-- 清空目标 citations；
-- 删除不受支持的目标结论；
-- 只保留正文直接支持的 `relatedContext`；
-- 在 answer 中明确“无法根据正式知识库确认”，不得写“不支持”。
+- 返回 `targetDecision=not_covered`；
+- 只用 `retainedRelatedContextIndexes` 选择正文直接支持的草稿相关信息；
+- 不重新输出或改写 answer、statement 和 citations。
+
+最终的 `coverage=none`、空目标 citations 和“无法根据正式知识库确认”answer
+全部由代码确定性重建，不允许模型把“未提及”改写成“不支持”。
 
 ## 7. 状态与响应格式
 
@@ -279,11 +294,16 @@ MCP 超时、连接失败、认证失败、结果无有效 Jira/Wiki 来源时�
 
 ## 9. 错误处理
 
-- 单条 relatedContext 引用无效、不是实际读页引用、内联标记不一致或引用越权时，
-  丢弃该条相关信息。
+- 主回答模型生成的单条 relatedContext 缺少引用、引用为空、内联标记与元数据
+  不一致、字段不完整或超过数量限制时，在进入严格最终 Schema 前丢弃该条；
+  其他合法目标回答继续处理。
+- 单条 relatedContext 引用不是实际读页引用或引用越权时，丢弃该条相关信息。
 - 丢弃相关信息不得把目标 `not_covered` 改为临时不可用，也不得阻止 MCP 尝试。
-- 覆盖校验器整体不可用或连续两次输出无效时，继续沿用当前关闭失败策略，返回
-  `temporarily_unavailable`，不调用 MCP。
+- 覆盖校验器整体不可用时继续关闭失败，返回 `temporarily_unavailable`。
+- 覆盖校验器连续输出无效决策时，不信任草稿目标结论；代码确定性降为
+  `not_covered`、清空目标引用和 relatedContext，再继续既有 MCP 兜底。
+- Schema 修复提示必须携带脱敏的具体 Schema 路径与错误码，例如
+  `requirements.0.relatedContext.1.citations:too_small`，不得只提示“格式错误”。
 - MCP 失败时返回正式 `not_covered` 结果；如果正式相关信息有效，则继续展示。
 - 发送失败、取消或 `/new` 仍不得写入上下文。
 - 正式相关信息可以进入下一轮上下文；Coremail MCP 历史线索继续不得进入。
@@ -334,6 +354,13 @@ Lunkr `answered` 生命周期日志传递这两个布尔字段。日志继续只
     专门的覆盖校验脚本或独立测试夹具验证降级和 MCP 触发。
 14. 历史探针允许 `not_covered` 携带正式 relatedContext 引用，但必须继续保证正式
     引用和 MCP 历史引用分区、计数和来源互不混淆。
+15. 验证器只返回保留/删除决策，模型输出中不得再出现 answer、statement 或
+    citations；代码按索引原样重建草稿。
+16. 主回答中的单条非法 relatedContext 被丢弃时，合法主体答案仍可返回。
+17. 验证器删除内联 `[n]`、改写标点或空格的历史失败样本改写为决策协议回归，
+    不再产生 `coverage_verifier_invalid`。
+18. 连续无效验证决策确定性降为 `not_covered`，而验证器网络或服务不可用仍为
+    `temporarily_unavailable`。
 
 ### 11.2 真实模型验收
 
@@ -388,3 +415,4 @@ Lunkr `answered` 生命周期日志传递这两个布尔字段。日志继续只
 5. 两个知识库的完全未覆盖结果都能触发 Coremail MCP。
 6. 用户可以通过脱敏日志确认 MCP 是否尝试、是否展示。
 7. MCP 内容保持低可信分区，不改变正式结论，不污染下一轮上下文。
+8. 模型格式波动不得因单条可选相关信息或验证器抄写差异导致整题处理失败。
