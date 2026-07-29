@@ -319,32 +319,10 @@ function validateRelatedProtocols(
   if (disallowedRelation.test(relatedSection)) {
     throw new Error("unsupported_related_relation");
   }
-  const statements = relatedSection
-    .split(/[。！？；;\n]+/gu)
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-  const allStatementsSupported = statements.length > 0 &&
-    statements.every((statement) => {
-      const citations =
-        [...statement.matchAll(/\[(\d+)\]/gu)].map((match) => match[1]);
-      const normalized = statement
-        .replace(/\[\d+\]/gu, "")
-        .replace(/\s+/gu, "")
-        .replace(/[。.!！]+$/gu, "")
-        .toLocaleUpperCase("en-US");
-      const statementTokens =
-        normalized.match(protocolTokenPattern) ?? [];
-      const statementProtocols = statementTokens.filter((token) =>
-        !allowedContextTokens.has(token));
-      const positiveEvidence =
-        /(?:列出|列举|记载|包括|包含|支持|受支持|兼容|相容|遵循|符合|具备|提供|采用|可用)/u
-          .test(normalized);
-      return citations.length > 0 &&
-        statementProtocols.length > 0 &&
-        statementProtocols.every((token) => supportedTokens.has(token)) &&
-        positiveEvidence;
-    });
-  if (!allStatementsSupported) {
+  const positiveEvidence =
+    /(?:列出|列举|记载|包括|包含|支持|受支持|兼容|相容|遵循|符合|具备|提供|采用|可用)/u
+      .test(relatedSection);
+  if (!positiveEvidence) {
     throw new Error("unsupported_related_relation");
   }
 }

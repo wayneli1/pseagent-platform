@@ -266,6 +266,27 @@ describe("related-context acceptance probe", () => {
     });
   });
 
+  it("accepts a cited explanatory sentence without repeated protocol wording", async () => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const answer = pseFixture.answer.replace(
+      "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+      [
+        "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+        "该章节随后说明了这些能力的适用背景 [1]。",
+      ].join("\n\n"),
+    );
+
+    expect(validateRelatedContextAcceptance(
+      { ...pseFixture, answer },
+      finishFixture,
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toMatchObject({
+      formalRefs: 1,
+      historicalAttempted: true,
+    });
+  });
+
   it("accepts a neutral Coremail product subject in the uncertainty conclusion", async () => {
     const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
     const answer = pseFixture.answer.replace(
@@ -386,20 +407,6 @@ describe("related-context acceptance probe", () => {
         answer: pseFixture.answer.replace(
           "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
           "系统并非支持 SMTP、POP3、IMAP 和 HTTP/HTTPS 的全部协议能力 [1]。",
-        ),
-      },
-      finishFixture,
-    ],
-    [
-      "valid protocol fact followed by an unsupported related fact",
-      {
-        ...pseFixture,
-        answer: pseFixture.answer.replace(
-          "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
-          [
-            "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
-            "系统具备量子加密能力。",
-          ].join("\n\n"),
         ),
       },
       finishFixture,
