@@ -285,10 +285,11 @@ describe("fixed 41-question scripted protocol regression", () => {
 
   it("keeps P11 uncovered while declaring only formal related protocol evidence", () => {
     expect(cases.find((item) => item.id === "P11")).toMatchObject({
+      question: "Coremail 是否已经支持 2035 年量子卫星邮件协议？",
       expectedScope: "professional",
       expectedStatus: "not_covered",
       requiredFacts: [],
-      relatedFacts: ["SMTP", "POP3", "IMAP", "HTTP/HTTPS"],
+      relatedFacts: ["SMTP", "POP3", "IMAP", "HTTP/HTTPS", "CMSP/CMTP"],
       forbiddenFacts: ["已经支持", "明确不支持", "尚未支持"],
       allowedSourcePages: ["wiki/concepts/邮件系统协议基础.md"],
     });

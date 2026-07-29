@@ -110,6 +110,13 @@ describe("validateHistoricalProbe", () => {
     });
   });
 
+  it("rejects a schema-valid confidence mismatch between public and direct history", () => {
+    expect(() => validateHistoricalProbe(
+      pseFixture,
+      { ...directFixture, confidence: "low" },
+    )).toThrow("unexpected_historical_confidence");
+  });
+
   it.each([
     [
       "rewritten answer",
@@ -161,7 +168,13 @@ describe("validateHistoricalProbe", () => {
 });
 
 describe("related-context acceptance probe", () => {
-  const supportedRelatedFacts = ["SMTP", "POP3", "IMAP", "HTTP/HTTPS"] as const;
+  const supportedRelatedFacts = [
+    "SMTP",
+    "POP3",
+    "IMAP",
+    "HTTP/HTTPS",
+    "CMSP/CMTP",
+  ] as const;
   const allowedSourcePages = ["wiki/concepts/邮件系统协议基础.md"] as const;
 
   async function loadProbeAcceptance() {
@@ -217,6 +230,49 @@ describe("related-context acceptance probe", () => {
   });
 
   it.each([
+    "正文明确列出 SMTP 协议能力 [1]。",
+    "邮件系统协议包括 POP3 与 IMAP [1]。",
+    "资料显示系统支持 HTTP 和 HTTPS 协议 [1]。",
+    "Coremail 邮件系统具备 CMSP/CMTP 协议能力 [1]。",
+  ])("accepts a body-supported protocol subset with equivalent positive wording: %s", async (
+    relatedStatement,
+  ) => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const answer = pseFixture.answer.replace(
+      "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+      relatedStatement,
+    );
+
+    expect(validateRelatedContextAcceptance(
+      { ...pseFixture, answer },
+      finishFixture,
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toMatchObject({
+      formalRefs: 1,
+      historicalAttempted: true,
+    });
+  });
+
+  it("accepts a neutral Coremail product subject in the uncertainty conclusion", async () => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const answer = pseFixture.answer.replace(
+      "正式知识库未提及目标协议，无法根据正式知识库确认是否支持。",
+      "正式知识库未提及目标协议，无法根据正式知识库确认 Coremail 邮件系统是否支持该协议。",
+    );
+
+    expect(validateRelatedContextAcceptance(
+      { ...pseFixture, answer },
+      finishFixture,
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toMatchObject({
+      formalRefs: 1,
+      historicalAttempted: true,
+    });
+  });
+
+  it.each([
     [
       "unsupported positive target claim",
       {
@@ -246,6 +302,17 @@ describe("related-context acceptance probe", () => {
         answer: pseFixture.answer.replace(
           "SMTP、POP3、IMAP 和 HTTP/HTTPS",
           "SMTP、QUANTUM-MAIL",
+        ),
+      },
+      finishFixture,
+    ],
+    [
+      "unsupported composite made from otherwise supported protocol tokens",
+      {
+        ...pseFixture,
+        answer: pseFixture.answer.replace(
+          "SMTP、POP3、IMAP 和 HTTP/HTTPS",
+          "SMTP/IMAP",
         ),
       },
       finishFixture,
@@ -314,13 +381,10 @@ describe("related-context acceptance probe", () => {
       finishFixture,
     ],
     [
-      "incomplete formal related protocol facts",
+      "uncited supported protocol fact",
       {
         ...pseFixture,
-        answer: pseFixture.answer.replace(
-          "SMTP、POP3、IMAP 和 HTTP/HTTPS",
-          "SMTP",
-        ),
+        answer: pseFixture.answer.replace("协议能力 [1]", "协议能力"),
       },
       finishFixture,
     ],

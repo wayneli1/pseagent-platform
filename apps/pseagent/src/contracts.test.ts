@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   HISTORICAL_ANSWER_WARNING,
   agentActionSchema,
@@ -7,6 +7,8 @@ import {
   historicalAnswerSchema,
   requirementCoverageSchema,
   routeActionSchema,
+  type RelatedContextItem,
+  type RequirementCoverage,
 } from "./contracts.js";
 
 const historical = {
@@ -173,6 +175,13 @@ describe("PSEAgent contracts", () => {
       ...noneWithContext,
       coverage: "complete",
     })).toThrow();
+  });
+
+  it("exports statically readonly related-context coverage arrays", () => {
+    expectTypeOf<RequirementCoverage["relatedContext"]>()
+      .toEqualTypeOf<readonly RelatedContextItem[] | undefined>();
+    expectTypeOf<RelatedContextItem["citations"]>()
+      .toEqualTypeOf<readonly number[]>();
   });
 
   it("keeps historical answers separate and requires verifiable Jira/Wiki sources", () => {

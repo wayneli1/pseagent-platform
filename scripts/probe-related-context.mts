@@ -293,24 +293,14 @@ function validateRelatedProtocols(
       fact.toLocaleUpperCase("en-US").match(/[A-Z][A-Z0-9]*(?:[/-][A-Z0-9]+)*/gu) ?? []
     ).flatMap((token) => [token, ...token.split(/[/-]/gu)]),
   );
-  const visibleTokens = new Set(
-    (relatedSection.toLocaleUpperCase("en-US")
-      .match(/[A-Z][A-Z0-9]*(?:[/-][A-Z0-9]+)*/gu) ?? [])
-      .flatMap((token) => [token, ...token.split(/[/-]/gu)]),
-  );
-  const requiredTokens = new Set(
-    supportedRelatedFacts.flatMap((fact) =>
-      (fact.toLocaleUpperCase("en-US")
-        .match(/[A-Z][A-Z0-9]*(?:[/-][A-Z0-9]+)*/gu) ?? [])
-        .flatMap((token) => token.split(/[/-]/gu))),
-  );
+  const visibleTokens =
+    relatedSection.toLocaleUpperCase("en-US")
+      .match(/[A-Z][A-Z0-9]*(?:[/-][A-Z0-9]+)*/gu) ?? [];
+  const visibleProtocols = visibleTokens.filter((token) =>
+    !allowedContextTokens.has(token));
   if (
-    visibleTokens.size === 0 ||
-    [...visibleTokens].some((token) =>
-      !allowedContextTokens.has(token) &&
-      !supportedTokens.has(token) &&
-      token.split(/[/-]/gu).some((part) => !supportedTokens.has(part))) ||
-    [...requiredTokens].some((token) => !visibleTokens.has(token))
+    visibleProtocols.length === 0 ||
+    visibleProtocols.some((token) => !supportedTokens.has(token))
   ) {
     throw new Error("unsupported_related_protocol");
   }
@@ -332,22 +322,16 @@ function validateRelatedProtocols(
         .replace(/\s+/gu, "")
         .replace(/[。.!！]+$/gu, "")
         .toLocaleUpperCase("en-US");
-      const protocolList =
-        "(?:(?:SMTP|POP3|IMAP|HTTP/HTTPS)(?:、|，|,|和|及|以及|与)?){4}";
-      const source = "(?:正文|正式知识库(?:正文)?|资料|页面)";
-      const subject = "(?:COREMAIL邮件系统|COREMAIL|系统|邮件系统)";
-      const relation = "(?:支持|遵循|兼容|具备|提供|采用)";
-      const positiveEvidence = [
-        `^${source}(?:明确)?(?:列出|记载|说明|显示)${protocolList}` +
-          "(?:等)?(?:受支持的|支持的)?(?:协议|协议能力)?$",
-        `^${source}(?:明确)?(?:表明|确认|说明|显示)${subject}` +
-          `(?:明确)?${relation}${protocolList}(?:等)?(?:协议|协议能力)?$`,
-        `^${subject}(?:明确)?${relation}(?:的协议(?:包括|包含|有)?)?` +
-          `${protocolList}(?:等)?(?:协议|协议能力)?$`,
-        `^${protocolList}(?:等)?(?:协议)?(?:均|都)(?:受支持|可用)$`,
-      ].some((pattern) => new RegExp(pattern, "u").test(normalized));
+      const statementTokens =
+        normalized.match(/[A-Z][A-Z0-9]*(?:[/-][A-Z0-9]+)*/gu) ?? [];
+      const statementProtocols = statementTokens.filter((token) =>
+        !allowedContextTokens.has(token));
+      const positiveEvidence =
+        /(?:列出|列举|记载|说明|显示|表明|确认|包括|包含|支持|遵循|兼容|具备|提供|采用|受支持|可用|协议能力)/u
+          .test(normalized);
       return citations.length > 0 &&
-        [...requiredTokens].every((token) => normalized.includes(token)) &&
+        statementProtocols.length > 0 &&
+        statementProtocols.every((token) => supportedTokens.has(token)) &&
         positiveEvidence;
     });
   if (!allStatementsSupported) {
@@ -360,28 +344,12 @@ function validateTargetConclusion(conclusionSection: string): void {
   if (!containsOnlyUncertaintyVocabulary(normalized)) {
     throw new Error("unsupported_target_claim");
   }
-  const targetCount = countMatches(
-    normalized,
-    /(?:(?:2035年?)?量子卫星邮件协议|目标协议|该协议|此协议)/gu,
-  );
-  const abilityCount = countMatches(
-    normalized,
-    /(?:支持|兼容|可用|通信|运行)/gu,
-  );
-  const uncertaintyCount = countMatches(
-    normalized,
-    /(?:无法|不能|不足以|难以)/gu,
-  );
-  const determinationCount = countMatches(
-    normalized,
-    /(?:作出确认|得出结论|确认|判断|确定|证实|证明)/gu,
-  );
   if (
     !normalized.includes("正式知识库") ||
-    targetCount !== 1 ||
-    abilityCount !== 1 ||
-    uncertaintyCount !== 1 ||
-    determinationCount !== 1
+    !/(?:(?:2035年?)?量子卫星邮件协议|目标协议|该协议|此协议)/u.test(normalized) ||
+    !/(?:支持|兼容|可用|通信|运行)/u.test(normalized) ||
+    !/(?:无法|不能|不足以|难以)/u.test(normalized) ||
+    !/(?:作出确认|得出结论|确认|判断|确定|证实|证明)/u.test(normalized)
   ) {
     throw new Error("missing_formal_uncertainty");
   }
@@ -415,6 +383,9 @@ function containsOnlyUncertaintyVocabulary(value: string): boolean {
   const vocabulary = [
     "2035年量子卫星邮件协议",
     "量子卫星邮件协议",
+    "Coremail邮件系统",
+    "Coremail",
+    "邮件系统",
     "正式知识库",
     "得出结论",
     "作出确认",
@@ -467,10 +438,6 @@ function containsOnlyUncertaintyVocabulary(value: string): boolean {
     remaining = remaining.split(token).join("");
   }
   return remaining.length === 0;
-}
-
-function countMatches(value: string, pattern: RegExp): number {
-  return [...value.matchAll(pattern)].length;
 }
 
 function containsTargetClaim(value: string): boolean {

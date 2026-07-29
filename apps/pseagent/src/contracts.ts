@@ -202,10 +202,21 @@ export type RelatedContextItem = {
   readonly statement: string;
   readonly citations: readonly number[];
 };
-export type RequirementCoverage = z.infer<typeof requirementCoverageSchema>;
+type ParsedRequirementCoverage = z.infer<typeof requirementCoverageSchema>;
+export type RequirementCoverage = {
+  readonly id: ParsedRequirementCoverage["id"];
+  readonly coverage: ParsedRequirementCoverage["coverage"];
+  readonly answer: ParsedRequirementCoverage["answer"];
+  readonly citations: readonly number[];
+  readonly relatedContext?: readonly RelatedContextItem[] | undefined;
+};
 export type AgentAction = z.infer<typeof agentActionSchema>;
 export type ToolAction = z.infer<typeof toolActionSchema>;
-export type FinalAction = z.infer<typeof finalActionSchema>;
+export type FinalAction = {
+  readonly action: "final";
+  readonly requirements: readonly RequirementCoverage[];
+  readonly citations: readonly number[];
+};
 export type CoverageVerificationAction = z.infer<typeof coverageVerificationActionSchema>;
 export type CoverageVerificationReason = z.infer<typeof coverageVerificationReasonSchema>;
 export type AnswerResult = z.infer<typeof answerResultSchema>;
