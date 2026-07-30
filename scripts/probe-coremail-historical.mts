@@ -14,11 +14,13 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { answerResultSchema } from "../apps/pseagent/src/contracts.js";
 import { coremailKnowledgeArguments } from "../apps/pseagent/src/coremail-mcp-client.js";
-import { validateHistoricalProbe } from
+import {
+  validateHistoricalProbe,
+  validateHistoricalUnavailableProbe,
+} from
   "../apps/pseagent/src/coremail-historical-probe-contract.js";
-import { NOT_COVERED_TEXT } from "../apps/pseagent/src/response.js";
 
-const question = "请说明 Jira 工单 CMHA-1097 的修改内容和适用镜像版本。";
+const question = "Coremail 是否支持 2035 年量子卫星邮件协议？";
 const coveredQuestion = "列出 Coremail AI 助手的新功能特性";
 const mode = process.env.PSE_COREMAIL_PROBE_MODE ?? "historical";
 const inheritedNames = [
@@ -44,16 +46,19 @@ const safeFailureCodes = new Set([
   "unexpected_primary_status",
   "unexpected_primary_answer",
   "unexpected_primary_references",
+  "unexpected_rendered_history",
+  "unexpected_direct_unavailable",
+  "unexpected_hidden_historical_answer",
+  "unexpected_historical_notice",
+  "missing_historical_notice_text",
+  "unexpected_display_notice",
   "missing_historical_answer",
-  "missing_historical_reference",
-  "unexpected_historical_source_type",
-  "unexpected_historical_warning",
-  "unexpected_historical_confidence",
-  "missing_direct_historical_reference",
-  "historical_answer_rewritten",
+  "unexpected_displayed_history",
+  "historical_display_limit_exceeded",
+  "historical_internal_url_visible",
+  "unavailable_history_was_exposed",
   "unexpected_probe_mode",
   "coremail_probe_not_enabled",
-  "broken_path_fallback_changed",
   "covered_query_changed",
   "covered_query_started_coremail",
   "refusing_probe_temp_cleanup",
@@ -131,16 +136,13 @@ async function probe(): Promise<void> {
       );
       const result = answerResultSchema.parse(raw.structuredContent);
       if (mode === "broken_path") {
-        if (
-          result.status !== "not_covered" ||
-          result.answer !== NOT_COVERED_TEXT ||
-          result.references.length !== 0 ||
-          result.historicalAnswer !== undefined
-        ) {
-          throw new Error("broken_path_fallback_changed");
-        }
+        const summary = validateHistoricalUnavailableProbe(
+          result,
+          raw.content.find((item) => item.type === "text")?.text,
+        );
         process.stdout.write(
-          "broken_path startup=true fallback_unchanged=true\n",
+          `broken_path startup=true history_exposed=false` +
+          ` main_refs=${summary.mainRefs}\n`,
         );
         return;
       }
@@ -148,7 +150,8 @@ async function probe(): Promise<void> {
         (result.status !== "answered" &&
           result.status !== "partially_answered") ||
         result.references.length === 0 ||
-        result.historicalAnswer !== undefined
+        result.historicalAnswer !== undefined ||
+        result.historicalNotice !== undefined
       ) {
         throw new Error("covered_query_changed");
       }
@@ -202,16 +205,26 @@ async function probe(): Promise<void> {
       { timeout: 60_000 },
     );
     const summary = validateHistoricalProbe(
+      question,
       pseRaw.structuredContent,
       directRaw.structuredContent,
+      pseRaw.content.find((item) => item.type === "text")?.text,
     );
     const elapsedMs = Math.round(performance.now() - started);
-    process.stdout.write(
-      `historical status=not_covered main_refs=${summary.mainRefs}` +
-      ` history_refs=${summary.historyRefs} confidence=${summary.confidence}` +
-      ` raw_equal=${summary.rawEqual} warning=${summary.warning}` +
-      ` elapsed_ms=${elapsedMs}\n`,
-    );
+    if (summary.outcome === "hidden") {
+      process.stdout.write(
+        `historical status=not_covered outcome=hidden` +
+        ` main_refs=${summary.mainRefs} history_refs=0` +
+        ` reason=${summary.reason} elapsed_ms=${elapsedMs}\n`,
+      );
+    } else {
+      process.stdout.write(
+        `historical status=not_covered outcome=display` +
+        ` main_refs=${summary.mainRefs}` +
+        ` history_refs=${summary.historyRefs}` +
+        ` confidence=${summary.confidence} elapsed_ms=${elapsedMs}\n`,
+      );
+    }
   } finally {
     await Promise.allSettled([
       pseClient.close(),

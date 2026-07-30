@@ -25,7 +25,7 @@ const evidenceRequirementSchema = z.object({
   requiredFacts: z.array(factExpectationSchema).min(1),
 }).strict();
 const evidenceCaseSchema = z.object({
-  id: z.string().regex(/^EC0[1-6]$/u),
+  id: z.string().regex(/^EC0[1-7]$/u),
   variants: z.array(z.object({
     question: z.string().trim().min(1),
     requiredFacts: z.array(factExpectationSchema).min(1),
@@ -68,7 +68,7 @@ const corpusSchema = z.object({
     "coremail-professional": z.string().regex(/^[a-f0-9]{40}$/u),
     "presales-general": z.string().regex(/^[a-f0-9]{40}$/u),
   }).strict(),
-  cases: z.array(evidenceCaseSchema).length(6),
+  cases: z.array(evidenceCaseSchema).length(7),
 }).strict();
 
 const corpusPath = fileURLToPath(
@@ -76,8 +76,8 @@ const corpusPath = fileURLToPath(
 );
 const corpus = corpusSchema.parse(JSON.parse(readFileSync(corpusPath, "utf8")));
 
-describe("six-question evidence coverage golden set", () => {
-  it("pins both knowledge snapshots and contains six stable cases", () => {
+describe("seven-question evidence coverage golden set", () => {
+  it("pins both knowledge snapshots and contains seven stable cases", () => {
     expect(corpus.cases.map((item) => item.id)).toEqual([
       "EC01",
       "EC02",
@@ -85,6 +85,7 @@ describe("six-question evidence coverage golden set", () => {
       "EC04",
       "EC05",
       "EC06",
+      "EC07",
     ]);
     expect(corpus.revisions["coremail-professional"]).toHaveLength(40);
     expect(corpus.revisions["presales-general"]).toHaveLength(40);
@@ -94,7 +95,7 @@ describe("six-question evidence coverage golden set", () => {
     const questions = corpus.cases.flatMap(
       (item) => item.variants.map((variant) => variant.question),
     );
-    expect(new Set(questions).size).toBe(12);
+    expect(new Set(questions).size).toBe(14);
     for (const item of corpus.cases) {
       expect(item.variants).toHaveLength(2);
       expect(item.variants.every((variant) => variant.requiredFacts.length > 0)).toBe(true);
@@ -143,6 +144,7 @@ describe("six-question evidence coverage golden set", () => {
     ]);
     const ec05 = corpus.cases.find((item) => item.id === "EC05");
     const ec06 = corpus.cases.find((item) => item.id === "EC06");
+    const ec07 = corpus.cases.find((item) => item.id === "EC07");
     const ec04 = corpus.cases.find((item) => item.id === "EC04");
     expect(ec04?.requiredFacts).toContainEqual(["migrateX", "DTS", "domino-migrate.jar"]);
     expect(ec04?.requiredFacts).toContainEqual([
@@ -159,5 +161,13 @@ describe("six-question evidence coverage golden set", () => {
       minReferenceCount: 4,
     });
     expect(ec06?.requirements[0]?.expectedEvidencePages).toHaveLength(6);
+    expect(ec07).toMatchObject({
+      expectedScope: "professional",
+      expectedStatus: "answered",
+      minReferenceCount: 1,
+    });
+    expect(ec07?.requirements[0]?.expectedEvidencePages).toContain(
+      "wiki/comparison/coremail-vs-exchange对比.md",
+    );
   });
 });

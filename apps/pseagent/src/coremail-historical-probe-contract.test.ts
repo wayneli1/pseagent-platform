@@ -8,21 +8,30 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HISTORICAL_ANSWER_WARNING } from "./contracts.js";
-import { validateHistoricalProbe } from
+import {
+  HISTORICAL_ANSWER_WARNING,
+  answerResultSchema,
+} from "./contracts.js";
+import {
+  validateHistoricalProbe,
+  validateHistoricalUnavailableProbe,
+} from
   "./coremail-historical-probe-contract.js";
+import { formatMcpText } from "./mcp-server.js";
 import { NOT_COVERED_TEXT } from "./response.js";
 
+const displayQuestion =
+  "请说明 Jira 工单 CMHA-1097 的修改内容和适用镜像版本。";
 const historical = {
   provider: "coremail_mcp",
   verified: false,
   confidence: "medium",
   warning: HISTORICAL_ANSWER_WARNING,
-  answer: "历史资料原文",
+  answer: "Jira 工单 CMHA-1097 记录了修改内容和适用镜像版本。",
   references: [{
     sourceType: "jira",
     key: "CMHA-1097",
-    title: "测试历史记录",
+    title: "Jira 工单 CMHA-1097 修改记录",
     versions: ["5.0"],
   }],
 } as const;
@@ -34,7 +43,7 @@ const formalReference = {
   revision: "a".repeat(40),
   contentHash: "b".repeat(64),
 } as const;
-const pseFixture = {
+const pseFixture = answerResultSchema.parse({
   scope: "professional",
   status: "not_covered",
   answer: [
@@ -47,16 +56,42 @@ const pseFixture = {
   ].join("\n\n"),
   references: [formalReference],
   historicalAnswer: historical,
-} as const;
+});
 const directFixture = {
-  answer: "历史资料原文",
+  answer: [
+    "Jira 工单 CMHA-1097 记录了修改内容和适用镜像版本。",
+    "内部链接：https://jira.coremail.cn/browse/CMHA-1097",
+  ].join("\n"),
   confidence: "medium",
   sources: [{
     source_type: "jira",
     key: "CMHA-1097",
-    title: "测试历史记录",
+    title: "Jira 工单 CMHA-1097 修改记录",
+    url: "https://jira.coremail.cn/browse/CMHA-1097",
+    excerpt: "CMHA-1097 的修改内容适用于 5.0 镜像版本。",
+    metadata: { fix_versions: ["5.0"] },
   }],
 } as const;
+const hiddenQuestion = "Coremail 是否支持 2035 年量子卫星邮件协议？";
+const hiddenDirectFixture = {
+  answer: "Coremail 历史资料仅介绍 SMTP 等常规协议。",
+  confidence: "medium",
+  sources: [{
+    source_type: "wiki",
+    title: "Coremail 常规邮件协议",
+    excerpt: "Coremail 支持 SMTP、POP3 和 IMAP。",
+  }],
+} as const;
+const hiddenPseFixture = answerResultSchema.parse({
+  ...pseFixture,
+  historicalAnswer: undefined,
+  historicalNotice: {
+    provider: "coremail_mcp",
+    searched: true,
+    displayed: false,
+    reason: "topic_mismatch",
+  },
+});
 
 describe("validateHistoricalProbe", () => {
   it("bounds direct Coremail MCP initialization", () => {
@@ -84,54 +119,129 @@ describe("validateHistoricalProbe", () => {
     );
   });
 
-  it("accepts separately cited formal related context and an unchanged historical answer", () => {
-    expect(validateHistoricalProbe(pseFixture, directFixture)).toEqual({
+  it("accepts a relevant displayed result after removing its internal URL", () => {
+    expect(validateHistoricalProbe(
+      displayQuestion,
+      pseFixture,
+      directFixture,
+      formatMcpText(pseFixture),
+    )).toEqual({
+      outcome: "display",
       mainRefs: 1,
       historyRefs: 1,
       confidence: "medium",
-      rawEqual: true,
-      warning: true,
     });
   });
 
-  it("preserves the existing fixed uncovered primary answer for the Jira history probe", () => {
+  it("accepts a fixed not-covered primary answer with a displayed result", () => {
+    const result = answerResultSchema.parse({
+      ...pseFixture,
+      answer: NOT_COVERED_TEXT,
+      references: [],
+    });
     expect(validateHistoricalProbe(
-      {
-        ...pseFixture,
-        answer: NOT_COVERED_TEXT,
-        references: [],
-      },
+      displayQuestion,
+      result,
       directFixture,
+      formatMcpText(result),
     )).toMatchObject({
+      outcome: "display",
       mainRefs: 0,
       historyRefs: 1,
-      rawEqual: true,
-      warning: true,
     });
   });
 
-  it("rejects a schema-valid confidence mismatch between public and direct history", () => {
-    expect(() => validateHistoricalProbe(
-      pseFixture,
-      { ...directFixture, confidence: "low" },
-    )).toThrow("unexpected_historical_confidence");
+  it("accepts a topic-mismatch rejection and its user-visible notice", () => {
+    expect(validateHistoricalProbe(
+      hiddenQuestion,
+      hiddenPseFixture,
+      hiddenDirectFixture,
+      formatMcpText(hiddenPseFixture),
+    )).toEqual({
+      outcome: "hidden",
+      mainRefs: 1,
+      historyRefs: 0,
+      reason: "topic_mismatch",
+    });
   });
 
   it.each([
     [
-      "rewritten answer",
-      { ...pseFixture, historicalAnswer: { ...historical, answer: "changed" } },
-      directFixture,
+      "low_confidence",
+      {
+        answer: "量子卫星邮件协议仍需人工确认。",
+        confidence: "low",
+        sources: [{
+          source_type: "wiki",
+          title: "Coremail 量子卫星邮件协议调研",
+          excerpt: "Coremail 量子卫星邮件协议的历史调研记录。",
+        }],
+      },
     ],
     [
-      "no historical answer",
+      "no_reliable_source",
+      { ...hiddenDirectFixture, confidence: "none", sources: [] },
+    ],
+  ] as const)("accepts a %s rejection notice", (
+    reason,
+    direct,
+  ) => {
+    const result = answerResultSchema.parse({
+      ...hiddenPseFixture,
+      historicalNotice: {
+        ...hiddenPseFixture.historicalNotice,
+        reason,
+      },
+    });
+
+    expect(validateHistoricalProbe(
+      hiddenQuestion,
+      result,
+      direct,
+      formatMcpText(result),
+    )).toMatchObject({
+      outcome: "hidden",
+      reason,
+      historyRefs: 0,
+    });
+  });
+
+  it.each([
+    [
+      "changed displayed answer",
+      { ...pseFixture, historicalAnswer: { ...historical, answer: "changed" } },
+      directFixture,
+      displayQuestion,
+    ],
+    [
+      "missing displayed answer",
       { ...pseFixture, historicalAnswer: undefined },
       directFixture,
+      displayQuestion,
+    ],
+    [
+      "history displayed despite rejection",
+      pseFixture,
+      hiddenDirectFixture,
+      hiddenQuestion,
+    ],
+    [
+      "wrong rejection reason",
+      {
+        ...hiddenPseFixture,
+        historicalNotice: {
+          ...hiddenPseFixture.historicalNotice,
+          reason: "low_confidence",
+        },
+      },
+      hiddenDirectFixture,
+      hiddenQuestion,
     ],
     [
       "primary promoted",
       { ...pseFixture, status: "answered" },
       directFixture,
+      displayQuestion,
     ],
     [
       "uncited formal reference",
@@ -140,11 +250,13 @@ describe("validateHistoricalProbe", () => {
         answer: pseFixture.answer.replace("协议能力 [1]", "协议能力"),
       },
       directFixture,
+      displayQuestion,
     ],
     [
       "formal citation without a reference",
       { ...pseFixture, references: [] },
       directFixture,
+      displayQuestion,
     ],
     [
       "historical source admitted as a formal reference",
@@ -153,17 +265,51 @@ describe("validateHistoricalProbe", () => {
         references: [historical.references[0]],
       },
       directFixture,
+      displayQuestion,
     ],
     [
-      "direct result without Jira/Wiki",
-      pseFixture,
-      {
-        ...directFixture,
-        sources: [{ source_type: "local", title: "本地记录" }],
-      },
+      "malformed direct result",
+      hiddenPseFixture,
+      { answer: "缺少置信度字段", sources: [] },
+      hiddenQuestion,
     ],
-  ])("rejects %s", (_label, pseValue, directValue) => {
-    expect(() => validateHistoricalProbe(pseValue, directValue)).toThrow();
+  ])("rejects %s", (_label, pseValue, directValue, question) => {
+    const parsed = answerResultSchema.safeParse(pseValue);
+    const rendered = parsed.success ? formatMcpText(parsed.data) : "";
+    expect(() => validateHistoricalProbe(
+      question,
+      pseValue,
+      directValue,
+      rendered,
+    )).toThrow();
+  });
+
+  it("rejects rendered text that differs from the public structured result", () => {
+    expect(() => validateHistoricalProbe(
+      hiddenQuestion,
+      hiddenPseFixture,
+      hiddenDirectFixture,
+      `${formatMcpText(hiddenPseFixture)}\n泄露的历史正文`,
+    )).toThrow("unexpected_rendered_history");
+  });
+
+  it("allows formal related context when Coremail MCP is unavailable without showing a search notice", () => {
+    const result = answerResultSchema.parse({
+      ...pseFixture,
+      historicalAnswer: undefined,
+    });
+
+    expect(validateHistoricalUnavailableProbe(
+      result,
+      result.answer,
+    )).toEqual({ mainRefs: 1 });
+  });
+
+  it("rejects a searched notice when Coremail MCP was unavailable", () => {
+    expect(() => validateHistoricalUnavailableProbe(
+      hiddenPseFixture,
+      formatMcpText(hiddenPseFixture),
+    )).toThrow("unavailable_history_was_exposed");
   });
 });
 

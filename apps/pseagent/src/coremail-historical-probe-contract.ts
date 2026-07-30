@@ -1,63 +1,129 @@
 import { z } from "zod";
 import {
-  HISTORICAL_ANSWER_WARNING,
   answerResultSchema,
 } from "./contracts.js";
+import { evaluateCoremailHistoricalAnswer } from "./coremail-mcp-client.js";
+import {
+  HISTORICAL_BODY_MAX_CHARS,
+  HISTORICAL_NOTICE_MESSAGES,
+  HISTORICAL_REFERENCE_LIMIT,
+} from "./historical-display.js";
+import { formatMcpText } from "./mcp-server.js";
 import { NOT_COVERED_TEXT } from "./response.js";
 
-const directHistoricalAnswerSchema = z.object({
-  answer: z.string().min(1).max(32_768),
-  confidence: z.enum(["low", "medium", "high"]),
-  sources: z.array(z.object({
-    source_type: z.string(),
-  }).passthrough()).min(1),
-}).passthrough();
+const probeQuestionSchema = z.string().trim().min(1).max(16_384);
 
 export function validateHistoricalProbe(
+  questionInput: unknown,
   pseInput: unknown,
   directInput: unknown,
+  renderedInput: unknown,
 ) {
+  const question = probeQuestionSchema.parse(questionInput);
   const pseResult = answerResultSchema.parse(pseInput);
-  const directResult = directHistoricalAnswerSchema.parse(directInput);
-  if (pseResult.status !== "not_covered") {
-    throw new Error("unexpected_primary_status");
+  const rendered = z.string().parse(renderedInput);
+  validateNotCoveredPrimary(pseResult);
+  if (rendered !== formatMcpText(pseResult)) {
+    throw new Error("unexpected_rendered_history");
   }
-  if (pseResult.references.length === 0) {
-    if (pseResult.answer !== NOT_COVERED_TEXT) {
-      throw new Error("unexpected_primary_answer");
+
+  const expected = evaluateCoremailHistoricalAnswer(question, directInput);
+  if (expected.outcome === "unavailable") {
+    throw new Error("unexpected_direct_unavailable");
+  }
+  if (expected.outcome === "hidden") {
+    if (pseResult.historicalAnswer !== undefined) {
+      throw new Error("unexpected_hidden_historical_answer");
     }
-  } else {
-    validateFormalRelatedReferences(pseResult);
+    if (pseResult.historicalNotice?.reason !== expected.reason) {
+      throw new Error("unexpected_historical_notice");
+    }
+    if (!rendered.includes(HISTORICAL_NOTICE_MESSAGES[expected.reason])) {
+      throw new Error("missing_historical_notice_text");
+    }
+    return {
+      outcome: "hidden" as const,
+      mainRefs: pseResult.references.length,
+      historyRefs: 0 as const,
+      reason: expected.reason,
+    };
+  }
+
+  if (pseResult.historicalNotice !== undefined) {
+    throw new Error("unexpected_display_notice");
   }
   const historical = pseResult.historicalAnswer;
-  if (!historical) throw new Error("missing_historical_answer");
-  if (historical.references.length < 1) {
-    throw new Error("missing_historical_reference");
+  if (historical === undefined) throw new Error("missing_historical_answer");
+  if (canonicalJson(historical) !== canonicalJson(expected.answer)) {
+    throw new Error("unexpected_displayed_history");
   }
-  if (!historical.references.every((reference) =>
-    reference.sourceType === "jira" || reference.sourceType === "wiki")) {
-    throw new Error("unexpected_historical_source_type");
+  if (
+    historical.answer.length > HISTORICAL_BODY_MAX_CHARS ||
+    historical.references.length > HISTORICAL_REFERENCE_LIMIT
+  ) {
+    throw new Error("historical_display_limit_exceeded");
   }
-  if (historical.warning !== HISTORICAL_ANSWER_WARNING) {
-    throw new Error("unexpected_historical_warning");
-  }
-  if (historical.confidence !== directResult.confidence) {
-    throw new Error("unexpected_historical_confidence");
-  }
-  if (!directResult.sources.some((source) =>
-    source.source_type === "jira" || source.source_type === "wiki")) {
-    throw new Error("missing_direct_historical_reference");
-  }
-  if (historical.answer !== directResult.answer) {
-    throw new Error("historical_answer_rewritten");
+  if (
+    /https?:\/\//iu.test(historical.answer) ||
+    historical.references.some((reference) => reference.url !== undefined) ||
+    /https?:\/\//iu.test(rendered)
+  ) {
+    throw new Error("historical_internal_url_visible");
   }
   return {
+    outcome: "display" as const,
     mainRefs: pseResult.references.length,
     historyRefs: historical.references.length,
     confidence: historical.confidence,
-    rawEqual: true as const,
-    warning: true as const,
   };
+}
+
+export function validateHistoricalUnavailableProbe(
+  pseInput: unknown,
+  renderedInput: unknown,
+) {
+  const pseResult = answerResultSchema.parse(pseInput);
+  const rendered = z.string().parse(renderedInput);
+  validateNotCoveredPrimary(pseResult);
+  if (
+    pseResult.historicalAnswer !== undefined ||
+    pseResult.historicalNotice !== undefined
+  ) {
+    throw new Error("unavailable_history_was_exposed");
+  }
+  if (rendered !== pseResult.answer) {
+    throw new Error("unexpected_rendered_history");
+  }
+  return { mainRefs: pseResult.references.length };
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, sortJsonValue(item)]),
+  );
+}
+
+function validateNotCoveredPrimary(
+  result: ReturnType<typeof answerResultSchema.parse>,
+): void {
+  if (result.status !== "not_covered") {
+    throw new Error("unexpected_primary_status");
+  }
+  if (result.references.length === 0) {
+    if (result.answer !== NOT_COVERED_TEXT) {
+      throw new Error("unexpected_primary_answer");
+    }
+    return;
+  }
+  validateFormalRelatedReferences(result);
 }
 
 function validateFormalRelatedReferences(

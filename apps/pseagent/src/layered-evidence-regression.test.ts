@@ -53,6 +53,28 @@ const dutyBodies = new Map<string, string>([
   [dutyPages[5], "识别关键角色并以客户可观察证据推进销售机会。"],
 ]);
 
+const exchangePages = [
+  "wiki/comparison/coremail-vs-exchange对比.md",
+  "wiki/findings/协鑫集团项目经验-海外exchange替换与客户关系重建.md",
+] as const;
+
+const exchangeBodies = new Map<string, string>([
+  [
+    exchangePages[0],
+    [
+      "Coremail 在个性化定制、较低 TCO、原厂现场服务和邮件安全功能方面具备差异化能力。",
+      "对比材料同时提醒：Exchange 也有扩展、安全和品牌定制能力，不能表述为完全不支持。",
+    ].join("\n"),
+  ],
+  [
+    exchangePages[1],
+    [
+      "海外 Exchange 替换案例将降低运维成本和满足数据主权要求列为 Coremail 的价值主张。",
+      "该结论来自单一案例，不应直接泛化到所有客户。",
+    ].join("\n"),
+  ],
+]);
+
 const dutyPlan: KnowledgePlan = {
   subject: "售前工程师职责",
   requirements: [{
@@ -142,6 +164,99 @@ describe("layered formal evidence business regression", () => {
       removedSegmentCount: 0,
     });
     expect(execution).not.toHaveProperty("historicalGateReason");
+  });
+
+  it("answers Coremail versus Exchange from formal comparison pages without historical fallback", async () => {
+    const answer = [
+      "个性化定制：Coremail 对企业个性化需求的支持度更高 [1]。",
+      "总体成本：Coremail 可通过较低资源消耗和邮件去重降低 TCO [1]。",
+      "服务方式：Coremail 可提供原厂人员现场服务 [1]。",
+      "安全能力：Coremail 提供陌生人识别、水印、密级邮件和私有加密等能力 [1]。",
+      "替换价值：海外案例还体现了降低运维成本和满足数据主权要求的价值 [2]。",
+      "边界：Exchange 也具备扩展和高级安全能力，具体比较应结合版本、许可与客户场景 [1][2]。",
+    ].join("\n");
+    const actions: Array<AgentAction | CoverageVerificationAction> = [
+      ...exchangePages.map((path): AgentAction => ({
+        action: "tool",
+        tool: "kb.read_page",
+        input: { requirementId: "R1", path },
+      })),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer,
+          citations: [1, 2],
+        }],
+        citations: [1, 2],
+      },
+      {
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0, 1, 2, 3, 4, 5],
+          synthesizedTargetSegmentIndexes: [0, 1, 2, 3, 4, 5],
+          retainedRelatedContextIndexes: [],
+          reason: "synthesized_support",
+        }],
+      },
+    ];
+    const model = sequenceModel(actions);
+    const planner = {
+      plan: vi.fn(async (): Promise<KnowledgePlan> => ({
+        subject: "Coremail 与 Exchange 对比",
+        requirements: [{
+          id: "R1",
+          question: "Coremail 相比 Exchange 的优势及适用边界",
+          queries: [
+            "Coremail Exchange 对比 TCO 定制 服务 安全",
+            "Exchange 替换 Coremail 运维成本 数据主权",
+          ],
+          evidenceMode: "synthesis_allowed",
+        }],
+      })),
+    } satisfies KnowledgePlanner;
+    const service = new AnswerService({
+      model,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner,
+      knowledge: {
+        open: vi.fn(async () =>
+          exchangeSession() as unknown as KnowledgeSession),
+      },
+      runAgent: runKnowledgeAgent,
+    });
+
+    const execution = await service.answerDetailed(
+      "对比 Exchange 邮件系统，Coremail 的优势有哪些？",
+    );
+
+    expect(execution.result).toMatchObject({
+      scope: "professional",
+      status: "answered",
+    });
+    for (const fact of [
+      "个性化定制",
+      "TCO",
+      "原厂人员现场服务",
+      "安全能力",
+      "数据主权",
+      "具体比较应结合版本、许可与客户场景",
+    ]) {
+      expect(execution.result.answer).toContain(fact);
+    }
+    expect(execution.result.references.map((reference) => reference.path))
+      .toEqual(exchangePages);
+    expect(execution.result.historicalAnswer).toBeUndefined();
+    expect(execution.result.historicalNotice).toBeUndefined();
+    expect(execution).toMatchObject({
+      historicalAttempted: false,
+      historicalUsed: false,
+      retainedSynthesizedSegmentCount: 6,
+      removedSegmentCount: 0,
+    });
   });
 
   it("rejects synthesized support for an unrecorded Coremail protocol", async () => {
@@ -302,6 +417,47 @@ function generalSession(): KnowledgeAgentSession {
       related: [],
       sources: [],
       body: dutyBodies.get(path) ?? "",
+      contentHash,
+    })),
+    compactPage: vi.fn((page) => page.body),
+  };
+}
+
+function exchangeSession(): KnowledgeAgentSession {
+  return {
+    project: "coremail-professional",
+    revision,
+    schema: "professional schema",
+    overview: "professional overview",
+    search: vi.fn(async () => ({
+      project: "coremail-professional" as const,
+      revision,
+      hits: exchangePages.map((path, index) => ({
+        path,
+        title: index === 0
+          ? "Coremail vs Exchange对比"
+          : "协鑫集团项目经验：海外Exchange替换与客户关系重建",
+        score: 1 - index / 10,
+        matchedTerms: ["Coremail", "Exchange"],
+        snippet: exchangeBodies.get(path)!,
+      })),
+    })),
+    graph: vi.fn(async () => ({
+      project: "coremail-professional" as const,
+      revision,
+      hits: [],
+    })),
+    readPage: vi.fn(async (path: string) => ({
+      project: "coremail-professional" as const,
+      path,
+      title: path === exchangePages[0]
+        ? "Coremail vs Exchange对比"
+        : "协鑫集团项目经验：海外Exchange替换与客户关系重建",
+      type: path === exchangePages[0] ? "comparison" : "finding",
+      tags: ["Coremail", "Exchange"],
+      related: [],
+      sources: [],
+      body: exchangeBodies.get(path) ?? "",
       contentHash,
     })),
     compactPage: vi.fn((page) => page.body),

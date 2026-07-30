@@ -246,6 +246,67 @@
       ],
       "maxElapsedMs": 300000,
       "minReferenceCount": 4
+    },
+    {
+      "id": "EC07",
+      "variants": [
+        {
+          "question": "对比 Exchange 邮件系统，Coremail 的优势有哪些？",
+          "requiredFacts": [
+            ["个性化定制", "定制化需求"],
+            ["TCO", "总拥有成本"],
+            ["现场服务", "原厂人员"],
+            ["安全功能", "安全能力", "密级邮件", "私有加密"],
+            ["客观", "实际情况", "具体场景", "版本", "许可"]
+          ]
+        },
+        {
+          "question": "Coremail 相比 Microsoft Exchange 有哪些差异化优势？回答时也请说明对比边界。",
+          "requiredFacts": [
+            ["个性化定制", "定制化需求"],
+            ["TCO", "总拥有成本"],
+            ["现场服务", "原厂人员"],
+            ["安全功能", "安全能力", "密级邮件", "私有加密"],
+            ["客观", "实际情况", "具体场景", "版本", "许可"]
+          ]
+        }
+      ],
+      "expectedScope": "professional",
+      "expectedStatus": "answered",
+      "requirements": [
+        {
+          "id": "R1",
+          "question": "Coremail 相比 Exchange 的差异化优势与对比边界",
+          "queries": [
+            "Coremail vs Exchange 对比 TCO 定制 现场服务 安全",
+            "Coremail Exchange 功能对比 优势 边界"
+          ],
+          "expectedEvidencePages": [
+            "wiki/comparison/coremail-vs-exchange对比.md",
+            "wiki/concepts/功能对比清单-Exchange-vs-Coremail.md"
+          ],
+          "requiredFacts": [
+            ["个性化定制", "定制化需求"],
+            ["TCO", "总拥有成本"],
+            ["现场服务", "原厂人员"],
+            ["安全功能", "安全能力", "密级邮件", "私有加密"]
+          ]
+        }
+      ],
+      "requiredFacts": [
+        ["个性化定制", "定制化需求"],
+        ["TCO", "总拥有成本"],
+        ["现场服务", "原厂人员"],
+        ["安全功能", "安全能力", "密级邮件", "私有加密"],
+        ["客观", "实际情况", "具体场景", "版本", "许可"]
+      ],
+      "forbiddenFacts": [
+        "Exchange 完全不支持定制",
+        "Exchange 完全不支持安全功能",
+        "所有客户都应替换 Exchange"
+      ],
+      "maxElapsedMs": 300000,
+      "minReferenceCount": 1
     }
   ]
 }
