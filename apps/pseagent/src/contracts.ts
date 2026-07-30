@@ -3,12 +3,14 @@ import { z } from "zod";
 export const scopeSchema = z.enum(["professional", "general", "normal"]);
 export const answerStatusSchema = z.enum(["answered", "partially_answered", "not_covered", "temporarily_unavailable"]);
 export const coverageSchema = z.enum(["complete", "partial", "none"]);
+export const evidenceModeSchema = z.enum(["direct_only", "synthesis_allowed"]);
 export const routeActionSchema = z.object({ action: z.literal("route"), scope: scopeSchema }).strict();
 export const knowledgeRequirementIdSchema = z.string().regex(/^R[1-6]$/u);
 export const knowledgeRequirementSchema = z.object({
   id: knowledgeRequirementIdSchema,
   question: z.string().trim().min(1).max(1_024),
   queries: z.array(z.string().trim().min(1).max(1_024)).min(1).max(3),
+  evidenceMode: evidenceModeSchema,
 }).strict().superRefine((requirement, context) => {
   const normalizedQueries = requirement.queries.map((query) =>
     query.toLocaleLowerCase("zh-CN").replace(/\s+/gu, " ").trim());
@@ -214,6 +216,7 @@ export const answerResultSchema = z.object({
   historicalAnswer: historicalAnswerSchema.optional(),
 }).strict();
 export type Scope = z.infer<typeof scopeSchema>;
+export type EvidenceMode = z.infer<typeof evidenceModeSchema>;
 export type RouteAction = z.infer<typeof routeActionSchema>;
 export type KnowledgeRequirement = z.infer<typeof knowledgeRequirementSchema>;
 export type KnowledgePlan = z.infer<typeof knowledgePlanSchema>;

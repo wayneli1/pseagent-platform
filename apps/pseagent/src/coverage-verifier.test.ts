@@ -23,6 +23,7 @@ const singleRequirementPlan: KnowledgePlan = {
     id: "R1",
     question: "是否支持目标协议",
     queries: ["Coremail 目标协议支持"],
+    evidenceMode: "direct_only",
   }],
 };
 

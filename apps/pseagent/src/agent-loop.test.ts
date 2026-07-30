@@ -195,7 +195,7 @@ function fakeSession(options: {
 
 const singlePlan: KnowledgePlan = {
   subject: "Coremail AI",
-  requirements: [{ id: "R1", question: "Coremail AI 是什么", queries: ["seed-r1"] }],
+  requirements: [{ id: "R1", question: "Coremail AI 是什么", queries: ["seed-r1"], evidenceMode: "direct_only" }],
 };
 
 function agentInput(
@@ -243,6 +243,7 @@ describe("runKnowledgeAgent", () => {
         id: "R1",
         question,
         queries: ["Coremail 2035 年量子卫星邮件协议支持"],
+        evidenceMode: "direct_only",
       }],
     };
     const session = fakeSession({
@@ -398,6 +399,7 @@ describe("runKnowledgeAgent", () => {
         id: "R1",
         question,
         queries: ["Coremail 2035 年量子卫星邮件协议支持"],
+        evidenceMode: "direct_only",
       }],
     };
     const session = fakeSession({
@@ -472,6 +474,7 @@ describe("runKnowledgeAgent", () => {
         id: "R1",
         question,
         queries: ["Coremail 2035 年量子卫星邮件协议支持"],
+        evidenceMode: "direct_only",
       }],
     };
     const session = fakeSession({
@@ -640,6 +643,7 @@ describe("runKnowledgeAgent", () => {
         id: "R1",
         question: "网关功能和 POC",
         queries: ["功能查询", "POC 查询"],
+        evidenceMode: "direct_only",
       }],
     };
     const session = fakeSession({
@@ -709,6 +713,7 @@ describe("runKnowledgeAgent", () => {
         id: "R1",
         question: "POC 注意事项",
         queries: ["POC测试关键注意事项 范围控制 压测 资源建议 信创"],
+        evidenceMode: "direct_only",
       }],
     };
     const session = fakeSession({
@@ -748,6 +753,7 @@ describe("runKnowledgeAgent", () => {
         id: "R1",
         question: "Domino 迁移执行步骤",
         queries: ["Domino 迁移 Coremail 执行步骤"],
+        evidenceMode: "direct_only",
       }],
     };
     const session = fakeSession({
@@ -804,6 +810,7 @@ describe("runKnowledgeAgent", () => {
           "Coremail 镜像 同步 机制 多活 容灾",
           "镜像 多活 容灾 规划",
         ],
+        evidenceMode: "synthesis_allowed",
       }],
     };
     const session = fakeSession({
@@ -842,6 +849,7 @@ describe("runKnowledgeAgent", () => {
         id: "R1",
         question: "Coremail 安全网关有哪些核心能力",
         queries: ["Coremail 安全网关核心能力", "CACTER邮件安全网关功能"],
+        evidenceMode: "direct_only",
       }],
     };
     const session = fakeSession({
@@ -877,8 +885,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "复合问题",
       requirements: [
-        { id: "R1", question: "功能", queries: ["seed-r1"] },
-        { id: "R2", question: "POC", queries: ["seed-r2"] },
+        { id: "R1", question: "功能", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "POC", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -915,9 +923,9 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "复合问题",
       requirements: [
-        { id: "R1", question: "容量", queries: ["seed-r1"] },
-        { id: "R2", question: "多活", queries: ["seed-r2"] },
-        { id: "R3", question: "同步", queries: ["seed-r3"] },
+        { id: "R1", question: "容量", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "多活", queries: ["seed-r2"], evidenceMode: "direct_only" },
+        { id: "R3", question: "同步", queries: ["seed-r3"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -1020,8 +1028,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "复合问题",
       requirements: [
-        { id: "R1", question: "功能", queries: ["seed-r1"] },
-        { id: "R2", question: "POC", queries: ["seed-r2"] },
+        { id: "R1", question: "功能", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "POC", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -1053,8 +1061,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "共享证据",
       requirements: [
-        { id: "R1", question: "架构", queries: ["seed-r1"] },
-        { id: "R2", question: "容灾", queries: ["seed-r2"] },
+        { id: "R1", question: "架构", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "容灾", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -1083,8 +1091,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "跨需求终稿引用",
       requirements: [
-        { id: "R1", question: "机会判断框架", queries: ["seed-r1"] },
-        { id: "R2", question: "客户证据维度", queries: ["seed-r2"] },
+        { id: "R1", question: "机会判断框架", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "客户证据维度", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -1132,8 +1140,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "共享证据预算",
       requirements: [
-        { id: "R1", question: "共享事实", queries: ["seed-r1"] },
-        { id: "R2", question: "三个独立事实", queries: ["seed-r2"] },
+        { id: "R1", question: "共享事实", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "三个独立事实", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -1169,8 +1177,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "全局召回",
       requirements: [
-        { id: "R1", question: "环境", queries: ["seed-r1"] },
-        { id: "R2", question: "步骤", queries: ["seed-r2"] },
+        { id: "R1", question: "环境", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "步骤", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -1200,8 +1208,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "复合问题",
       requirements: [
-        { id: "R1", question: "不存在的资料", queries: ["seed-r1"] },
-        { id: "R2", question: "已有资料", queries: ["seed-r2"] },
+        { id: "R1", question: "不存在的资料", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "已有资料", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -1366,8 +1374,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "复合能力",
       requirements: [
-        { id: "R1", question: "能力一", queries: ["seed-r1"] },
-        { id: "R2", question: "能力二", queries: ["seed-r2"] },
+        { id: "R1", question: "能力一", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "能力二", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -1485,8 +1493,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "复合能力",
       requirements: [
-        { id: "R1", question: "能力一", queries: ["seed-r1"] },
-        { id: "R2", question: "能力二", queries: ["seed-r2"] },
+        { id: "R1", question: "能力一", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "能力二", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({
@@ -1751,8 +1759,8 @@ describe("runKnowledgeAgent", () => {
     const plan: KnowledgePlan = {
       subject: "复合问题",
       requirements: [
-        { id: "R1", question: "功能", queries: ["seed-r1"] },
-        { id: "R2", question: "POC", queries: ["seed-r2"] },
+        { id: "R1", question: "功能", queries: ["seed-r1"], evidenceMode: "direct_only" },
+        { id: "R2", question: "POC", queries: ["seed-r2"], evidenceMode: "direct_only" },
       ],
     };
     const session = fakeSession({

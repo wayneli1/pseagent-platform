@@ -20,7 +20,12 @@ import { ScopeRouter } from "./router.js";
 
 const knowledgePlan = {
   subject: "Coremail",
-  requirements: [{ id: "R1" as const, question: "产品问题", queries: ["Coremail 产品问题"] }],
+  requirements: [{
+    id: "R1" as const,
+    question: "产品问题",
+    queries: ["Coremail 产品问题"],
+    evidenceMode: "direct_only" as const,
+  }],
 };
 
 function createPlanner() {

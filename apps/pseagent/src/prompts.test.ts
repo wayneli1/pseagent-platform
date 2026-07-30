@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  KNOWLEDGE_PLAN_SYSTEM_PROMPT,
   coverageVerificationMessages,
   knowledgeAgentMessages,
 } from "./prompts.js";
@@ -9,6 +10,21 @@ function systemMessage(messages: ReturnType<typeof knowledgeAgentMessages>): str
 }
 
 describe("support and existence semantics", () => {
+  it("makes the planner classify direct-only and synthesis-allowed evidence", () => {
+    expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
+      '"evidenceMode":"direct_only|synthesis_allowed"',
+    );
+    expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
+      "岗位职责、方法论总结、多页面对比、方案组织、能力领域、综合分析和建议",
+    );
+    expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
+      "支持性、存在性、明确否定、版本、兼容性、容量或性能数字、授权、报价、认证和穷举完整性",
+    );
+    expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
+      "不同事实风险必须拆成不同 requirement",
+    );
+  });
+
   it("gives the agent a bounded related-context contract for omitted target claims", () => {
     const prompt = systemMessage(knowledgeAgentMessages({
       question: "Coremail 是否已经支持 2035 年量子卫星邮件协议？",
@@ -20,6 +36,7 @@ describe("support and existence semantics", () => {
           id: "R1",
           question: "Coremail 是否已经支持 2035 年量子卫星邮件协议？",
           queries: ["Coremail 2035 年量子卫星邮件协议支持"],
+          evidenceMode: "direct_only",
         }],
       },
       requirementEvidence: [],

@@ -87,6 +87,7 @@
 - Modify fixtures: `apps/pseagent/src/evidence-coverage.test.ts`
 - Modify fixtures: `apps/pseagent/src/regression.test.ts`
 - Modify fixtures: `apps/pseagent/src/main-wiring.test.ts`
+- Modify fixtures: `apps/pseagent/src/references.test.ts`
 
 **Interfaces:**
 

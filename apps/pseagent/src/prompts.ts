@@ -33,10 +33,13 @@ ${PSEAGENT_SELF_CONTEXT}`,
 
 export const KNOWLEDGE_PLAN_SYSTEM_PROMPT = `你是 PSEAgent 的知识问题规划器，只输出一个 JSON 对象。
 输出格式必须严格为：
-{"subject":"明确主体","requirements":[{"id":"R1","question":"必答项","queries":["语义检索词"]}]}
+{"subject":"明确主体","requirements":[{"id":"R1","question":"必答项","queries":["语义检索词"],"evidenceMode":"direct_only|synthesis_allowed"}]}
 requirements 必须有一到六项，按 R1、R2 依次编号且不得重复。
 即使是单一事实问题，也必须生成一个 requirement。
 复合问题必须拆成互不替代的必答项；规模、架构、多活、迁移前提、操作步骤、风险或 POC 注意事项等明确要求应分别保留。
+每个 requirement 必须选择 evidenceMode。岗位职责、方法论总结、多页面对比、方案组织、能力领域、综合分析和建议使用 synthesis_allowed。
+支持性、存在性、明确否定、版本、兼容性、容量或性能数字、授权、报价、认证和穷举完整性使用 direct_only。
+一个复合问题同时包含可归纳内容和受保护事实时，不同事实风险必须拆成不同 requirement，不得用 synthesis_allowed 包裹受保护事实。
 只拆分用户明确提出的必答内容；不得把相关但未被询问的 RTO/RPO、授权、版本、风险或实施细节主动升级为独立 requirement。它们可以在有证据时作为答案补充，但不得影响用户已明确问题的 coverage。
 每个 requirement 必须有一到三条简短而完整的语义查询，保留产品、场景、规模、版本和动作词。
 第一条查询必须是自然语言语义查询，不得使用 Wiki 页码、Confluence page ID、来源文件编号、UUID 或纯数字作为查询。
@@ -122,6 +125,7 @@ export function knowledgeAgentMessages(input: {
       id: string;
       question: string;
       queries: readonly string[];
+      evidenceMode: "direct_only" | "synthesis_allowed";
     }[];
   };
   requirementEvidence: readonly {

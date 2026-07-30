@@ -11,11 +11,13 @@ const compositePlan = {
       id: "R1" as const,
       question: "详细功能清单",
       queries: ["Coremail 安全网关 功能清单", "CACTER CAC 功能"],
+      evidenceMode: "direct_only" as const,
     },
     {
       id: "R2" as const,
       question: "POC 注意事项",
       queries: ["网关 POC 测试要点", "安全网关 POC 注意事项"],
+      evidenceMode: "synthesis_allowed" as const,
     },
   ],
 };
@@ -39,6 +41,7 @@ describe("knowledge plan schema", () => {
         id: "R1",
         question: "Coremail AI 是什么",
         queries: ["Coremail AI 新功能"],
+        evidenceMode: "direct_only",
       }],
     }).requirements).toHaveLength(1);
   });
@@ -103,16 +106,19 @@ describe("ModelKnowledgePlanner", () => {
           id: "R1" as const,
           question: "十万用户规模下如何规划多活架构",
           queries: ["Coremail 十万用户 多活架构"],
+          evidenceMode: "direct_only" as const,
         },
         {
           id: "R2" as const,
           question: "如何规划容灾方案",
           queries: ["Coremail 十万用户 容灾方案"],
+          evidenceMode: "synthesis_allowed" as const,
         },
         {
           id: "R3" as const,
           question: "镜像同步机制如何实现",
           queries: ["Coremail 镜像同步机制"],
+          evidenceMode: "synthesis_allowed" as const,
         },
       ],
     };
@@ -133,11 +139,47 @@ describe("ModelKnowledgePlanner", () => {
     expect(result.requirements[0]).toMatchObject({
       id: "R1",
       question: expect.stringMatching(/十万用户.*(?:服务器|存储|容量|硬件)/u),
+      evidenceMode: "direct_only",
     });
     expect(result.requirements[0]?.queries.join(" ")).toMatch(/十万用户.*Coremail.*(?:容量|硬件)/u);
     expect(result.requirements.slice(1).map((requirement) => requirement.id))
       .toEqual(["R2", "R3", "R4"]);
   });
+
+  it.each([
+    ["售前工程师的工作职责有哪些？", "售前职责", "synthesis_allowed"],
+    ["Coremail 是否支持目标协议？", "目标协议支持", "direct_only"],
+    ["Coremail 适用哪个版本？", "适用版本", "direct_only"],
+    ["最大支持多少用户？", "最大用户数", "direct_only"],
+    ["授权和报价是多少？", "授权报价", "direct_only"],
+    ["列出全部兼容数据库", "兼容数据库完整清单", "direct_only"],
+  ] as const)(
+    "normalizes evidence mode for %s",
+    async (question, requirementQuestion, expectedMode) => {
+      const completeJson = vi.fn(async (
+        input: Parameters<ModelClient["completeJson"]>[0],
+      ) => input.schema.parse({
+        subject: requirementQuestion,
+        requirements: [{
+          id: "R1",
+          question: requirementQuestion,
+          queries: [requirementQuestion],
+          evidenceMode: "synthesis_allowed",
+        }],
+      }));
+      const planner = new ModelKnowledgePlanner({
+        completeJson,
+        completeText: vi.fn(),
+      } as unknown as ModelClient);
+
+      const result = await planner.plan({
+        ...plannerInput(),
+        question,
+      });
+
+      expect(result.requirements[0]?.evidenceMode).toBe(expectedMode);
+    },
+  );
 
   it("repairs an invalid model payload", async () => {
     const completeJson = vi.fn()

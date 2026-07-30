@@ -28,7 +28,12 @@ const enabledConfigEnv = {
 
 const plan = {
   subject: "Coremail",
-  requirements: [{ id: "R1" as const, question: "产品问题", queries: ["Coremail 产品问题"] }],
+  requirements: [{
+    id: "R1" as const,
+    question: "产品问题",
+    queries: ["Coremail 产品问题"],
+    evidenceMode: "direct_only" as const,
+  }],
 };
 
 describe("main wiring", () => {

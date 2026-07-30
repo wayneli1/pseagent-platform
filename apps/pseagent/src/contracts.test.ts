@@ -6,6 +6,7 @@ import {
   coverageVerificationActionSchema,
   finalOnlyActionSchema,
   historicalAnswerSchema,
+  knowledgePlanSchema,
   requirementCoverageSchema,
   routeActionSchema,
   type RelatedContextItem,
@@ -44,6 +45,37 @@ describe("PSEAgent contracts", () => {
     for (const scope of ["both", "mixed", "ambiguous"]) {
       expect(() => routeActionSchema.parse({ action: "route", scope })).toThrow();
     }
+  });
+
+  it("requires an explicit evidence mode on every knowledge requirement", () => {
+    expect(knowledgePlanSchema.safeParse({
+      subject: "售前职责",
+      requirements: [{
+        id: "R1",
+        question: "售前工程师的工作职责",
+        queries: ["售前 工作职责"],
+      }],
+    }).success).toBe(false);
+
+    expect(knowledgePlanSchema.parse({
+      subject: "售前职责",
+      requirements: [{
+        id: "R1",
+        question: "售前工程师的工作职责",
+        queries: ["售前 工作职责"],
+        evidenceMode: "synthesis_allowed",
+      }],
+    }).requirements[0]?.evidenceMode).toBe("synthesis_allowed");
+
+    expect(knowledgePlanSchema.safeParse({
+      subject: "售前职责",
+      requirements: [{
+        id: "R1",
+        question: "售前工程师的工作职责",
+        queries: ["售前 工作职责"],
+        evidenceMode: "model_guess",
+      }],
+    }).success).toBe(false);
   });
 
   it("rejects project and revision in model-visible tool inputs", () => {

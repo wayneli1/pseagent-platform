@@ -10,8 +10,8 @@ import { ReferenceRegistry, ReferenceValidationError, type ReadEvidence } from "
 const revision = "a".repeat(40);
 const contentHash = "b".repeat(64);
 const requirements: KnowledgeRequirement[] = [
-  { id: "R1", question: "功能", queries: ["功能查询"] },
-  { id: "R2", question: "POC", queries: ["POC 查询"] },
+  { id: "R1", question: "功能", queries: ["功能查询"], evidenceMode: "direct_only" },
+  { id: "R2", question: "POC", queries: ["POC 查询"], evidenceMode: "direct_only" },
 ];
 
 function readEvidence(path = "wiki/concepts/coremail-ai助手.md", overrides: Partial<ReadEvidence> = {}): ReadEvidence {
