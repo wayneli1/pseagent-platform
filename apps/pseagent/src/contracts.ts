@@ -129,6 +129,7 @@ export const finalActionSchema = z.object({
 export const coverageVerificationReasonSchema = z.enum([
   "direct_support",
   "explicit_negative_support",
+  "synthesized_support",
   "partial_support",
   "related_only",
   "target_omitted",
@@ -138,6 +139,7 @@ const coverageVerificationRequirementSchema = z.object({
   id: knowledgeRequirementIdSchema,
   targetDecision: z.enum(["retain", "retain_partial", "not_covered"]),
   retainedTargetSegmentIndexes: z.array(z.number().int().nonnegative()).max(64),
+  synthesizedTargetSegmentIndexes: z.array(z.number().int().nonnegative()).max(64),
   retainedRelatedContextIndexes: z.array(z.number().int().nonnegative()).max(3),
   reason: coverageVerificationReasonSchema,
 }).strict().superRefine((requirement, context) => {
@@ -145,6 +147,10 @@ const coverageVerificationRequirementSchema = z.object({
     [
       "retainedTargetSegmentIndexes",
       "target_segment_indexes_must_be_unique_and_ordered",
+    ],
+    [
+      "synthesizedTargetSegmentIndexes",
+      "synthesized_segment_indexes_must_be_unique_and_ordered",
     ],
     [
       "retainedRelatedContextIndexes",

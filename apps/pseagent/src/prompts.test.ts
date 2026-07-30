@@ -103,7 +103,7 @@ describe("support and existence semantics", () => {
   it("makes the verifier retain only evidence-backed target segments", () => {
     const prompt = systemMessage(coverageVerificationMessages({
       question: "Coremail 是否已经支持 2035 年量子卫星邮件协议？",
-      plan: { requirements: [{ id: "R1" }] },
+      plan: { requirements: [{ id: "R1", evidenceMode: "synthesis_allowed" }] },
       draft: { requirements: [{ id: "R1" }] },
       targetSegments: [{
         id: "R1",
@@ -112,29 +112,34 @@ describe("support and existence semantics", () => {
       evidence: [],
     }));
 
-    expect(prompt).toContain("一个句段都没有直接证据时才选择 not_covered");
+    expect(prompt).toContain("一个句段都没有正式支持时才选择 not_covered");
     expect(prompt).toContain("正文未提及目标不得保留对应句段");
-    expect(prompt).toContain("正文只支持部分句段时必须选择 retain_partial");
+    expect(prompt).toContain("只支持部分句段时选择 retain_partial");
     expect(prompt).toContain("同义词、缩略词或等价表达必须有正文确认的等价关系");
     expect(prompt).toContain("非穷尽列表不得作为完整清单保留");
+    expect(prompt).toContain("岗位职责、方法论总结、多页面对比");
+    expect(prompt).toContain("relatedContext 还必须直接缩小用户判断范围");
+    expect(prompt).toContain("始终只能直接支持");
+    expect(prompt).toContain("多篇正文冲突时只能保留明确披露冲突的句段");
     expect(prompt).toContain("targetDecision=retain");
     expect(prompt).toContain("targetDecision=retain_partial");
     expect(prompt).toContain("targetDecision=not_covered");
     expect(prompt).toContain("retainedTargetSegmentIndexes");
+    expect(prompt).toContain("synthesizedTargetSegmentIndexes");
     expect(prompt).toContain("retainedRelatedContextIndexes");
     expect(prompt).toContain("索引从 0 开始，只能保留或删除，不能改写内容");
     expect(prompt).toContain("量子卫星邮件协议");
     expect(prompt).toContain("SMTP、POP3、IMAP");
     expect(prompt).toContain("顶层只能包含 action、requirements");
     expect(prompt).toContain(
-      "每个 requirement 只能包含 id、targetDecision、retainedTargetSegmentIndexes、retainedRelatedContextIndexes、reason",
+      "每个 requirement 只能包含 id、targetDecision、retainedTargetSegmentIndexes、synthesizedTargetSegmentIndexes、retainedRelatedContextIndexes、reason",
     );
     expect(prompt).toContain(
       "不得输出或复制 coverage、answer、citations、statement、relatedContext 或顶层 citations",
     );
     expect(prompt).toContain(
-      '{"action":"verify","requirements":[{"id":"R1","targetDecision":"retain_partial","retainedTargetSegmentIndexes":[0,2],"retainedRelatedContextIndexes":[],"reason":"partial_support"}]}',
+      '{"action":"verify","requirements":[{"id":"R1","targetDecision":"retain_partial","retainedTargetSegmentIndexes":[0,2],"synthesizedTargetSegmentIndexes":[2],"retainedRelatedContextIndexes":[],"reason":"partial_support"}]}',
     );
-    expect(prompt).toContain("direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed");
+    expect(prompt).toContain("direct_support、explicit_negative_support、synthesized_support、partial_support、related_only、target_omitted、unsupported_claim_removed");
   });
 });

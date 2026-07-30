@@ -27,6 +27,30 @@ const singleRequirementPlan: KnowledgePlan = {
   }],
 };
 
+const synthesisPlan: KnowledgePlan = {
+  subject: "售前职责",
+  requirements: [{
+    id: "R1",
+    question: "售前工程师的工作职责有哪些",
+    queries: ["售前 工作职责"],
+    evidenceMode: "synthesis_allowed",
+  }],
+};
+
+const synthesisDraft: FinalAction = {
+  action: "final",
+  requirements: [{
+    id: "R1",
+    coverage: "complete",
+    answer: [
+      "售前职责包括需求诊断与访谈 [1]。",
+      "售前职责还包括产品演示与机会推进 [2]。",
+    ].join("\n"),
+    citations: [1, 2],
+  }],
+  citations: [1, 2],
+};
+
 const completeDraft: FinalAction = {
   action: "final",
   requirements: [{
@@ -113,6 +137,119 @@ const evidence = [
 ] as const;
 
 describe("verifyKnowledgeCoverage", () => {
+  it("retains synthesized segments with deterministic disclosure and support counts", async () => {
+    const onVerified = vi.fn();
+    const result = await verifyKnowledgeCoverage({
+      question: "售前工程师的工作职责有哪些？",
+      plan: synthesisPlan,
+      draft: synthesisDraft,
+      evidence,
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0, 1],
+          synthesizedTargetSegmentIndexes: [0, 1],
+          retainedRelatedContextIndexes: [],
+          reason: "synthesized_support",
+        }],
+      } as unknown as CoverageVerificationAction),
+      onVerified,
+    });
+
+    expect(result.requirements[0]).toEqual({
+      id: "R1",
+      coverage: "complete",
+      answer: [
+        "根据正式知识库中多篇资料综合归纳：",
+        "售前职责包括需求诊断与访谈 [1]。",
+        "售前职责还包括产品演示与机会推进 [2]。",
+      ].join("\n"),
+      citations: [1, 2],
+    });
+    expect(onVerified).toHaveBeenCalledWith([{
+      id: "R1",
+      reason: "synthesized_support",
+      retainedDirectSegmentCount: 0,
+      retainedSynthesizedSegmentCount: 2,
+      removedSegmentCount: 0,
+    }]);
+  });
+
+  it("reports mixed direct and synthesized target support separately", async () => {
+    const onVerified = vi.fn();
+
+    await verifyKnowledgeCoverage({
+      question: "售前职责",
+      plan: synthesisPlan,
+      draft: synthesisDraft,
+      evidence,
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0, 1],
+          synthesizedTargetSegmentIndexes: [1],
+          retainedRelatedContextIndexes: [],
+          reason: "synthesized_support",
+        }],
+      } as unknown as CoverageVerificationAction),
+      onVerified,
+    });
+
+    expect(onVerified).toHaveBeenCalledWith([{
+      id: "R1",
+      reason: "synthesized_support",
+      retainedDirectSegmentCount: 1,
+      retainedSynthesizedSegmentCount: 1,
+      removedSegmentCount: 0,
+    }]);
+  });
+
+  it.each([
+    {
+      label: "direct-only synthesis",
+      plan: singleRequirementPlan,
+      retained: [0],
+      synthesized: [0],
+    },
+    {
+      label: "synthesis outside retained target",
+      plan: synthesisPlan,
+      retained: [0],
+      synthesized: [1],
+    },
+  ])("rejects $label after three decisions", async ({
+    plan,
+    retained,
+    synthesized,
+  }) => {
+    const completeJson = vi.fn(async () => ({
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        targetDecision: retained.length === 1
+          ? "retain_partial"
+          : "retain",
+        retainedTargetSegmentIndexes: retained,
+        synthesizedTargetSegmentIndexes: synthesized,
+        retainedRelatedContextIndexes: [],
+        reason: "synthesized_support",
+      }],
+    }) as unknown as CoverageVerificationAction);
+
+    await expect(verifyKnowledgeCoverage({
+      question: "问题",
+      plan,
+      draft: synthesisDraft,
+      evidence,
+      model: modelFromCompleteJson(completeJson),
+    })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
+    expect(completeJson).toHaveBeenCalledTimes(3);
+  });
+
   it.each([
     {
       label: "missing complete reason",
@@ -123,10 +260,14 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "retain",
           retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
         }],
       },
       expectedReason: "direct_support",
+      expectedDirectCount: 1,
+      expectedSynthesizedCount: 0,
+      expectedRemovedCount: 0,
     },
     {
       label: "unknown partial reason",
@@ -137,11 +278,15 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "retain",
           retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "provider_partial",
         }],
       },
       expectedReason: "partial_support",
+      expectedDirectCount: 1,
+      expectedSynthesizedCount: 0,
+      expectedRemovedCount: 0,
     },
     {
       label: "missing related-only reason",
@@ -152,10 +297,14 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "not_covered",
           retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [0],
         }],
       },
       expectedReason: "related_only",
+      expectedDirectCount: 0,
+      expectedSynthesizedCount: 0,
+      expectedRemovedCount: 0,
     },
     {
       label: "unknown downgrade reason",
@@ -166,11 +315,15 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "not_covered",
           retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "provider_removed_claim",
         }],
       },
       expectedReason: "unsupported_claim_removed",
+      expectedDirectCount: 0,
+      expectedSynthesizedCount: 0,
+      expectedRemovedCount: 1,
     },
     {
       label: "unknown omitted-target reason",
@@ -181,21 +334,31 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "not_covered",
           retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "provider_no_match",
         }],
       },
       expectedReason: "target_omitted",
+      expectedDirectCount: 0,
+      expectedSynthesizedCount: 0,
+      expectedRemovedCount: 0,
     },
   ] satisfies Array<{
     label: string;
     draft: FinalAction;
     decision: unknown;
     expectedReason: CoverageVerificationReason;
+    expectedDirectCount: number;
+    expectedSynthesizedCount: number;
+    expectedRemovedCount: number;
   }>)("normalizes $label at the model boundary", async ({
     draft,
     decision,
     expectedReason,
+    expectedDirectCount,
+    expectedSynthesizedCount,
+    expectedRemovedCount,
   }) => {
     const onVerified = vi.fn();
 
@@ -209,7 +372,13 @@ describe("verifyKnowledgeCoverage", () => {
     });
 
     expect(onVerified).toHaveBeenCalledWith([
-      { id: "R1", reason: expectedReason },
+      {
+        id: "R1",
+        reason: expectedReason,
+        retainedDirectSegmentCount: expectedDirectCount,
+        retainedSynthesizedSegmentCount: expectedSynthesizedCount,
+        removedSegmentCount: expectedRemovedCount,
+      },
     ]);
   });
 
@@ -220,6 +389,7 @@ describe("verifyKnowledgeCoverage", () => {
         id: "R1",
         targetDecision: "not_covered",
         retainedTargetSegmentIndexes: [],
+        synthesizedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [0, 2],
         reason: "related_only",
       }],
@@ -234,6 +404,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "retain",
           retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "direct_support",
           answer: "模型不得复制答案",
@@ -245,6 +416,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "not_covered",
           retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [1, 0],
           reason: "related_only",
         }],
@@ -255,6 +427,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "not_covered",
           retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [0, 0],
           reason: "related_only",
         }],
@@ -276,6 +449,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "retain",
           retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "direct_support",
         }],
@@ -311,6 +485,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "retain_partial",
           retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "partial_support",
         }],
@@ -343,6 +518,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "not_covered",
           retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [1],
           reason: "related_only",
         }],
@@ -377,6 +553,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "not_covered",
           retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "unsupported_claim_removed",
         }],
@@ -403,6 +580,7 @@ describe("verifyKnowledgeCoverage", () => {
         id: "R2",
         targetDecision: "not_covered",
         retainedTargetSegmentIndexes: [],
+        synthesizedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [],
         reason: "target_omitted",
       }],
@@ -413,6 +591,7 @@ describe("verifyKnowledgeCoverage", () => {
         id: "R1",
         targetDecision: "retain",
         retainedTargetSegmentIndexes: [0],
+        synthesizedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [],
         reason: "target_omitted",
       }],
@@ -423,6 +602,7 @@ describe("verifyKnowledgeCoverage", () => {
         id: "R1",
         targetDecision: "retain",
         retainedTargetSegmentIndexes: [0],
+        synthesizedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [0],
         reason: "direct_support",
       }],
@@ -433,6 +613,7 @@ describe("verifyKnowledgeCoverage", () => {
         id: "R1",
         targetDecision: "not_covered",
         retainedTargetSegmentIndexes: [],
+        synthesizedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [2],
         reason: "related_only",
       }],
@@ -443,6 +624,7 @@ describe("verifyKnowledgeCoverage", () => {
         id: "R1",
         targetDecision: "not_covered",
         retainedTargetSegmentIndexes: [],
+        synthesizedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [0],
         reason: "related_only",
       }],
@@ -471,6 +653,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "not_covered",
           retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [2],
           reason: "related_only",
         }],
@@ -481,6 +664,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "not_covered",
           retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [0],
           reason: "related_only",
         }],
@@ -516,6 +700,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "retain",
           retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "direct_support",
         }],
@@ -555,7 +740,13 @@ describe("verifyKnowledgeCoverage", () => {
     })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
     expect(completeJson).toHaveBeenCalledTimes(3);
     expect(onVerified).toHaveBeenCalledWith([
-      { id: "R1", reason: "target_omitted" },
+      {
+        id: "R1",
+        reason: "target_omitted",
+        retainedDirectSegmentCount: 0,
+        retainedSynthesizedSegmentCount: 0,
+        removedSegmentCount: 1,
+      },
     ]);
   });
 
@@ -587,6 +778,7 @@ describe("verifyKnowledgeCoverage", () => {
           id: "R1",
           targetDecision: "retain",
           retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "direct_support",
         }],

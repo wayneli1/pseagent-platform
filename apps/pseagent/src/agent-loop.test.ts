@@ -285,7 +285,13 @@ describe("runKnowledgeAgent", () => {
         citation: 1,
         content: "支持 SMTP、POP3、IMAP、HTTP/HTTPS 与 CMSP/CMTP。",
       })]);
-      input.onVerified?.([{ id: "R1", reason: "related_only" }]);
+      input.onVerified?.([{
+        id: "R1",
+        reason: "related_only",
+        retainedDirectSegmentCount: 0,
+        retainedSynthesizedSegmentCount: 0,
+        removedSegmentCount: 0,
+      }]);
       return {
         action: "final" as const,
         requirements: [{

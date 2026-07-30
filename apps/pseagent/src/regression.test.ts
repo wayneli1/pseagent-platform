@@ -230,6 +230,7 @@ function p11VerificationFor(
       id: "R1",
       targetDecision: "not_covered",
       retainedTargetSegmentIndexes: [],
+      synthesizedTargetSegmentIndexes: [],
       retainedRelatedContextIndexes: [0],
       reason: "related_only",
     }],

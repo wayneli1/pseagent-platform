@@ -199,6 +199,7 @@ describe("PSEAgent contracts", () => {
         id: "R1",
         targetDecision: "not_covered",
         retainedTargetSegmentIndexes: [],
+        synthesizedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [0],
         reason: "related_only",
       }],
@@ -208,7 +209,25 @@ describe("PSEAgent contracts", () => {
         id: "R1",
         targetDecision: "not_covered",
         retainedTargetSegmentIndexes: [],
+        synthesizedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [0],
+      }],
+    });
+
+    expect(coverageVerificationActionSchema.parse({
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        targetDecision: "retain",
+        retainedTargetSegmentIndexes: [0, 1],
+        synthesizedTargetSegmentIndexes: [0, 1],
+        retainedRelatedContextIndexes: [],
+        reason: "synthesized_support",
+      }],
+    })).toMatchObject({
+      requirements: [{
+        synthesizedTargetSegmentIndexes: [0, 1],
+        reason: "synthesized_support",
       }],
     });
 
@@ -218,6 +237,7 @@ describe("PSEAgent contracts", () => {
         id: "R1",
         targetDecision: "retain",
         retainedTargetSegmentIndexes: [0],
+        synthesizedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [],
         answer: "模型不得重新输出正文",
         reason: "invented_reason",

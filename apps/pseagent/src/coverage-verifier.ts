@@ -31,6 +31,17 @@ interface TargetSegment {
   readonly citations: readonly number[];
 }
 
+export const SYNTHESIS_DISCLOSURE =
+  "根据正式知识库中多篇资料综合归纳：";
+
+export interface CoverageVerificationSummary {
+  readonly id: string;
+  readonly reason: CoverageVerificationReason;
+  readonly retainedDirectSegmentCount: number;
+  readonly retainedSynthesizedSegmentCount: number;
+  readonly removedSegmentCount: number;
+}
+
 export interface CoverageVerifierInput {
   readonly question: string;
   readonly plan: KnowledgePlan;
@@ -39,10 +50,7 @@ export interface CoverageVerifierInput {
   readonly model: ModelClient;
   readonly signal?: AbortSignal;
   readonly onVerified?: (
-    reasons: readonly {
-      readonly id: string;
-      readonly reason: CoverageVerificationReason;
-    }[],
+    summaries: readonly CoverageVerificationSummary[],
   ) => void;
 }
 
@@ -106,15 +114,17 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
     const reasons = input.plan.requirements.map((requirement) => ({
       id: requirement.id,
       reason: "target_omitted" as const,
+      retainedDirectSegmentCount: 0,
+      retainedSynthesizedSegmentCount: 0,
+      removedSegmentCount:
+        targetSegments.find((target) => target.id === requirement.id)
+          ?.segments.length ?? 0,
     }));
     input.onVerified?.(reasons);
     throw new InvalidCoverageVerificationError(lastInvalidReason);
   }
 
-  input.onVerified?.(verified.requirements.map((requirement) => ({
-    id: requirement.id,
-    reason: requirement.reason,
-  })));
+  input.onVerified?.(verificationSummaries(verified, targetSegments));
   return materializeVerification(input.draft, verified, targetSegments);
 }
 
@@ -131,6 +141,17 @@ function normalizeModelReasons(value: unknown, draft: FinalAction): unknown {
     ...value,
     requirements: value.requirements.map((requirement) => {
       if (!isRecord(requirement)) return requirement;
+      if (
+        Array.isArray(requirement.synthesizedTargetSegmentIndexes) &&
+        requirement.synthesizedTargetSegmentIndexes.length > 0
+      ) {
+        return {
+          ...requirement,
+          reason: requirement.targetDecision === "retain_partial"
+            ? "partial_support"
+            : "synthesized_support",
+        };
+      }
       if (coverageVerificationReasonSchema.safeParse(requirement.reason).success) {
         return requirement;
       }
@@ -220,6 +241,28 @@ function validateVerification(
     ) {
       return `uncovered_target_cannot_retain_segments:${decision.id}`;
     }
+    const retainedTargetIndexes = new Set(
+      decision.retainedTargetSegmentIndexes,
+    );
+    if (
+      decision.synthesizedTargetSegmentIndexes.some(
+        (segmentIndex) => !retainedTargetIndexes.has(segmentIndex),
+      )
+    ) {
+      return `synthesized_segments_must_be_retained:${decision.id}`;
+    }
+    if (
+      planned.evidenceMode === "direct_only" &&
+      decision.synthesizedTargetSegmentIndexes.length > 0
+    ) {
+      return `direct_only_cannot_synthesize:${decision.id}`;
+    }
+    if (
+      decision.targetDecision === "not_covered" &&
+      decision.synthesizedTargetSegmentIndexes.length > 0
+    ) {
+      return `not_covered_cannot_synthesize:${decision.id}`;
+    }
     if (
       decision.targetDecision !== "not_covered" &&
       decision.retainedRelatedContextIndexes.length > 0
@@ -276,8 +319,16 @@ function materializeVerification(
 ): FinalAction {
   const requirements = verified.requirements.map((decision, index) => {
     const draftRequirement = draft.requirements[index]!;
+    const hasSynthesis =
+      decision.synthesizedTargetSegmentIndexes.length > 0;
     if (decision.targetDecision === "retain") {
-      return cloneRequirement(draftRequirement);
+      const retained = cloneRequirement(draftRequirement);
+      return hasSynthesis
+        ? {
+            ...retained,
+            answer: addSynthesisDisclosure(retained.answer),
+          }
+        : retained;
     }
     if (decision.targetDecision === "retain_partial") {
       const segments = targetSegments[index]?.segments ?? [];
@@ -287,7 +338,10 @@ function materializeVerification(
       return {
         id: draftRequirement.id,
         coverage: "partial" as const,
-        answer: retained.map((segment) => segment.text).join("\n"),
+        answer: addSynthesisDisclosureIfNeeded(
+          retained.map((segment) => segment.text).join("\n"),
+          hasSynthesis,
+        ),
         citations: stableUnique(retained.flatMap((segment) => segment.citations)),
       };
     }
@@ -321,6 +375,46 @@ function materializeVerification(
       ]),
     ),
   };
+}
+
+function verificationSummaries(
+  verified: CoverageVerificationAction,
+  targetSegments: readonly {
+    readonly id: string;
+    readonly segments: readonly TargetSegment[];
+  }[],
+): CoverageVerificationSummary[] {
+  return verified.requirements.map((decision, index) => {
+    const synthesized = new Set(
+      decision.synthesizedTargetSegmentIndexes,
+    );
+    const retainedDirectSegmentCount =
+      decision.retainedTargetSegmentIndexes.filter(
+        (segmentIndex) => !synthesized.has(segmentIndex),
+      ).length;
+    return {
+      id: decision.id,
+      reason: decision.reason,
+      retainedDirectSegmentCount,
+      retainedSynthesizedSegmentCount: synthesized.size,
+      removedSegmentCount:
+        (targetSegments[index]?.segments.length ?? 0) -
+        decision.retainedTargetSegmentIndexes.length,
+    };
+  });
+}
+
+function addSynthesisDisclosureIfNeeded(
+  answer: string,
+  hasSynthesis: boolean,
+): string {
+  return hasSynthesis ? addSynthesisDisclosure(answer) : answer;
+}
+
+function addSynthesisDisclosure(answer: string): string {
+  return answer.startsWith(SYNTHESIS_DISCLOSURE)
+    ? answer
+    : `${SYNTHESIS_DISCLOSURE}\n${answer}`;
 }
 
 function splitTargetSegments(answer: string): TargetSegment[] {
