@@ -140,12 +140,24 @@ export class AnswerService {
       }
       try {
         const historicalAttempted = true;
-        const historicalAnswer =
+        const historicalLookup =
           await this.dependencies.historicalProvider.answer(question, requestSignal);
-        if (historicalAnswer === undefined) {
+        if (historicalLookup.outcome === "unavailable") {
           return finishExecution(trace, primary, startedAt, historicalAttempted, false);
         }
-        const result = { ...primary, historicalAnswer };
+        if (historicalLookup.outcome === "hidden") {
+          const result: AnswerResult = {
+            ...primary,
+            historicalNotice: {
+              provider: "coremail_mcp",
+              searched: true,
+              displayed: false,
+              reason: historicalLookup.reason,
+            },
+          };
+          return finishExecution(trace, result, startedAt, historicalAttempted, false);
+        }
+        const result = { ...primary, historicalAnswer: historicalLookup.answer };
         return finishExecution(trace, result, startedAt, historicalAttempted, true);
       } catch {
         return finishExecution(trace, primary, startedAt, true, false);

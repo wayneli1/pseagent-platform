@@ -214,13 +214,33 @@ export const historicalAnswerSchema = z.object({
   answer: z.string().min(1).max(32_768),
   references: z.array(historicalReferenceSchema).min(1).max(20),
 }).strict();
+export const historicalRejectionReasonSchema = z.enum([
+  "topic_mismatch",
+  "low_confidence",
+  "no_reliable_source",
+]);
+export const historicalNoticeSchema = z.object({
+  provider: z.literal("coremail_mcp"),
+  searched: z.literal(true),
+  displayed: z.literal(false),
+  reason: historicalRejectionReasonSchema,
+}).strict();
 export const answerResultSchema = z.object({
   scope: scopeSchema,
   status: answerStatusSchema,
   answer: z.string(),
   references: z.array(referenceSchema),
   historicalAnswer: historicalAnswerSchema.optional(),
-}).strict();
+  historicalNotice: historicalNoticeSchema.optional(),
+}).strict().superRefine((value, context) => {
+  if (value.historicalAnswer !== undefined && value.historicalNotice !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["historicalNotice"],
+      message: "historical_answer_and_notice_are_mutually_exclusive",
+    });
+  }
+});
 export type Scope = z.infer<typeof scopeSchema>;
 export type EvidenceMode = z.infer<typeof evidenceModeSchema>;
 export type RouteAction = z.infer<typeof routeActionSchema>;
@@ -251,6 +271,10 @@ export type AnswerResult = z.infer<typeof answerResultSchema>;
 export type Reference = z.infer<typeof referenceSchema>;
 export type HistoricalReference = z.infer<typeof historicalReferenceSchema>;
 export type HistoricalAnswer = z.infer<typeof historicalAnswerSchema>;
+export type HistoricalRejectionReason = z.infer<
+  typeof historicalRejectionReasonSchema
+>;
+export type HistoricalNotice = z.infer<typeof historicalNoticeSchema>;
 export type Coverage = z.infer<typeof coverageSchema>;
 export type AnswerStatus = z.infer<typeof answerStatusSchema>;
 

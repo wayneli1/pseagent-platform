@@ -341,4 +341,38 @@ describe("PSEAgent contracts", () => {
       answer: "x".repeat(32_769),
     })).toThrow();
   });
+
+  it("accepts a strict hidden-history notice and keeps it mutually exclusive with content", () => {
+    const historicalNotice = {
+      provider: "coremail_mcp" as const,
+      searched: true as const,
+      displayed: false as const,
+      reason: "topic_mismatch" as const,
+    };
+    expect(answerResultSchema.parse({
+      scope: "professional",
+      status: "not_covered",
+      answer: "固定未覆盖文本",
+      references: [],
+      historicalNotice,
+    })).toMatchObject({ historicalNotice });
+    expect(() => answerResultSchema.parse({
+      scope: "professional",
+      status: "not_covered",
+      answer: "固定未覆盖文本",
+      references: [],
+      historicalAnswer: historical,
+      historicalNotice,
+    })).toThrow("historical_answer_and_notice_are_mutually_exclusive");
+    expect(() => answerResultSchema.parse({
+      scope: "professional",
+      status: "not_covered",
+      answer: "固定未覆盖文本",
+      references: [],
+      historicalNotice: {
+        ...historicalNotice,
+        reason: "provider_failed",
+      },
+    })).toThrow();
+  });
 });

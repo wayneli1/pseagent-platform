@@ -163,7 +163,7 @@ describe("main wiring", () => {
       references: [],
     }));
     const provider = {
-      answer: vi.fn(async () => undefined),
+      answer: vi.fn(async () => ({ outcome: "unavailable" as const })),
       close: vi.fn(async (): Promise<void> => {
         throw new Error("close failure");
       }),

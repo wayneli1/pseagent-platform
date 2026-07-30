@@ -11,11 +11,25 @@ import {
   HISTORICAL_ANSWER_WARNING,
   historicalAnswerSchema,
   type HistoricalAnswer,
+  type HistoricalRejectionReason,
   type HistoricalReference,
 } from "./contracts.js";
 
+export type HistoricalLookupResult =
+  | {
+      readonly outcome: "display";
+      readonly answer: HistoricalAnswer;
+    }
+  | {
+      readonly outcome: "hidden";
+      readonly reason: HistoricalRejectionReason;
+    }
+  | {
+      readonly outcome: "unavailable";
+    };
+
 export interface HistoricalAnswerProvider {
-  answer(question: string, signal?: AbortSignal): Promise<HistoricalAnswer | undefined>;
+  answer(question: string, signal?: AbortSignal): Promise<HistoricalLookupResult>;
   close(): Promise<void>;
 }
 
@@ -48,6 +62,13 @@ const rawSourceSchema = z.object({
   title: z.string().min(1),
   url: z.string().optional(),
   updated_at: z.string().optional(),
+  excerpt: z.string().optional(),
+  evidence_blocks: z.array(z.object({
+    role: z.string().optional(),
+    text: z.string().optional(),
+    summary: z.string().optional(),
+    next_action: z.string().optional(),
+  }).passthrough()).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
@@ -56,6 +77,201 @@ const rawAnswerSchema = z.object({
   confidence: z.string(),
   sources: z.array(z.unknown()),
 }).passthrough();
+
+const rawLookupSchema = z.object({
+  answer: z.string().optional(),
+  confidence: z.string(),
+  sources: z.array(z.unknown()),
+}).passthrough();
+
+const COMPARISON_PATTERN =
+  /(?:对比|比较|相比|区别|差异|优劣|(?:^|\s)vs(?:\s|$)|versus)/iu;
+const LATIN_TERM_PATTERN = /[a-z][a-z0-9.+#-]{2,}/gu;
+const LATIN_STOP_TERMS = new Set([
+  "and",
+  "compare",
+  "comparison",
+  "email",
+  "mail",
+  "microsoft",
+  "system",
+  "versus",
+]);
+const CHINESE_STOP_PHRASES = [
+  "邮件系统",
+  "电子邮件",
+  "哪些方面",
+  "有哪些",
+  "是什么",
+  "怎么样",
+  "怎么做",
+  "如何",
+  "是否",
+  "能否",
+  "有没有",
+  "支持",
+  "对比",
+  "比较",
+  "相比",
+  "区别",
+  "差异",
+  "优劣",
+  "优势",
+  "邮件",
+  "系统",
+  "产品",
+  "功能",
+  "能力",
+  "问题",
+  "请问",
+  "当前",
+  "相关",
+  "历史",
+  "资料",
+  "内容",
+  "哪些",
+  "什么",
+  "怎样",
+  "以及",
+  "还是",
+];
+const CHINESE_GENERIC_TERMS = new Set([
+  "系统",
+  "产品",
+  "功能",
+  "能力",
+  "问题",
+  "邮件",
+  "支持",
+  "相关",
+  "资料",
+  "内容",
+  "协议",
+]);
+const ATTACHMENT_NOISE_PATTERN =
+  /(?:\.(?:xlsx?|docx?|pptx?|pdf|zip|rar|7z)\b|application\/|(?:^|[\s，。；;：:])附件[：:]?|bytes?\b|use\s+list_attachments|inspect\s+metadata)/iu;
+
+type ParsedHistoricalSource = z.infer<typeof rawSourceSchema>;
+
+export function evaluateCoremailHistoricalAnswer(
+  question: string,
+  input: unknown,
+): HistoricalLookupResult {
+  const parsed = rawLookupSchema.safeParse(input);
+  if (!parsed.success) return { outcome: "unavailable" };
+
+  const confidence = parsed.data.confidence;
+  if (confidence === "none" && parsed.data.sources.length === 0) {
+    return { outcome: "hidden", reason: "no_reliable_source" };
+  }
+  if (confidence !== "low" && confidence !== "medium" && confidence !== "high") {
+    return { outcome: "unavailable" };
+  }
+
+  const sources = parsed.data.sources.flatMap((raw) => {
+    const source = rawSourceSchema.safeParse(raw);
+    if (!source.success) return [];
+    return source.data.source_type === "jira" || source.data.source_type === "wiki"
+      ? [source.data]
+      : [];
+  });
+  if (sources.length === 0) {
+    return { outcome: "hidden", reason: "no_reliable_source" };
+  }
+  if (!sourcesMatchQuestion(question, sources)) {
+    return { outcome: "hidden", reason: "topic_mismatch" };
+  }
+  if (confidence === "low") {
+    return { outcome: "hidden", reason: "low_confidence" };
+  }
+
+  const answer = sanitizeCoremailHistoricalAnswer(input);
+  return answer === undefined
+    ? { outcome: "unavailable" }
+    : { outcome: "display", answer };
+}
+
+function sourcesMatchQuestion(
+  question: string,
+  sources: readonly ParsedHistoricalSource[],
+): boolean {
+  const normalizedQuestion = normalizeSemanticText(question);
+  const evidence = normalizeSemanticText(
+    sources.flatMap(sourceEvidenceFragments).join("\n"),
+  );
+  if (evidence.length === 0) return false;
+
+  const subjects = extractLatinTerms(normalizedQuestion);
+  if (COMPARISON_PATTERN.test(normalizedQuestion)) {
+    return subjects.length >= 2 &&
+      subjects.every((subject) => evidence.includes(subject));
+  }
+
+  if (
+    subjects.length > 0 &&
+    !subjects.every((subject) => evidence.includes(subject))
+  ) {
+    return false;
+  }
+  const concepts = extractChineseConcepts(normalizedQuestion);
+  return concepts.length > 0 &&
+    concepts.some((concept) => evidence.includes(concept));
+}
+
+function sourceEvidenceFragments(source: ParsedHistoricalSource): string[] {
+  const fragments = [
+    source.title,
+    source.excerpt,
+    ...(
+      source.evidence_blocks?.flatMap((block) => [
+        block.text,
+        block.summary,
+        block.next_action,
+      ]) ?? []
+    ),
+  ].filter((value): value is string => value !== undefined && value.trim() !== "");
+  return fragments.filter(isSubstantiveEvidence);
+}
+
+function isSubstantiveEvidence(value: string): boolean {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  return compact.length >= 6 && !ATTACHMENT_NOISE_PATTERN.test(compact);
+}
+
+function normalizeSemanticText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\b(?:microsoft|ms)\s+exchange\b/gu, "exchange")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function extractLatinTerms(value: string): string[] {
+  const terms = value.match(LATIN_TERM_PATTERN) ?? [];
+  return [...new Set(terms.filter((term) => !LATIN_STOP_TERMS.has(term)))];
+}
+
+function extractChineseConcepts(value: string): string[] {
+  let cleaned = value
+    .replace(LATIN_TERM_PATTERN, " ")
+    .replace(/[0-9]+/gu, " ");
+  for (const phrase of CHINESE_STOP_PHRASES) {
+    cleaned = cleaned.replaceAll(phrase, " ");
+  }
+  const runs = cleaned.match(/\p{Script=Han}{2,}/gu) ?? [];
+  const concepts: string[] = [];
+  for (const run of runs) {
+    if (!CHINESE_GENERIC_TERMS.has(run)) concepts.push(run);
+    for (let size = Math.min(4, run.length); size >= 2; size -= 1) {
+      for (let index = 0; index <= run.length - size; index += 1) {
+        const token = run.slice(index, index + size);
+        if (!CHINESE_GENERIC_TERMS.has(token)) concepts.push(token);
+      }
+    }
+  }
+  return [...new Set(concepts)];
+}
 
 export function sanitizeCoremailHistoricalAnswer(
   input: unknown,
@@ -193,10 +409,10 @@ implements HistoricalAnswerProvider {
   async answer(
     question: string,
     signal?: AbortSignal,
-  ): Promise<HistoricalAnswer | undefined> {
+  ): Promise<HistoricalLookupResult> {
     if (this.state === "closing" || this.state === "closed") {
       this.reportError("coremail_mcp_closed");
-      return undefined;
+      return { outcome: "unavailable" };
     }
 
     const timeoutController = new AbortController();
@@ -237,15 +453,15 @@ implements HistoricalAnswerProvider {
           throw new CoremailMcpClientError("coremail_mcp_invalid_result");
         }
       }
-      const historical = sanitizeCoremailHistoricalAnswer(raw);
-      if (historical === undefined) {
+      const historical = evaluateCoremailHistoricalAnswer(question, raw);
+      if (historical.outcome === "unavailable") {
         throw new CoremailMcpClientError("coremail_mcp_invalid_result");
       }
       return historical;
     } catch (error) {
       if (signal?.aborted && !timeoutController.signal.aborted) {
         await this.resetBrokenConnection();
-        return undefined;
+        return { outcome: "unavailable" };
       }
       const code = classifyCoremailError(
         error,
@@ -258,7 +474,7 @@ implements HistoricalAnswerProvider {
         await this.resetBrokenConnection();
       }
       this.reportError(code);
-      return undefined;
+      return { outcome: "unavailable" };
     } finally {
       clearTimeout(timer);
     }

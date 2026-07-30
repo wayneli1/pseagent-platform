@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  evaluateCoremailHistoricalAnswer,
   StdioCoremailHistoricalAnswerProvider,
   coremailKnowledgeArguments,
   sanitizeCoremailHistoricalAnswer,
@@ -34,6 +35,15 @@ const validRaw = {
     },
   ],
   diagnostics: { secret: "must-not-leak" },
+};
+const displayRaw = {
+  ...validRaw,
+  confidence: "medium",
+  sources: [{
+    ...validRaw.sources[0],
+    title: "Coremail 镜像版本记录",
+    excerpt: "该历史资料记录了 Coremail 镜像版本的发布与验证方式。",
+  }],
 };
 
 describe("sanitizeCoremailHistoricalAnswer", () => {
@@ -96,6 +106,125 @@ describe("sanitizeCoremailHistoricalAnswer", () => {
       relationDepth: 1,
       diagnosticsLevel: "summary",
     });
+  });
+});
+
+describe("evaluateCoremailHistoricalAnswer", () => {
+  it("rejects the real Exchange comparison mismatch backed only by SMC attachments", () => {
+    const result = evaluateCoremailHistoricalAnswer(
+      "对比 Exchange 邮件系统，Coremail 的优势有哪些？",
+      {
+        answer: [
+          "围绕问题检索到 3 个候选来源。",
+          "附件：【SMC2高级版与SMC1高级版功能对比-v2220】功能对比.xlsx",
+          "https://wiki.coremail.cn/pages/viewpage.action?pageId=1221525564",
+        ].join("\n"),
+        confidence: "medium",
+        sources: [{
+          source_type: "wiki",
+          id: "1221525564",
+          title: "【SMC2高级版与SMC1高级版功能对比】功能对比.xlsx",
+          url: "https://wiki.coremail.cn/pages/viewpage.action?pageId=1221525564",
+          excerpt: "附件：SMC2高级版与SMC1高级版功能对比，类型：application/vnd.openxmlformats-officedocument.spreadsheetml.sheet，大小：15924 bytes",
+          evidence_blocks: [{
+            role: "attachment",
+            text: "附件：SMC2高级版与SMC1高级版功能对比.xlsx",
+            next_action: "Use list_attachments to inspect metadata.",
+          }],
+        }],
+      },
+    );
+
+    expect(result).toEqual({
+      outcome: "hidden",
+      reason: "topic_mismatch",
+    });
+  });
+
+  it("hides a topic-matching answer when Coremail MCP reports low confidence", () => {
+    expect(evaluateCoremailHistoricalAnswer(
+      "Coremail 海外邮件投递策略有哪些？",
+      {
+        answer: "历史资料提到 Coremail 海外邮件投递策略。",
+        confidence: "low",
+        sources: [{
+          source_type: "jira",
+          key: "MAIL-100",
+          title: "Coremail 海外邮件投递策略",
+          excerpt: "该问题记录了海外邮件投递策略与退信处理方式。",
+        }],
+      },
+    )).toEqual({
+      outcome: "hidden",
+      reason: "low_confidence",
+    });
+  });
+
+  it("reports a completed lookup with no reliable source separately from failure", () => {
+    expect(evaluateCoremailHistoricalAnswer(
+      "Coremail 未收录能力",
+      {
+        confidence: "none",
+        sources: [],
+      },
+    )).toEqual({
+      outcome: "hidden",
+      reason: "no_reliable_source",
+    });
+  });
+
+  it("accepts a medium-confidence answer with substantive matching evidence", () => {
+    const result = evaluateCoremailHistoricalAnswer(
+      "Coremail 海外邮件投递策略有哪些？",
+      {
+        answer: "历史资料提到 Coremail 海外邮件投递策略。",
+        confidence: "medium",
+        sources: [{
+          source_type: "jira",
+          key: "MAIL-100",
+          title: "Coremail 海外邮件投递策略",
+          excerpt: "该问题记录了海外邮件投递策略与退信处理方式。",
+        }],
+      },
+    );
+
+    expect(result).toMatchObject({
+      outcome: "display",
+      answer: {
+        confidence: "medium",
+        answer: "历史资料提到 Coremail 海外邮件投递策略。",
+        references: [{ key: "MAIL-100" }],
+      },
+    });
+  });
+
+  it("accepts a comparison only when substantive evidence covers both products", () => {
+    expect(evaluateCoremailHistoricalAnswer(
+      "对比 Exchange 邮件系统，Coremail 的优势有哪些？",
+      {
+        answer: "历史资料记录了 Coremail 与 Exchange 的迁移和能力差异。",
+        confidence: "medium",
+        sources: [{
+          source_type: "wiki",
+          id: "comparison-1",
+          title: "Coremail 与 Exchange 邮件系统对比",
+          excerpt: "正文比较了 Coremail 和 Exchange 的部署、迁移与管理差异。",
+        }],
+      },
+    )).toMatchObject({
+      outcome: "display",
+      answer: {
+        confidence: "medium",
+        references: [{ id: "comparison-1" }],
+      },
+    });
+  });
+
+  it("treats malformed Coremail MCP output as unavailable", () => {
+    expect(evaluateCoremailHistoricalAnswer(
+      "Coremail 海外邮件投递策略有哪些？",
+      { answer: 42, confidence: "medium", sources: "invalid" },
+    )).toEqual({ outcome: "unavailable" });
   });
 });
 
@@ -214,7 +343,7 @@ describe("StdioCoremailHistoricalAnswerProvider", () => {
     }));
   });
 
-  it("returns undefined and reports only a safe code on invalid output", async () => {
+  it("returns a hidden no-source result without reporting a runtime error", async () => {
     const reportError = vi.fn();
     const client = fakeClient({
       structuredContent: { answer: "无来源", confidence: "none", sources: [] },
@@ -231,8 +360,11 @@ describe("StdioCoremailHistoricalAnswerProvider", () => {
       },
     );
 
-    await expect(provider.answer("问题")).resolves.toBeUndefined();
-    expect(reportError).toHaveBeenCalledWith("coremail_mcp_invalid_result");
+    await expect(provider.answer("Coremail 未收录能力")).resolves.toEqual({
+      outcome: "hidden",
+      reason: "no_reliable_source",
+    });
+    expect(reportError).not.toHaveBeenCalled();
   });
 
   it("closes the underlying client once", async () => {
@@ -256,7 +388,7 @@ describe("StdioCoremailHistoricalAnswerProvider", () => {
 
   it("uses text JSON only when structuredContent is absent", async () => {
     const client = fakeClient({
-      content: [{ type: "text", text: JSON.stringify(validRaw) }],
+      content: [{ type: "text", text: JSON.stringify(displayRaw) }],
     });
     const provider = new StdioCoremailHistoricalAnswerProvider(
       "C:\\runtime\\dist\\server.js",
@@ -270,12 +402,15 @@ describe("StdioCoremailHistoricalAnswerProvider", () => {
       },
     );
 
-    await expect(provider.answer("问题")).resolves.toMatchObject({ answer: rawAnswer });
+    await expect(provider.answer("Coremail 镜像版本记录")).resolves.toMatchObject({
+      outcome: "display",
+      answer: { answer: rawAnswer },
+    });
   });
 
   it("prefers structuredContent and does not parse fallback text when both exist", async () => {
     const client = fakeClient({
-      structuredContent: validRaw,
+      structuredContent: displayRaw,
       content: [{ type: "text", text: "not-json" }],
     });
     const provider = new StdioCoremailHistoricalAnswerProvider(
@@ -290,7 +425,10 @@ describe("StdioCoremailHistoricalAnswerProvider", () => {
       },
     );
 
-    await expect(provider.answer("问题")).resolves.toMatchObject({ answer: rawAnswer });
+    await expect(provider.answer("Coremail 镜像版本记录")).resolves.toMatchObject({
+      outcome: "display",
+      answer: { answer: rawAnswer },
+    });
   });
 
   it("rejects a tool list without answer_coremail_knowledge", async () => {
@@ -309,7 +447,9 @@ describe("StdioCoremailHistoricalAnswerProvider", () => {
       },
     );
 
-    await expect(provider.answer("问题")).resolves.toBeUndefined();
+    await expect(provider.answer("问题")).resolves.toEqual({
+      outcome: "unavailable",
+    });
     expect(reportError).toHaveBeenCalledWith("coremail_mcp_connect_failed");
     expect(client.close).toHaveBeenCalledOnce();
   });
@@ -328,7 +468,7 @@ describe("StdioCoremailHistoricalAnswerProvider", () => {
         if (signal.aborted) rejectOnAbort();
         else signal.addEventListener("abort", rejectOnAbort, { once: true });
       }));
-    const secondClient = fakeClient();
+    const secondClient = fakeClient({ structuredContent: displayRaw });
     const clients = [firstClient, secondClient];
     const createClient = vi.fn(() => {
       const client = clients.shift();
@@ -347,11 +487,16 @@ describe("StdioCoremailHistoricalAnswerProvider", () => {
       },
     );
 
-    await expect(provider.answer("第一次")).resolves.toBeUndefined();
+    await expect(provider.answer("第一次")).resolves.toEqual({
+      outcome: "unavailable",
+    });
     expect(reportError).toHaveBeenLastCalledWith("coremail_mcp_timeout");
     expect(firstClient.close).toHaveBeenCalledOnce();
 
-    await expect(provider.answer("第二次")).resolves.toMatchObject({ answer: rawAnswer });
+    await expect(provider.answer("Coremail 镜像版本记录")).resolves.toMatchObject({
+      outcome: "display",
+      answer: { answer: rawAnswer },
+    });
     expect(createClient).toHaveBeenCalledTimes(2);
     expect(secondClient.callTool).toHaveBeenCalledOnce();
   });
@@ -374,7 +519,9 @@ describe("StdioCoremailHistoricalAnswerProvider", () => {
       },
     );
 
-    await expect(provider.answer("问题")).resolves.toBeUndefined();
+    await expect(provider.answer("问题")).resolves.toEqual({
+      outcome: "unavailable",
+    });
     expect(reportError).toHaveBeenCalledWith("coremail_mcp_auth_failed");
     expect(JSON.stringify(reportError.mock.calls)).not.toContain("secret response body");
   });

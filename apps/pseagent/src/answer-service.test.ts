@@ -44,6 +44,10 @@ const historicalAnswer: HistoricalAnswer = {
     title: "历史方案",
   }],
 };
+const displayedHistoricalLookup = {
+  outcome: "display" as const,
+  answer: historicalAnswer,
+};
 
 const formalReference = {
   index: 1,
@@ -126,7 +130,7 @@ describe("AnswerService", () => {
     const planner = createPlanner();
     const runAgent = vi.fn();
     const historicalProvider = {
-      answer: vi.fn(async () => historicalAnswer),
+      answer: vi.fn(async () => displayedHistoricalLookup),
       close: vi.fn(async () => undefined),
     } satisfies HistoricalAnswerProvider;
     const service = new AnswerService({
@@ -215,7 +219,7 @@ describe("AnswerService", () => {
     "does not use historical material when the formal result is $status",
     async (primary) => {
       const historicalProvider = {
-        answer: vi.fn(async () => historicalAnswer),
+        answer: vi.fn(async () => displayedHistoricalLookup),
         close: vi.fn(async () => undefined),
       } satisfies HistoricalAnswerProvider;
       const { service } = createProfessionalService(primary, historicalProvider);
@@ -233,7 +237,7 @@ describe("AnswerService", () => {
       references: [formalReference],
     };
     const historicalProvider = {
-      answer: vi.fn(async () => historicalAnswer),
+      answer: vi.fn(async () => displayedHistoricalLookup),
       close: vi.fn(async () => undefined),
     } satisfies HistoricalAnswerProvider;
     const { service } = createProfessionalService(primary, historicalProvider);
@@ -272,7 +276,7 @@ describe("AnswerService", () => {
     }) => {
       const events: DiagnosticEvent[] = [];
       const historicalProvider = {
-        answer: vi.fn(async () => historicalAnswer),
+        answer: vi.fn(async () => displayedHistoricalLookup),
         close: vi.fn(async () => undefined),
       } satisfies HistoricalAnswerProvider;
       const service = new AnswerService({
@@ -362,7 +366,7 @@ describe("AnswerService", () => {
       references: [formalReference],
     };
     const historicalProvider = {
-      answer: vi.fn(async () => historicalAnswer),
+      answer: vi.fn(async () => displayedHistoricalLookup),
       close: vi.fn(async () => undefined),
     } satisfies HistoricalAnswerProvider;
     const { service } = createProfessionalService(primary, historicalProvider);
@@ -392,6 +396,42 @@ describe("AnswerService", () => {
     );
   });
 
+  it("attaches a notice instead of historical content when the completed lookup is hidden", async () => {
+    const primary: AnswerResult = {
+      scope: "professional",
+      status: "not_covered",
+      answer: "正式知识未覆盖",
+      references: [],
+    };
+    const historicalProvider = {
+      answer: vi.fn(async () => ({
+        outcome: "hidden" as const,
+        reason: "topic_mismatch" as const,
+      })),
+      close: vi.fn(async () => undefined),
+    } satisfies HistoricalAnswerProvider;
+    const { service } = createProfessionalService(primary, historicalProvider);
+
+    const execution = await service.answerDetailed(
+      "Coremail 与未知系统的差异",
+    );
+
+    expect(execution).toMatchObject({
+      historicalAttempted: true,
+      historicalUsed: false,
+      result: {
+        ...primary,
+        historicalNotice: {
+          provider: "coremail_mcp",
+          searched: true,
+          displayed: false,
+          reason: "topic_mismatch",
+        },
+      },
+    });
+    expect(execution.result).not.toHaveProperty("historicalAnswer");
+  });
+
   it("does not use Coremail MCP for a generic mail-system question", async () => {
     const primary: AnswerResult = {
       scope: "professional",
@@ -400,7 +440,7 @@ describe("AnswerService", () => {
       references: [],
     };
     const historicalProvider = {
-      answer: vi.fn(async () => historicalAnswer),
+      answer: vi.fn(async () => displayedHistoricalLookup),
       close: vi.fn(async () => undefined),
     } satisfies HistoricalAnswerProvider;
     const service = new AnswerService({
@@ -455,7 +495,7 @@ describe("AnswerService", () => {
       references: [],
     };
     const historicalProvider = {
-      answer: vi.fn(async () => historicalAnswer),
+      answer: vi.fn(async () => displayedHistoricalLookup),
       close: vi.fn(async () => undefined),
     } satisfies HistoricalAnswerProvider;
     const service = new AnswerService({
@@ -499,7 +539,7 @@ describe("AnswerService", () => {
       references: [],
     };
     const historicalProvider = {
-      answer: vi.fn(async () => historicalAnswer),
+      answer: vi.fn(async () => displayedHistoricalLookup),
       close: vi.fn(async () => undefined),
     } satisfies HistoricalAnswerProvider;
     const service = new AnswerService({
@@ -536,7 +576,7 @@ describe("AnswerService", () => {
       references: [formalReference],
     };
     const historicalProvider = {
-      answer: vi.fn(async () => historicalAnswer),
+      answer: vi.fn(async () => displayedHistoricalLookup),
       close: vi.fn(async () => undefined),
     } satisfies HistoricalAnswerProvider;
     const { service, planner, runAgent } = createProfessionalService(primary, historicalProvider);
@@ -703,7 +743,7 @@ describe("AnswerService", () => {
       references: [],
     };
     const historicalProvider = {
-      answer: vi.fn(async () => undefined),
+      answer: vi.fn(async () => ({ outcome: "unavailable" as const })),
       close: vi.fn(async () => undefined),
     } satisfies HistoricalAnswerProvider;
     const { service } = createProfessionalService(primary, historicalProvider);
@@ -725,7 +765,7 @@ describe("AnswerService", () => {
       references: [],
     };
     const historicalProvider = {
-      answer: vi.fn(async (): Promise<HistoricalAnswer | undefined> => {
+      answer: vi.fn(async () => {
         throw new Error("historical provider failed");
       }),
       close: vi.fn(async () => undefined),
