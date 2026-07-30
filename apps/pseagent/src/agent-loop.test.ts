@@ -198,6 +198,16 @@ const singlePlan: KnowledgePlan = {
   requirements: [{ id: "R1", question: "Coremail AI 是什么", queries: ["seed-r1"], evidenceMode: "direct_only" }],
 };
 
+const synthesisPlan: KnowledgePlan = {
+  subject: "售前职责",
+  requirements: [{
+    id: "R1",
+    question: "售前工程师的工作职责有哪些",
+    queries: ["seed-r1"],
+    evidenceMode: "synthesis_allowed",
+  }],
+};
+
 function agentInput(
   model: ModelClient,
   session: ReturnType<typeof fakeSession>,
@@ -1024,6 +1034,44 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
+  it("reads up to six distinct pages for a synthesis requirement", async () => {
+    const paths = Array.from(
+      { length: 7 },
+      (_, index) => `wiki/duty-${index + 1}.md`,
+    );
+    const session = fakeSession({
+      hits: {
+        "seed-r1": paths.map((path) => ({ path })),
+      },
+    });
+    const model = scriptedAgentModel([
+      readPages(
+        { requirementId: "R1", path: paths[0]! },
+        { requirementId: "R1", path: paths[1]! },
+      ),
+      readPages(
+        { requirementId: "R1", path: paths[2]! },
+        { requirementId: "R1", path: paths[3]! },
+      ),
+      readPages(
+        { requirementId: "R1", path: paths[4]! },
+        { requirementId: "R1", path: paths[5]! },
+      ),
+      read("R1", paths[6]!),
+      final("complete", "六页正式资料共同支持职责归纳", [1, 2, 3, 4, 5, 6]),
+    ]);
+
+    const result = await runKnowledgeAgent(
+      agentInput(model, session, synthesisPlan),
+    );
+
+    expect(session.readPage).toHaveBeenCalledTimes(6);
+    expect(payloadAt(model, 3).requirementEvidence?.[0]?.remainingReads).toBe(0);
+    expect(result.references.map((reference) => reference.path)).toEqual(
+      paths.slice(0, 6),
+    );
+  });
+
   it("rejects reading a candidate through a different requirement", async () => {
     const plan: KnowledgePlan = {
       subject: "复合问题",
@@ -1305,6 +1353,38 @@ describe("runKnowledgeAgent", () => {
       "coverage_gate_requires_read",
     );
     expect(session.readPage).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("answered");
+  });
+
+  it("continues the synthesis coverage gate after three reads when a fourth candidate remains", async () => {
+    const paths = [
+      "wiki/duty-diagnosis.md",
+      "wiki/duty-solution.md",
+      "wiki/duty-demo.md",
+      "wiki/duty-opportunity.md",
+    ];
+    const session = fakeSession({
+      hits: {
+        "seed-r1": paths.map((path) => ({ path })),
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", paths[0]!),
+      read("R1", paths[1]!),
+      read("R1", paths[2]!),
+      final("partial", "三类职责已经确认", [1, 2, 3]),
+      read("R1", paths[3]!),
+      final("complete", "四类职责共同构成归纳", [1, 2, 3, 4]),
+    ]);
+
+    const result = await runKnowledgeAgent(
+      agentInput(model, session, synthesisPlan),
+    );
+
+    expect(payloadAt(model, 4).observations?.join("\n")).toContain(
+      "coverage_gate_requires_read",
+    );
+    expect(session.readPage).toHaveBeenCalledTimes(4);
     expect(result.status).toBe("answered");
   });
 

@@ -64,6 +64,42 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain("正文明确支持 SMTP、但未提及 IMAP 时，对“是否支持 SMTP 和 IMAP”只能标记 partial");
   });
 
+  it("uses overview only to navigate synthesis evidence facets", () => {
+    const prompt = systemMessage(knowledgeAgentMessages({
+      question: "售前工程师的工作职责有哪些？",
+      schema: "schema",
+      overview: "六套售前方法论总览",
+      plan: {
+        subject: "售前职责",
+        requirements: [{
+          id: "R1",
+          question: "售前工程师的工作职责有哪些",
+          queries: ["售前 工作职责"],
+          evidenceMode: "synthesis_allowed",
+        }],
+      },
+      requirementEvidence: [],
+      observations: [],
+      references: [],
+      remainingTurns: 1,
+      remainingRetrievalActions: 6,
+      finalOnly: false,
+    }));
+
+    expect(prompt).toContain(
+      "overview 只用于识别证据面和扩展查询，不能作为最终引用",
+    );
+    expect(prompt).toContain(
+      "synthesis_allowed 应从实际候选页收集不同证据面",
+    );
+    expect(prompt).toContain(
+      "不得为了耗尽六页而读取重复页面",
+    );
+    expect(prompt).toContain(
+      "direct_only 仍只接受实际读取正文的直接结论",
+    );
+  });
+
   it("makes the verifier retain only evidence-backed target segments", () => {
     const prompt = systemMessage(coverageVerificationMessages({
       question: "Coremail 是否已经支持 2035 年量子卫星邮件协议？",

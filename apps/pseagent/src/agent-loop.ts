@@ -34,12 +34,19 @@ import {
 } from "./diagnostics.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
-export const MAX_READS_PER_REQUIREMENT = 3;
+export const DIRECT_ONLY_READ_LIMIT = 3;
+export const SYNTHESIS_ALLOWED_READ_LIMIT = 6;
 export const MAX_BATCH_READS_PER_REQUIREMENT = 2;
 export const MAX_GRAPH_ACTIONS_PER_REQUIREMENT = 1;
 export const MAX_AGENT_TURNS_PER_REQUIREMENT = 7;
 const RRF_K = 60;
 const SEED_TOP_K = 10;
+
+export function readLimitFor(requirement: KnowledgeRequirement): number {
+  return requirement.evidenceMode === "synthesis_allowed"
+    ? SYNTHESIS_ALLOWED_READ_LIMIT
+    : DIRECT_ONLY_READ_LIMIT;
+}
 
 export interface KnowledgeAgentSession {
   readonly project: ProjectKey;
@@ -558,7 +565,8 @@ async function executeBatchReads(
     }
     if (
       requirementState.readPaths.has(page.path) ||
-      requirementState.directReadPaths.size + pending >= MAX_READS_PER_REQUIREMENT
+      requirementState.directReadPaths.size + pending >=
+        readLimitFor(requirementState.requirement)
     ) {
       observe(state, {
         type: "requirement_read_budget_exhausted",
@@ -650,7 +658,8 @@ async function executeRead(
   }
   if (
     requirementState.readPaths.has(action.input.path) ||
-    requirementState.directReadPaths.size >= MAX_READS_PER_REQUIREMENT
+    requirementState.directReadPaths.size >=
+      readLimitFor(requirementState.requirement)
   ) {
     observe(state, {
       type: "requirement_read_budget_exhausted",
@@ -662,7 +671,8 @@ async function executeRead(
   const page = await input.session.readPage(action.input.path, toolSignal(input));
   if (
     requirementState.readPaths.has(page.path) ||
-    requirementState.directReadPaths.size >= MAX_READS_PER_REQUIREMENT
+    requirementState.directReadPaths.size >=
+      readLimitFor(requirementState.requirement)
   ) {
     return;
   }
@@ -932,7 +942,9 @@ function requirementEvidence(state: AgentState) {
     remainingSearches: requirementState.searchStopped
       ? 0
       : MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT - requirementState.supplementalSearches,
-    remainingReads: MAX_READS_PER_REQUIREMENT - requirementState.directReadPaths.size,
+    remainingReads:
+      readLimitFor(requirementState.requirement) -
+      requirementState.directReadPaths.size,
   }));
 }
 
@@ -1072,7 +1084,8 @@ function pendingEvidenceReviews(
     const requirementState = state.requirements.get(result.id);
     if (
       !requirementState ||
-      requirementState.directReadPaths.size >= MAX_READS_PER_REQUIREMENT ||
+      requirementState.directReadPaths.size >=
+        readLimitFor(requirementState.requirement) ||
       requirementState.lastCoverageGateDirectReadCount ===
         requirementState.directReadPaths.size
     ) {
@@ -1178,7 +1191,8 @@ function hasAvailableToolAction(state: AgentState): boolean {
       (!requirementState.searchStopped &&
         requirementState.supplementalSearches < MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT) ||
       (unreadCandidate &&
-        requirementState.directReadPaths.size < MAX_READS_PER_REQUIREMENT) ||
+        requirementState.directReadPaths.size <
+          readLimitFor(requirementState.requirement)) ||
       (requirementState.candidatePaths.size > 0 &&
         requirementState.graphActions < MAX_GRAPH_ACTIONS_PER_REQUIREMENT)
     );
@@ -1195,7 +1209,8 @@ function countRemainingToolActions(state: AgentState): number {
       .filter((path) => !requirementState.readPaths.has(path)).length;
     remaining += Math.min(
       unreadCandidates,
-      MAX_READS_PER_REQUIREMENT - requirementState.directReadPaths.size,
+      readLimitFor(requirementState.requirement) -
+        requirementState.directReadPaths.size,
     );
     if (
       requirementState.candidatePaths.size > 0 &&
