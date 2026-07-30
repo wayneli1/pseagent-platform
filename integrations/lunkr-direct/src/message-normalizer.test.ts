@@ -23,6 +23,73 @@ describe("normalizeDirectMessage", () => {
     });
   });
 
+  it("accepts a structurally valid USER message without relying on its topic", () => {
+    expect(normalizeDirectMessage({
+      topic: "server-channel-v2",
+      payload: JSON.stringify({
+        fid: 2,
+        uid: "#peer#U",
+        mid: "server-mid",
+        type: "USER",
+        from: { uid: "#peer#U" },
+        to: { uid: "#bot#U" },
+        subject: "%E7%9C%9F%E5%AE%9E%E6%96%87%E5%AD%97%E6%B6%88%E6%81%AF",
+        clientMid: "client-mid",
+      }),
+    }, "#bot#U")).toMatchObject({
+      id: "server-mid",
+      peerUid: "#peer#U",
+      senderUid: "#peer#U",
+      text: "真实文字消息",
+      hasAttachments: false,
+    });
+  });
+
+  it("requires a real message id and explicit sender structure", () => {
+    expect(normalizeDirectMessage({
+      topic: "server-channel-v2",
+      payload: {
+        uid: "#peer#U",
+        from: { uid: "#peer#U" },
+        to: { uid: "#bot#U" },
+        subject: "缺少消息 ID",
+      },
+    }, "#bot#U")).toBeUndefined();
+    expect(normalizeDirectMessage({
+      topic: "server-channel-v2",
+      payload: {
+        mid: "missing-sender",
+        uid: "#peer#U",
+        to: { uid: "#bot#U" },
+        subject: "缺少发送者",
+      },
+    }, "#bot#U")).toBeUndefined();
+  });
+
+  it("ignores clearUnread and P2P negotiation payloads on CIM topics", () => {
+    expect(normalizeDirectMessage({
+      topic: "/cim/inbox/control",
+      payload: {
+        op_type: "clearUnread",
+        uid: "#peer#U",
+        user_type: "USER",
+        last_mid: "last-read-mid",
+      },
+    }, "#bot#U")).toBeUndefined();
+    expect(normalizeDirectMessage({
+      topic: "/cim/p2p",
+      payload: {
+        uid: "#peer#U",
+        action: "start",
+        attachments: [{
+          uid: "#bot#U",
+          title: "connection metadata",
+          file_size: 1,
+        }],
+      },
+    }, "#bot#U")).toBeUndefined();
+  });
+
   it("rejects groups, self messages and unknown events", () => {
     expect(normalizeDirectMessage({
       topic: "/cim/message",

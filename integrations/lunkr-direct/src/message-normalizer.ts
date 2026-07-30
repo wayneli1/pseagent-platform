@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
 
 const INVISIBLE_COMMAND_CHARACTERS = /[\u200B-\u200D\u2060\uFEFF]/gu;
@@ -15,10 +14,13 @@ export function normalizeDirectMessage(
 ): LunkrDirectMessage | undefined {
   const envelope = asRecord(event);
   if (envelope === undefined) return undefined;
-  const topic = typeof envelope.topic === "string" ? envelope.topic : "";
-  if (!isDirectMessageTopic(topic)) return undefined;
   const payload = parsePayload(envelope.payload);
   if (payload === undefined) return undefined;
+  const id = firstString(
+    payload,
+    ["msgId", "messageId", "mid", "clientMid", "id"],
+  );
+  if (id === undefined) return undefined;
   const messageType = firstString(
     payload,
     ["contentType", "content_type", "msgType", "eventType"],
@@ -39,8 +41,7 @@ export function normalizeDirectMessage(
     firstString(from, ["uid", "id"]) ??
     (typeof payload.from === "string" && payload.from.endsWith("#U")
       ? payload.from
-      : undefined) ??
-    sourceUid;
+      : undefined);
   if (senderUid === undefined || senderUid === selfUid) return undefined;
   if (sourceUid !== undefined && !sourceUid.endsWith("#U")) return undefined;
   const peerUid =
@@ -54,8 +55,7 @@ export function normalizeDirectMessage(
   const destinationUid = firstString(to, ["uid", "id"]);
   if (
     destinationUid !== undefined &&
-    destinationUid !== selfUid &&
-    !destinationUid.endsWith("#U")
+    destinationUid !== selfUid
   ) {
     return undefined;
   }
@@ -66,11 +66,6 @@ export function normalizeDirectMessage(
   const hasAttachments = detectsAttachments(payload, messageType);
   if (text.trim() === "" && !hasAttachments) return undefined;
   const timestamp = parseTimestamp(payload.time ?? payload.timestamp, now);
-  const id =
-    firstString(payload, ["msgId", "messageId", "mid", "clientMid", "id"]) ??
-    createHash("sha256")
-      .update(`${peerUid}:${timestamp}:${text}:${JSON.stringify(payload)}`)
-      .digest("hex");
   const command = recognizeDirectCommand(text);
   return {
     id,
@@ -110,12 +105,6 @@ function parsePayload(value: unknown): Record<string, unknown> | undefined {
     }
   }
   return asRecord(value);
-}
-
-function isDirectMessageTopic(topic: string): boolean {
-  return topic === "" ||
-    topic === "inbox" ||
-    /^\/cim\/message\/?$/iu.test(topic);
 }
 
 function detectsAttachments(
