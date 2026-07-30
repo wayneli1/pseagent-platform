@@ -1,7 +1,12 @@
 # PSEAgent 未覆盖问题的相关信息与 Coremail MCP 兜底设计
 
 日期：2026-07-28
-状态：已确认并实施；2026-07-29 追加结构化输出稳定性修复
+状态：已确认并实施；2026-07-29 追加结构化输出稳定性修复；
+2026-07-30 追加严格 MCP 门槛与部分证据保留修复
+
+> 2026-07-30 决策优先级说明：本次追加规则取代本文后续章节中
+> “任何 `not_covered` 都调用 Coremail MCP”和“覆盖验证只能整项保留或整项删除”
+> 的旧规则。历史章节保留用于说明原始问题背景，冲突处以本次追加规则为准。
 
 ## 1. 背景
 
@@ -40,11 +45,13 @@
    不得使用“全部”“仅支持”“完整列表”等表达。
 7. 正式知识库可以展示与问题相关、且有直接正文证据的已确认信息，即使这些信息
    不能回答目标问题。
-8. 相关信息不能提升目标覆盖状态。目标完全未覆盖时，正式状态仍为
-   `not_covered`，并继续调用 Coremail MCP。
-9. Coremail 专业知识库与通用售前知识库完全 `not_covered` 时，都可以调用
-   Coremail MCP；不增加 scope 限制。
-10. `partially_answered` 不调用 Coremail MCP。只有完全 `not_covered` 才调用。
+8. 相关信息本身不能提升目标覆盖状态；但验证器必须按句段保留目标答案中
+   有直接正文证据的部分，不能因同一 requirement 中存在无证据句段而整项删除。
+9. Coremail MCP 只允许在正式检索正常完成、目标没有任何直接正式证据、且当前
+   问题文本明确涉及 Coremail 时调用。通用售前问题、泛称“邮件系统”的问题、
+   结构化输出降级和处理预算耗尽都不得触发 Coremail MCP。
+10. `answered`、`partially_answered` 和不满足严格资格的 `not_covered` 都不调用
+    Coremail MCP。只有“正式检索穷尽后的 Coremail 明确问题完全未覆盖”才调用。
 11. Coremail MCP 仍是低可信历史线索，不得改变正式状态或正式知识库结论，
     也不得进入下一轮 Lunkr 会话上下文。
 
@@ -142,18 +149,26 @@ interface RequirementCoverage {
 ```ts
 interface CoverageVerificationDecision {
   readonly id: string;
-  readonly targetDecision: "retain" | "not_covered";
+  readonly targetDecision: "retain" | "retain_partial" | "not_covered";
+  readonly retainedTargetSegmentIndexes: readonly number[];
   readonly retainedRelatedContextIndexes: readonly number[];
   readonly reason: CoverageVerificationReason;
 }
 ```
 
-- `targetDecision=retain`：目标 coverage、answer 和 citations 必须从草稿原样保留。
+- 代码先把草稿目标 answer 确定性拆成带内联引用的句段，并按原顺序编号；验证器
+  只能返回句段索引，不能输出或改写句段文本与引用。
+- `targetDecision=retain`：全部目标句段均有直接证据，目标 coverage、answer 和
+  citations 从草稿原样保留；`retainedTargetSegmentIndexes` 必须是完整索引集合。
+- `targetDecision=retain_partial`：至少一个、但不是全部目标句段有直接证据；代码
+  只复制这些原始句段，按原顺序合并引用，并把目标 coverage 确定为 `partial`。
 - `targetDecision=not_covered`：目标 coverage 由代码降为 `none`，目标 citations
-  清空，answer 使用确定性的“正式知识库未覆盖、无法确认”安全文案。
+  清空，answer 使用确定性的“正式知识库未覆盖、无法确认”安全文案；
+  `retainedTargetSegmentIndexes` 必须为空。
 - `retainedRelatedContextIndexes` 只能按原顺序引用草稿中已有的相关信息项；
   代码按索引原样复制 statement 和 citations，模型不得再次抄写或改写。
-- 草稿不是 `coverage=none` 时不得保留 relatedContext。
+- `retain` 和 `retain_partial` 时不得保留 relatedContext；只有 `not_covered` 可以
+  保留 relatedContext。
 - 顶层 citations 由代码从重建结果稳定合并，模型不再生成。
 
 这样仍然禁止新增相关事实、新增引用、升级目标 coverage 或移动引用，同时消除
@@ -203,9 +218,17 @@ Coremail 是否支持 2035 年量子卫星邮件协议？
 - 相关事实是否可脱离目标结论独立成立；
 - 列举答案是否错误暗示完整性。
 
-当正文未回答目标时，校验器必须：
+校验器必须逐个目标句段判断正文是否直接支持：
+
+- 全部句段有直接证据时返回 `targetDecision=retain`；
+- 部分句段有直接证据时返回 `targetDecision=retain_partial`，只列出有证据的句段
+  索引；
+- 一个句段都没有直接证据时，才返回 `targetDecision=not_covered`。
+
+当正文完全未回答目标时，校验器必须：
 
 - 返回 `targetDecision=not_covered`；
+- `retainedTargetSegmentIndexes` 返回空数组；
 - 只用 `retainedRelatedContextIndexes` 选择正文直接支持的草稿相关信息；
 - 不重新输出或改写 answer、statement 和 citations。
 
@@ -271,14 +294,19 @@ CMSP/CMTP 等协议能力 [1][2]。
 
 ## 8. Coremail MCP 调用规则
 
-MCP 调用条件保持为：
+MCP 调用条件修改为：
 
 ```text
 primary.status === "not_covered"
 && historicalProvider 已配置
+&& 正式检索和覆盖验证正常完成
+&& 所有 requirement 都没有可保留的直接目标证据句段
+&& 当前问题文本明确包含 Coremail
 ```
 
-不增加 scope 限制。专业知识库和通用售前知识库均遵循该规则。
+“明确包含 Coremail”只根据当前问题文本进行大小写不敏感匹配，不从其他用户或
+当前用户的历史会话推导，也不把“邮件系统”“邮箱”“邮件网关”等泛称等同于
+Coremail。
 
 以下状态不调用 MCP：
 
@@ -286,8 +314,13 @@ primary.status === "not_covered"
 - `partially_answered`
 - `temporarily_unavailable`
 - `normal` 普通回答
+- 通用售前库或泛称邮件系统问题的 `not_covered`
+- `invalid_model_payload`、`invalid_final`、`coverage_verifier_invalid` 或
+  `turn_budget_exhausted` 安全降级得到的 `not_covered`
 
-`not_covered` 是否带正式相关引用不影响 MCP 调用。
+`not_covered` 可以带正式 relatedContext 引用；这些引用不算目标直接证据，因此
+不单独阻止 MCP，但仍必须满足“当前问题明确包含 Coremail”和“正常完成正式检索”
+两个条件。
 
 MCP 超时、连接失败、认证失败、结果无有效 Jira/Wiki 来源时，正式结果保持不变，
 不向用户展示不完整历史内容。
@@ -301,7 +334,8 @@ MCP 超时、连接失败、认证失败、结果无有效 Jira/Wiki 来源时�
 - 丢弃相关信息不得把目标 `not_covered` 改为临时不可用，也不得阻止 MCP 尝试。
 - 覆盖校验器整体不可用时继续关闭失败，返回 `temporarily_unavailable`。
 - 覆盖校验器连续输出无效决策时，不信任草稿目标结论；代码确定性降为
-  `not_covered`、清空目标引用和 relatedContext，再继续既有 MCP 兜底。
+  `not_covered`、清空目标引用和 relatedContext，但该结构异常结果不得触发
+  Coremail MCP。
 - Schema 修复提示必须携带脱敏的具体 Schema 路径与错误码，例如
   `requirements.0.relatedContext.1.citations:too_small`，不得只提示“格式错误”。
 - MCP 失败时返回正式 `not_covered` 结果；如果正式相关信息有效，则继续展示。
@@ -344,7 +378,8 @@ Lunkr `answered` 生命周期日志传递这两个布尔字段。日志继续只
 4. 无效 relatedContext 被丢弃，不影响目标 `not_covered`。
 5. `not_covered` 可以保留正式相关信息和正式引用。
 6. 相关引用不能把状态升级为 `answered/partially_answered`。
-7. `not_covered` 带相关引用时仍调用 Coremail MCP。
+7. `not_covered` 带相关引用时，只有当前问题明确包含 Coremail 且正式检索正常
+   完成才调用 Coremail MCP。
 8. MCP 失败时保留正式相关信息和未覆盖结论。
 9. MCP 历史内容仍不进入下一轮 Lunkr 上下文。
 10. `historicalAttempted/historicalUsed` 正确区分三种调用结果。
@@ -359,8 +394,12 @@ Lunkr `answered` 生命周期日志传递这两个布尔字段。日志继续只
 16. 主回答中的单条非法 relatedContext 被丢弃时，合法主体答案仍可返回。
 17. 验证器删除内联 `[n]`、改写标点或空格的历史失败样本改写为决策协议回归，
     不再产生 `coverage_verifier_invalid`。
-18. 连续无效验证决策确定性降为 `not_covered`，而验证器网络或服务不可用仍为
-    `temporarily_unavailable`。
+18. 连续无效验证决策确定性降为 `not_covered` 且不调用 MCP；验证器网络或服务
+    不可用仍为 `temporarily_unavailable`。
+19. 草稿同时包含有证据和无证据目标句段时，只保留有证据句段，状态为
+    `partially_answered`，不得整项降为 `not_covered`。
+20. 泛称“邮件系统”的完全未覆盖问题不得调用 Coremail MCP；显式包含 Coremail、
+    正式检索正常完成且完全没有直接目标证据的问题才允许调用。
 
 ### 11.2 真实模型验收
 
@@ -383,7 +422,12 @@ Lunkr `answered` 生命周期日志传递这两个布尔字段。日志继续只
 - 一个正文明示支持的问题：`answered`，不调用 MCP。
 - 一个正文明示否定的合成单元用例：`answered`，不调用 MCP。
 - 一个“支持哪些”问题：只列出明确项目，不宣称完整性。
-- 一个通用售前库完全未覆盖问题：`not_covered`，同样尝试 Coremail MCP。
+- 一个通用售前库完全未覆盖问题：`not_covered`，不得尝试 Coremail MCP。
+- 一个泛称“邮件系统”的完全未覆盖问题：`not_covered`，不得尝试 Coremail MCP。
+- 一个明确包含 Coremail 且正式检索正常完成、完全没有直接目标证据的问题：
+  `not_covered`，尝试 Coremail MCP。
+- “推荐一份邮件系统的 POC 方案给我”由不同用户重复执行时，正式库存在直接证据
+  的句段必须保留为 `partially_answered`，不得因无证据句段整体降级或切换到 MCP。
 
 ### 11.3 全仓验证
 
@@ -412,7 +456,10 @@ Lunkr `answered` 生命周期日志传递这两个布尔字段。日志继续只
 2. 正式结论明确表示目标协议未覆盖、无法确认是否支持。
 3. 不再把“没有资料”写成“不支持”。
 4. 正式状态保持 `not_covered`。
-5. 两个知识库的完全未覆盖结果都能触发 Coremail MCP。
+5. 只有显式 Coremail 问题在正式检索正常完成且完全没有直接目标证据时才能触发
+   Coremail MCP；通用问题和泛称邮件系统问题不得触发。
 6. 用户可以通过脱敏日志确认 MCP 是否尝试、是否展示。
 7. MCP 内容保持低可信分区，不改变正式结论，不污染下一轮上下文。
 8. 模型格式波动不得因单条可选相关信息或验证器抄写差异导致整题处理失败。
+9. 同一 requirement 中至少一个目标句段有直接证据时，正式状态至少为
+   `partially_answered`，无证据句段由代码删除。
