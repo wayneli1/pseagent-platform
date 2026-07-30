@@ -62,7 +62,31 @@ function createProfessionalService(
   } as KnowledgeSession;
   const knowledge = { open: vi.fn(async () => session) };
   const planner = createPlanner();
-  const runAgent = vi.fn<AgentRunner>(async () => primary);
+  const runAgent = vi.fn<AgentRunner>(async (input) => {
+    if (primary.status !== "temporarily_unavailable") {
+      const coverage = primary.status === "answered"
+        ? "complete"
+        : primary.status === "partially_answered"
+          ? "partial"
+          : "none";
+      input.trace.record({
+        event: "coverage",
+        stage: "verified",
+        requirements: [{
+          id: "R1",
+          coverage,
+          citations: coverage === "none"
+            ? []
+            : primary.references.map((reference) => reference.index),
+        }],
+        citations: coverage === "none"
+          ? []
+          : primary.references.map((reference) => reference.index),
+        stopReason: "final",
+      });
+    }
+    return primary;
+  });
   const service = new AnswerService({
     model,
     router,
@@ -175,7 +199,7 @@ describe("AnswerService", () => {
       } satisfies HistoricalAnswerProvider;
       const { service } = createProfessionalService(primary, historicalProvider);
 
-      await expect(service.answer("产品问题")).resolves.toBe(primary);
+      await expect(service.answer("Coremail 产品问题")).resolves.toBe(primary);
       expect(historicalProvider.answer).not.toHaveBeenCalled();
     },
   );
@@ -194,7 +218,7 @@ describe("AnswerService", () => {
     const { service } = createProfessionalService(primary, historicalProvider);
 
     const usedProviderExecution = await service.answerDetailed(
-      "产品问题",
+      "Coremail 产品问题",
       "不应传递的对话上下文",
     );
     expect(usedProviderExecution).toMatchObject({
@@ -207,9 +231,134 @@ describe("AnswerService", () => {
     });
     expect(historicalProvider.answer).toHaveBeenCalledOnce();
     expect(historicalProvider.answer).toHaveBeenCalledWith(
-      "产品问题",
+      "Coremail 产品问题",
       expect.any(AbortSignal),
     );
+  });
+
+  it("does not use Coremail MCP for a generic mail-system question", async () => {
+    const primary: AnswerResult = {
+      scope: "professional",
+      status: "not_covered",
+      answer: "正式知识未覆盖",
+      references: [],
+    };
+    const historicalProvider = {
+      answer: vi.fn(async () => historicalAnswer),
+      close: vi.fn(async () => undefined),
+    } satisfies HistoricalAnswerProvider;
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: createPlanner(),
+      knowledge: {
+        open: vi.fn(async () => ({
+          project: "coremail-professional",
+          schema: "专业库 schema",
+          overview: "专业库用途",
+        }) as KnowledgeSession),
+      },
+      runAgent: vi.fn<AgentRunner>(async (input) => {
+        input.trace.record({
+          event: "coverage",
+          stage: "verified",
+          requirements: [{ id: "R1", coverage: "none", citations: [] }],
+          reasons: [{ id: "R1", reason: "target_omitted" }],
+          citations: [],
+          stopReason: "final",
+        });
+        return primary;
+      }),
+      historicalProvider,
+    });
+
+    const execution = await service.answerDetailed("推荐一份邮件系统的 POC 方案给我");
+
+    expect(execution).toMatchObject({
+      historicalAttempted: false,
+      historicalUsed: false,
+      result: { status: "not_covered" },
+    });
+    expect(historicalProvider.answer).not.toHaveBeenCalled();
+  });
+
+  it("does not use Coremail MCP for a structural not-covered fallback", async () => {
+    const primary: AnswerResult = {
+      scope: "professional",
+      status: "not_covered",
+      answer: "正式知识未覆盖",
+      references: [],
+    };
+    const historicalProvider = {
+      answer: vi.fn(async () => historicalAnswer),
+      close: vi.fn(async () => undefined),
+    } satisfies HistoricalAnswerProvider;
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: createPlanner(),
+      knowledge: {
+        open: vi.fn(async () => ({
+          project: "coremail-professional",
+          schema: "专业库 schema",
+          overview: "专业库用途",
+        }) as KnowledgeSession),
+      },
+      runAgent: vi.fn<AgentRunner>(async (input) => {
+        input.trace.record({
+          event: "fallback",
+          reason: "invalid_model_payload",
+          outcome: "not_covered",
+        });
+        return primary;
+      }),
+      historicalProvider,
+    });
+
+    const execution = await service.answerDetailed("Coremail 有哪些能力？");
+
+    expect(execution).toMatchObject({
+      historicalAttempted: false,
+      historicalUsed: false,
+      result: { status: "not_covered" },
+    });
+    expect(historicalProvider.answer).not.toHaveBeenCalled();
+  });
+
+  it("does not use Coremail MCP before formal coverage verification completes", async () => {
+    const primary: AnswerResult = {
+      scope: "professional",
+      status: "not_covered",
+      answer: "正式知识未覆盖",
+      references: [],
+    };
+    const historicalProvider = {
+      answer: vi.fn(async () => historicalAnswer),
+      close: vi.fn(async () => undefined),
+    } satisfies HistoricalAnswerProvider;
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: createPlanner(),
+      knowledge: {
+        open: vi.fn(async () => ({
+          project: "coremail-professional",
+          schema: "专业库 schema",
+          overview: "专业库用途",
+        }) as KnowledgeSession),
+      },
+      runAgent: vi.fn<AgentRunner>(async () => primary),
+      historicalProvider,
+    });
+
+    const execution = await service.answerDetailed("Coremail 有哪些能力？");
+
+    expect(execution).toMatchObject({
+      historicalAttempted: false,
+      historicalUsed: false,
+      result: { status: "not_covered" },
+    });
+    expect(historicalProvider.answer).not.toHaveBeenCalled();
   });
 
   it("plans a knowledge question before running the agent and passes the exact plan through", async () => {
@@ -392,7 +541,7 @@ describe("AnswerService", () => {
     } satisfies HistoricalAnswerProvider;
     const { service } = createProfessionalService(primary, historicalProvider);
 
-    const emptyProviderExecution = await service.answerDetailed("产品问题");
+    const emptyProviderExecution = await service.answerDetailed("Coremail 产品问题");
 
     expect(emptyProviderExecution).toMatchObject({
       historicalAttempted: true,
@@ -416,7 +565,7 @@ describe("AnswerService", () => {
     } satisfies HistoricalAnswerProvider;
     const { service } = createProfessionalService(primary, historicalProvider);
 
-    const failedProviderExecution = await service.answerDetailed("产品问题");
+    const failedProviderExecution = await service.answerDetailed("Coremail 产品问题");
 
     expect(failedProviderExecution).toMatchObject({
       historicalAttempted: true,

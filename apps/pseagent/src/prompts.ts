@@ -171,8 +171,9 @@ export function knowledgeAgentMessages(input: {
 
 export const COVERAGE_VERIFICATION_REPAIR_INSTRUCTION =
   `顶层只能包含 action、requirements，不得输出任何额外字段。
-每个 requirement 只能包含 id、targetDecision、retainedRelatedContextIndexes、reason。
-targetDecision 只能是 retain 或 not_covered。
+每个 requirement 只能包含 id、targetDecision、retainedTargetSegmentIndexes、retainedRelatedContextIndexes、reason。
+targetDecision 只能是 retain、retain_partial 或 not_covered。
+retainedTargetSegmentIndexes 只能填写输入 targetSegments 中对应 requirement 的从 0 开始索引，必须严格递增、不得重复；不保留时输出空数组。
 retainedRelatedContextIndexes 只能填写草稿 relatedContext 的从 0 开始索引，必须严格递增、不得重复、最多三项；不保留时输出空数组。
 不得输出或复制 coverage、answer、citations、statement、relatedContext 或顶层 citations，这些内容全部由代码从草稿确定性重建。
 reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed。`;
@@ -181,22 +182,25 @@ export const COVERAGE_VERIFICATION_SYSTEM_PROMPT = `你是 PSEAgent 的正文证
 输出 action 必须是 verify，并逐项保留规划中的 requirement ID，只返回目标保留决策、相关信息索引和固定 reason。
 你只能审计输入中的草稿和实际读页正文，禁止搜索、调用工具、增加引用或使用模型先验。
 页面主题相关、介绍相邻概念或只列出基础协议，不等于正文支持用户询问的目标命题。
-正文未提及目标必须选择 not_covered，不得把草稿中的“不支持/尚未支持”保留下来；只有明确支持或明确否定且草稿 coverage 为 complete/partial 时才可选择 retain。同义词、缩略词或等价表达必须有正文确认的等价关系；非穷尽列表不得作为完整清单保留。
+逐项检查 targetSegments 中每个带引用目标句段。正文直接支持全部句段时选择 retain；正文只支持部分句段时必须选择 retain_partial，只保留有直接证据的句段索引；一个句段都没有直接证据时才选择 not_covered。
+正文未提及目标不得保留对应句段，也不得把草稿中的“不支持/尚未支持”保留下来。同义词、缩略词或等价表达必须有正文确认的等价关系；非穷尽列表不得作为完整清单保留。
 选择 not_covered 时，最终 coverage、answer 和 citations 由代码安全重建。可通过 retainedRelatedContextIndexes 选择草稿中正文直接支持且不证明目标的 relatedContext；索引从 0 开始，只能保留或删除，不能改写内容。量子卫星邮件协议问题中，正文只列 SMTP、POP3、IMAP 等协议时，应选择 not_covered，并只保留直接列出的协议事实索引。
 如果用户询问的是资料是否覆盖或信息是否明确，正文明确列出的资料缺口可以直接支持该判断。
-targetDecision=retain 表示草稿目标 coverage、answer 和 citations 整体原样保留，只适用于草稿 complete/partial 且正文直接支持其全部目标结论；此时 retainedRelatedContextIndexes 必须为空。
-targetDecision=not_covered 表示不信任草稿目标结论并由代码降为 none；草稿 coverage=none 时也必须使用 not_covered。
+targetDecision=retain 表示草稿目标 coverage、answer 和 citations 整体原样保留；retainedTargetSegmentIndexes 必须列出全部目标句段索引，retainedRelatedContextIndexes 必须为空。
+targetDecision=retain_partial 表示代码只按原顺序复制 retainedTargetSegmentIndexes 指定的原始目标句段，并将 coverage 确定为 partial；必须保留至少一个但不能保留全部句段，retainedRelatedContextIndexes 必须为空。
+targetDecision=not_covered 表示不信任任何草稿目标句段并由代码降为 none；retainedTargetSegmentIndexes 必须为空，草稿 coverage=none 时也必须使用 not_covered。
 retainedRelatedContextIndexes 中的每一项都必须由该 requirement 的实际正文直接支持。
 reason 只能是 direct_support、explicit_negative_support、partial_support、related_only、target_omitted、unsupported_claim_removed。
 ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}
 合法示例：
-{"action":"verify","requirements":[{"id":"R1","targetDecision":"not_covered","retainedRelatedContextIndexes":[0],"reason":"related_only"}]}
+{"action":"verify","requirements":[{"id":"R1","targetDecision":"retain_partial","retainedTargetSegmentIndexes":[0,2],"retainedRelatedContextIndexes":[],"reason":"partial_support"}]}
 禁止输出 Markdown、解释或额外字段。`;
 
 export function coverageVerificationMessages(input: {
   question: string;
   plan: unknown;
   draft: unknown;
+  targetSegments: readonly unknown[];
   evidence: readonly unknown[];
 }): ModelMessage[] {
   return [
@@ -207,6 +211,7 @@ export function coverageVerificationMessages(input: {
         question: input.question,
         plan: input.plan,
         draft: input.draft,
+        targetSegments: input.targetSegments,
         evidence: input.evidence,
       }),
     },

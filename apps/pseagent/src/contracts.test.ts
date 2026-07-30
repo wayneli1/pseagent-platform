@@ -166,6 +166,7 @@ describe("PSEAgent contracts", () => {
       requirements: [{
         id: "R1",
         targetDecision: "not_covered",
+        retainedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [0],
         reason: "related_only",
       }],
@@ -174,6 +175,7 @@ describe("PSEAgent contracts", () => {
       requirements: [{
         id: "R1",
         targetDecision: "not_covered",
+        retainedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [0],
       }],
     });
@@ -183,6 +185,7 @@ describe("PSEAgent contracts", () => {
       requirements: [{
         id: "R1",
         targetDecision: "retain",
+        retainedTargetSegmentIndexes: [0],
         retainedRelatedContextIndexes: [],
         answer: "模型不得重新输出正文",
         reason: "invented_reason",

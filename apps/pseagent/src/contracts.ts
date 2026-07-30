@@ -134,20 +134,32 @@ export const coverageVerificationReasonSchema = z.enum([
 ]);
 const coverageVerificationRequirementSchema = z.object({
   id: knowledgeRequirementIdSchema,
-  targetDecision: z.enum(["retain", "not_covered"]),
+  targetDecision: z.enum(["retain", "retain_partial", "not_covered"]),
+  retainedTargetSegmentIndexes: z.array(z.number().int().nonnegative()).max(64),
   retainedRelatedContextIndexes: z.array(z.number().int().nonnegative()).max(3),
   reason: coverageVerificationReasonSchema,
 }).strict().superRefine((requirement, context) => {
-  const indexes = requirement.retainedRelatedContextIndexes;
-  if (
-    new Set(indexes).size !== indexes.length ||
-    indexes.some((value, index) => index > 0 && value <= indexes[index - 1]!)
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["retainedRelatedContextIndexes"],
-      message: "related_context_indexes_must_be_unique_and_ordered",
-    });
+  for (const [field, message] of [
+    [
+      "retainedTargetSegmentIndexes",
+      "target_segment_indexes_must_be_unique_and_ordered",
+    ],
+    [
+      "retainedRelatedContextIndexes",
+      "related_context_indexes_must_be_unique_and_ordered",
+    ],
+  ] as const) {
+    const indexes = requirement[field];
+    if (
+      new Set(indexes).size !== indexes.length ||
+      indexes.some((value, index) => index > 0 && value <= indexes[index - 1]!)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: [field],
+        message,
+      });
+    }
   }
 });
 export const coverageVerificationActionSchema = z.object({

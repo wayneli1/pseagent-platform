@@ -100,6 +100,16 @@ export type DiagnosticEvent =
       readonly outcome: "not_covered";
     }
   | {
+      readonly event: "historical_gate";
+      readonly eligible: boolean;
+      readonly reason:
+        | "eligible"
+        | "question_not_explicit_coremail"
+        | "formal_verification_incomplete"
+        | "direct_formal_evidence_present"
+        | "structural_fallback";
+    }
+  | {
       readonly event: "stop";
       readonly reason: PseStopReason;
     }

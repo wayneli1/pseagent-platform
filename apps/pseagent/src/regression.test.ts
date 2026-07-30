@@ -229,6 +229,7 @@ function p11VerificationFor(
     requirements: [{
       id: "R1",
       targetDecision: "not_covered",
+      retainedTargetSegmentIndexes: [],
       retainedRelatedContextIndexes: [0],
       reason: "related_only",
     }],

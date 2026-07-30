@@ -7,6 +7,7 @@ import {
   type KnowledgePlan,
 } from "./contracts.js";
 import {
+  InvalidCoverageVerificationError,
   type CoverageVerifierInput,
   verifyKnowledgeCoverage,
 } from "./coverage-verifier.js";
@@ -45,6 +46,20 @@ const partialDraft: FinalAction = {
     citations: [1],
   }],
   citations: [1],
+};
+
+const mixedSupportDraft: FinalAction = {
+  action: "final",
+  requirements: [{
+    id: "R1",
+    coverage: "complete",
+    answer: [
+      "POC 测试方案通常包括测试目标、测试环境、测试范围、测试用例和验收标准 [1]。",
+      "该方案可以保证所有项目零风险通过验收 [2]。",
+    ].join("\n"),
+    citations: [1, 2],
+  }],
+  citations: [1, 2],
 };
 
 const relatedOnlyDraft: FinalAction = {
@@ -106,6 +121,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
           retainedRelatedContextIndexes: [],
         }],
       },
@@ -119,6 +135,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
           retainedRelatedContextIndexes: [],
           reason: "provider_partial",
         }],
@@ -133,6 +150,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [0],
         }],
       },
@@ -146,6 +164,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "provider_removed_claim",
         }],
@@ -160,6 +179,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "provider_no_match",
         }],
@@ -198,6 +218,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         targetDecision: "not_covered",
+        retainedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [0, 2],
         reason: "related_only",
       }],
@@ -211,6 +232,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
           retainedRelatedContextIndexes: [],
           reason: "direct_support",
           answer: "模型不得复制答案",
@@ -221,6 +243,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [1, 0],
           reason: "related_only",
         }],
@@ -230,6 +253,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [0, 0],
           reason: "related_only",
         }],
@@ -250,6 +274,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
           retainedRelatedContextIndexes: [],
           reason: "direct_support",
         }],
@@ -258,6 +283,51 @@ describe("verifyKnowledgeCoverage", () => {
 
     expect(result).toEqual(completeDraft);
     expect(result.requirements[0]).not.toBe(completeDraft.requirements[0]);
+  });
+
+  it("keeps supported target segments and removes unsupported segments", async () => {
+    const result = await verifyKnowledgeCoverage({
+      question: "推荐一份 Coremail 邮件系统的 POC 方案给我",
+      plan: singleRequirementPlan,
+      draft: mixedSupportDraft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "POC测试方案",
+        path: "wiki/concepts/POC测试方案.md",
+        content:
+          "POC测试方案通常包含测试目标、测试环境、测试范围、测试用例和验收标准。",
+      }, {
+        requirementId: "R1",
+        citation: 2,
+        title: "项目说明",
+        path: "wiki/concepts/项目说明.md",
+        content: "项目风险需要按实际范围评估。",
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain_partial",
+          retainedTargetSegmentIndexes: [0],
+          retainedRelatedContextIndexes: [],
+          reason: "partial_support",
+        }],
+      } as unknown as CoverageVerificationAction),
+    });
+
+    expect(result).toEqual({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "partial",
+        answer:
+          "POC 测试方案通常包括测试目标、测试环境、测试范围、测试用例和验收标准 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+    expect(JSON.stringify(result)).not.toContain("零风险");
   });
 
   it("rebuilds an uncovered result from retained draft indexes without model-written text", async () => {
@@ -271,6 +341,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [1],
           reason: "related_only",
         }],
@@ -304,6 +375,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
           reason: "unsupported_claim_removed",
         }],
@@ -329,6 +401,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R2",
         targetDecision: "not_covered",
+        retainedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [],
         reason: "target_omitted",
       }],
@@ -338,6 +411,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         targetDecision: "retain",
+        retainedTargetSegmentIndexes: [0],
         retainedRelatedContextIndexes: [],
         reason: "target_omitted",
       }],
@@ -347,6 +421,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         targetDecision: "retain",
+        retainedTargetSegmentIndexes: [0],
         retainedRelatedContextIndexes: [0],
         reason: "direct_support",
       }],
@@ -356,6 +431,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         targetDecision: "not_covered",
+        retainedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [2],
         reason: "related_only",
       }],
@@ -365,33 +441,23 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         targetDecision: "not_covered",
+        retainedTargetSegmentIndexes: [],
         retainedRelatedContextIndexes: [0],
         reason: "related_only",
       }],
     }, relatedOnlyDraft, [{ ...evidence[0], requirementId: "R2" }]],
   ] as const)(
-    "falls back conservatively after three invalid decisions: %s",
+    "rejects after three invalid decisions: %s",
     async (_label, decision, draft, decisionEvidence) => {
       const completeJson = vi.fn(async () =>
         decision as unknown as CoverageVerificationAction);
-      const result = await verifyKnowledgeCoverage({
+      await expect(verifyKnowledgeCoverage({
         question: "问题",
         plan: singleRequirementPlan,
         draft,
         evidence: decisionEvidence,
         model: modelFromCompleteJson(completeJson),
-      });
-
-      expect(result).toEqual({
-        action: "final",
-        requirements: [{
-          id: "R1",
-          coverage: "none",
-          answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
-          citations: [],
-        }],
-        citations: [],
-      });
+      })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
       expect(completeJson).toHaveBeenCalledTimes(3);
     },
   );
@@ -403,6 +469,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [2],
           reason: "related_only",
         }],
@@ -412,6 +479,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [0],
           reason: "related_only",
         }],
@@ -446,6 +514,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
           retainedRelatedContextIndexes: [],
           reason: "direct_support",
         }],
@@ -467,7 +536,7 @@ describe("verifyKnowledgeCoverage", () => {
       );
   });
 
-  it("returns a deterministic uncovered result after three invalid model payloads", async () => {
+  it("reports structural failure after three invalid model payloads", async () => {
     const completeJson = vi.fn(async () => {
       throw new InvalidModelPayloadError(
         "invalid_schema:requirements.0.targetDecision:invalid_value",
@@ -475,19 +544,14 @@ describe("verifyKnowledgeCoverage", () => {
     });
     const onVerified = vi.fn();
 
-    const result = await verifyKnowledgeCoverage({
+    await expect(verifyKnowledgeCoverage({
       question: "问题",
       plan: singleRequirementPlan,
       draft: completeDraft,
       evidence,
       model: modelFromCompleteJson(completeJson),
       onVerified,
-    });
-
-    expect(result).toMatchObject({
-      requirements: [{ coverage: "none", citations: [] }],
-      citations: [],
-    });
+    })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
     expect(completeJson).toHaveBeenCalledTimes(3);
     expect(onVerified).toHaveBeenCalledWith([
       { id: "R1", reason: "target_omitted" },
@@ -521,6 +585,7 @@ describe("verifyKnowledgeCoverage", () => {
         requirements: [{
           id: "R1",
           targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
           retainedRelatedContextIndexes: [],
           reason: "direct_support",
         }],

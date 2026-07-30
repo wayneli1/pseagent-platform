@@ -25,6 +25,12 @@ export interface CoverageEvidenceDocument {
   readonly content: string;
 }
 
+interface TargetSegment {
+  readonly index: number;
+  readonly text: string;
+  readonly citations: readonly number[];
+}
+
 export interface CoverageVerifierInput {
   readonly question: string;
   readonly plan: KnowledgePlan;
@@ -53,10 +59,15 @@ export const NOT_COVERED_REQUIREMENT_ANSWER =
 export async function verifyKnowledgeCoverage(
   input: CoverageVerifierInput,
 ): Promise<FinalAction> {
+  const targetSegments = input.draft.requirements.map((requirement) => ({
+    id: requirement.id,
+    segments: splitTargetSegments(requirement.answer),
+  }));
   const messages = coverageVerificationMessages({
     question: input.question,
     plan: input.plan,
     draft: input.draft,
+    targetSegments,
     evidence: input.evidence,
   });
   const modelResponseSchema = coverageVerificationModelResponseSchema(input.draft);
@@ -79,7 +90,7 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
         schemaDescription: "pse_coverage_verification_decision",
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
-      const invalidReason = validateVerification(input, candidate);
+      const invalidReason = validateVerification(input, candidate, targetSegments);
       if (invalidReason === undefined) {
         verified = candidate;
         break;
@@ -97,14 +108,14 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
       reason: "target_omitted" as const,
     }));
     input.onVerified?.(reasons);
-    return conservativeNotCovered(input);
+    throw new InvalidCoverageVerificationError(lastInvalidReason);
   }
 
   input.onVerified?.(verified.requirements.map((requirement) => ({
     id: requirement.id,
     reason: requirement.reason,
   })));
-  return materializeVerification(input.draft, verified);
+  return materializeVerification(input.draft, verified, targetSegments);
 }
 
 function coverageVerificationModelResponseSchema(draft: FinalAction) {
@@ -142,6 +153,7 @@ function deriveModelReason(
     if (draft?.coverage === "complete") return "direct_support";
     if (draft?.coverage === "partial") return "partial_support";
   }
+  if (decision.targetDecision === "retain_partial") return "partial_support";
   if (
     Array.isArray(decision.retainedRelatedContextIndexes) &&
     decision.retainedRelatedContextIndexes.length > 0
@@ -157,6 +169,10 @@ function deriveModelReason(
 function validateVerification(
   input: CoverageVerifierInput,
   verified: CoverageVerificationAction,
+  targetSegments: readonly {
+    readonly id: string;
+    readonly segments: readonly TargetSegment[];
+  }[],
 ): string | undefined {
   if (
     input.draft.requirements.length !== input.plan.requirements.length ||
@@ -169,6 +185,8 @@ function validateVerification(
     const planned = input.plan.requirements[index]!;
     const draft = input.draft.requirements[index]!;
     const decision = verified.requirements[index]!;
+    const segments = targetSegments[index]?.segments ?? [];
+    const allSegmentIndexes = segments.map((segment) => segment.index);
     if (draft.id !== planned.id || decision.id !== planned.id) {
       return "requirement_order_mismatch";
     }
@@ -177,6 +195,33 @@ function validateVerification(
     }
     if (
       decision.targetDecision === "retain" &&
+      !sameNumbers(decision.retainedTargetSegmentIndexes, allSegmentIndexes)
+    ) {
+      return `retained_target_requires_all_segments:${decision.id}`;
+    }
+    if (
+      decision.targetDecision === "retain_partial" &&
+      draft.coverage === "none"
+    ) {
+      return `none_target_cannot_be_partially_retained:${decision.id}`;
+    }
+    if (
+      decision.targetDecision === "retain_partial" &&
+      (
+        decision.retainedTargetSegmentIndexes.length === 0 ||
+        decision.retainedTargetSegmentIndexes.length >= allSegmentIndexes.length
+      )
+    ) {
+      return `partial_target_requires_proper_segment_subset:${decision.id}`;
+    }
+    if (
+      decision.targetDecision === "not_covered" &&
+      decision.retainedTargetSegmentIndexes.length > 0
+    ) {
+      return `uncovered_target_cannot_retain_segments:${decision.id}`;
+    }
+    if (
+      decision.targetDecision !== "not_covered" &&
       decision.retainedRelatedContextIndexes.length > 0
     ) {
       return `retained_target_cannot_have_related_context:${decision.id}`;
@@ -193,6 +238,18 @@ function validateVerification(
         .filter((document) => document.requirementId === decision.id)
         .map((document) => document.citation),
     );
+    for (const targetIndex of decision.retainedTargetSegmentIndexes) {
+      const segment = segments[targetIndex];
+      if (segment === undefined) {
+        return `target_segment_index_out_of_range:${decision.id}:${targetIndex}`;
+      }
+      const unsupportedCitation = segment.citations.find(
+        (citation) => !evidenceCitations.has(citation),
+      );
+      if (unsupportedCitation !== undefined) {
+        return `target_segment_citation_not_in_evidence:${decision.id}:${unsupportedCitation}`;
+      }
+    }
     for (const relatedIndex of decision.retainedRelatedContextIndexes) {
       const related = relatedContext[relatedIndex];
       if (related === undefined) {
@@ -212,11 +269,27 @@ function validateVerification(
 function materializeVerification(
   draft: FinalAction,
   verified: CoverageVerificationAction,
+  targetSegments: readonly {
+    readonly id: string;
+    readonly segments: readonly TargetSegment[];
+  }[],
 ): FinalAction {
   const requirements = verified.requirements.map((decision, index) => {
     const draftRequirement = draft.requirements[index]!;
     if (decision.targetDecision === "retain") {
       return cloneRequirement(draftRequirement);
+    }
+    if (decision.targetDecision === "retain_partial") {
+      const segments = targetSegments[index]?.segments ?? [];
+      const retained = decision.retainedTargetSegmentIndexes.map(
+        (segmentIndex) => segments[segmentIndex]!,
+      );
+      return {
+        id: draftRequirement.id,
+        coverage: "partial" as const,
+        answer: retained.map((segment) => segment.text).join("\n"),
+        citations: stableUnique(retained.flatMap((segment) => segment.citations)),
+      };
     }
     const relatedContext = decision.retainedRelatedContextIndexes.map(
       (relatedIndex) => draftRequirement.relatedContext![relatedIndex]!,
@@ -250,17 +323,30 @@ function materializeVerification(
   };
 }
 
-function conservativeNotCovered(input: CoverageVerifierInput): FinalAction {
-  return {
-    action: "final",
-    requirements: input.plan.requirements.map((requirement) => ({
-      id: requirement.id,
-      coverage: "none",
-      answer: NOT_COVERED_REQUIREMENT_ANSWER,
-      citations: [],
-    })),
-    citations: [],
-  };
+function splitTargetSegments(answer: string): TargetSegment[] {
+  const pieces = answer
+    .split(/\r?\n+/u)
+    .flatMap((line) => line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [])
+    .map((piece) => piece.trim())
+    .filter(Boolean);
+  const segments: TargetSegment[] = [];
+  for (const text of pieces) {
+    const citations = stableUnique(
+      [...text.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+    );
+    if (citations.length === 0) continue;
+    segments.push({
+      index: segments.length,
+      text,
+      citations,
+    });
+  }
+  return segments;
+}
+
+function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index]);
 }
 
 function cloneRequirement(

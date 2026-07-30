@@ -122,6 +122,15 @@ export class AnswerService {
       ) {
         return finishExecution(trace, primary, startedAt, false, false);
       }
+      const historicalGate = evaluateHistoricalGate(question, trace);
+      recordDiagnostic(trace, {
+        event: "historical_gate",
+        eligible: historicalGate === "eligible",
+        reason: historicalGate,
+      });
+      if (historicalGate !== "eligible") {
+        return finishExecution(trace, primary, startedAt, false, false);
+      }
       try {
         const historicalAttempted = true;
         const historicalAnswer =
@@ -185,6 +194,9 @@ export class AnswerService {
 
 class OutcomeTrace implements DiagnosticTrace {
   stopReason?: PseStopReason;
+  formalCoverageVerified = false;
+  verifiedHasDirectEvidence = false;
+  structuralFallback = false;
 
   constructor(private readonly delegate: DiagnosticTrace) {}
 
@@ -194,8 +206,26 @@ class OutcomeTrace implements DiagnosticTrace {
 
   record(event: DiagnosticEvent): void {
     if (event.event === "stop") this.stopReason = event.reason;
+    if (event.event === "fallback") this.structuralFallback = true;
+    if (event.event === "coverage" && event.stage === "verified") {
+      this.formalCoverageVerified = true;
+      this.verifiedHasDirectEvidence = event.requirements.some(
+        (requirement) => requirement.coverage !== "none",
+      );
+    }
     this.delegate.record(event);
   }
+}
+
+function evaluateHistoricalGate(
+  question: string,
+  trace: OutcomeTrace,
+): Extract<DiagnosticEvent, { event: "historical_gate" }>["reason"] {
+  if (trace.structuralFallback) return "structural_fallback";
+  if (!trace.formalCoverageVerified) return "formal_verification_incomplete";
+  if (trace.verifiedHasDirectEvidence) return "direct_formal_evidence_present";
+  if (!/coremail/iu.test(question)) return "question_not_explicit_coremail";
+  return "eligible";
 }
 
 function startDiagnosticTrace(factory: DiagnosticTraceFactory | undefined): DiagnosticTrace {
