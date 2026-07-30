@@ -154,9 +154,6 @@ export class ReferenceRegistry {
       } else if (item.citations.length > 0) {
         return { ok: false, reason: "none_requirement_with_citation" };
       }
-      if (item.coverage !== "complete" && !hasCoverageLimitation(item.answer)) {
-        return { ok: false, reason: "incomplete_without_limitation" };
-      }
     }
     return { ok: true };
   }
@@ -177,10 +174,6 @@ function sameNumbers(left: readonly number[], right: readonly number[]): boolean
 
 function sameNumberSet(left: readonly number[], right: readonly number[]): boolean {
   return left.length === right.length && left.every((value) => right.includes(value));
-}
-
-function hasCoverageLimitation(answer: string): boolean {
-  return /(未覆盖|待确认|暂无|无法|不足|没有|缺少|有限|其余|尚未|仅能|只能)/u.test(answer);
 }
 
 function delegatesConclusionToCitation(answer: string): boolean {

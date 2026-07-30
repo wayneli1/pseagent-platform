@@ -56,10 +56,9 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
   private readonly command: string;
   private readonly env: Record<string, string> | undefined;
   private state: "idle" | "connecting" | "connected" | "closing" | "closed" = "idle";
-  private connectPromise?: Promise<void>;
-  private closePromise?: Promise<void>;
-  private client?: McpClientFacade;
-  private clientClosed = false;
+  private connectPromise: Promise<void> | undefined;
+  private closePromise: Promise<void> | undefined;
+  private client: McpClientFacade | undefined;
 
   constructor(
     private readonly entryPath: string,
@@ -81,8 +80,11 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
     if (this.connectPromise) return this.connectPromise;
 
     this.state = "connecting";
-    this.connectPromise = this.startConnection();
-    return this.connectPromise;
+    const tracked = this.startConnection().finally(() => {
+      if (this.connectPromise === tracked) this.connectPromise = undefined;
+    });
+    this.connectPromise = tracked;
+    return tracked;
   }
 
   async call(name: KnowledgeToolName, input: unknown, signal?: AbortSignal): Promise<unknown> {
@@ -90,24 +92,34 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
       throw new KnowledgeToolCallerError("knowledge_mcp_tool_forbidden");
     }
     if (!isRecord(input)) throw new KnowledgeToolCallerError("knowledge_mcp_invalid_input");
-    await this.connect();
-    if (!this.client || this.state !== "connected") throw new KnowledgeToolCallerError("knowledge_mcp_closed");
-
-    try {
-      const result = await this.client.callTool(
-        { name, arguments: input },
-        undefined,
-        signal === undefined ? undefined : { signal },
-      );
-      if (result.structuredContent !== undefined) return result.structuredContent;
-      const text = result.content?.find((item) => item.type === "text")?.text;
-      if (text === undefined) throw new KnowledgeToolCallerError("knowledge_mcp_invalid_result");
-      return JSON.parse(text) as unknown;
-    } catch (error) {
-      if (error instanceof KnowledgeToolCallerError) throw error;
-      if (signal?.aborted) throw new KnowledgeToolCallerError("knowledge_mcp_cancelled");
-      throw new KnowledgeToolCallerError("knowledge_mcp_call_failed");
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        await this.connect();
+        if (!this.client || this.state !== "connected") {
+          throw new KnowledgeToolCallerError("knowledge_mcp_closed");
+        }
+        const result = await this.client.callTool(
+          { name, arguments: input },
+          undefined,
+          signal === undefined ? undefined : { signal },
+        );
+        if (result.structuredContent !== undefined) return result.structuredContent;
+        const text = result.content?.find((item) => item.type === "text")?.text;
+        if (text === undefined) {
+          throw new KnowledgeToolCallerError("knowledge_mcp_invalid_result");
+        }
+        return JSON.parse(text) as unknown;
+      } catch (error) {
+        if (signal?.aborted) {
+          throw new KnowledgeToolCallerError("knowledge_mcp_cancelled");
+        }
+        const normalized = normalizeCallError(error);
+        if (!RECOVERABLE_CALL_ERRORS.has(normalized.code)) throw normalized;
+        await this.resetConnection();
+        if (attempt === 2) throw normalized;
+      }
     }
+    throw new KnowledgeToolCallerError("knowledge_mcp_call_failed");
   }
 
   async close(): Promise<void> {
@@ -162,14 +174,36 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
   }
 
   private async closeClient(): Promise<void> {
-    if (!this.client || this.clientClosed) return;
-    this.clientClosed = true;
+    const client = this.client;
+    this.client = undefined;
+    if (!client) return;
     try {
-      await this.client.close();
+      await client.close();
     } catch {
       // Closing is best effort and must not expose transport details.
     }
   }
+
+  private async resetConnection(): Promise<void> {
+    if (this.isClosingOrClosed()) return;
+    await this.closeClient();
+    if (!this.isClosingOrClosed()) this.state = "idle";
+  }
+
+  private isClosingOrClosed(): boolean {
+    return this.state === "closing" || this.state === "closed";
+  }
+}
+
+const RECOVERABLE_CALL_ERRORS = new Set([
+  "knowledge_mcp_connect_failed",
+  "knowledge_mcp_call_failed",
+  "knowledge_mcp_invalid_result",
+]);
+
+function normalizeCallError(error: unknown): KnowledgeToolCallerError {
+  if (error instanceof KnowledgeToolCallerError) return error;
+  return new KnowledgeToolCallerError("knowledge_mcp_call_failed");
 }
 
 function validateAndNormalizeEntry(entryPath: string): string {

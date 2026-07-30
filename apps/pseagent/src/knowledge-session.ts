@@ -88,7 +88,6 @@ export class KnowledgeSession {
   ): Promise<KnowledgeSession> {
     const project = PROJECT_BY_SCOPE[scope];
     try {
-      await caller.connect();
       const status = healthResultSchema.parse(await caller.call("knowledge_status", {}, signal));
       const snapshot = status.projects.find((item) => item.project === project);
       if (!snapshot) throw new KnowledgeUnavailableError("knowledge_project_unavailable");
@@ -98,7 +97,6 @@ export class KnowledgeSession {
       assertSameSnapshot(project, snapshot.revision, context);
       return new KnowledgeSession(project, snapshot.revision, context.schema, context.overview, caller);
     } catch (error) {
-      await caller.close();
       throw error;
     }
   }

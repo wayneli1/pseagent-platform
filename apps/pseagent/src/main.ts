@@ -138,6 +138,7 @@ function defaultCreateModel(config: AppConfig): ModelClient {
     apiKey: config.PSE_MODEL_API_KEY,
     model: config.PSE_MODEL_NAME,
     timeoutMs: config.PSE_MODEL_TIMEOUT_MS,
+    maxTokens: config.PSE_MODEL_MAX_TOKENS,
   });
 }
 

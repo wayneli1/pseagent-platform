@@ -8,6 +8,7 @@ const client = () => new OpenAiCompatibleModelClient({
   apiKey: "top-secret",
   model: "one-model",
   timeoutMs: 1_000,
+  maxTokens: 8_192,
 });
 
 describe("model client", () => {
@@ -19,6 +20,7 @@ describe("model client", () => {
     await expect(failure).rejects.toMatchObject({
       code: "invalid_json",
       rawPayload: "not json",
+      rawPayloadLength: 8,
       schemaDescription: "test",
     });
   });
@@ -36,8 +38,35 @@ describe("model client", () => {
     await expect(failure).rejects.toMatchObject({
       code: expect.stringContaining("citations:invalid_type(expected=array)"),
       rawPayload,
+      rawPayloadLength: rawPayload.length,
       schemaDescription: "pse_final_action",
     });
+  });
+  it("sends the configured output budget and retains the provider finish reason", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+      Response.json({
+        choices: [{
+          finish_reason: "length",
+          message: { content: "{\"ok\":" },
+        }],
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const failure = client().completeJson({
+      messages: [],
+      schema: z.object({ ok: z.boolean() }),
+      schemaDescription: "test",
+    });
+
+    await expect(failure).rejects.toMatchObject({
+      code: "invalid_json",
+      finishReason: "length",
+      rawPayloadLength: 6,
+    });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as {
+      max_tokens?: number;
+    };
+    expect(body.max_tokens).toBe(8_192);
   });
   it("redacts HTTP provider bodies and secrets", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("top-secret raw body", { status: 401 })));

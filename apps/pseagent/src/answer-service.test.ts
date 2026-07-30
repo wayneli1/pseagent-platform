@@ -277,6 +277,63 @@ describe("AnswerService", () => {
     expect(runAgent).not.toHaveBeenCalled();
   });
 
+  it("records and safely degrades an invalid knowledge plan payload", async () => {
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "invalid-plan",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+    const runAgent = vi.fn<AgentRunner>();
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: {
+        plan: vi.fn(async () => {
+          throw new InvalidModelPayloadError(
+            "invalid_json",
+            "{\"subject\":",
+            "pse_knowledge_plan",
+            "abort",
+          );
+        }),
+      },
+      diagnostics: { start: () => trace },
+      knowledge: {
+        open: vi.fn(async () => ({
+          schema: "专业库 schema",
+          overview: "专业库用途",
+        }) as KnowledgeSession),
+      },
+      runAgent,
+    });
+
+    await expect(service.answerDetailed("产品问题")).resolves.toMatchObject({
+      retryable: false,
+      stopReason: "final",
+      result: {
+        scope: "professional",
+        status: "not_covered",
+        references: [],
+      },
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      event: "model_payload",
+      reason: "invalid_json",
+      rawPayload: "{\"subject\":",
+      rawPayloadLength: 11,
+      schemaDescription: "pse_knowledge_plan",
+      finishReason: "abort",
+    }));
+    expect(events).toContainEqual({
+      event: "fallback",
+      reason: "invalid_model_payload",
+      outcome: "not_covered",
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
   it("records route, plan, and a content-free finish summary when diagnostics are enabled", async () => {
     const events: DiagnosticEvent[] = [];
     const trace = {

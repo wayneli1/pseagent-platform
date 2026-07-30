@@ -65,6 +65,19 @@ function fakeKnowledgeCaller(overrides: {
 }
 
 describe("KnowledgeSession", () => {
+  it("does not permanently close the shared caller after one open failure", async () => {
+    const caller = fakeKnowledgeCaller();
+    caller.call.mockRejectedValueOnce(new Error("transient status failure"));
+
+    await expect(KnowledgeSession.open("professional", caller)).rejects.toThrow(
+      "transient status failure",
+    );
+
+    expect(caller.close).not.toHaveBeenCalled();
+    await expect(KnowledgeSession.open("professional", caller)).resolves
+      .toMatchObject({ project: "coremail-professional" });
+  });
+
   it("binds professional to coremail-professional and hides project from model actions", async () => {
     const caller = fakeKnowledgeCaller();
     const session = await KnowledgeSession.open("professional", caller);

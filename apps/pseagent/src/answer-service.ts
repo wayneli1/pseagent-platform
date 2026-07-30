@@ -18,6 +18,7 @@ import {
   ModelUnavailableError,
   type ModelClient,
 } from "./model-client.js";
+import { formatAnswerResult } from "./response.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -134,6 +135,41 @@ export class AnswerService {
         return finishExecution(trace, primary, startedAt, true, false);
       }
     } catch (error) {
+      if (error instanceof InvalidModelPayloadError) {
+        recordDiagnostic(trace, {
+          event: "model_payload",
+          result: "rejected",
+          reason: error.code,
+          repairAttempt: 0,
+          ...(error.schemaDescription === undefined
+            ? {}
+            : { schemaDescription: error.schemaDescription }),
+          ...(error.rawPayload === undefined ? {} : { rawPayload: error.rawPayload }),
+          ...(error.rawPayloadLength === undefined
+            ? {}
+            : { rawPayloadLength: error.rawPayloadLength }),
+          ...(error.finishReason === undefined ? {} : { finishReason: error.finishReason }),
+        });
+        if (scope === "professional" || scope === "general") {
+          recordDiagnostic(trace, {
+            event: "fallback",
+            reason: "invalid_model_payload",
+            outcome: "not_covered",
+          });
+          return finishExecution(
+            trace,
+            formatAnswerResult({
+              scope,
+              status: "not_covered",
+              answer: "",
+              references: [],
+            }),
+            startedAt,
+            false,
+            false,
+          );
+        }
+      }
       const result = temporaryUnavailableResult(scope);
       const reason: PseStopReason =
         error instanceof ModelUnavailableError

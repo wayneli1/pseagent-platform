@@ -20,24 +20,32 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
 
   async plan(input: KnowledgePlanInput): Promise<KnowledgePlan> {
     const messages = knowledgePlanMessages(input);
-    try {
-      return normalizePlanRequirements(
-        input.question,
-        await this.complete(messages, input.signal),
-      );
-    } catch (error) {
-      if (!(error instanceof InvalidModelPayloadError)) throw error;
-      return normalizePlanRequirements(
-        input.question,
-        await this.complete([
-          ...messages,
-          {
-            role: "user",
-            content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
-          },
-        ], input.signal),
-      );
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        return normalizePlanRequirements(
+          input.question,
+          await this.complete(
+            attempt === 1
+              ? messages
+              : [
+                  ...messages,
+                  {
+                    role: "user",
+                    content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
+                  },
+                ],
+            input.signal,
+          ),
+        );
+      } catch (error) {
+        if (!(error instanceof InvalidModelPayloadError) || attempt === 3) throw error;
+      }
     }
+    throw new InvalidModelPayloadError(
+      "invalid_knowledge_plan_after_repair",
+      undefined,
+      "pse_knowledge_plan",
+    );
   }
 
   private complete(

@@ -19,7 +19,23 @@ describe("loadConfig", () => {
       JUDGE_MODEL_NAME: "forbidden",
     });
     expect(config.PSE_MODEL_NAME).toBe("model");
+    expect(config.PSE_MODEL_MAX_TOKENS).toBe(8_192);
     expect(config).not.toHaveProperty("JUDGE_MODEL_NAME");
+  });
+
+  it("accepts a bounded model output token budget", () => {
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_MODEL_MAX_TOKENS: "16384",
+    }).PSE_MODEL_MAX_TOKENS).toBe(16_384);
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_MODEL_MAX_TOKENS: "1023",
+    })).toThrow();
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_MODEL_MAX_TOKENS: "32769",
+    })).toThrow();
   });
 
   it("keeps Coremail historical fallback disabled by default", () => {

@@ -160,6 +160,8 @@ export function knowledgeAgentMessages(input: {
     remainingTurns: input.remainingTurns,
     remainingRetrievalActions: input.remainingRetrievalActions,
     finalOnly: input.finalOnly,
+    finalAnswerGuidance:
+      "保持证据完整，但避免重复同一事实；每个 requirement.answer 尽量控制在 1200 个汉字以内，并优先确保 JSON 完整闭合。",
   };
   return [
     { role: "system", content: KNOWLEDGE_AGENT_SYSTEM_PROMPT },

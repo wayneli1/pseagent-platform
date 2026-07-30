@@ -137,14 +137,6 @@ describe("ReferenceRegistry", () => {
       evidence: evidence([["R1", [1]], ["R2", [2]]]),
     },
     {
-      name: "partial 未说明缺口",
-      action: final([
-        { id: "R1", coverage: "complete", citations: [1] },
-        { id: "R2", coverage: "partial", citations: [2] },
-      ], "功能[1]；POC[2]", [1, 2]),
-      evidence: evidence([["R1", [1]], ["R2", [2]]]),
-    },
-    {
       name: "none 携带引用",
       action: final([
         { id: "R1", coverage: "complete", citations: [1] },
@@ -158,6 +150,36 @@ describe("ReferenceRegistry", () => {
     registry.register(readEvidence("wiki/poc.md"));
 
     expect(registry.validateFinal(action, requirements, itemEvidence).ok).toBe(false);
+  });
+
+  it("does not reject partial coverage based on natural-language limitation keywords", () => {
+    const registry = new ReferenceRegistry("coremail-professional", revision);
+    registry.register(readEvidence("wiki/feature.md"));
+    registry.register(readEvidence("wiki/poc.md"));
+    const action = finalActionSchema.parse({
+      action: "final",
+      requirements: [
+        {
+          id: "R1",
+          coverage: "complete",
+          answer: "功能已经确认 [1]。",
+          citations: [1],
+        },
+        {
+          id: "R2",
+          coverage: "partial",
+          answer: "POC 当前可以给出这些信息 [2]。",
+          citations: [2],
+        },
+      ],
+      citations: [1, 2],
+    });
+
+    expect(registry.validateFinal(
+      action,
+      requirements,
+      evidence([["R1", [1]], ["R2", [2]]]),
+    )).toEqual({ ok: true });
   });
 
   it("accepts a partial composite result when the missing item is explicit", () => {

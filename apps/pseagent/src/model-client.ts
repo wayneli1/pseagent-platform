@@ -20,12 +20,16 @@ export class ModelUnavailableError extends Error {
   constructor(readonly code = "model_unavailable") { super(code); }
 }
 export class InvalidModelPayloadError extends Error {
+  readonly rawPayloadLength: number | undefined;
+
   constructor(
     readonly code = "invalid_model_payload",
     readonly rawPayload?: string,
     readonly schemaDescription?: string,
+    readonly finishReason?: string,
   ) {
     super(code);
+    this.rawPayloadLength = rawPayload?.length;
   }
 }
 
@@ -35,6 +39,7 @@ export class OpenAiCompatibleModelClient implements ModelClient {
     apiKey: string;
     model: string;
     timeoutMs: number;
+    maxTokens: number;
   }) {}
 
   async completeJson<T>(input: {
@@ -43,7 +48,8 @@ export class OpenAiCompatibleModelClient implements ModelClient {
     schemaDescription: string;
     signal?: AbortSignal;
   }): Promise<T> {
-    const content = await this.complete(input.messages, true, input.signal);
+    const completion = await this.complete(input.messages, true, input.signal);
+    const content = completion.content;
     let decoded: unknown;
     try {
       decoded = JSON.parse(content);
@@ -52,6 +58,7 @@ export class OpenAiCompatibleModelClient implements ModelClient {
         "invalid_json",
         content,
         input.schemaDescription,
+        completion.finishReason,
       );
     }
     const parsed = input.schema.safeParse(decoded);
@@ -60,21 +67,27 @@ export class OpenAiCompatibleModelClient implements ModelClient {
         `invalid_schema:${summarizeIssueTree(parsed.error.issues)}`,
         content,
         input.schemaDescription,
+        completion.finishReason,
       );
     }
     return parsed.data;
   }
 
   async completeText(input: { messages: readonly ModelMessage[]; signal?: AbortSignal }): Promise<string> {
-    return this.complete(input.messages, false, input.signal);
+    return (await this.complete(input.messages, false, input.signal)).content;
   }
 
-  private async complete(messages: readonly ModelMessage[], json: boolean, callerSignal?: AbortSignal): Promise<string> {
+  private async complete(
+    messages: readonly ModelMessage[],
+    json: boolean,
+    callerSignal?: AbortSignal,
+  ): Promise<{ readonly content: string; readonly finishReason?: string }> {
     const timeout = AbortSignal.timeout(this.config.timeoutMs);
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
     const body = {
       model: this.config.model,
       temperature: 0,
+      max_tokens: this.config.maxTokens,
       messages,
       ...(json ? { response_format: { type: "json_object" } } : {}),
     };
@@ -88,10 +101,21 @@ export class OpenAiCompatibleModelClient implements ModelClient {
       if (!response.ok) throw new ModelUnavailableError(`model_unavailable_${response.status}`);
       const text = await response.text();
       if (new TextEncoder().encode(text).byteLength > 1024 * 1024) throw new InvalidModelPayloadError();
-      const parsed = JSON.parse(text) as { choices?: Array<{ message?: { content?: unknown } }> };
-      const content = parsed.choices?.[0]?.message?.content;
+      const parsed = JSON.parse(text) as {
+        choices?: Array<{
+          finish_reason?: unknown;
+          message?: { content?: unknown };
+        }>;
+      };
+      const choice = parsed.choices?.[0];
+      const content = choice?.message?.content;
       if (typeof content !== "string" || !content.trim()) throw new InvalidModelPayloadError();
-      return content;
+      return {
+        content,
+        ...(typeof choice?.finish_reason === "string"
+          ? { finishReason: choice.finish_reason }
+          : {}),
+      };
     } catch (error) {
       if (error instanceof ModelUnavailableError || error instanceof InvalidModelPayloadError) throw error;
       if (signal.aborted) throw new ModelUnavailableError();

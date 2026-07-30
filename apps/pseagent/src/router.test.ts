@@ -23,13 +23,24 @@ describe("ScopeRouter", () => {
     await expect(new ScopeRouter(model).route(_question)).resolves.toBe(expected);
   });
 
-  it("repairs one invalid route and never silently downgrades", async () => {
+  it("repairs an invalid route and never silently downgrades", async () => {
     const completeJson = vi.fn()
       .mockRejectedValueOnce(new InvalidModelPayloadError())
       .mockResolvedValueOnce({ action: "route", scope: "professional" });
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
     await expect(new ScopeRouter(model).route("Coremail")).resolves.toBe("professional");
     expect(completeJson).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes two repair attempts before rejecting an invalid route", async () => {
+    const completeJson = vi.fn(async () => {
+      throw new InvalidModelPayloadError();
+    });
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    await expect(new ScopeRouter(model).route("Coremail"))
+      .rejects.toBeInstanceOf(InvalidModelPayloadError);
+    expect(completeJson).toHaveBeenCalledTimes(3);
   });
 
   it.each([

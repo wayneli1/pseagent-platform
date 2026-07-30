@@ -87,6 +87,17 @@ export type DiagnosticEvent =
       readonly repairAttempt: number;
       readonly schemaDescription?: string;
       readonly rawPayload?: string;
+      readonly rawPayloadLength?: number;
+      readonly finishReason?: string;
+    }
+  | {
+      readonly event: "fallback";
+      readonly reason:
+        | "invalid_model_payload"
+        | "invalid_final"
+        | "turn_budget_exhausted"
+        | "coverage_verifier_invalid";
+      readonly outcome: "not_covered";
     }
   | {
       readonly event: "stop";

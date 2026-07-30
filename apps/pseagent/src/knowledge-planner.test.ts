@@ -139,7 +139,7 @@ describe("ModelKnowledgePlanner", () => {
       .toEqual(["R2", "R3", "R4"]);
   });
 
-  it("repairs an invalid model payload exactly once", async () => {
+  it("repairs an invalid model payload", async () => {
     const completeJson = vi.fn()
       .mockRejectedValueOnce(new InvalidModelPayloadError())
       .mockImplementationOnce(async (input: Parameters<ModelClient["completeJson"]>[0]) => {
@@ -155,7 +155,7 @@ describe("ModelKnowledgePlanner", () => {
     expect(completeJson).toHaveBeenCalledTimes(2);
   });
 
-  it("does not attempt a third model call after two invalid payloads", async () => {
+  it("makes two repair attempts before rejecting invalid payloads", async () => {
     const completeJson = vi.fn(async () => {
       throw new InvalidModelPayloadError();
     });
@@ -165,6 +165,6 @@ describe("ModelKnowledgePlanner", () => {
     } as unknown as ModelClient);
 
     await expect(planner.plan(plannerInput())).rejects.toBeInstanceOf(InvalidModelPayloadError);
-    expect(completeJson).toHaveBeenCalledTimes(2);
+    expect(completeJson).toHaveBeenCalledTimes(3);
   });
 });

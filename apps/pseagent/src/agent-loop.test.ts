@@ -524,13 +524,17 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(verifyCoverage).toHaveBeenCalledOnce();
-    expect(result.status).toBe("temporarily_unavailable");
+    expect(result.status).toBe("not_covered");
     expect(events).toContainEqual(expect.objectContaining({
       event: "validation",
       result: "rejected",
       reason: "related_citation_metadata_mismatch",
     }));
-    expect(events).toContainEqual({ event: "stop", reason: "coverage_verifier_invalid" });
+    expect(events).toContainEqual({
+      event: "fallback",
+      reason: "coverage_verifier_invalid",
+      outcome: "not_covered",
+    });
   });
 
   it("normalizes target citations out of an uncovered draft without rejecting the answer", async () => {
@@ -1075,6 +1079,55 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
+  it("audits a final answer against evidence read for another requirement", async () => {
+    const plan: KnowledgePlan = {
+      subject: "跨需求终稿引用",
+      requirements: [
+        { id: "R1", question: "机会判断框架", queries: ["seed-r1"] },
+        { id: "R2", question: "客户证据维度", queries: ["seed-r2"] },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{ path: "wiki/r1.md" }],
+        "seed-r2": [{ path: "wiki/r2.md" }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/r1.md"),
+      read("R2", "wiki/r2.md"),
+      final("complete", "机会判断同时需要客户证据 [1][2]。", [1, 2], [
+        { id: "R1", coverage: "complete", citations: [1, 2] },
+        { id: "R2", coverage: "complete", citations: [2] },
+      ]),
+    ]);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "cross-requirement-final-evidence",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      trace,
+    });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      event: "evidence_shared",
+      fromRequirementId: "R2",
+      toRequirementId: "R1",
+      citation: 2,
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      event: "validation",
+      result: "rejected",
+    }));
+    expect(result.status).toBe("answered");
+    expect(result.references).toHaveLength(2);
+  });
+
   it("does not charge shared evidence against the target requirement's direct-read budget", async () => {
     const plan: KnowledgePlan = {
       subject: "共享证据预算",
@@ -1566,14 +1619,18 @@ describe("runKnowledgeAgent", () => {
     [
       new ModelUnavailableError(),
       "coverage_verifier_unavailable",
+      "temporarily_unavailable",
+      "stop",
     ],
     [
       new InvalidCoverageVerificationError(),
       "coverage_verifier_invalid",
+      "not_covered",
+      "fallback",
     ],
   ] as const)(
     "fails closed when coverage verification fails with %s",
-    async (error, reason) => {
+    async (error, reason, expectedStatus, expectedEvent) => {
       const session = fakeSession({
         hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
       });
@@ -1597,8 +1654,11 @@ describe("runKnowledgeAgent", () => {
         },
       });
 
-      expect(result.status).toBe("temporarily_unavailable");
-      expect(events).toContainEqual({ event: "stop", reason });
+      expect(result.status).toBe(expectedStatus);
+      expect(events).toContainEqual(expect.objectContaining({
+        event: expectedEvent,
+        reason,
+      }));
     },
   );
 
@@ -1641,17 +1701,38 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("not_covered");
   });
 
-  it("returns unavailable when the explicit action repair is still invalid", async () => {
+  it("falls back to not covered after two explicit action repair attempts remain invalid", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([
+      new InvalidModelPayloadError(),
       new InvalidModelPayloadError(),
       new InvalidModelPayloadError(),
     ]);
 
     const result = await runKnowledgeAgent(agentInput(model, session));
 
+    expect(model.calls).toBe(3);
+    expect(result.status).toBe("not_covered");
+  });
+
+  it("requests a shorter closed JSON after the provider aborts a payload", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    const model = scriptedAgentModel([
+      new InvalidModelPayloadError(
+        "invalid_json",
+        "{\"action\":\"final\"",
+        "pse_agent_action",
+        "abort",
+      ),
+      final("none", "当前资料未覆盖该问题"),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(model.prompts[1]?.at(-1)?.content).toContain("finish_reason=abort");
+    expect(model.prompts[1]?.at(-1)?.content).toContain("600 个汉字以内");
     expect(model.calls).toBe(2);
-    expect(result.status).toBe("temporarily_unavailable");
+    expect(result.status).toBe("not_covered");
   });
 
   it("allows exactly one repair attempt for invalid citations", async () => {
@@ -1663,7 +1744,7 @@ describe("runKnowledgeAgent", () => {
 
     expect(model.calls).toBe(2);
     expect(model.lastSchemaName()).toBe("pse_final_action");
-    expect(result.status).toBe("temporarily_unavailable");
+    expect(result.status).toBe("not_covered");
   });
 
   it("normalizes harmless top-level citation ordering before strict validation", async () => {

@@ -44,6 +44,8 @@ describe("development diagnostic trace", () => {
       repairAttempt: 1,
       schemaDescription: "pse_final_action",
       rawPayload: "{\"citations\":\"Bearer live-token\"}",
+      rawPayloadLength: 37,
+      finishReason: "length",
     });
     trace.record({
       event: "finish",

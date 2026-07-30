@@ -87,6 +87,48 @@ describe("StdioKnowledgeToolCaller", () => {
     );
   });
 
+  it("reconnects and retries one read-only call after a transport failure", async () => {
+    const first = fakeClient();
+    first.callTool.mockRejectedValue(new Error("broken transport"));
+    const second = fakeClient();
+    const clients = [first, second];
+    const caller = new StdioKnowledgeToolCaller(process.execPath, {
+      createClient: () => clients.shift() ?? second,
+      createTransport: () => ({ stderr: null }),
+    });
+
+    await expect(caller.call("knowledge_status", {})).resolves.toEqual({
+      ok: true,
+    });
+    await expect(caller.call("knowledge_context", {
+      project: "coremail-professional",
+    })).resolves.toEqual({ ok: true });
+
+    expect(first.callTool).toHaveBeenCalledOnce();
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(second.connect).toHaveBeenCalledOnce();
+    expect(second.callTool).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not tear down the shared transport for one cancelled request", async () => {
+    const client = fakeClient();
+    client.callTool.mockRejectedValueOnce(new Error("cancelled"));
+    const caller = new StdioKnowledgeToolCaller(process.execPath, {
+      createClient: () => client,
+      createTransport: () => ({ stderr: null }),
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(caller.call("knowledge_status", {}, controller.signal))
+      .rejects.toThrow("knowledge_mcp_cancelled");
+    await expect(caller.call("knowledge_status", {})).resolves.toEqual({
+      ok: true,
+    });
+    expect(client.close).not.toHaveBeenCalled();
+    expect(client.connect).toHaveBeenCalledOnce();
+  });
+
   it.each(["relative.js", "C:\\definitely-missing\\entry.js"])(
     "rejects an invalid entry before creating a transport: %s",
     async (entryPath) => {

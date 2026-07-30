@@ -7,6 +7,7 @@ const baseEnvSchema = z.object({
   PSE_MODEL_API_KEY: z.string().trim().min(1),
   PSE_MODEL_NAME: z.string().trim().min(1),
   PSE_MODEL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(180_000).default(60_000),
+  PSE_MODEL_MAX_TOKENS: z.coerce.number().int().min(1_024).max(32_768).default(8_192),
   KNOWLEDGE_MCP_COMMAND: z.string().trim().min(1),
   KNOWLEDGE_MCP_ENTRY_PATH: z.string().trim().min(1),
 }).strict();
@@ -39,6 +40,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     PSE_MODEL_API_KEY: env.PSE_MODEL_API_KEY,
     PSE_MODEL_NAME: env.PSE_MODEL_NAME,
     PSE_MODEL_TIMEOUT_MS: env.PSE_MODEL_TIMEOUT_MS,
+    PSE_MODEL_MAX_TOKENS: env.PSE_MODEL_MAX_TOKENS,
     KNOWLEDGE_MCP_COMMAND: env.KNOWLEDGE_MCP_COMMAND,
     KNOWLEDGE_MCP_ENTRY_PATH: env.KNOWLEDGE_MCP_ENTRY_PATH,
   });

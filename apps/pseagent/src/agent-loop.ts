@@ -126,10 +126,10 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
     try {
       action = await requestAgentAction(input, state, turn, maxTurns, finalOnly);
     } catch (error) {
-      const reason = error instanceof ModelUnavailableError
-        ? "model_unavailable"
-        : "invalid_model_payload";
-      recordDiagnostic(input.trace, { event: "stop", reason });
+      if (error instanceof InvalidModelPayloadError) {
+        return fallbackNotCovered(input, "invalid_model_payload");
+      }
+      recordDiagnostic(input.trace, { event: "stop", reason: "model_unavailable" });
       return unavailableResult(input.scope);
     }
 
@@ -138,6 +138,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         normalizeFinalCitationMetadata(action),
         state,
       );
+      shareFinalAnswerEvidence(input, state, normalizedAction);
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
       if (pendingReviews.length > 0 && !deadlineReached(input)) {
         for (const requirementId of pendingReviews) {
@@ -152,8 +153,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           requirements: pendingReviews,
         });
         if (turn < maxTurns) continue;
-        recordDiagnostic(input.trace, { event: "stop", reason: "turn_budget_exhausted" });
-        return unavailableResult(input.scope);
+        return fallbackNotCovered(input, "turn_budget_exhausted");
       }
       const validation = state.references.validateFinal(
         normalizedAction,
@@ -173,8 +173,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           observe(state, { type: "invalid_citations", reason: validation.reason });
           continue;
         }
-        recordDiagnostic(input.trace, { event: "stop", reason: "invalid_final" });
-        return unavailableResult(input.scope);
+        return fallbackNotCovered(input, "invalid_final");
       }
       recordCoverage(
         input,
@@ -202,10 +201,13 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           },
         });
       } catch (error) {
-        const reason = error instanceof ModelUnavailableError
-          ? "coverage_verifier_unavailable"
-          : "coverage_verifier_invalid";
-        recordDiagnostic(input.trace, { event: "stop", reason });
+        if (!(error instanceof ModelUnavailableError)) {
+          return fallbackNotCovered(input, "coverage_verifier_invalid");
+        }
+        recordDiagnostic(input.trace, {
+          event: "stop",
+          reason: "coverage_verifier_unavailable",
+        });
         return unavailableResult(input.scope);
       }
       const auditedValidation = state.references.validateFinal(
@@ -220,11 +222,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           reason: auditedValidation.reason,
           repairAttempt: 1,
         });
-        recordDiagnostic(input.trace, {
-          event: "stop",
-          reason: "coverage_verifier_invalid",
-        });
-        return unavailableResult(input.scope);
+        return fallbackNotCovered(input, "coverage_verifier_invalid");
       }
       recordCoverage(
         input,
@@ -273,8 +271,32 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       }
     }
   }
-  recordDiagnostic(input.trace, { event: "stop", reason: "turn_budget_exhausted" });
-  return unavailableResult(input.scope);
+  return fallbackNotCovered(input, "turn_budget_exhausted");
+}
+
+function fallbackNotCovered(
+  input: KnowledgeAgentInput,
+  reason:
+    | "invalid_model_payload"
+    | "invalid_final"
+    | "turn_budget_exhausted"
+    | "coverage_verifier_invalid",
+): AnswerResult {
+  recordDiagnostic(input.trace, {
+    event: "fallback",
+    reason,
+    outcome: "not_covered",
+  });
+  return formatKnowledgeFinal(input.scope, {
+    action: "final",
+    requirements: input.plan.requirements.map((requirement) => ({
+      id: requirement.id,
+      coverage: "none",
+      answer: NOT_COVERED_REQUIREMENT_ANSWER,
+      citations: [],
+    })),
+    citations: [],
+  }, []);
 }
 
 function createAgentState(input: KnowledgeAgentInput): AgentState {
@@ -409,42 +431,61 @@ async function requestAgentAction(
       schemaDescription: finalOnly ? "pse_final_action" : "pse_agent_action",
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
-  try {
-    return await request();
-  } catch (error) {
-    if (!(error instanceof InvalidModelPayloadError)) throw error;
-    recordDiagnostic(input.trace, {
-      event: "model_payload",
-      result: "rejected",
-      reason: error.code,
-      repairAttempt: 1,
-      ...(error.schemaDescription === undefined
-        ? {}
-        : { schemaDescription: error.schemaDescription }),
-      ...(error.rawPayload === undefined
-        ? {}
-        : { rawPayload: error.rawPayload }),
-    });
+  let repairReason: string | undefined;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      return await request(error.code);
-    } catch (repairError) {
-      if (repairError instanceof InvalidModelPayloadError) {
-        recordDiagnostic(input.trace, {
-          event: "model_payload",
-          result: "rejected",
-          reason: repairError.code,
-          repairAttempt: 2,
-          ...(repairError.schemaDescription === undefined
-            ? {}
-            : { schemaDescription: repairError.schemaDescription }),
-          ...(repairError.rawPayload === undefined
-            ? {}
-            : { rawPayload: repairError.rawPayload }),
-        });
-      }
-      throw repairError;
+      return await request(repairReason);
+    } catch (error) {
+      if (!(error instanceof InvalidModelPayloadError)) throw error;
+      recordRejectedModelPayload(input, error, attempt);
+      if (attempt === 3) throw error;
+      repairReason = modelPayloadRepairReason(error);
     }
   }
+  throw new InvalidModelPayloadError();
+}
+
+function recordRejectedModelPayload(
+  input: KnowledgeAgentInput,
+  error: InvalidModelPayloadError,
+  attempt: number,
+): void {
+  recordDiagnostic(input.trace, {
+    event: "model_payload",
+    result: "rejected",
+    reason: error.code,
+    repairAttempt: attempt,
+    ...(error.schemaDescription === undefined
+      ? {}
+      : { schemaDescription: error.schemaDescription }),
+    ...(error.rawPayload === undefined
+      ? {}
+      : { rawPayload: error.rawPayload }),
+    ...(error.rawPayloadLength === undefined
+      ? {}
+      : { rawPayloadLength: error.rawPayloadLength }),
+    ...(error.finishReason === undefined
+      ? {}
+      : { finishReason: error.finishReason }),
+  });
+}
+
+function modelPayloadRepairReason(error: InvalidModelPayloadError): string {
+  const details = [
+    error.code,
+    ...(error.finishReason === undefined
+      ? []
+      : [`finish_reason=${error.finishReason}`]),
+    ...(error.rawPayloadLength === undefined
+      ? []
+      : [`raw_length=${error.rawPayloadLength}`]),
+  ];
+  if (error.finishReason === "abort" || error.finishReason === "length") {
+    details.push(
+      "上一次 JSON 在闭合前被服务中止；删除重复说明，每个 requirement.answer 控制在 600 个汉字以内，优先完整输出全部字段并闭合 JSON",
+    );
+  }
+  return details.join(";");
 }
 
 async function executeToolAction(
@@ -713,6 +754,44 @@ function shareReadEvidence(
       path,
       citation,
     });
+  }
+}
+
+function shareFinalAnswerEvidence(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+  action: FinalAction,
+): void {
+  for (const requirement of action.requirements) {
+    const targetState = state.requirements.get(requirement.id);
+    const targetDocuments = state.evidenceDocuments.get(requirement.id);
+    if (targetState === undefined || targetDocuments === undefined) continue;
+    for (const citation of requirement.citations) {
+      if (targetState.citationIndexes.has(citation)) continue;
+      const source = [...state.evidenceDocuments.entries()].find(
+        ([sourceRequirementId, documents]) =>
+          sourceRequirementId !== requirement.id && documents.has(citation),
+      );
+      const document = source?.[1].get(citation);
+      if (source === undefined || document === undefined) continue;
+      targetState.citationIndexes.add(citation);
+      targetState.readPaths.add(document.path);
+      targetDocuments.set(citation, document);
+      observe(state, {
+        type: "evidence_shared",
+        fromRequirementId: source[0],
+        toRequirementId: requirement.id,
+        path: document.path,
+        citation,
+      });
+      recordDiagnostic(input.trace, {
+        event: "evidence_shared",
+        fromRequirementId: source[0],
+        toRequirementId: requirement.id,
+        path: document.path,
+        citation,
+      });
+    }
   }
 }
 
