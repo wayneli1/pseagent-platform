@@ -172,18 +172,25 @@ interface LunkrDirectMessage {
 
 - Socket.IO 事件名为 `message`；
 - payload 可解析；
+- payload 自身具备真实消息结构：存在明确的消息 ID（`mid`、`msgId`、
+  `messageId` 或 `clientMid`）和发送者对象，不能用控制事件字段拼接合成消息 ID；
 - 消息来源为私聊用户 UID；
 - 发送者不是机器人自身 UID；
 - 消息 ID 未处理；
 - 文本非空。
 
-群、讨论组、频道和无法确认类型的事件默认拒绝，不通过猜测路由。
+Lunkr 会把真实消息和部分控制事件放在同一个 `/cim/*` 通道下，因此不得仅用
+精确 topic 白名单判断是否为消息。`inbox` 和 `/cim/*` topic 都先进入结构校验；
+群、讨论组、频道、缺少真实消息 ID/发送者结构和无法确认类型的事件默认拒绝，
+不通过猜测路由。
 
 打开聊天窗口、已读回执、输入状态、在线状态、送达回执等控制事件必须静默
 忽略，不得被规范化为用户消息，也不得向用户发送“当前仅支持文字私聊。”
 提示。空数组、空对象或 `null` 的附件容器不算真实附件。只有附件字段中
 实际存在文件信息，或消息类型明确为图片、文件、语音、音频、视频、卡片等
-非文字内容时，才标记 `hasAttachments=true`。
+非文字内容时，才标记 `hasAttachments=true`。`clearUnread`、聊天窗口建立的
+P2P 协商等负载即使带 `uid` 或 `attachments` 字段，只要缺少真实消息 ID 和
+发送者结构，也必须静默忽略。
 
 ## 触发、权限与固定命令
 
@@ -261,6 +268,7 @@ npm run lunkr:start
 - TypeScript typecheck、Vitest、build 和现有 Rust 测试全部通过。
 - 登录响应、OTP 分支、Session 加密、Socket 帧解析、私聊识别、忽略自己、去重、同 peer 串行、上下文隔离和分段发送均有无网络测试。
 - 打开聊天窗口、已读、typing、presence 和空附件容器均被静默忽略；真实附件仍只回复固定文字提示。
+- 真实 `USER` 私聊即使使用非精确匹配的 `/cim/*` topic 也能进入 PSEAgent；`clearUnread` 和 P2P 协商负载不会误触发。
 - 仓库不存在密码、SID、Cookie、消息正文或回答正文。
 - 运行时代码不包含 `openclaw` 命令、依赖或配置路径。
 
