@@ -63,7 +63,36 @@ describe("main wiring", () => {
     const agentResult: AnswerResult = {
       scope: "professional", status: "not_covered", answer: "未覆盖", references: [],
     };
-    const runAgent = vi.fn<AgentRunner>(async () => agentResult);
+    const runAgent = vi.fn<AgentRunner>(async (input) => {
+      input.trace.record({
+        event: "coverage",
+        stage: "draft",
+        requirements: [{
+          id: "R1",
+          evidenceMode: "direct_only",
+          coverage: "none",
+          citations: [],
+        }],
+        citations: [],
+        stopReason: "final",
+      });
+      input.trace.record({
+        event: "coverage",
+        stage: "verified",
+        requirements: [{
+          id: "R1",
+          evidenceMode: "direct_only",
+          coverage: "none",
+          citations: [],
+          retainedDirectSegmentCount: 0,
+          retainedSynthesizedSegmentCount: 0,
+          removedSegmentCount: 1,
+        }],
+        citations: [],
+        stopReason: "final",
+      });
+      return agentResult;
+    });
     const closeServer = vi.fn(async () => undefined);
     const server = { close: closeServer } as unknown as McpServer;
     const createHistoricalProvider = vi.fn();
@@ -80,12 +109,25 @@ describe("main wiring", () => {
     });
 
     await expect(runtime.answer("普通问题")).resolves.toMatchObject({ scope: "normal", answer: "普通回答" });
-    await expect(runtime.answer("产品问题")).resolves.toBe(agentResult);
-    await expect(runtime.answerDetailed("普通问题")).resolves.toMatchObject({
+    const productExecution = await runtime.answerDetailed("产品问题");
+    expect(productExecution).toMatchObject({
+      result: agentResult,
+      draftCoverage: ["none"],
+      verifiedCoverage: ["none"],
+      retainedDirectSegmentCount: 0,
+      retainedSynthesizedSegmentCount: 0,
+      removedSegmentCount: 1,
+    });
+    expect(productExecution).not.toHaveProperty("historicalGateReason");
+    const normalExecution = await runtime.answerDetailed("普通问题");
+    expect(normalExecution).toMatchObject({
       retryable: false,
       stopReason: "final",
       result: { scope: "normal", answer: "普通回答" },
     });
+    expect(normalExecution).not.toHaveProperty("draftCoverage");
+    expect(normalExecution).not.toHaveProperty("verifiedCoverage");
+    expect(normalExecution).not.toHaveProperty("historicalGateReason");
     expect(createModel).toHaveBeenCalledOnce();
     expect(createKnowledgePlanner).toHaveBeenCalledOnce();
     expect(model.completeText).toHaveBeenCalledTimes(2);

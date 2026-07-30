@@ -2,7 +2,6 @@ import {
   agentActionSchema,
   finalOnlyActionSchema,
   type AnswerResult,
-  type CoverageVerificationReason,
   type FinalAction,
   type KnowledgePlan,
   type KnowledgeRequirement,
@@ -18,6 +17,7 @@ import {
   NOT_COVERED_REQUIREMENT_ANSWER,
   verifyKnowledgeCoverage,
   type CoverageEvidenceDocument,
+  type CoverageVerificationSummary,
   type CoverageVerifierInput,
 } from "./coverage-verifier.js";
 import {
@@ -189,10 +189,8 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         deadlineReached(input) ? "deadline" : "final",
       );
       let auditedAction: FinalAction;
-      let verifiedReasons: readonly {
-        readonly id: string;
-        readonly reason: CoverageVerificationReason;
-      }[] | undefined;
+      let verificationSummaries:
+        readonly CoverageVerificationSummary[] | undefined;
       try {
         auditedAction = await (
           input.verifyCoverage ?? verifyKnowledgeCoverage
@@ -203,8 +201,8 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           evidence: coverageEvidence(normalizedAction, state),
           model: input.model,
           ...(input.signal === undefined ? {} : { signal: input.signal }),
-          onVerified(reasons) {
-            verifiedReasons = reasons;
+          onVerified(summaries) {
+            verificationSummaries = summaries;
           },
         });
       } catch (error) {
@@ -236,7 +234,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         auditedAction,
         "verified",
         deadlineReached(input) ? "deadline" : "final",
-        verifiedReasons,
+        verificationSummaries,
       );
       return formatKnowledgeFinal(
         input.scope,
@@ -977,20 +975,40 @@ function recordCoverage(
   action: FinalAction,
   stage: "draft" | "verified",
   stopReason: "final" | "deadline",
-  reasons?: readonly {
-    readonly id: string;
-    readonly reason: CoverageVerificationReason;
-  }[],
+  summaries?: readonly CoverageVerificationSummary[],
 ): void {
+  const summaryById = new Map(
+    summaries?.map((summary) => [summary.id, summary]),
+  );
   recordDiagnostic(input.trace, {
     event: "coverage",
     stage,
-    requirements: action.requirements.map((requirement) => ({
-      id: requirement.id,
-      coverage: requirement.coverage,
-      citations: requirementEvidenceCitations(requirement),
-    })),
-    ...(reasons === undefined ? {} : { reasons }),
+    requirements: action.requirements.map((requirement) => {
+      const planned = input.plan.requirements.find(
+        (candidate) => candidate.id === requirement.id,
+      );
+      const summary = summaryById.get(requirement.id);
+      return {
+        id: requirement.id,
+        evidenceMode: planned?.evidenceMode ?? "direct_only",
+        coverage: requirement.coverage,
+        citations: requirementEvidenceCitations(requirement),
+        ...(summary === undefined
+          ? {}
+          : {
+              retainedDirectSegmentCount:
+                summary.retainedDirectSegmentCount,
+              retainedSynthesizedSegmentCount:
+                summary.retainedSynthesizedSegmentCount,
+              removedSegmentCount: summary.removedSegmentCount,
+            }),
+      };
+    }),
+    ...(summaries === undefined
+      ? {}
+      : {
+          reasons: summaries.map(({ id, reason }) => ({ id, reason })),
+        }),
     citations: action.citations,
     stopReason,
   });

@@ -74,19 +74,32 @@ function createProfessionalService(
         : primary.status === "partially_answered"
           ? "partial"
           : "none";
+      const citations = primary.references.map((reference) => reference.index);
+      input.trace.record({
+        event: "coverage",
+        stage: "draft",
+        requirements: [{
+          id: "R1",
+          evidenceMode: "direct_only",
+          coverage,
+          citations,
+        }],
+        citations,
+        stopReason: "final",
+      });
       input.trace.record({
         event: "coverage",
         stage: "verified",
         requirements: [{
           id: "R1",
+          evidenceMode: "direct_only",
           coverage,
-          citations: coverage === "none"
-            ? []
-            : primary.references.map((reference) => reference.index),
+          citations,
+          retainedDirectSegmentCount: coverage === "none" ? 0 : 1,
+          retainedSynthesizedSegmentCount: 0,
+          removedSegmentCount: 0,
         }],
-        citations: coverage === "none"
-          ? []
-          : primary.references.map((reference) => reference.index),
+        citations,
         stopReason: "final",
       });
     }
@@ -130,6 +143,9 @@ describe("AnswerService", () => {
       historicalAttempted: false,
       historicalUsed: false,
     });
+    expect(noProviderExecution).not.toHaveProperty("draftCoverage");
+    expect(noProviderExecution).not.toHaveProperty("verifiedCoverage");
+    expect(noProviderExecution).not.toHaveProperty("historicalGateReason");
     expect(noProviderExecution.result).toEqual({
       scope: "normal",
       status: "answered",
@@ -209,6 +225,135 @@ describe("AnswerService", () => {
     },
   );
 
+  it("exposes verified formal-support counts without evaluating the historical gate", async () => {
+    const primary: AnswerResult = {
+      scope: "professional",
+      status: "answered",
+      answer: "正式回答",
+      references: [formalReference],
+    };
+    const historicalProvider = {
+      answer: vi.fn(async () => historicalAnswer),
+      close: vi.fn(async () => undefined),
+    } satisfies HistoricalAnswerProvider;
+    const { service } = createProfessionalService(primary, historicalProvider);
+
+    const execution = await service.answerDetailed("Coremail 产品问题");
+
+    expect(execution).toMatchObject({
+      draftCoverage: ["complete"],
+      verifiedCoverage: ["complete"],
+      retainedDirectSegmentCount: 1,
+      retainedSynthesizedSegmentCount: 0,
+      removedSegmentCount: 0,
+      historicalAttempted: false,
+      historicalUsed: false,
+    });
+    expect(execution).not.toHaveProperty("historicalGateReason");
+  });
+
+  it.each([
+    {
+      evidenceMode: "direct_only",
+      retainedDirectSegmentCount: 1,
+      retainedSynthesizedSegmentCount: 0,
+    },
+    {
+      evidenceMode: "synthesis_allowed",
+      retainedDirectSegmentCount: 0,
+      retainedSynthesizedSegmentCount: 2,
+    },
+  ] as const)(
+    "blocks history with formal support from $evidenceMode evidence",
+    async ({
+      evidenceMode,
+      retainedDirectSegmentCount,
+      retainedSynthesizedSegmentCount,
+    }) => {
+      const events: DiagnosticEvent[] = [];
+      const historicalProvider = {
+        answer: vi.fn(async () => historicalAnswer),
+        close: vi.fn(async () => undefined),
+      } satisfies HistoricalAnswerProvider;
+      const service = new AnswerService({
+        model: {} as ModelClient,
+        router: { route: vi.fn(async () => "professional" as const) },
+        planner: {
+          plan: vi.fn(async () => ({
+            subject: knowledgePlan.subject,
+            requirements: [{
+              id: "R1" as const,
+              question: "产品问题",
+              queries: ["Coremail 产品问题"],
+              evidenceMode,
+            }],
+          })),
+        },
+        diagnostics: {
+          start: () => ({
+            requestId: `formal-support-${evidenceMode}`,
+            record(event: DiagnosticEvent) {
+              events.push(event);
+            },
+          }),
+        },
+        knowledge: {
+          open: vi.fn(async () => ({
+            project: "coremail-professional",
+            schema: "专业库 schema",
+            overview: "专业库用途",
+          }) as KnowledgeSession),
+        },
+        runAgent: vi.fn<AgentRunner>(async (input) => {
+          input.trace.record({
+            event: "coverage",
+            stage: "verified",
+            requirements: [{
+              id: "R1",
+              evidenceMode,
+              coverage: "complete",
+              citations: [1],
+              retainedDirectSegmentCount,
+              retainedSynthesizedSegmentCount,
+              removedSegmentCount: 0,
+            }],
+            reasons: [{
+              id: "R1",
+              reason: retainedSynthesizedSegmentCount > 0
+                ? "synthesized_support"
+                : "direct_support",
+            }],
+            citations: [1],
+            stopReason: "final",
+          });
+          return {
+            scope: "professional",
+            status: "not_covered",
+            answer: "防御性测试：结果状态与正式支持不一致",
+            references: [],
+          };
+        }),
+        historicalProvider,
+      });
+
+      const execution = await service.answerDetailed("Coremail 产品问题");
+
+      expect(execution).toMatchObject({
+        verifiedCoverage: ["complete"],
+        retainedDirectSegmentCount,
+        retainedSynthesizedSegmentCount,
+        removedSegmentCount: 0,
+        historicalGateReason: "formal_support_present",
+        historicalAttempted: false,
+        historicalUsed: false,
+      });
+      expect(historicalProvider.answer).not.toHaveBeenCalled();
+      expect(JSON.stringify(events)).not.toContain(
+        "direct_formal_evidence_present",
+      );
+    },
+  );
+
   it("adds a separate historical answer only when formal knowledge is not covered", async () => {
     const primary: AnswerResult = {
       scope: "professional",
@@ -227,6 +372,12 @@ describe("AnswerService", () => {
       "不应传递的对话上下文",
     );
     expect(usedProviderExecution).toMatchObject({
+      draftCoverage: ["none"],
+      verifiedCoverage: ["none"],
+      retainedDirectSegmentCount: 0,
+      retainedSynthesizedSegmentCount: 0,
+      removedSegmentCount: 0,
+      historicalGateReason: "eligible",
       historicalAttempted: true,
       historicalUsed: true,
     });
@@ -267,7 +418,15 @@ describe("AnswerService", () => {
         input.trace.record({
           event: "coverage",
           stage: "verified",
-          requirements: [{ id: "R1", coverage: "none", citations: [] }],
+          requirements: [{
+            id: "R1",
+            evidenceMode: "direct_only",
+            coverage: "none",
+            citations: [],
+            retainedDirectSegmentCount: 0,
+            retainedSynthesizedSegmentCount: 0,
+            removedSegmentCount: 0,
+          }],
           reasons: [{ id: "R1", reason: "target_omitted" }],
           citations: [],
           stopReason: "final",
@@ -280,6 +439,7 @@ describe("AnswerService", () => {
     const execution = await service.answerDetailed("推荐一份邮件系统的 POC 方案给我");
 
     expect(execution).toMatchObject({
+      historicalGateReason: "question_not_explicit_coremail",
       historicalAttempted: false,
       historicalUsed: false,
       result: { status: "not_covered" },
@@ -323,6 +483,7 @@ describe("AnswerService", () => {
     const execution = await service.answerDetailed("Coremail 有哪些能力？");
 
     expect(execution).toMatchObject({
+      historicalGateReason: "structural_fallback",
       historicalAttempted: false,
       historicalUsed: false,
       result: { status: "not_covered" },
@@ -359,6 +520,7 @@ describe("AnswerService", () => {
     const execution = await service.answerDetailed("Coremail 有哪些能力？");
 
     expect(execution).toMatchObject({
+      historicalGateReason: "formal_verification_incomplete",
       historicalAttempted: false,
       historicalUsed: false,
       result: { status: "not_covered" },

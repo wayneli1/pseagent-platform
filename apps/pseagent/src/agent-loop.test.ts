@@ -321,6 +321,15 @@ describe("runKnowledgeAgent", () => {
     expect(events.find(
       (event) => event.event === "coverage" && event.stage === "verified",
     )).toMatchObject({
+      requirements: [{
+        id: "R1",
+        evidenceMode: "direct_only",
+        coverage: "none",
+        citations: [],
+        retainedDirectSegmentCount: 0,
+        retainedSynthesizedSegmentCount: 0,
+        removedSegmentCount: 0,
+      }],
       reasons: [{ id: "R1", reason: "related_only" }],
     });
     expect(JSON.stringify(events)).not.toContain(

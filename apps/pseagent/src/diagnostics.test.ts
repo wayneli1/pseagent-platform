@@ -48,6 +48,22 @@ describe("development diagnostic trace", () => {
       finishReason: "length",
     });
     trace.record({
+      event: "coverage",
+      stage: "verified",
+      requirements: [{
+        id: "R1",
+        evidenceMode: "synthesis_allowed",
+        coverage: "complete",
+        citations: [1, 2, 3],
+        retainedDirectSegmentCount: 1,
+        retainedSynthesizedSegmentCount: 2,
+        removedSegmentCount: 1,
+      }],
+      reasons: [{ id: "R1", reason: "synthesized_support" }],
+      citations: [1, 2, 3],
+      stopReason: "final",
+    });
+    trace.record({
       event: "finish",
       scope: "professional",
       status: "answered",
@@ -74,10 +90,33 @@ describe("development diagnostic trace", () => {
       "route",
       "plan",
       "model_payload",
+      "coverage",
       "finish",
     ]);
     expect(new Set(records.map((record) => record.requestId))).toEqual(new Set([trace.requestId]));
     expect(records.every((record) => record.answer === undefined)).toBe(true);
+    const coverage = records.find((record) => record.event === "coverage");
+    expect(coverage).toMatchObject({
+      requirements: [{
+        id: "R1",
+        evidenceMode: "synthesis_allowed",
+        coverage: "complete",
+        citations: [1, 2, 3],
+        retainedDirectSegmentCount: 1,
+        retainedSynthesizedSegmentCount: 2,
+        removedSegmentCount: 1,
+      }],
+    });
+    expect(Object.keys(coverage ?? {}).sort()).toEqual([
+      "citations",
+      "event",
+      "reasons",
+      "requestId",
+      "requirements",
+      "stage",
+      "stopReason",
+      "timestamp",
+    ]);
     expect(content.length).toBeLessThan(10_000);
   });
 

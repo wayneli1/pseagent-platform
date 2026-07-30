@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AnswerStatus,
+  Coverage,
   CoverageVerificationReason,
   Scope,
 } from "./contracts.js";
@@ -16,6 +17,13 @@ export type PseStopReason =
   | "turn_budget_exhausted"
   | "coverage_verifier_unavailable"
   | "coverage_verifier_invalid";
+
+export type HistoricalGateReason =
+  | "eligible"
+  | "question_not_explicit_coremail"
+  | "formal_verification_incomplete"
+  | "formal_support_present"
+  | "structural_fallback";
 
 export type DiagnosticEvent =
   | { readonly event: "route"; readonly scope: Scope }
@@ -64,8 +72,12 @@ export type DiagnosticEvent =
       readonly stage: "draft" | "verified";
       readonly requirements: readonly {
         readonly id: string;
-        readonly coverage: "complete" | "partial" | "none";
+        readonly evidenceMode: "direct_only" | "synthesis_allowed";
+        readonly coverage: Coverage;
         readonly citations: readonly number[];
+        readonly retainedDirectSegmentCount?: number;
+        readonly retainedSynthesizedSegmentCount?: number;
+        readonly removedSegmentCount?: number;
       }[];
       readonly reasons?: readonly {
         readonly id: string;
@@ -102,12 +114,7 @@ export type DiagnosticEvent =
   | {
       readonly event: "historical_gate";
       readonly eligible: boolean;
-      readonly reason:
-        | "eligible"
-        | "question_not_explicit_coremail"
-        | "formal_verification_incomplete"
-        | "direct_formal_evidence_present"
-        | "structural_fallback";
+      readonly reason: HistoricalGateReason;
     }
   | {
       readonly event: "stop";

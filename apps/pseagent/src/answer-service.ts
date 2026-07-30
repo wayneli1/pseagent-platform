@@ -1,4 +1,4 @@
-import type { AnswerResult, Scope } from "./contracts.js";
+import type { AnswerResult, Coverage, Scope } from "./contracts.js";
 import { normalAnswerMessages } from "./prompts.js";
 import type { ScopeRouter } from "./router.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
@@ -11,6 +11,7 @@ import {
   type DiagnosticEvent,
   type DiagnosticTrace,
   type DiagnosticTraceFactory,
+  type HistoricalGateReason,
   type PseStopReason,
 } from "./diagnostics.js";
 import {
@@ -44,6 +45,12 @@ export interface PseAnswerExecution {
   readonly stopReason: PseStopReason | "final" | "unknown_unavailable";
   readonly historicalAttempted: boolean;
   readonly historicalUsed: boolean;
+  readonly draftCoverage?: readonly Coverage[];
+  readonly verifiedCoverage?: readonly Coverage[];
+  readonly retainedDirectSegmentCount?: number;
+  readonly retainedSynthesizedSegmentCount?: number;
+  readonly removedSegmentCount?: number;
+  readonly historicalGateReason?: HistoricalGateReason;
 }
 
 export class AnswerService {
@@ -195,8 +202,14 @@ export class AnswerService {
 class OutcomeTrace implements DiagnosticTrace {
   stopReason?: PseStopReason;
   formalCoverageVerified = false;
-  verifiedHasDirectEvidence = false;
+  verifiedHasFormalSupport = false;
   structuralFallback = false;
+  draftCoverage?: readonly Coverage[];
+  verifiedCoverage?: readonly Coverage[];
+  retainedDirectSegmentCount?: number;
+  retainedSynthesizedSegmentCount?: number;
+  removedSegmentCount?: number;
+  historicalGateReason?: HistoricalGateReason;
 
   constructor(private readonly delegate: DiagnosticTrace) {}
 
@@ -207,14 +220,60 @@ class OutcomeTrace implements DiagnosticTrace {
   record(event: DiagnosticEvent): void {
     if (event.event === "stop") this.stopReason = event.reason;
     if (event.event === "fallback") this.structuralFallback = true;
-    if (event.event === "coverage" && event.stage === "verified") {
-      this.formalCoverageVerified = true;
-      this.verifiedHasDirectEvidence = event.requirements.some(
-        (requirement) => requirement.coverage !== "none",
+    if (event.event === "coverage") {
+      const coverage = event.requirements.map(
+        (requirement) => requirement.coverage,
       );
+      if (event.stage === "draft") {
+        this.draftCoverage = coverage;
+      } else {
+        this.formalCoverageVerified = true;
+        this.verifiedCoverage = coverage;
+        const hasSegmentCounts = event.requirements.some((requirement) =>
+          requirement.retainedDirectSegmentCount !== undefined ||
+          requirement.retainedSynthesizedSegmentCount !== undefined ||
+          requirement.removedSegmentCount !== undefined
+        );
+        if (hasSegmentCounts) {
+          this.retainedDirectSegmentCount = sumRequirementCounts(
+            event.requirements,
+            "retainedDirectSegmentCount",
+          );
+          this.retainedSynthesizedSegmentCount = sumRequirementCounts(
+            event.requirements,
+            "retainedSynthesizedSegmentCount",
+          );
+          this.removedSegmentCount = sumRequirementCounts(
+            event.requirements,
+            "removedSegmentCount",
+          );
+          this.verifiedHasFormalSupport =
+            this.retainedDirectSegmentCount > 0 ||
+            this.retainedSynthesizedSegmentCount > 0;
+        }
+      }
+    }
+    if (event.event === "historical_gate") {
+      this.historicalGateReason = event.reason;
     }
     this.delegate.record(event);
   }
+}
+
+function sumRequirementCounts(
+  requirements: Extract<
+    DiagnosticEvent,
+    { event: "coverage" }
+  >["requirements"],
+  key:
+    | "retainedDirectSegmentCount"
+    | "retainedSynthesizedSegmentCount"
+    | "removedSegmentCount",
+): number {
+  return requirements.reduce(
+    (total, requirement) => total + (requirement[key] ?? 0),
+    0,
+  );
 }
 
 function evaluateHistoricalGate(
@@ -223,7 +282,7 @@ function evaluateHistoricalGate(
 ): Extract<DiagnosticEvent, { event: "historical_gate" }>["reason"] {
   if (trace.structuralFallback) return "structural_fallback";
   if (!trace.formalCoverageVerified) return "formal_verification_incomplete";
-  if (trace.verifiedHasDirectEvidence) return "direct_formal_evidence_present";
+  if (trace.verifiedHasFormalSupport) return "formal_support_present";
   if (!/coremail/iu.test(question)) return "question_not_explicit_coremail";
   return "eligible";
 }
@@ -262,6 +321,7 @@ function finishExecution(
   historicalUsed: boolean,
 ): PseAnswerExecution {
   recordFinished(trace, result, startedAt, historicalAttempted, historicalUsed);
+  const coverageMetadata = executionCoverageMetadata(trace);
   if (result.status !== "temporarily_unavailable") {
     return {
       result,
@@ -269,6 +329,7 @@ function finishExecution(
       stopReason: "final",
       historicalAttempted,
       historicalUsed,
+      ...coverageMetadata,
     };
   }
   const stopReason = trace.stopReason ?? "unknown_unavailable";
@@ -281,6 +342,45 @@ function finishExecution(
     stopReason,
     historicalAttempted,
     historicalUsed,
+    ...coverageMetadata,
+  };
+}
+
+function executionCoverageMetadata(
+  trace: OutcomeTrace,
+): Omit<
+  PseAnswerExecution,
+  | "result"
+  | "retryable"
+  | "stopReason"
+  | "historicalAttempted"
+  | "historicalUsed"
+> {
+  return {
+    ...(trace.draftCoverage === undefined
+      ? {}
+      : { draftCoverage: trace.draftCoverage }),
+    ...(trace.verifiedCoverage === undefined
+      ? {}
+      : { verifiedCoverage: trace.verifiedCoverage }),
+    ...(trace.retainedDirectSegmentCount === undefined
+      ? {}
+      : {
+          retainedDirectSegmentCount:
+            trace.retainedDirectSegmentCount,
+        }),
+    ...(trace.retainedSynthesizedSegmentCount === undefined
+      ? {}
+      : {
+          retainedSynthesizedSegmentCount:
+            trace.retainedSynthesizedSegmentCount,
+        }),
+    ...(trace.removedSegmentCount === undefined
+      ? {}
+      : { removedSegmentCount: trace.removedSegmentCount }),
+    ...(trace.historicalGateReason === undefined
+      ? {}
+      : { historicalGateReason: trace.historicalGateReason }),
   };
 }
 
