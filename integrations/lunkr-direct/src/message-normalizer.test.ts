@@ -147,19 +147,25 @@ describe("normalizeDirectMessage", () => {
     }, "#bot#U")).toBeUndefined();
   });
 
-  it("silently ignores an unknown message type even when it carries text", () => {
-    expect(normalizeDirectMessage({
-      topic: "/cim/message",
-      payload: {
-        msgId: "unknown-window-state",
-        sourceId: "#peer#U",
-        from: { uid: "#peer#U" },
-        to: { uid: "#bot#U" },
-        subject: "未知客户端状态",
-        contentType: "window-state-v2",
-      },
-    }, "#bot#U")).toBeUndefined();
-  });
+  it.each(["chat-text-v2", "custom-text-v2", "html", "richtext", "card"])(
+    "treats the non-control %s message type as ordinary text",
+    (contentType) => {
+      expect(normalizeDirectMessage({
+        topic: "/cim/message",
+        payload: {
+          msgId: `ordinary-${contentType}`,
+          sourceId: "#peer#U",
+          from: { uid: "#peer#U" },
+          to: { uid: "#bot#U" },
+          subject: "未知类型文字",
+          contentType,
+        },
+      }, "#bot#U")).toMatchObject({
+        text: "未知类型文字",
+        hasAttachments: false,
+      });
+    },
+  );
 
   it("does not treat empty attachment containers as real attachments", () => {
     expect(normalizeDirectMessage({
@@ -190,6 +196,20 @@ describe("normalizeDirectMessage", () => {
         fileInfo: {},
       },
     }, "#bot#U")).toBeUndefined();
+
+    expect(normalizeDirectMessage({
+      topic: "inbox",
+      payload: {
+        msgId: "ordinary-text-with-status-metadata",
+        sourceId: "#peer#U",
+        from: { uid: "#peer#U" },
+        subject: "状态元数据不是附件",
+        fileInfo: { status: "none" },
+      },
+    }, "#bot#U")).toMatchObject({
+      text: "状态元数据不是附件",
+      hasAttachments: false,
+    });
   });
 
   it("marks attachment-only private messages", () => {
@@ -208,7 +228,16 @@ describe("normalizeDirectMessage", () => {
     });
   });
 
-  it.each(["image", "file", "voice", "audio", "video", "card"])(
+  it.each([
+    "image",
+    "image/png",
+    "file",
+    "application/pdf",
+    "voice",
+    "audio/ogg",
+    "video/mp4",
+    "attachment",
+  ])(
     "marks the explicit %s message type as non-text content",
     (contentType) => {
       expect(normalizeDirectMessage({

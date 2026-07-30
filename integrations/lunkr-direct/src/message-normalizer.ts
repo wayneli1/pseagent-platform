@@ -1,11 +1,12 @@
 import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
 
 const INVISIBLE_COMMAND_CHARACTERS = /[\u200B-\u200D\u2060\uFEFF]/gu;
-const TEXT_MESSAGE_TYPE = /^(?:text(?:\/plain)?|plain|message)$/iu;
 const ATTACHMENT_MESSAGE_TYPE =
-  /^(?:(?:image|audio|video|application)\/|image|img|file|voice|audio|video|attachment|card|richtext|html)(?:$|[/:_.-])/iu;
+  /^(?:(?:image|audio|video|application)\/[a-z0-9.+-]+|image|img|file|voice|audio|video|attachment)(?:$|[/:_.-])/iu;
 const CONTROL_MESSAGE_TYPE =
   /^(?:read|read[_-]?receipt|receipt|seen|ack|typing(?:[_-](?:start|stop))?|presence(?:[_-]?update)?|delivered|delivery[_-]?receipt|open|chat[_-]?open|window[_-]?open|focus|blur|status|system|notice|notification|event|sync)$/iu;
+const ATTACHMENT_DETAIL_KEY =
+  /^(?:id|file[_-]?id|attachment[_-]?id|name|file[_-]?name|filename|url|download[_-]?url|path|size|file[_-]?size|content[_-]?type|mime[_-]?type)$/iu;
 
 export function normalizeDirectMessage(
   event: unknown,
@@ -26,13 +27,6 @@ export function normalizeDirectMessage(
     ["contentType", "content_type", "msgType", "eventType"],
   );
   if (messageType !== undefined && CONTROL_MESSAGE_TYPE.test(messageType.trim())) {
-    return undefined;
-  }
-  if (
-    messageType !== undefined &&
-    !TEXT_MESSAGE_TYPE.test(messageType.trim()) &&
-    !ATTACHMENT_MESSAGE_TYPE.test(messageType.trim())
-  ) {
     return undefined;
   }
   const sourceUid = firstString(payload, ["sourceId", "source_id", "uid"]);
@@ -112,22 +106,39 @@ function detectsAttachments(
   messageType: string | undefined,
 ): boolean {
   for (const key of ["attachments", "files", "fileInfo", "attachment"]) {
-    const value = payload[key];
-    if (Array.isArray(value) && value.length > 0) return true;
+    if (hasConcreteAttachment(payload[key])) return true;
+  }
+  if (messageType === undefined) return false;
+  return ATTACHMENT_MESSAGE_TYPE.test(messageType.trim());
+}
+
+function hasConcreteAttachment(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => hasConcreteAttachment(item));
+  }
+  if (typeof value === "string") return value.trim() !== "";
+  if (value === true) return true;
+  const record = asRecord(value);
+  if (record === undefined) return false;
+  for (const [key, detail] of Object.entries(record)) {
+    if (ATTACHMENT_DETAIL_KEY.test(key) && hasAttachmentDetailValue(detail)) {
+      return true;
+    }
     if (
-      value !== null &&
-      typeof value === "object" &&
-      Object.keys(value).length > 0
+      detail !== null &&
+      typeof detail === "object" &&
+      hasConcreteAttachment(detail)
     ) {
       return true;
     }
-    if (typeof value === "string" && value.trim() !== "") return true;
-    if (value === true) return true;
   }
-  if (messageType === undefined) return false;
-  const normalizedType = messageType.trim();
-  if (TEXT_MESSAGE_TYPE.test(normalizedType)) return false;
-  return ATTACHMENT_MESSAGE_TYPE.test(normalizedType);
+  return false;
+}
+
+function hasAttachmentDetailValue(value: unknown): boolean {
+  if (typeof value === "string") return value.trim() !== "";
+  if (typeof value === "number") return Number.isFinite(value);
+  return value === true;
 }
 
 function parseTimestamp(value: unknown, fallback: number): number {
