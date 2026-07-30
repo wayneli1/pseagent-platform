@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
 
 const INVISIBLE_COMMAND_CHARACTERS = /[\u200B-\u200D\u2060\uFEFF]/gu;
+const TEXT_MESSAGE_TYPE = /^(?:text(?:\/plain)?|plain|message)$/iu;
+const ATTACHMENT_MESSAGE_TYPE =
+  /^(?:(?:image|audio|video|application)\/|image|img|file|voice|audio|video|attachment|card|richtext|html)(?:$|[/:_.-])/iu;
+const CONTROL_MESSAGE_TYPE =
+  /^(?:read|read[_-]?receipt|receipt|seen|ack|typing(?:[_-](?:start|stop))?|presence(?:[_-]?update)?|delivered|delivery[_-]?receipt|open|chat[_-]?open|window[_-]?open|focus|blur|status|system|notice|notification|event|sync)$/iu;
 
 export function normalizeDirectMessage(
   event: unknown,
@@ -11,11 +16,23 @@ export function normalizeDirectMessage(
   const envelope = asRecord(event);
   if (envelope === undefined) return undefined;
   const topic = typeof envelope.topic === "string" ? envelope.topic : "";
-  if (topic !== "" && topic !== "inbox" && !topic.includes("/cim/")) {
-    return undefined;
-  }
+  if (!isDirectMessageTopic(topic)) return undefined;
   const payload = parsePayload(envelope.payload);
   if (payload === undefined) return undefined;
+  const messageType = firstString(
+    payload,
+    ["contentType", "content_type", "msgType", "eventType"],
+  );
+  if (messageType !== undefined && CONTROL_MESSAGE_TYPE.test(messageType.trim())) {
+    return undefined;
+  }
+  if (
+    messageType !== undefined &&
+    !TEXT_MESSAGE_TYPE.test(messageType.trim()) &&
+    !ATTACHMENT_MESSAGE_TYPE.test(messageType.trim())
+  ) {
+    return undefined;
+  }
   const sourceUid = firstString(payload, ["sourceId", "source_id", "uid"]);
   const from = asRecord(payload.from);
   const senderUid =
@@ -46,7 +63,7 @@ export function normalizeDirectMessage(
   const text = subject === undefined
     ? firstString(payload, ["content", "text", "body"]) ?? ""
     : decodeLunkrSubject(subject);
-  const hasAttachments = detectsAttachments(payload);
+  const hasAttachments = detectsAttachments(payload, messageType);
   if (text.trim() === "" && !hasAttachments) return undefined;
   const timestamp = parseTimestamp(payload.time ?? payload.timestamp, now);
   const id =
@@ -95,14 +112,33 @@ function parsePayload(value: unknown): Record<string, unknown> | undefined {
   return asRecord(value);
 }
 
-function detectsAttachments(payload: Record<string, unknown>): boolean {
+function isDirectMessageTopic(topic: string): boolean {
+  return topic === "" ||
+    topic === "inbox" ||
+    /^\/cim\/message\/?$/iu.test(topic);
+}
+
+function detectsAttachments(
+  payload: Record<string, unknown>,
+  messageType: string | undefined,
+): boolean {
   for (const key of ["attachments", "files", "fileInfo", "attachment"]) {
     const value = payload[key];
     if (Array.isArray(value) && value.length > 0) return true;
-    if (value !== null && typeof value === "object") return true;
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      Object.keys(value).length > 0
+    ) {
+      return true;
+    }
+    if (typeof value === "string" && value.trim() !== "") return true;
+    if (value === true) return true;
   }
-  const type = firstString(payload, ["contentType", "content_type", "msgType"]);
-  return type !== undefined && !/^(?:text|plain|message)$/i.test(type);
+  if (messageType === undefined) return false;
+  const normalizedType = messageType.trim();
+  if (TEXT_MESSAGE_TYPE.test(normalizedType)) return false;
+  return ATTACHMENT_MESSAGE_TYPE.test(normalizedType);
 }
 
 function parseTimestamp(value: unknown, fallback: number): number {

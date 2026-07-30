@@ -45,6 +45,86 @@ describe("normalizeDirectMessage", () => {
       .toBeUndefined();
   });
 
+  it.each([
+    "read",
+    "receipt",
+    "typing",
+    "presence",
+    "delivered",
+    "open",
+  ])("silently ignores the %s control message type", (contentType) => {
+    expect(normalizeDirectMessage({
+      topic: "/cim/message",
+      payload: {
+        msgId: `control-${contentType}`,
+        sourceId: "#peer#U",
+        from: { uid: "#peer#U" },
+        to: { uid: "#bot#U" },
+        subject: "控制事件不得作为用户消息",
+        contentType,
+      },
+    }, "#bot#U")).toBeUndefined();
+  });
+
+  it("rejects non-message CIM topics instead of treating them as attachments", () => {
+    expect(normalizeDirectMessage({
+      topic: "/cim/read",
+      payload: {
+        msgId: "window-open",
+        sourceId: "#peer#U",
+        from: { uid: "#peer#U" },
+        to: { uid: "#bot#U" },
+        subject: "打开聊天窗口",
+        contentType: "read",
+      },
+    }, "#bot#U")).toBeUndefined();
+  });
+
+  it("silently ignores an unknown message type even when it carries text", () => {
+    expect(normalizeDirectMessage({
+      topic: "/cim/message",
+      payload: {
+        msgId: "unknown-window-state",
+        sourceId: "#peer#U",
+        from: { uid: "#peer#U" },
+        to: { uid: "#bot#U" },
+        subject: "未知客户端状态",
+        contentType: "window-state-v2",
+      },
+    }, "#bot#U")).toBeUndefined();
+  });
+
+  it("does not treat empty attachment containers as real attachments", () => {
+    expect(normalizeDirectMessage({
+      topic: "inbox",
+      payload: {
+        msgId: "ordinary-text-with-empty-attachments",
+        sourceId: "#peer#U",
+        from: { uid: "#peer#U" },
+        subject: "正常文字消息",
+        attachments: [],
+        files: [],
+        fileInfo: {},
+        attachment: {},
+        contentType: "text",
+      },
+    }, "#bot#U")).toMatchObject({
+      text: "正常文字消息",
+      hasAttachments: false,
+    });
+
+    expect(normalizeDirectMessage({
+      topic: "inbox",
+      payload: {
+        msgId: "blank-control-with-empty-attachments",
+        sourceId: "#peer#U",
+        from: { uid: "#peer#U" },
+        attachments: [],
+        fileInfo: {},
+      },
+    }, "#bot#U")).toBeUndefined();
+  });
+
   it("marks attachment-only private messages", () => {
     expect(normalizeDirectMessage({
       topic: "inbox",
@@ -60,6 +140,25 @@ describe("normalizeDirectMessage", () => {
       hasAttachments: true,
     });
   });
+
+  it.each(["image", "file", "voice", "audio", "video", "card"])(
+    "marks the explicit %s message type as non-text content",
+    (contentType) => {
+      expect(normalizeDirectMessage({
+        topic: "/cim/message",
+        payload: {
+          msgId: `attachment-${contentType}`,
+          sourceId: "#peer#U",
+          from: { uid: "#peer#U" },
+          to: { uid: "#bot#U" },
+          contentType,
+        },
+      }, "#bot#U")).toMatchObject({
+        text: "",
+        hasAttachments: true,
+      });
+    },
+  );
 
   it.each([
     ["/new", "new"],
