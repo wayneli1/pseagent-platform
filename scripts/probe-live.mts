@@ -10,6 +10,7 @@ import {
   KNOWLEDGE_UNAVAILABLE_TEXT,
   NOT_COVERED_TEXT,
 } from "../apps/pseagent/src/response.js";
+import { assertMinimumReferenceCount } from "./probe-live-contract.js";
 import { selectProbeVariants } from "./probe-selection.js";
 
 type FactExpectation = string | readonly string[];
@@ -28,6 +29,7 @@ type GoldenCase = {
   readonly requiredFacts: readonly FactExpectation[];
   readonly forbiddenFacts: readonly string[];
   readonly maxElapsedMs: number;
+  readonly minReferenceCount?: number;
 };
 const corpusPath = fileURLToPath(
   new URL("../tests/regression/evidence-coverage.json", import.meta.url),
@@ -55,6 +57,7 @@ const probes = selectedCases.flatMap((item) => {
     requiredFacts: probeVariant.requiredFacts,
     forbiddenFacts: item.forbiddenFacts,
     maxElapsedMs: item.maxElapsedMs,
+    minReferenceCount: item.minReferenceCount,
   }));
 });
 
@@ -68,6 +71,7 @@ const unavailableProbe = [
     requiredFacts: [],
     forbiddenFacts: [],
     maxElapsedMs: 300_000,
+    minReferenceCount: undefined,
   },
 ] as const;
 
@@ -103,12 +107,22 @@ const safeFailureCodes = new Set([
   "missing_required_fact",
   "forbidden_fact_present",
   "missing_expected_evidence_page",
+  "insufficient_reference_count",
   "probe_deadline_exceeded",
 ]);
 let activeProbe = "none";
 let lastResultSummary = "";
 
 async function probe(): Promise<void> {
+  const keepAlive = setInterval(() => undefined, 1_000);
+  try {
+    await executeProbe();
+  } finally {
+    clearInterval(keepAlive);
+  }
+}
+
+async function executeProbe(): Promise<void> {
   const env = getDefaultEnvironment();
   for (const name of inheritedNames) {
     const value = process.env[name];
@@ -174,6 +188,10 @@ async function probe(): Promise<void> {
       ) {
         throw new Error("unexpected_reference");
       }
+      assertMinimumReferenceCount(
+        result.references.length,
+        item.minReferenceCount,
+      );
       const elapsedMs = Math.round(performance.now() - started);
       for (const [factIndex, expectation] of item.requiredFacts.entries()) {
         const alternatives = typeof expectation === "string" ? [expectation] : expectation;
@@ -220,7 +238,7 @@ function validateReferences(result: ReturnType<typeof answerResultSchema.parse>)
   }
 }
 
-probe().catch((error: unknown) => {
+await probe().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : "";
   const code = safeFailureCodes.has(message) ? message : "unclassified";
   const summary = lastResultSummary ? ` ${lastResultSummary}` : "";

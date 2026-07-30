@@ -181,6 +181,36 @@ describe("ModelKnowledgePlanner", () => {
     },
   );
 
+  it("expands presales duty retrieval into complementary evidence facets", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: "售前工程师职责",
+      requirements: [{
+        id: "R1",
+        question: "售前工程师的工作职责有哪些？",
+        queries: ["售前工程师的岗位职责"],
+        evidenceMode: "synthesis_allowed",
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({
+      ...plannerInput(),
+      scope: "general",
+      question: "售前工程师的工作职责有哪些？",
+    });
+
+    expect(result.requirements[0]?.queries).toEqual([
+      "售前工程师的岗位职责",
+      "愿景演示 技术证明 解决方案销售 需求诊断 可信顾问",
+      "机会质量 客户证据 售前冲突沟通场景集",
+    ]);
+  });
+
   it("repairs an invalid model payload", async () => {
     const completeJson = vi.fn()
       .mockRejectedValueOnce(new InvalidModelPayloadError())

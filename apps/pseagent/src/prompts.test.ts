@@ -98,6 +98,15 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain(
       "direct_only 仍只接受实际读取正文的直接结论",
     );
+    expect(prompt).toContain(
+      "不得仅因缺少专门岗位说明页而降为 partial 或 none",
+    );
+    expect(prompt).toContain(
+      "需求诊断、方案组织与价值表达、产品演示与技术证明、客户关系与可信顾问、冲突沟通与异议处理、机会管理与项目推进",
+    );
+    expect(prompt).toContain(
+      "职责领域名称必须和对应说明、引用写在同一句段",
+    );
   });
 
   it("makes the verifier retain only evidence-backed target segments", () => {
@@ -121,6 +130,15 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain("relatedContext 还必须直接缩小用户判断范围");
     expect(prompt).toContain("始终只能直接支持");
     expect(prompt).toContain("多篇正文冲突时只能保留明确披露冲突的句段");
+    expect(prompt).toContain(
+      "把方法论动作重新组织为岗位职责属于跨页归纳",
+    );
+    expect(prompt).toContain(
+      "不得仅因缺少专门岗位说明页而把已充分覆盖的职责答案降为 partial",
+    );
+    expect(prompt).toContain(
+      "冲突场景页可以支持“冲突沟通与异议处理”这一职责领域",
+    );
     expect(prompt).toContain("targetDecision=retain");
     expect(prompt).toContain("targetDecision=retain_partial");
     expect(prompt).toContain("targetDecision=not_covered");

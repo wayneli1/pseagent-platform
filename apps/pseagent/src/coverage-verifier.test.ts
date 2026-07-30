@@ -177,6 +177,65 @@ describe("verifyKnowledgeCoverage", () => {
     }]);
   });
 
+  it("deterministically verifies the six-facet presales duty synthesis", async () => {
+    const fullDutyDraft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "模型草稿会由正式六页证据映射替换[1][2][3][4][5][6]。",
+        citations: [1, 2, 3, 4, 5, 6],
+      }],
+      citations: [1, 2, 3, 4, 5, 6],
+    };
+    const fullDutyEvidence = [
+      ["售前诊断式对话框架", "wiki/synthesis/售前诊断式对话框架.md"],
+      ["解决方案销售", "wiki/concepts/解决方案销售.md"],
+      ["愿景演示与技术证明的区分", "wiki/concepts/愿景演示与技术证明的区分.md"],
+      ["可信顾问", "wiki/concepts/可信顾问.md"],
+      ["售前冲突沟通场景集", "wiki/synthesis/售前冲突沟通场景集.md"],
+      ["机会质量与客户证据", "wiki/concepts/机会质量与客户证据.md"],
+    ].map(([title, path], index) => ({
+      requirementId: "R1",
+      citation: index + 1,
+      title: title!,
+      path: path!,
+      content: `# ${title}\n正式知识正文`,
+    }));
+    const completeJson = vi.fn(async () => {
+      throw new InvalidModelPayloadError();
+    });
+    const onVerified = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "售前工程师的工作职责有哪些？",
+      plan: synthesisPlan,
+      draft: fullDutyDraft,
+      evidence: fullDutyEvidence,
+      model: modelFromCompleteJson(completeJson),
+      onVerified,
+    });
+
+    expect(completeJson).not.toHaveBeenCalled();
+    expect(result.requirements[0]).toMatchObject({
+      coverage: "complete",
+      citations: [1, 2, 3, 4, 5, 6],
+    });
+    expect(result.requirements[0]?.answer).toContain("需求诊断与访谈");
+    expect(result.requirements[0]?.answer).toContain("方案组织与价值表达");
+    expect(result.requirements[0]?.answer).toContain("产品演示与技术证明");
+    expect(result.requirements[0]?.answer).toContain("客户关系与可信顾问");
+    expect(result.requirements[0]?.answer).toContain("冲突沟通与异议处理");
+    expect(result.requirements[0]?.answer).toContain("机会管理与项目推进");
+    expect(onVerified).toHaveBeenCalledWith([{
+      id: "R1",
+      reason: "synthesized_support",
+      retainedDirectSegmentCount: 0,
+      retainedSynthesizedSegmentCount: 6,
+      removedSegmentCount: 0,
+    }]);
+  });
+
   it("reports mixed direct and synthesized target support separately", async () => {
     const onVerified = vi.fn();
 
@@ -530,7 +589,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         coverage: "none",
-        answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
+        answer: "正式知识库未提及用户询问的目标协议、功能或能力，无法根据正式知识库确认是否支持或兼容。",
         citations: [],
         relatedContext: [{
           statement: "资料还说明 HTTP/HTTPS 用于 Webmail 访问 [2]。",
@@ -539,6 +598,50 @@ describe("verifyKnowledgeCoverage", () => {
       }],
       citations: [2],
     });
+  });
+
+  it("drops retained related context that repeats the protected target", async () => {
+    const draft: FinalAction = {
+      ...relatedOnlyDraft,
+      requirements: [{
+        ...relatedOnlyDraft.requirements[0]!,
+        relatedContext: [
+          relatedOnlyDraft.requirements[0]!.relatedContext![0]!,
+          {
+            statement: "资料还说明目标协议已经具备兼容能力 [2]。",
+            citations: [2],
+          },
+        ],
+      }],
+    };
+    const result = await verifyKnowledgeCoverage({
+      question: "Coremail 是否支持目标协议",
+      plan: {
+        ...singleRequirementPlan,
+        requirements: [{
+          ...singleRequirementPlan.requirements[0]!,
+          question: "目标协议的支持情况",
+        }],
+      },
+      draft,
+      evidence,
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "not_covered",
+          retainedTargetSegmentIndexes: [],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [0, 1],
+          reason: "related_only",
+        }],
+      }),
+    });
+
+    expect(result.requirements[0]?.relatedContext).toEqual([
+      relatedOnlyDraft.requirements[0]!.relatedContext![0],
+    ]);
+    expect(result.citations).toEqual([1]);
   });
 
   it("downgrades an unsupported target and removes all target text and citations", async () => {
@@ -565,7 +668,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         coverage: "none",
-        answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
+        answer: "正式知识库未提及用户询问的目标协议、功能或能力，无法根据正式知识库确认是否支持或兼容。",
         citations: [],
       }],
       citations: [],

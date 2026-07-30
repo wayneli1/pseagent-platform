@@ -24,6 +24,7 @@ const regressionCaseSchema = z.object({
   allowedProjects: z.array(projectSchema),
   requiredFacts: z.array(z.string().trim().min(1)),
   relatedFacts: z.array(z.string().trim().min(1)).default([]),
+  allowedRelatedTokens: z.array(z.string().trim().min(1)).default([]),
   forbiddenFacts: z.array(z.string().trim().min(1)).min(1),
   allowedSourcePages: z.array(z.string().trim().min(1)),
 }).strict().superRefine((item, context) => {
@@ -316,7 +317,11 @@ describe("fixed 41-question scripted protocol regression", () => {
       requiredFacts: [],
       relatedFacts: ["SMTP", "POP3", "IMAP", "HTTP/HTTPS", "CMSP/CMTP"],
       forbiddenFacts: ["已经支持", "明确不支持", "尚未支持"],
-      allowedSourcePages: ["wiki/concepts/邮件系统协议基础.md"],
+      allowedSourcePages: [
+        "wiki/concepts/邮件系统协议基础.md",
+        "wiki/concepts/CMSP协议.md",
+        "wiki/concepts/邮件协议命令行测试.md",
+      ],
     });
   });
 

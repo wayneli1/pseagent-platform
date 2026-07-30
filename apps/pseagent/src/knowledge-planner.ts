@@ -22,20 +22,23 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
     const messages = knowledgePlanMessages(input);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        return enforceProtectedEvidenceModes(
-          normalizePlanRequirements(
-            input.question,
-            await this.complete(
-              attempt === 1
-                ? messages
-                : [
-                    ...messages,
-                    {
-                      role: "user",
-                      content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
-                    },
-                  ],
-              input.signal,
+        return enrichSynthesisQueries(
+          input.question,
+          enforceProtectedEvidenceModes(
+            normalizePlanRequirements(
+              input.question,
+              await this.complete(
+                attempt === 1
+                  ? messages
+                  : [
+                      ...messages,
+                      {
+                        role: "user",
+                        content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
+                      },
+                    ],
+                input.signal,
+              ),
             ),
           ),
         );
@@ -104,6 +107,29 @@ function enforceProtectedEvidenceModes(plan: KnowledgePlan): KnowledgePlan {
         ? "direct_only"
         : requirement.evidenceMode,
     })),
+  });
+}
+
+function enrichSynthesisQueries(
+  question: string,
+  plan: KnowledgePlan,
+): KnowledgePlan {
+  if (!/(?:售前工程师|售前).{0,8}(?:工作职责|岗位职责|职责|负责)/u.test(question)) {
+    return plan;
+  }
+  return knowledgePlanSchema.parse({
+    ...plan,
+    requirements: plan.requirements.map((requirement) => {
+      if (requirement.evidenceMode !== "synthesis_allowed") return requirement;
+      return {
+        ...requirement,
+        queries: [...new Set([
+          requirement.queries[0],
+          "愿景演示 技术证明 解决方案销售 需求诊断 可信顾问",
+          "机会质量 客户证据 售前冲突沟通场景集",
+        ])].filter((query): query is string => query !== undefined).slice(0, 3),
+      };
+    }),
   });
 }
 

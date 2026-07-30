@@ -21,11 +21,11 @@ const evidenceRequirementSchema = z.object({
   id: knowledgeRequirementIdSchema,
   question: z.string().trim().min(1),
   queries: z.array(z.string().trim().min(1)).min(1).max(3),
-  expectedEvidencePages: z.array(safePageSchema).min(1).max(3),
+  expectedEvidencePages: z.array(safePageSchema).min(1).max(6),
   requiredFacts: z.array(factExpectationSchema).min(1),
 }).strict();
 const evidenceCaseSchema = z.object({
-  id: z.string().regex(/^EC0[1-5]$/u),
+  id: z.string().regex(/^EC0[1-6]$/u),
   variants: z.array(z.object({
     question: z.string().trim().min(1),
     requiredFacts: z.array(factExpectationSchema).min(1),
@@ -36,6 +36,7 @@ const evidenceCaseSchema = z.object({
   requiredFacts: z.array(factExpectationSchema).min(1),
   forbiddenFacts: z.array(z.string().trim().min(1)).min(1),
   maxElapsedMs: z.literal(300_000),
+  minReferenceCount: z.number().int().positive().optional(),
 }).strict().superRefine((item, context) => {
   if (item.expectedScope === "normal" && item.requirements.length !== 0) {
     context.addIssue({
@@ -67,7 +68,7 @@ const corpusSchema = z.object({
     "coremail-professional": z.string().regex(/^[a-f0-9]{40}$/u),
     "presales-general": z.string().regex(/^[a-f0-9]{40}$/u),
   }).strict(),
-  cases: z.array(evidenceCaseSchema).length(5),
+  cases: z.array(evidenceCaseSchema).length(6),
 }).strict();
 
 const corpusPath = fileURLToPath(
@@ -75,14 +76,15 @@ const corpusPath = fileURLToPath(
 );
 const corpus = corpusSchema.parse(JSON.parse(readFileSync(corpusPath, "utf8")));
 
-describe("five-question evidence coverage golden set", () => {
-  it("pins both knowledge snapshots and contains five stable cases", () => {
+describe("six-question evidence coverage golden set", () => {
+  it("pins both knowledge snapshots and contains six stable cases", () => {
     expect(corpus.cases.map((item) => item.id)).toEqual([
       "EC01",
       "EC02",
       "EC03",
       "EC04",
       "EC05",
+      "EC06",
     ]);
     expect(corpus.revisions["coremail-professional"]).toHaveLength(40);
     expect(corpus.revisions["presales-general"]).toHaveLength(40);
@@ -92,7 +94,7 @@ describe("five-question evidence coverage golden set", () => {
     const questions = corpus.cases.flatMap(
       (item) => item.variants.map((variant) => variant.question),
     );
-    expect(new Set(questions).size).toBe(10);
+    expect(new Set(questions).size).toBe(12);
     for (const item of corpus.cases) {
       expect(item.variants).toHaveLength(2);
       expect(item.variants.every((variant) => variant.requiredFacts.length > 0)).toBe(true);
@@ -140,6 +142,7 @@ describe("five-question evidence coverage golden set", () => {
       "双机多活",
     ]);
     const ec05 = corpus.cases.find((item) => item.id === "EC05");
+    const ec06 = corpus.cases.find((item) => item.id === "EC06");
     const ec04 = corpus.cases.find((item) => item.id === "EC04");
     expect(ec04?.requiredFacts).toContainEqual(["migrateX", "DTS", "domino-migrate.jar"]);
     expect(ec04?.requiredFacts).toContainEqual([
@@ -150,5 +153,11 @@ describe("five-question evidence coverage golden set", () => {
     expect(ec05?.requiredFacts).toContainEqual(["反垃圾", "垃圾邮件过滤", "垃圾邮件检测"]);
     expect(ec05?.requiredFacts).toContainEqual(["反钓鱼", "钓鱼邮件", "钓鱼检测"]);
     expect(ec05?.requiredFacts).toContainEqual(["信创合规", "全栈信创", "全栈国产化"]);
+    expect(ec06).toMatchObject({
+      expectedScope: "general",
+      expectedStatus: "answered",
+      minReferenceCount: 4,
+    });
+    expect(ec06?.requirements[0]?.expectedEvidencePages).toHaveLength(6);
   });
 });

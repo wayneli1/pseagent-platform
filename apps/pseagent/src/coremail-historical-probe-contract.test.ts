@@ -175,7 +175,10 @@ describe("related-context acceptance probe", () => {
     "HTTP/HTTPS",
     "CMSP/CMTP",
   ] as const;
-  const allowedSourcePages = ["wiki/concepts/邮件系统协议基础.md"] as const;
+  const allowedSourcePages = [
+    "wiki/concepts/邮件系统协议基础.md",
+    "wiki/concepts/CMSP协议.md",
+  ] as const;
 
   async function loadProbeAcceptance() {
     const probeModuleUrl = new URL(
@@ -211,11 +214,103 @@ describe("related-context acceptance probe", () => {
     });
   });
 
+  it("accepts a safe uncovered result when optional formal related context is absent", async () => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+
+    expect(validateRelatedContextAcceptance(
+      {
+        ...pseFixture,
+        answer: NOT_COVERED_TEXT,
+        references: [],
+      },
+      {
+        ...finishFixture,
+        citationCount: 0,
+      },
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toEqual({
+      formalRefs: 0,
+      historyRefs: 1,
+      historicalAttempted: true,
+      historicalUsed: true,
+    });
+  });
+
+  it("accepts an allowlisted supplementary formal page without requiring every allowed page", async () => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const supplementaryReference = {
+      ...formalReference,
+      index: 2,
+      title: "CMSP协议",
+      path: "wiki/concepts/CMSP协议.md",
+    };
+    const answer = pseFixture.answer
+      .replace("协议能力 [1]。", "协议能力 [1][2]。")
+      .replace(
+        "[1] 邮件系统协议基础 — coremail-professional/wiki/concepts/邮件系统协议基础.md",
+        [
+          "[1] 邮件系统协议基础 — coremail-professional/wiki/concepts/邮件系统协议基础.md",
+          "[2] CMSP协议 — coremail-professional/wiki/concepts/CMSP协议.md",
+        ].join("\n"),
+      );
+
+    expect(validateRelatedContextAcceptance(
+      {
+        ...pseFixture,
+        answer,
+        references: [formalReference, supplementaryReference],
+      },
+      { ...finishFixture, citationCount: 2 },
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toMatchObject({
+      formalRefs: 2,
+      historicalAttempted: true,
+    });
+  });
+
   it("treats the Coremail product subject as context instead of an extra protocol", async () => {
     const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
     const answer = pseFixture.answer.replace(
       "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
       "Coremail邮件系统支持 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议 [1]。",
+    );
+
+    expect(validateRelatedContextAcceptance(
+      { ...pseFixture, answer },
+      finishFixture,
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toMatchObject({
+      formalRefs: 1,
+      historicalAttempted: true,
+    });
+  });
+
+  it("treats Web as HTTP/HTTPS usage context instead of an extra protocol", async () => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const answer = pseFixture.answer.replace(
+      "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+      "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS，HTTP/HTTPS 用于 Web 访问 [1]。",
+    );
+
+    expect(validateRelatedContextAcceptance(
+      { ...pseFixture, answer },
+      finishFixture,
+      supportedRelatedFacts,
+      allowedSourcePages,
+    )).toMatchObject({
+      formalRefs: 1,
+      historicalAttempted: true,
+    });
+  });
+
+  it("accepts a cited protocol list without requiring one fixed positive verb", async () => {
+    const { validateRelatedContextAcceptance } = await loadProbeAcceptance();
+    const answer = pseFixture.answer.replace(
+      "正文明确列出 SMTP、POP3、IMAP 和 HTTP/HTTPS 协议能力 [1]。",
+      "邮件协议包括 SMTP、POP3、IMAP 和 HTTP/HTTPS [1]。",
     );
 
     expect(validateRelatedContextAcceptance(

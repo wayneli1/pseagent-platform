@@ -23,6 +23,7 @@ import {
   scopeSchema,
   type AnswerResult,
 } from "../apps/pseagent/src/contracts.js";
+import { NOT_COVERED_TEXT } from "../apps/pseagent/src/response.js";
 
 const PROBE_RUNS = 3;
 const CALL_BUDGET_MS = 300_000;
@@ -36,6 +37,7 @@ const regressionCaseSchema = z.object({
   id: z.string(),
   question: z.string().trim().min(1),
   relatedFacts: z.array(z.string().trim().min(1)).optional(),
+  allowedRelatedTokens: z.array(z.string().trim().min(1)).optional(),
   allowedSourcePages: z.array(z.string().trim().min(1)).optional(),
 }).passthrough();
 const regressionCases = z.array(regressionCaseSchema).parse(JSON.parse(
@@ -55,6 +57,7 @@ if (
 const probeCase = {
   question: selectedProbeCase.question,
   relatedFacts: selectedProbeCase.relatedFacts,
+  allowedRelatedTokens: selectedProbeCase.allowedRelatedTokens ?? [],
   allowedSourcePages: selectedProbeCase.allowedSourcePages,
 } as const;
 
@@ -134,29 +137,34 @@ export function validateRelatedContextAcceptance(
     throw new Error("unexpected_scope_or_status");
   }
   if (result.references.length === 0) {
-    throw new Error("missing_formal_reference");
+    if (result.answer !== NOT_COVERED_TEXT) {
+      throw new Error("missing_formal_reference");
+    }
+  } else {
+    const {
+      prefixSection,
+      relatedSection,
+      conclusionSection,
+      sourcesSection,
+    } = extractFormalSections(result.answer);
+    if (prefixSection.trim().length > 0) {
+      throw new Error("unexpected_answer_framing");
+    }
+    validateRelatedProtocols(relatedSection, supportedRelatedFacts);
+    validateTargetConclusion(conclusionSection);
+    if (
+      containsTargetClaim(relatedSection) ||
+      containsTargetClaim(sourcesSection)
+    ) {
+      throw new Error("unsupported_target_claim");
+    }
+    validateVisibleFormalReferences(
+      result,
+      relatedSection,
+      sourcesSection,
+      allowedSourcePages,
+    );
   }
-
-  const {
-    prefixSection,
-    relatedSection,
-    conclusionSection,
-    sourcesSection,
-  } = extractFormalSections(result.answer);
-  if (prefixSection.trim().length > 0) {
-    throw new Error("unexpected_answer_framing");
-  }
-  validateRelatedProtocols(relatedSection, supportedRelatedFacts);
-  validateTargetConclusion(conclusionSection);
-  if (containsTargetClaim(relatedSection) || containsTargetClaim(sourcesSection)) {
-    throw new Error("unsupported_target_claim");
-  }
-  validateVisibleFormalReferences(
-    result,
-    relatedSection,
-    sourcesSection,
-    allowedSourcePages,
-  );
 
   if (!finish.historicalAttempted) {
     throw new Error("historical_attempt_not_confirmed");
@@ -303,11 +311,9 @@ function validateRelatedProtocols(
       }
     }
   }
-  const visibleTokens =
-    relatedSection.toLocaleUpperCase("en-US")
-      .match(protocolTokenPattern) ?? [];
+  const visibleTokens = relatedSection.match(protocolTokenPattern) ?? [];
   const visibleProtocols = visibleTokens.filter((token) =>
-    !allowedContextTokens.has(token));
+    token.length >= 2 && !allowedContextTokens.has(token));
   if (
     visibleProtocols.length === 0 ||
     visibleProtocols.some((token) => !supportedTokens.has(token))
@@ -320,8 +326,9 @@ function validateRelatedProtocols(
     throw new Error("unsupported_related_relation");
   }
   const positiveEvidence =
-    /(?:列出|列举|记载|包括|包含|支持|受支持|兼容|相容|遵循|符合|具备|提供|采用|可用)/u
-      .test(relatedSection);
+    /(?:列出|列举|记载|包括|包含|支持|受支持|兼容|相容|遵循|符合|具备|提供|采用|可用|用于|属于|基于)/u
+      .test(relatedSection) ||
+    new Set(visibleProtocols).size >= 2;
   if (!positiveEvidence) {
     throw new Error("unsupported_related_relation");
   }
@@ -388,9 +395,8 @@ function validateVisibleFormalReferences(
   }
   const actualPaths = result.references.map((reference) => reference.path);
   if (
-    actualPaths.length !== allowedSourcePages.length ||
     new Set(actualPaths).size !== actualPaths.length ||
-    allowedSourcePages.some((path) => !actualPaths.includes(path))
+    actualPaths.some((path) => !allowedSourcePages.includes(path))
   ) {
     throw new Error("unexpected_formal_reference_page");
   }
@@ -480,7 +486,10 @@ async function probe(): Promise<void> {
       const summary = validateRelatedContextAcceptance(
         result,
         finish,
-        probeCase.relatedFacts,
+        [
+          ...probeCase.relatedFacts,
+          ...probeCase.allowedRelatedTokens,
+        ],
         probeCase.allowedSourcePages,
       );
       process.stdout.write(

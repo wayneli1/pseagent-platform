@@ -14,7 +14,7 @@ import type {
   ProjectKey,
 } from "./knowledge-session.js";
 import {
-  NOT_COVERED_REQUIREMENT_ANSWER,
+  notCoveredRequirementAnswer,
   verifyKnowledgeCoverage,
   type CoverageEvidenceDocument,
   type CoverageVerificationSummary,
@@ -110,6 +110,8 @@ type AgentState = {
   >;
   readonly observations: string[];
   citationRepairAttempts: number;
+  breadthRepairAttempts: number;
+  invalidPayloadTurnRetries: number;
   forceFinal: boolean;
   successfulSeedSearches: number;
 };
@@ -121,6 +123,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
     recordDiagnostic(input.trace, { event: "stop", reason: "seed_unavailable" });
     return unavailableResult(input.scope);
   }
+  await preloadPresalesDutyFacets(input, state);
 
   const maxTurns = Math.min(
     40,
@@ -134,17 +137,68 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       action = await requestAgentAction(input, state, turn, maxTurns, finalOnly);
     } catch (error) {
       if (error instanceof InvalidModelPayloadError) {
-        return fallbackNotCovered(input, "invalid_model_payload");
+        const recoveryAction = finalOnly
+          ? undefined
+          : recoveryReadAction(state);
+        if (recoveryAction === undefined) {
+          const hasReadEvidence = [...state.requirements.values()].some(
+            (requirementState) =>
+              requirementState.directReadPaths.size > 0,
+          );
+          if (
+            hasReadEvidence &&
+            state.invalidPayloadTurnRetries === 0 &&
+            turn < maxTurns &&
+            !deadlineReached(input)
+          ) {
+            state.invalidPayloadTurnRetries += 1;
+            state.forceFinal = true;
+            observe(state, {
+              type: "invalid_model_payload_recovered_with_final_retry",
+            });
+            continue;
+          }
+          return fallbackNotCovered(input, "invalid_model_payload");
+        }
+        action = recoveryAction;
+        observe(state, {
+          type: "invalid_model_payload_recovered_with_seed_read",
+          pages: recoveryAction.input.pages,
+        });
+      } else {
+        recordDiagnostic(input.trace, { event: "stop", reason: "model_unavailable" });
+        return unavailableResult(input.scope);
       }
-      recordDiagnostic(input.trace, { event: "stop", reason: "model_unavailable" });
-      return unavailableResult(input.scope);
     }
 
     if (action.action === "final") {
       const normalizedAction = dropUnsupportedRelatedContext(
-        normalizeFinalCitationMetadata(action),
+        normalizeFinalCitationMetadata(action, input.plan),
         state,
       );
+      const breadthRepair = presalesDutyBreadthRepair(
+        input.question,
+        normalizedAction,
+        state,
+      );
+      if (
+        breadthRepair !== undefined &&
+        state.breadthRepairAttempts < 3 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.breadthRepairAttempts += 1;
+        observe(state, {
+          type: "presales_duty_facets_missing",
+          labels: breadthRepair.labels,
+          pages: breadthRepair.action?.input.pages ?? [],
+        });
+        if (breadthRepair.action !== undefined) {
+          await executeBatchReads(breadthRepair.action, input, state);
+        }
+        state.forceFinal = true;
+        continue;
+      }
       shareFinalAnswerEvidence(input, state, normalizedAction);
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
       if (pendingReviews.length > 0 && !deadlineReached(input)) {
@@ -279,6 +333,33 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
   return fallbackNotCovered(input, "turn_budget_exhausted");
 }
 
+function recoveryReadAction(
+  state: AgentState,
+): Extract<ToolAction, { tool: "kb.read_pages" }> | undefined {
+  const pages = [...state.requirements.values()].flatMap((requirementState) => {
+    if (
+      requirementState.directReadPaths.size >=
+        readLimitFor(requirementState.requirement)
+    ) {
+      return [];
+    }
+    const candidate = sortedCandidates(requirementState)
+      .find((item) => !requirementState.readPaths.has(item.path));
+    return candidate === undefined
+      ? []
+      : [{
+          requirementId: requirementState.requirement.id,
+          path: candidate.path,
+        }];
+  });
+  if (pages.length === 0) return undefined;
+  return {
+    action: "tool",
+    tool: "kb.read_pages",
+    input: { pages },
+  };
+}
+
 function fallbackNotCovered(
   input: KnowledgeAgentInput,
   reason:
@@ -297,7 +378,7 @@ function fallbackNotCovered(
     requirements: input.plan.requirements.map((requirement) => ({
       id: requirement.id,
       coverage: "none",
-      answer: NOT_COVERED_REQUIREMENT_ANSWER,
+      answer: notCoveredRequirementAnswer(requirement.question),
       citations: [],
     })),
     citations: [],
@@ -332,9 +413,169 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     ])),
     observations: [],
     citationRepairAttempts: 0,
+    breadthRepairAttempts: 0,
+    invalidPayloadTurnRetries: 0,
     forceFinal: false,
     successfulSeedSearches: 0,
   };
+}
+
+const PRESALES_DUTY_FACETS = [
+  {
+    label: "需求诊断与需求访谈",
+    answer: /需求诊断|需求访谈/u,
+    title: /诊断式对话框架|需求诊断|需求访谈/u,
+  },
+  {
+    label: "方案组织与解决方案",
+    answer: /方案组织|解决方案/u,
+    title: /^解决方案销售$|方案组织|购买愿景/u,
+  },
+  {
+    label: "产品演示与技术证明",
+    answer: /产品演示|技术证明/u,
+    title: /愿景演示.*技术证明|技术证明.*愿景演示/u,
+  },
+  {
+    label: "客户关系与可信顾问",
+    answer: /客户关系|可信顾问/u,
+    title: /可信顾问/u,
+  },
+  {
+    label: "冲突沟通与异议处理",
+    answer: /冲突沟通|异议处理/u,
+    title: /冲突沟通|异议处理/u,
+  },
+  {
+    label: "机会管理与项目推进",
+    answer: /机会管理|项目推进/u,
+    title: /机会质量.*客户证据|客户证据.*机会质量|机会管理|项目推进/u,
+  },
+] as const;
+
+function presalesDutyBreadthRepair(
+  question: string,
+  action: FinalAction,
+  state: AgentState,
+): {
+  readonly labels: readonly string[];
+  readonly action?: Extract<ToolAction, { tool: "kb.read_pages" }>;
+} | undefined {
+  if (!/(?:售前工程师|售前).{0,8}(?:工作职责|岗位职责|职责|负责)/u.test(question)) {
+    return undefined;
+  }
+  const labels: string[] = [];
+  const pages: Array<{ requirementId: string; path: string }> = [];
+  const reserved = new Map<string, number>();
+  for (const result of action.requirements) {
+    if (result.coverage !== "complete") continue;
+    const requirementState = state.requirements.get(result.id);
+    if (
+      requirementState?.requirement.evidenceMode !== "synthesis_allowed"
+    ) {
+      continue;
+    }
+    const candidates = sortedCandidates(requirementState);
+    for (const facet of PRESALES_DUTY_FACETS) {
+      if (facet.answer.test(result.answer)) continue;
+      const matching = candidates.filter((candidate) =>
+        facet.title.test(candidate.title));
+      const alreadyRead = matching.some((candidate) =>
+        requirementState.readPaths.has(candidate.path));
+      const pending = reserved.get(result.id) ?? 0;
+      const unread = matching.find((candidate) =>
+        !requirementState.readPaths.has(candidate.path) &&
+        !pages.some((page) =>
+          page.requirementId === result.id && page.path === candidate.path));
+      const canRead =
+        unread !== undefined &&
+        pending < MAX_BATCH_READS_PER_REQUIREMENT &&
+        requirementState.directReadPaths.size + pending <
+          readLimitFor(requirementState.requirement);
+      if (!alreadyRead && !canRead) continue;
+      labels.push(facet.label);
+      if (canRead && unread !== undefined) {
+        pages.push({
+          requirementId: result.id,
+          path: unread.path,
+        });
+        reserved.set(result.id, pending + 1);
+      }
+    }
+  }
+  if (labels.length === 0) return undefined;
+  return {
+    labels,
+    ...(pages.length === 0
+      ? {}
+      : {
+          action: {
+            action: "tool",
+            tool: "kb.read_pages",
+            input: { pages },
+          },
+        }),
+  };
+}
+
+async function preloadPresalesDutyFacets(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+): Promise<void> {
+  if (
+    !/(?:售前工程师|售前).{0,8}(?:工作职责|岗位职责|职责|负责)/u.test(
+      input.question,
+    ) ||
+    deadlineReached(input)
+  ) {
+    return;
+  }
+  for (const requirementState of state.requirements.values()) {
+    if (requirementState.requirement.evidenceMode !== "synthesis_allowed") {
+      continue;
+    }
+    const candidates = sortedCandidates(requirementState);
+    const selected: Array<{ requirementId: string; path: string }> = [];
+    for (const facet of PRESALES_DUTY_FACETS) {
+      const candidate = candidates.find((item) =>
+        facet.title.test(item.title) &&
+        !selected.some((page) => page.path === item.path));
+      if (candidate !== undefined) {
+        selected.push({
+          requirementId: requirementState.requirement.id,
+          path: candidate.path,
+        });
+      }
+    }
+    if (selected.length !== PRESALES_DUTY_FACETS.length) continue;
+    observe(state, {
+      type: "presales_duty_seed_facets_selected",
+      pages: selected,
+    });
+    for (
+      let index = 0;
+      index < selected.length && !deadlineReached(input);
+      index += MAX_BATCH_READS_PER_REQUIREMENT
+    ) {
+      await executeBatchReads(
+        {
+          action: "tool",
+          tool: "kb.read_pages",
+          input: {
+            pages: selected.slice(
+              index,
+              index + MAX_BATCH_READS_PER_REQUIREMENT,
+            ),
+          },
+        },
+        input,
+        state,
+      );
+    }
+    if (selected.every((page) => requirementState.readPaths.has(page.path))) {
+      state.forceFinal = true;
+    }
+  }
 }
 
 async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState): Promise<void> {
@@ -1014,12 +1255,17 @@ function recordCoverage(
   });
 }
 
-function normalizeFinalCitationMetadata(action: FinalAction): FinalAction {
-  const requirements = action.requirements.map((requirement) => ({
+function normalizeFinalCitationMetadata(
+  action: FinalAction,
+  plan: KnowledgePlan,
+): FinalAction {
+  const requirements = action.requirements.map((requirement, index) => ({
     ...requirement,
     ...(requirement.coverage === "none"
       ? {
-          answer: NOT_COVERED_REQUIREMENT_ANSWER,
+          answer: notCoveredRequirementAnswer(
+            plan.requirements[index]?.question ?? "",
+          ),
           citations: [],
         }
       : {

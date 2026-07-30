@@ -484,6 +484,9 @@ describe("runKnowledgeAgent", () => {
       "正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1]。",
     );
     expect(result.answer).toContain("覆盖结论：");
+    expect(result.answer).toContain(
+      "正式知识库未提及用户询问的目标协议、功能或能力，无法根据正式知识库确认是否支持或兼容。",
+    );
     expect(result.references).toEqual([expect.objectContaining({
       index: 1,
       title: "wiki/protocols.md",
@@ -1816,6 +1819,157 @@ describe("runKnowledgeAgent", () => {
 
     expect(model.calls).toBe(3);
     expect(result.status).toBe("not_covered");
+  });
+
+  it("recovers from exhausted action repairs by reading the best seed candidate", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{
+          path: "wiki/concepts/愿景演示与技术证明的区分.md",
+          title: "愿景演示与技术证明的区分",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      new InvalidModelPayloadError("invalid_json", "{\"action\":", "pse_agent_action", "abort"),
+      new InvalidModelPayloadError("invalid_json", "{\"action\":", "pse_agent_action", "abort"),
+      new InvalidModelPayloadError("invalid_json", "{\"action\":", "pse_agent_action", "abort"),
+      final("complete", "售前需要完成愿景演示与技术证明[1]。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, synthesisPlan));
+
+    expect(session.readPage).toHaveBeenCalledWith(
+      "wiki/concepts/愿景演示与技术证明的区分.md",
+      undefined,
+    );
+    expect(model.calls).toBe(4);
+    expect(result.status).toBe("answered");
+    expect(result.references).toHaveLength(1);
+  });
+
+  it("retries a final-only turn when action repairs fail after evidence was read", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{ path: "wiki/evidence.md", title: "正式证据" }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/evidence.md"),
+      new InvalidModelPayloadError("invalid_json", "{\"action\":", "pse_agent_action", "abort"),
+      new InvalidModelPayloadError("invalid_json", "{\"action\":", "pse_agent_action", "abort"),
+      new InvalidModelPayloadError("invalid_json", "{\"action\":", "pse_agent_action", "abort"),
+      final("complete", "正式证据支持该结论[1]。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(model.calls).toBe(5);
+    expect(model.lastSchemaName()).toBe("pse_final_action");
+    expect(result.status).toBe("answered");
+    expect(result.references).toHaveLength(1);
+  });
+
+  it("reads a missing presales duty facet before accepting a complete synthesis", async () => {
+    const question = "售前工程师的工作职责有哪些？";
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          {
+            path: "wiki/synthesis/售前诊断式对话框架.md",
+            title: "售前诊断式对话框架",
+          },
+          {
+            path: "wiki/concepts/可信顾问.md",
+            title: "可信顾问",
+          },
+        ],
+      },
+    });
+    const completeAnswer = [
+      "需求诊断[1]",
+      "方案组织[1]",
+      "产品演示与技术证明[1]",
+      "客户关系与可信顾问[2]",
+      "冲突沟通与异议处理[1]",
+      "机会管理与项目推进[1]",
+    ].join("；");
+    const model = scriptedAgentModel([
+      read("R1", "wiki/synthesis/售前诊断式对话框架.md"),
+      final("complete", "需求诊断、方案组织、产品演示、冲突沟通与机会管理[1]。", [1]),
+      final("complete", completeAnswer, [1, 2]),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, synthesisPlan),
+      scope: "general",
+      question,
+    });
+
+    expect(session.readPage).toHaveBeenCalledWith(
+      "wiki/concepts/可信顾问.md",
+      undefined,
+    );
+    expect(model.calls).toBe(3);
+    expect(result.status).toBe("answered");
+    expect(result.answer).toContain("客户关系与可信顾问");
+  });
+
+  it("preloads all six observed presales duty facets before asking for synthesis", async () => {
+    const question = "售前工程师的工作职责有哪些？";
+    const query1 = "售前工程师工作职责 售前方法论 岗位职责归纳";
+    const query2 = "愿景演示 技术证明 解决方案销售 需求诊断 可信顾问";
+    const query3 = "机会质量 客户证据 售前冲突沟通场景集";
+    const plan: KnowledgePlan = {
+      subject: "售前职责",
+      requirements: [{
+        id: "R1",
+        question,
+        queries: [query1, query2, query3],
+        evidenceMode: "synthesis_allowed",
+      }],
+    };
+    const pages = [
+      { path: "wiki/synthesis/售前诊断式对话框架.md", title: "售前诊断式对话框架" },
+      { path: "wiki/concepts/解决方案销售.md", title: "解决方案销售" },
+      { path: "wiki/concepts/愿景演示与技术证明的区分.md", title: "愿景演示与技术证明的区分" },
+      { path: "wiki/concepts/可信顾问.md", title: "可信顾问" },
+      { path: "wiki/synthesis/售前冲突沟通场景集.md", title: "售前冲突沟通场景集" },
+      { path: "wiki/concepts/机会质量与客户证据.md", title: "机会质量与客户证据" },
+    ];
+    const session = fakeSession({
+      hits: {
+        [query1]: pages.slice(0, 2),
+        [query2]: pages.slice(2, 4),
+        [query3]: pages.slice(4),
+      },
+    });
+    const model = scriptedAgentModel([
+      final(
+        "complete",
+        [
+          "需求诊断[1]",
+          "方案组织[2]",
+          "产品演示与技术证明[3]",
+          "客户关系与可信顾问[4]",
+          "冲突沟通与异议处理[5]",
+          "机会管理与项目推进[6]",
+        ].join("；"),
+        [1, 2, 3, 4, 5, 6],
+      ),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      scope: "general",
+      question,
+    });
+
+    expect(session.readPage).toHaveBeenCalledTimes(6);
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.citationIndexes)
+      .toHaveLength(6);
+    expect(result.status).toBe("answered");
+    expect(result.references).toHaveLength(6);
   });
 
   it("requests a shorter closed JSON after the provider aborts a payload", async () => {
