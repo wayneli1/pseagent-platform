@@ -19,6 +19,15 @@ const HELP_TEXT = [
   "当前暂不支持群聊、图片、文件或语音。",
 ].join("\n");
 
+export type BridgeCoverage = "complete" | "partial" | "none";
+
+export type BridgeHistoricalGateReason =
+  | "eligible"
+  | "question_not_explicit_coremail"
+  | "formal_verification_incomplete"
+  | "formal_support_present"
+  | "structural_fallback";
+
 export interface BridgeAnswerMetadata {
   readonly scope?: string | undefined;
   readonly status?: string | undefined;
@@ -27,6 +36,12 @@ export interface BridgeAnswerMetadata {
   readonly referenceCount: number;
   readonly historicalAttempted: boolean;
   readonly historicalUsed: boolean;
+  readonly draftCoverage?: readonly BridgeCoverage[] | undefined;
+  readonly verifiedCoverage?: readonly BridgeCoverage[] | undefined;
+  readonly retainedDirectSegmentCount?: number | undefined;
+  readonly retainedSynthesizedSegmentCount?: number | undefined;
+  readonly removedSegmentCount?: number | undefined;
+  readonly historicalGateReason?: BridgeHistoricalGateReason | undefined;
 }
 
 export interface BridgeQuestionEvent {
@@ -50,6 +65,12 @@ export interface BridgeQuestionEvent {
   readonly referenceCount?: number | undefined;
   readonly historicalAttempted?: boolean | undefined;
   readonly historicalUsed?: boolean | undefined;
+  readonly draftCoverage?: readonly BridgeCoverage[] | undefined;
+  readonly verifiedCoverage?: readonly BridgeCoverage[] | undefined;
+  readonly retainedDirectSegmentCount?: number | undefined;
+  readonly retainedSynthesizedSegmentCount?: number | undefined;
+  readonly removedSegmentCount?: number | undefined;
+  readonly historicalGateReason?: BridgeHistoricalGateReason | undefined;
 }
 
 export interface LunkrBridgeDependencies<Result> {
@@ -289,6 +310,7 @@ export class LunkrPseBridge<Result> {
       referenceCount: metadata.referenceCount,
       historicalAttempted: metadata.historicalAttempted,
       historicalUsed: metadata.historicalUsed,
+      ...layeredEvidenceMetadata(metadata),
     });
   }
 
@@ -322,6 +344,7 @@ export class LunkrPseBridge<Result> {
             historicalAttempted: metadata.historicalAttempted,
             historicalUsed: metadata.historicalUsed,
           }),
+      ...layeredEvidenceMetadata(metadata),
     });
   }
 
@@ -391,4 +414,44 @@ export class LunkrPseBridge<Result> {
     }
     throw lastError;
   }
+}
+
+function layeredEvidenceMetadata(
+  metadata: BridgeAnswerMetadata | undefined,
+): Pick<
+  BridgeQuestionEvent,
+  | "draftCoverage"
+  | "verifiedCoverage"
+  | "retainedDirectSegmentCount"
+  | "retainedSynthesizedSegmentCount"
+  | "removedSegmentCount"
+  | "historicalGateReason"
+> {
+  if (metadata === undefined) return {};
+  return {
+    ...(metadata.draftCoverage === undefined
+      ? {}
+      : { draftCoverage: metadata.draftCoverage }),
+    ...(metadata.verifiedCoverage === undefined
+      ? {}
+      : { verifiedCoverage: metadata.verifiedCoverage }),
+    ...(metadata.retainedDirectSegmentCount === undefined
+      ? {}
+      : {
+          retainedDirectSegmentCount:
+            metadata.retainedDirectSegmentCount,
+        }),
+    ...(metadata.retainedSynthesizedSegmentCount === undefined
+      ? {}
+      : {
+          retainedSynthesizedSegmentCount:
+            metadata.retainedSynthesizedSegmentCount,
+        }),
+    ...(metadata.removedSegmentCount === undefined
+      ? {}
+      : { removedSegmentCount: metadata.removedSegmentCount }),
+    ...(metadata.historicalGateReason === undefined
+      ? {}
+      : { historicalGateReason: metadata.historicalGateReason }),
+  };
 }

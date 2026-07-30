@@ -46,6 +46,13 @@ const bridge = new LunkrPseBridge(config, {
       (execution.result.historicalAnswer?.references.length ?? 0),
     historicalAttempted: execution.historicalAttempted,
     historicalUsed: execution.historicalUsed,
+    draftCoverage: execution.draftCoverage,
+    verifiedCoverage: execution.verifiedCoverage,
+    retainedDirectSegmentCount: execution.retainedDirectSegmentCount,
+    retainedSynthesizedSegmentCount:
+      execution.retainedSynthesizedSegmentCount,
+    removedSegmentCount: execution.removedSegmentCount,
+    historicalGateReason: execution.historicalGateReason,
   }),
   sendText: (peerUid, text) => api.sendText(peerUid, text),
   onEvent: logQuestionEvent,

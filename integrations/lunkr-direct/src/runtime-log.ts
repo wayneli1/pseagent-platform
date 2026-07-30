@@ -1,5 +1,9 @@
 import { createHmac, randomBytes } from "node:crypto";
-import type { BridgeQuestionEvent } from "./bridge.js";
+import type {
+  BridgeCoverage,
+  BridgeHistoricalGateReason,
+  BridgeQuestionEvent,
+} from "./bridge.js";
 
 export interface LunkrRuntimeLogRecord {
   readonly event: BridgeQuestionEvent["type"];
@@ -16,6 +20,12 @@ export interface LunkrRuntimeLogRecord {
   readonly referenceCount?: number | undefined;
   readonly historicalAttempted?: boolean | undefined;
   readonly historicalUsed?: boolean | undefined;
+  readonly draftCoverage?: readonly BridgeCoverage[] | undefined;
+  readonly verifiedCoverage?: readonly BridgeCoverage[] | undefined;
+  readonly retainedDirectSegmentCount?: number | undefined;
+  readonly retainedSynthesizedSegmentCount?: number | undefined;
+  readonly removedSegmentCount?: number | undefined;
+  readonly historicalGateReason?: BridgeHistoricalGateReason | undefined;
 }
 
 export function createRuntimeLogger(
@@ -23,15 +33,32 @@ export function createRuntimeLogger(
   salt: Uint8Array = randomBytes(32),
 ): (event: BridgeQuestionEvent) => void {
   return (event): void => {
-    const { peerUid, type, ...fields } = event;
     const peer = createHmac("sha256", salt)
-      .update(peerUid)
+      .update(event.peerUid)
       .digest("hex")
       .slice(0, 16);
     const record: LunkrRuntimeLogRecord = {
-      event: type,
+      event: event.type,
       peer,
-      ...fields,
+      questionId: event.questionId,
+      sessionEpoch: event.sessionEpoch,
+      resetReason: event.resetReason,
+      pendingCount: event.pendingCount,
+      activePeerCount: event.activePeerCount,
+      scope: event.scope,
+      status: event.status,
+      stopReason: event.stopReason,
+      elapsedMs: event.elapsedMs,
+      referenceCount: event.referenceCount,
+      historicalAttempted: event.historicalAttempted,
+      historicalUsed: event.historicalUsed,
+      draftCoverage: event.draftCoverage,
+      verifiedCoverage: event.verifiedCoverage,
+      retainedDirectSegmentCount: event.retainedDirectSegmentCount,
+      retainedSynthesizedSegmentCount:
+        event.retainedSynthesizedSegmentCount,
+      removedSegmentCount: event.removedSegmentCount,
+      historicalGateReason: event.historicalGateReason,
     };
     write(`${JSON.stringify(record)}\n`);
   };

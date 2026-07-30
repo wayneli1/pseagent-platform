@@ -27,6 +27,24 @@ describe("createRuntimeLogger", () => {
       referenceCount: 2,
       historicalAttempted: true,
       historicalUsed: false,
+      draftCoverage: ["complete"],
+      verifiedCoverage: ["complete"],
+      retainedDirectSegmentCount: 1,
+      retainedSynthesizedSegmentCount: 3,
+      removedSegmentCount: 0,
+      question: "sentinel-question",
+      answer: "sentinel-answer",
+      evidenceBody: "sentinel-evidence-body",
+      query: "sentinel-query",
+      path: "sentinel-path",
+      token: "sentinel-auth-token",
+    } as BridgeQuestionEvent & {
+      question: string;
+      answer: string;
+      evidenceBody: string;
+      query: string;
+      path: string;
+      token: string;
     });
 
     const serialized = lines.join("");
@@ -37,6 +55,18 @@ describe("createRuntimeLogger", () => {
     expect(serialized).toContain('"referenceCount":2');
     expect(serialized).toContain('"historicalAttempted":true');
     expect(serialized).toContain('"historicalUsed":false');
+    expect(serialized).toContain('"draftCoverage":["complete"]');
+    expect(serialized).toContain('"verifiedCoverage":["complete"]');
+    expect(serialized).toContain('"retainedDirectSegmentCount":1');
+    expect(serialized).toContain('"retainedSynthesizedSegmentCount":3');
+    expect(serialized).toContain('"removedSegmentCount":0');
+    expect(serialized).not.toContain("historicalGateReason");
+    expect(serialized).not.toContain("sentinel-question");
+    expect(serialized).not.toContain("sentinel-answer");
+    expect(serialized).not.toContain("sentinel-evidence-body");
+    expect(serialized).not.toContain("sentinel-query");
+    expect(serialized).not.toContain("sentinel-path");
+    expect(serialized).not.toContain("sentinel-auth-token");
     expect(serialized).toMatch(/"peer":"[0-9a-f]{16}"/u);
     expect(serialized.endsWith("\n")).toBe(true);
     expect(Object.keys(JSON.parse(serialized))).not.toEqual(

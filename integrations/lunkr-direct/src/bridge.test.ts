@@ -25,11 +25,23 @@ const config: LunkrDirectConfig = {
 type TestResult = {
   readonly answer: string;
   readonly status: "answered" | "temporarily_unavailable" | "not_covered";
+  readonly scope?: "normal" | "professional" | "general";
   readonly retryable?: boolean;
   readonly stopReason?: string;
   readonly historicalAttempted?: boolean;
   readonly historicalUsed?: boolean;
   readonly referenceCount?: number;
+  readonly draftCoverage?: readonly ("complete" | "partial" | "none")[];
+  readonly verifiedCoverage?: readonly ("complete" | "partial" | "none")[];
+  readonly retainedDirectSegmentCount?: number;
+  readonly retainedSynthesizedSegmentCount?: number;
+  readonly removedSegmentCount?: number;
+  readonly historicalGateReason?:
+    | "eligible"
+    | "question_not_explicit_coremail"
+    | "formal_verification_incomplete"
+    | "formal_support_present"
+    | "structural_fallback";
 };
 
 type Answer = (
@@ -388,6 +400,12 @@ describe("LunkrPseBridge", () => {
             historicalAttempted: true,
             historicalUsed: false,
             referenceCount: 2,
+            draftCoverage: ["partial"],
+            verifiedCoverage: ["none"],
+            retainedDirectSegmentCount: 0,
+            retainedSynthesizedSegmentCount: 0,
+            removedSegmentCount: 2,
+            historicalGateReason: "formal_verification_incomplete",
           },
       sendText: async () => undefined,
       onEvent: (event) => events.push(event),
@@ -408,8 +426,85 @@ describe("LunkrPseBridge", () => {
         historicalAttempted: true,
         historicalUsed: false,
         referenceCount: 2,
+        draftCoverage: ["partial"],
+        verifiedCoverage: ["none"],
+        retainedDirectSegmentCount: 0,
+        retainedSynthesizedSegmentCount: 0,
+        removedSegmentCount: 2,
+        historicalGateReason: "formal_verification_incomplete",
       }),
     ]));
+  });
+
+  it("emits layered formal-evidence metadata for answered and not-covered results", async () => {
+    const events: BridgeQuestionEvent[] = [];
+    const bridge = createBridge({
+      answer: async (question) => question === "正式归纳"
+        ? {
+            answer: "正式知识库归纳回答",
+            scope: "general",
+            status: "answered",
+            retryable: false,
+            stopReason: "final",
+            referenceCount: 4,
+            historicalAttempted: false,
+            historicalUsed: false,
+            draftCoverage: ["complete"],
+            verifiedCoverage: ["complete"],
+            retainedDirectSegmentCount: 1,
+            retainedSynthesizedSegmentCount: 3,
+            removedSegmentCount: 0,
+          }
+        : {
+            answer: "正式知识库未覆盖",
+            scope: "general",
+            status: "not_covered",
+            retryable: false,
+            stopReason: "final",
+            referenceCount: 0,
+            historicalAttempted: false,
+            historicalUsed: false,
+            draftCoverage: ["none"],
+            verifiedCoverage: ["none"],
+            retainedDirectSegmentCount: 0,
+            retainedSynthesizedSegmentCount: 0,
+            removedSegmentCount: 1,
+            historicalGateReason: "question_not_explicit_coremail",
+          },
+      sendText: async () => undefined,
+      onEvent: (event) => events.push(event),
+    });
+
+    await bridge.handle(message("formal", "#a#U", "正式归纳"));
+    await bridge.handle(message("not-covered", "#a#U", "未覆盖"));
+
+    const answeredEvent = events.find((event) =>
+      event.type === "answered" && event.status === "answered"
+    );
+    expect(answeredEvent).toMatchObject({
+      scope: "general",
+      status: "answered",
+      referenceCount: 4,
+      historicalAttempted: false,
+      historicalUsed: false,
+      draftCoverage: ["complete"],
+      verifiedCoverage: ["complete"],
+      retainedDirectSegmentCount: 1,
+      retainedSynthesizedSegmentCount: 3,
+      removedSegmentCount: 0,
+    });
+    expect(answeredEvent).not.toHaveProperty("historicalGateReason");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "answered",
+      scope: "general",
+      status: "not_covered",
+      draftCoverage: ["none"],
+      verifiedCoverage: ["none"],
+      retainedDirectSegmentCount: 0,
+      retainedSynthesizedSegmentCount: 0,
+      removedSegmentCount: 1,
+      historicalGateReason: "question_not_explicit_coremail",
+    }));
   });
 
   it("keeps the last retryable metadata when a later answer attempt throws", async () => {
@@ -625,12 +720,20 @@ function createBridge(options: {
       answer: options.answer,
       formatAnswer: (result) => result.answer,
       describeResult: (result) => ({
+        scope: result.scope,
         status: result.status,
         retryable: result.retryable ?? false,
         stopReason: result.stopReason,
         referenceCount: result.referenceCount ?? 0,
         historicalAttempted: result.historicalAttempted ?? false,
         historicalUsed: result.historicalUsed ?? false,
+        draftCoverage: result.draftCoverage,
+        verifiedCoverage: result.verifiedCoverage,
+        retainedDirectSegmentCount: result.retainedDirectSegmentCount,
+        retainedSynthesizedSegmentCount:
+          result.retainedSynthesizedSegmentCount,
+        removedSegmentCount: result.removedSegmentCount,
+        historicalGateReason: result.historicalGateReason,
       }),
       sendText: options.sendText,
       onEvent: options.onEvent,
