@@ -46,6 +46,8 @@ const bridge = new LunkrPseBridge(config, {
       (execution.result.historicalAnswer?.references.length ?? 0),
     historicalAttempted: execution.historicalAttempted,
     historicalUsed: execution.historicalUsed,
+    historicalNoticeShown: execution.historicalNoticeShown,
+    historicalRejectedReason: execution.historicalRejectedReason,
     draftCoverage: execution.draftCoverage,
     verifiedCoverage: execution.verifiedCoverage,
     retainedDirectSegmentCount: execution.retainedDirectSegmentCount,

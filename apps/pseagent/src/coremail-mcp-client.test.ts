@@ -220,6 +220,36 @@ describe("evaluateCoremailHistoricalAnswer", () => {
     });
   });
 
+  it("removes URLs and bounds accepted historical content before exposing it", () => {
+    const result = evaluateCoremailHistoricalAnswer(
+      "Coremail 海外邮件投递策略有哪些？",
+      {
+        answer: [
+          "Coremail 海外邮件投递策略历史说明。",
+          "内部链接：https://wiki.coremail.cn/pages/viewpage.action?pageId=1",
+          "正文".repeat(1_200),
+        ].join("\n"),
+        confidence: "medium",
+        sources: Array.from({ length: 5 }, (_, index) => ({
+          source_type: "jira",
+          key: `MAIL-${index + 1}`,
+          title: `Coremail 海外邮件投递策略来源 ${index + 1}`,
+          url: `https://jira.coremail.cn/browse/MAIL-${index + 1}`,
+          excerpt: "该问题记录了海外邮件投递策略与退信处理方式。",
+        })),
+      },
+    );
+
+    expect(result.outcome).toBe("display");
+    if (result.outcome !== "display") throw new Error("expected display");
+    expect(result.answer.answer.length).toBeLessThanOrEqual(2_000);
+    expect(result.answer.answer).not.toContain("https://");
+    expect(result.answer.references).toHaveLength(3);
+    expect(result.answer.references.every((reference) =>
+      reference.url === undefined
+    )).toBe(true);
+  });
+
   it("treats malformed Coremail MCP output as unavailable", () => {
     expect(evaluateCoremailHistoricalAnswer(
       "Coremail 海外邮件投递策略有哪些？",

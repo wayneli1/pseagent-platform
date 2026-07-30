@@ -4,6 +4,13 @@ import type {
   HistoricalReference,
 } from "./contracts.js";
 import { pseAnswerInputSchema } from "./contracts.js";
+import {
+  HISTORICAL_BLOCK_MAX_CHARS,
+  HISTORICAL_NOTICE_MESSAGES,
+  HISTORICAL_REFERENCE_LIMIT,
+  sanitizeHistoricalBody,
+  truncateText,
+} from "./historical-display.js";
 
 const confidenceLabels = {
   low: "低",
@@ -37,16 +44,33 @@ export function createPseMcpServer(dependencies: {
 }
 
 export function formatMcpText(result: AnswerResult): string {
+  if (result.historicalNotice) {
+    return [
+      result.answer,
+      HISTORICAL_NOTICE_MESSAGES[result.historicalNotice.reason],
+    ].join("\n\n");
+  }
   if (!result.historicalAnswer) return result.answer;
   const historical = result.historicalAnswer;
-  return [
-    result.answer,
+  if (historical.confidence === "low") {
+    return [
+      result.answer,
+      HISTORICAL_NOTICE_MESSAGES.low_confidence,
+    ].join("\n\n");
+  }
+  const historicalBlock = [
     "⚠️ Coremail MCP 低可信历史线索（可能不正确）",
     historical.warning,
     `MCP 自报置信度：${confidenceLabels[historical.confidence]}（不代表内容正确）`,
-    historical.answer,
+    sanitizeHistoricalBody(historical.answer),
     "历史来源：",
-    ...historical.references.map(formatHistoricalReference),
+    ...historical.references
+      .slice(0, HISTORICAL_REFERENCE_LIMIT)
+      .map(formatHistoricalReference),
+  ].join("\n\n");
+  return [
+    result.answer,
+    truncateText(historicalBlock, HISTORICAL_BLOCK_MAX_CHARS),
   ].join("\n\n");
 }
 
@@ -64,7 +88,6 @@ function formatHistoricalReference(
     reference.updatedAt ? `更新时间：${reference.updatedAt}` : undefined,
     reference.status ? `状态：${reference.status}` : undefined,
     reference.versions?.length ? `版本：${reference.versions.join("、")}` : undefined,
-    reference.url ? `链接：${reference.url}` : undefined,
   ].filter((part): part is string => part !== undefined);
   return [heading, ...details].join("\n");
 }

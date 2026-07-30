@@ -27,6 +27,8 @@ describe("createRuntimeLogger", () => {
       referenceCount: 2,
       historicalAttempted: true,
       historicalUsed: false,
+      historicalNoticeShown: true,
+      historicalRejectedReason: "topic_mismatch",
       draftCoverage: ["complete"],
       verifiedCoverage: ["complete"],
       retainedDirectSegmentCount: 1,
@@ -55,6 +57,8 @@ describe("createRuntimeLogger", () => {
     expect(serialized).toContain('"referenceCount":2');
     expect(serialized).toContain('"historicalAttempted":true');
     expect(serialized).toContain('"historicalUsed":false');
+    expect(serialized).toContain('"historicalNoticeShown":true');
+    expect(serialized).toContain('"historicalRejectedReason":"topic_mismatch"');
     expect(serialized).toContain('"draftCoverage":["complete"]');
     expect(serialized).toContain('"verifiedCoverage":["complete"]');
     expect(serialized).toContain('"retainedDirectSegmentCount":1');

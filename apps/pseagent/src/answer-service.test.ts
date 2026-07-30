@@ -419,6 +419,8 @@ describe("AnswerService", () => {
     expect(execution).toMatchObject({
       historicalAttempted: true,
       historicalUsed: false,
+      historicalNoticeShown: true,
+      historicalRejectedReason: "topic_mismatch",
       result: {
         ...primary,
         historicalNotice: {

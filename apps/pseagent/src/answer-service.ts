@@ -1,4 +1,9 @@
-import type { AnswerResult, Coverage, Scope } from "./contracts.js";
+import type {
+  AnswerResult,
+  Coverage,
+  HistoricalRejectionReason,
+  Scope,
+} from "./contracts.js";
 import { normalAnswerMessages } from "./prompts.js";
 import type { ScopeRouter } from "./router.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
@@ -51,6 +56,8 @@ export interface PseAnswerExecution {
   readonly retainedSynthesizedSegmentCount?: number;
   readonly removedSegmentCount?: number;
   readonly historicalGateReason?: HistoricalGateReason;
+  readonly historicalNoticeShown?: boolean;
+  readonly historicalRejectedReason?: HistoricalRejectionReason;
 }
 
 export class AnswerService {
@@ -322,6 +329,12 @@ function recordFinished(
     elapsedMs: Math.max(0, Date.now() - startedAt),
     historicalAttempted,
     historicalUsed,
+    ...(result.historicalNotice === undefined
+      ? {}
+      : {
+          historicalNoticeShown: true,
+          historicalRejectedReason: result.historicalNotice.reason,
+        }),
   });
 }
 
@@ -334,6 +347,12 @@ function finishExecution(
 ): PseAnswerExecution {
   recordFinished(trace, result, startedAt, historicalAttempted, historicalUsed);
   const coverageMetadata = executionCoverageMetadata(trace);
+  const historicalNoticeMetadata = result.historicalNotice === undefined
+    ? {}
+    : {
+        historicalNoticeShown: true as const,
+        historicalRejectedReason: result.historicalNotice.reason,
+      };
   if (result.status !== "temporarily_unavailable") {
     return {
       result,
@@ -342,6 +361,7 @@ function finishExecution(
       historicalAttempted,
       historicalUsed,
       ...coverageMetadata,
+      ...historicalNoticeMetadata,
     };
   }
   const stopReason = trace.stopReason ?? "unknown_unavailable";
@@ -355,6 +375,7 @@ function finishExecution(
     historicalAttempted,
     historicalUsed,
     ...coverageMetadata,
+    ...historicalNoticeMetadata,
   };
 }
 
@@ -367,6 +388,8 @@ function executionCoverageMetadata(
   | "stopReason"
   | "historicalAttempted"
   | "historicalUsed"
+  | "historicalNoticeShown"
+  | "historicalRejectedReason"
 > {
   return {
     ...(trace.draftCoverage === undefined

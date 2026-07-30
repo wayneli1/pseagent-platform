@@ -54,9 +54,10 @@ describe("PSEAgent MCP", () => {
     await Promise.all([pair.client.close(), pair.server.close()]);
   });
 
-  it("renders an isolated historical section without rewriting Markdown or Mermaid", () => {
+  it("renders a bounded historical section while preserving safe Markdown", () => {
     const rawHistoricalAnswer = [
       "原始历史答案。",
+      "内部链接：https://wiki.coremail.cn/pages/viewpage.action?pageId=123",
       "```mermaid",
       "flowchart LR",
       "  A --> B",
@@ -70,7 +71,7 @@ describe("PSEAgent MCP", () => {
       historicalAnswer: {
         provider: "coremail_mcp",
         verified: false,
-        confidence: "low",
+        confidence: "medium",
         warning: HISTORICAL_ANSWER_WARNING,
         answer: rawHistoricalAnswer,
         references: [{
@@ -90,13 +91,112 @@ describe("PSEAgent MCP", () => {
     expect(text).toContain(result.answer);
     expect(text).toContain("⚠️ Coremail MCP 低可信历史线索（可能不正确）");
     expect(text).toContain(HISTORICAL_ANSWER_WARNING);
-    expect(text).toContain("MCP 自报置信度：低（不代表内容正确）");
-    expect(text).toContain(rawHistoricalAnswer);
+    expect(text).toContain("MCP 自报置信度：中（不代表内容正确）");
+    expect(text).toContain("原始历史答案。");
+    expect(text).toContain("```mermaid");
     expect(text).toContain("版本：5.0、5.1");
-    expect(text.indexOf(result.answer)).toBeLessThan(text.indexOf(rawHistoricalAnswer));
+    expect(text).not.toContain("https://");
+    expect(text).not.toContain("链接：");
+    expect(text.indexOf(result.answer)).toBeLessThan(text.indexOf("原始历史答案。"));
     expect(text).not.toContain("Jira/Wiki 历史资料辅助回答");
     expect(text).not.toContain("\n\n可信度：低\n\n");
     expect(result.references).toEqual([]);
+  });
+
+  it.each([
+    [
+      "topic_mismatch",
+      "补充说明：已检索 Coremail MCP 历史资料，但检索内容与当前问题不匹配，因此未展示。",
+    ],
+    [
+      "low_confidence",
+      "补充说明：已检索 Coremail MCP 历史资料，但结果置信度较低，因此未展示。",
+    ],
+    [
+      "no_reliable_source",
+      "补充说明：已检索 Coremail MCP 历史资料，但未找到与当前问题可靠匹配的内容。",
+    ],
+  ] as const)("renders only the fixed hidden-history notice for %s", (reason, notice) => {
+    const result: AnswerResult = {
+      scope: "professional",
+      status: "not_covered",
+      answer: "当前正式知识库暂未覆盖该问题。",
+      references: [],
+      historicalNotice: {
+        provider: "coremail_mcp",
+        searched: true,
+        displayed: false,
+        reason,
+      },
+    };
+
+    const text = formatMcpText(result);
+
+    expect(text).toBe(`${result.answer}\n\n${notice}`);
+    expect(text).not.toContain("⚠️ Coremail MCP 低可信历史线索");
+    expect(text).not.toContain("历史来源：");
+    expect(text).not.toContain("http");
+  });
+
+  it("fails closed when a low-confidence historical answer reaches the renderer", () => {
+    const result: AnswerResult = {
+      scope: "professional",
+      status: "not_covered",
+      answer: "当前正式知识库暂未覆盖该问题。",
+      references: [],
+      historicalAnswer: {
+        provider: "coremail_mcp",
+        verified: false,
+        confidence: "low",
+        warning: HISTORICAL_ANSWER_WARNING,
+        answer: "不应显示的低置信度正文",
+        references: [{
+          sourceType: "jira",
+          key: "LOW-1",
+          title: "低置信度来源",
+        }],
+      },
+    };
+
+    const text = formatMcpText(result);
+
+    expect(text).toBe([
+      result.answer,
+      "补充说明：已检索 Coremail MCP 历史资料，但结果置信度较低，因此未展示。",
+    ].join("\n\n"));
+    expect(text).not.toContain("不应显示的低置信度正文");
+    expect(text).not.toContain("LOW-1");
+  });
+
+  it("limits the complete visible historical block to 3000 characters and three sources", () => {
+    const result: AnswerResult = {
+      scope: "professional",
+      status: "not_covered",
+      answer: "正式知识未覆盖。",
+      references: [],
+      historicalAnswer: {
+        provider: "coremail_mcp",
+        verified: false,
+        confidence: "medium",
+        warning: HISTORICAL_ANSWER_WARNING,
+        answer: `历史正文：${"内容".repeat(2_000)}`,
+        references: Array.from({ length: 5 }, (_, index) => ({
+          sourceType: "jira" as const,
+          key: `MAIL-${index + 1}`,
+          title: `来源${index + 1}`,
+          url: `https://jira.coremail.cn/browse/MAIL-${index + 1}`,
+        })),
+      },
+    };
+
+    const text = formatMcpText(result);
+    const historicalBlock = text.slice(result.answer.length + 2);
+
+    expect(historicalBlock.length).toBeLessThanOrEqual(3_000);
+    expect(text).toContain("MAIL-1");
+    expect(text).toContain("MAIL-3");
+    expect(text).not.toContain("MAIL-4");
+    expect(text).not.toContain("https://");
   });
 
   it("leaves formal related-context sections intact when no historical answer exists", () => {

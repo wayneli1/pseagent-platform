@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import type {
   BridgeCoverage,
   BridgeHistoricalGateReason,
+  BridgeHistoricalRejectionReason,
   BridgeQuestionEvent,
 } from "./bridge.js";
 
@@ -20,6 +21,8 @@ export interface LunkrRuntimeLogRecord {
   readonly referenceCount?: number | undefined;
   readonly historicalAttempted?: boolean | undefined;
   readonly historicalUsed?: boolean | undefined;
+  readonly historicalNoticeShown?: boolean | undefined;
+  readonly historicalRejectedReason?: BridgeHistoricalRejectionReason | undefined;
   readonly draftCoverage?: readonly BridgeCoverage[] | undefined;
   readonly verifiedCoverage?: readonly BridgeCoverage[] | undefined;
   readonly retainedDirectSegmentCount?: number | undefined;
@@ -52,6 +55,8 @@ export function createRuntimeLogger(
       referenceCount: event.referenceCount,
       historicalAttempted: event.historicalAttempted,
       historicalUsed: event.historicalUsed,
+      historicalNoticeShown: event.historicalNoticeShown,
+      historicalRejectedReason: event.historicalRejectedReason,
       draftCoverage: event.draftCoverage,
       verifiedCoverage: event.verifiedCoverage,
       retainedDirectSegmentCount: event.retainedDirectSegmentCount,

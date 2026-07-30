@@ -27,6 +27,10 @@ export type BridgeHistoricalGateReason =
   | "formal_verification_incomplete"
   | "formal_support_present"
   | "structural_fallback";
+export type BridgeHistoricalRejectionReason =
+  | "topic_mismatch"
+  | "low_confidence"
+  | "no_reliable_source";
 
 export interface BridgeAnswerMetadata {
   readonly scope?: string | undefined;
@@ -36,6 +40,8 @@ export interface BridgeAnswerMetadata {
   readonly referenceCount: number;
   readonly historicalAttempted: boolean;
   readonly historicalUsed: boolean;
+  readonly historicalNoticeShown?: boolean | undefined;
+  readonly historicalRejectedReason?: BridgeHistoricalRejectionReason | undefined;
   readonly draftCoverage?: readonly BridgeCoverage[] | undefined;
   readonly verifiedCoverage?: readonly BridgeCoverage[] | undefined;
   readonly retainedDirectSegmentCount?: number | undefined;
@@ -65,6 +71,8 @@ export interface BridgeQuestionEvent {
   readonly referenceCount?: number | undefined;
   readonly historicalAttempted?: boolean | undefined;
   readonly historicalUsed?: boolean | undefined;
+  readonly historicalNoticeShown?: boolean | undefined;
+  readonly historicalRejectedReason?: BridgeHistoricalRejectionReason | undefined;
   readonly draftCoverage?: readonly BridgeCoverage[] | undefined;
   readonly verifiedCoverage?: readonly BridgeCoverage[] | undefined;
   readonly retainedDirectSegmentCount?: number | undefined;
@@ -310,6 +318,7 @@ export class LunkrPseBridge<Result> {
       referenceCount: metadata.referenceCount,
       historicalAttempted: metadata.historicalAttempted,
       historicalUsed: metadata.historicalUsed,
+      ...historicalNoticeMetadata(metadata),
       ...layeredEvidenceMetadata(metadata),
     });
   }
@@ -343,6 +352,7 @@ export class LunkrPseBridge<Result> {
         : {
             historicalAttempted: metadata.historicalAttempted,
             historicalUsed: metadata.historicalUsed,
+            ...historicalNoticeMetadata(metadata),
           }),
       ...layeredEvidenceMetadata(metadata),
     });
@@ -414,6 +424,24 @@ export class LunkrPseBridge<Result> {
     }
     throw lastError;
   }
+}
+
+function historicalNoticeMetadata(
+  metadata: BridgeAnswerMetadata | undefined,
+): Pick<
+  BridgeQuestionEvent,
+  "historicalNoticeShown" | "historicalRejectedReason"
+> {
+  if (
+    metadata?.historicalNoticeShown !== true ||
+    metadata.historicalRejectedReason === undefined
+  ) {
+    return {};
+  }
+  return {
+    historicalNoticeShown: true,
+    historicalRejectedReason: metadata.historicalRejectedReason,
+  };
 }
 
 function layeredEvidenceMetadata(

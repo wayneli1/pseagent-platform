@@ -14,6 +14,7 @@ import {
   type HistoricalRejectionReason,
   type HistoricalReference,
 } from "./contracts.js";
+import { prepareHistoricalAnswerForDisplay } from "./historical-display.js";
 
 export type HistoricalLookupResult =
   | {
@@ -186,9 +187,11 @@ export function evaluateCoremailHistoricalAnswer(
   }
 
   const answer = sanitizeCoremailHistoricalAnswer(input);
-  return answer === undefined
-    ? { outcome: "unavailable" }
-    : { outcome: "display", answer };
+  if (answer === undefined) return { outcome: "unavailable" };
+  const displayAnswer = prepareHistoricalAnswerForDisplay(answer);
+  return displayAnswer === undefined
+    ? { outcome: "hidden", reason: "no_reliable_source" }
+    : { outcome: "display", answer: displayAnswer };
 }
 
 function sourcesMatchQuestion(

@@ -30,6 +30,11 @@ type TestResult = {
   readonly stopReason?: string;
   readonly historicalAttempted?: boolean;
   readonly historicalUsed?: boolean;
+  readonly historicalNoticeShown?: boolean;
+  readonly historicalRejectedReason?:
+    | "topic_mismatch"
+    | "low_confidence"
+    | "no_reliable_source";
   readonly referenceCount?: number;
   readonly draftCoverage?: readonly ("complete" | "partial" | "none")[];
   readonly verifiedCoverage?: readonly ("complete" | "partial" | "none")[];
@@ -74,14 +79,15 @@ describe("LunkrPseBridge", () => {
     ]);
   });
 
-  it("shows low-trust history but stores only the formal answer in later context", async () => {
+  it("shows a hidden-history notice but stores only the formal answer in later context", async () => {
     const formalAnswer = "当前知识库暂未覆盖该问题，暂时无法给出可靠答案。";
-    const historicalClue = "⚠️ Coremail MCP 低可信历史线索（可能不正确）";
+    const historicalNotice =
+      "补充说明：已检索 Coremail MCP 历史资料，但检索内容与当前问题不匹配，因此未展示。";
     const answer = vi.fn<Answer>(async () => answered(formalAnswer));
     const sendText = vi.fn(async () => undefined);
     const bridge = new LunkrPseBridge(config, {
       answer,
-      formatAnswer: (result) => `${result.answer}\n\n${historicalClue}`,
+      formatAnswer: (result) => `${result.answer}\n\n${historicalNotice}`,
       formatContextAnswer: (result) => result.answer,
       describeResult: (result) => ({
         status: result.status,
@@ -97,9 +103,9 @@ describe("LunkrPseBridge", () => {
     await bridge.handle(message("m1", "#a#U", "未知能力"));
     await bridge.handle(message("m2", "#a#U", "继续说明"));
 
-    expect(sentTexts(sendText)[1]).toContain(historicalClue);
+    expect(sentTexts(sendText)[1]).toContain(historicalNotice);
     expect(answer.mock.calls[1]?.[1]).toContain(formalAnswer);
-    expect(answer.mock.calls[1]?.[1]).not.toContain(historicalClue);
+    expect(answer.mock.calls[1]?.[1]).not.toContain(historicalNotice);
   });
 
   it("deduplicates before allocating an id or sending an acknowledgment", async () => {
@@ -436,6 +442,37 @@ describe("LunkrPseBridge", () => {
     ]));
   });
 
+  it("emits only the fixed hidden-history reason without content", async () => {
+    const events: BridgeQuestionEvent[] = [];
+    const bridge = createBridge({
+      answer: async () => ({
+        answer: "正式知识未覆盖",
+        scope: "professional",
+        status: "not_covered",
+        retryable: false,
+        stopReason: "final",
+        referenceCount: 0,
+        historicalAttempted: true,
+        historicalUsed: false,
+        historicalNoticeShown: true,
+        historicalRejectedReason: "topic_mismatch",
+      }),
+      sendText: async () => undefined,
+      onEvent: (event) => events.push(event),
+    });
+
+    await bridge.handle(message("hidden-history", "#a#U", "未覆盖"));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "answered",
+      historicalAttempted: true,
+      historicalUsed: false,
+      historicalNoticeShown: true,
+      historicalRejectedReason: "topic_mismatch",
+    }));
+    expect(JSON.stringify(events)).not.toContain("Coremail MCP 历史资料");
+  });
+
   it("emits layered formal-evidence metadata for answered and not-covered results", async () => {
     const events: BridgeQuestionEvent[] = [];
     const bridge = createBridge({
@@ -727,6 +764,8 @@ function createBridge(options: {
         referenceCount: result.referenceCount ?? 0,
         historicalAttempted: result.historicalAttempted ?? false,
         historicalUsed: result.historicalUsed ?? false,
+        historicalNoticeShown: result.historicalNoticeShown,
+        historicalRejectedReason: result.historicalRejectedReason,
         draftCoverage: result.draftCoverage,
         verifiedCoverage: result.verifiedCoverage,
         retainedDirectSegmentCount: result.retainedDirectSegmentCount,

@@ -5,6 +5,7 @@ import type {
   AnswerStatus,
   Coverage,
   CoverageVerificationReason,
+  HistoricalRejectionReason,
   Scope,
 } from "./contracts.js";
 
@@ -128,6 +129,8 @@ export type DiagnosticEvent =
       readonly elapsedMs: number;
       readonly historicalAttempted: boolean;
       readonly historicalUsed: boolean;
+      readonly historicalNoticeShown?: boolean;
+      readonly historicalRejectedReason?: HistoricalRejectionReason;
     };
 
 export interface DiagnosticTrace {
