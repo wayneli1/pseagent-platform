@@ -27,8 +27,9 @@ function plannerInput() {
     scope: "professional" as const,
     question: "请介绍安全网关的详细功能和 POC 注意事项",
     conversationContext: "正在做客户测试",
+    purpose: "专业知识库边界",
     schema: "受控 schema",
-    overview: "专业知识库用途",
+    planningOverview: "专业知识库用途",
   };
 }
 
@@ -85,7 +86,8 @@ describe("ModelKnowledgePlanner", () => {
       expect(input.schemaDescription).toBe("pse_knowledge_plan");
       expect(input.messages[0]?.content).toBe(KNOWLEDGE_PLAN_SYSTEM_PROMPT);
       expect(input.messages[1]?.content).toContain('"knowledgeSchema":"受控 schema"');
-      expect(input.messages[1]?.content).toContain('"knowledgeOverview":"专业知识库用途"');
+      expect(input.messages[1]?.content).toContain('"knowledgePurpose":"专业知识库边界"');
+      expect(input.messages[1]?.content).toContain('"planningOverview":"专业知识库用途"');
       expect(input.messages[1]?.content).toContain('"conversationContext":"正在做客户测试"');
       return input.schema.parse(compositePlan);
     });

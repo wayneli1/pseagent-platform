@@ -108,8 +108,9 @@ export class AnswerService {
       const plan = await this.dependencies.planner.plan({
         scope,
         question,
+        purpose: session.purpose,
         schema: session.schema,
-        overview: session.overview,
+        planningOverview: session.planningOverview,
         ...(conversationContext === undefined ? {} : { conversationContext }),
         signal: requestSignal,
       });

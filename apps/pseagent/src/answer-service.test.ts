@@ -32,6 +32,24 @@ function createPlanner() {
   return { plan: vi.fn(async () => knowledgePlan) } satisfies KnowledgePlanner;
 }
 
+function createKnowledgeSessionFixture(): KnowledgeSession {
+  return {
+    project: "coremail-professional",
+    revision: "a".repeat(40),
+    purpose: "专业库用途",
+    schema: "专业库 schema",
+    planningOverview: "专业库 overview",
+    planningOverviewMeta: {
+      status: "ready",
+      contentHash: "b".repeat(64),
+      rendererVersion: "planning-overview-v1",
+      originalChars: 14,
+      exposedChars: 14,
+      truncated: false,
+    },
+  } as unknown as KnowledgeSession;
+}
+
 const historicalAnswer: HistoricalAnswer = {
   provider: "coremail_mcp",
   verified: false,
@@ -64,11 +82,7 @@ function createProfessionalService(
 ) {
   const model = {} as ModelClient;
   const router = { route: vi.fn(async () => "professional" as const) };
-  const session = {
-    project: "coremail-professional",
-    schema: "专业库 schema",
-    overview: "专业库用途",
-  } as KnowledgeSession;
+  const session = createKnowledgeSessionFixture();
   const knowledge = { open: vi.fn(async () => session) };
   const planner = createPlanner();
   const runAgent = vi.fn<AgentRunner>(async (input) => {
@@ -302,11 +316,7 @@ describe("AnswerService", () => {
           }),
         },
         knowledge: {
-          open: vi.fn(async () => ({
-            project: "coremail-professional",
-            schema: "专业库 schema",
-            overview: "专业库用途",
-          }) as KnowledgeSession),
+          open: vi.fn(async () => createKnowledgeSessionFixture()),
         },
         runAgent: vi.fn<AgentRunner>(async (input) => {
           input.trace.record({
@@ -450,11 +460,7 @@ describe("AnswerService", () => {
       router: { route: vi.fn(async () => "professional" as const) },
       planner: createPlanner(),
       knowledge: {
-        open: vi.fn(async () => ({
-          project: "coremail-professional",
-          schema: "专业库 schema",
-          overview: "专业库用途",
-        }) as KnowledgeSession),
+        open: vi.fn(async () => createKnowledgeSessionFixture()),
       },
       runAgent: vi.fn<AgentRunner>(async (input) => {
         input.trace.record({
@@ -505,11 +511,7 @@ describe("AnswerService", () => {
       router: { route: vi.fn(async () => "professional" as const) },
       planner: createPlanner(),
       knowledge: {
-        open: vi.fn(async () => ({
-          project: "coremail-professional",
-          schema: "专业库 schema",
-          overview: "专业库用途",
-        }) as KnowledgeSession),
+        open: vi.fn(async () => createKnowledgeSessionFixture()),
       },
       runAgent: vi.fn<AgentRunner>(async (input) => {
         input.trace.record({
@@ -549,11 +551,7 @@ describe("AnswerService", () => {
       router: { route: vi.fn(async () => "professional" as const) },
       planner: createPlanner(),
       knowledge: {
-        open: vi.fn(async () => ({
-          project: "coremail-professional",
-          schema: "专业库 schema",
-          overview: "专业库用途",
-        }) as KnowledgeSession),
+        open: vi.fn(async () => createKnowledgeSessionFixture()),
       },
       runAgent: vi.fn<AgentRunner>(async () => primary),
       historicalProvider,
@@ -590,8 +588,9 @@ describe("AnswerService", () => {
       scope: "professional",
       question: "产品问题",
       conversationContext: "有限上下文",
+      purpose: "专业库用途",
       schema: "专业库 schema",
-      overview: "专业库用途",
+      planningOverview: "专业库 overview",
       signal: expect.any(AbortSignal),
     }));
     expect(runAgent.mock.calls[0]?.[0].plan).toEqual(knowledgePlan);
@@ -619,10 +618,7 @@ describe("AnswerService", () => {
         }),
       },
       knowledge: {
-        open: vi.fn(async () => ({
-          schema: "专业库 schema",
-          overview: "专业库用途",
-        }) as KnowledgeSession),
+        open: vi.fn(async () => createKnowledgeSessionFixture()),
       },
       runAgent,
     });
@@ -659,10 +655,7 @@ describe("AnswerService", () => {
       },
       diagnostics: { start: () => trace },
       knowledge: {
-        open: vi.fn(async () => ({
-          schema: "专业库 schema",
-          overview: "专业库用途",
-        }) as KnowledgeSession),
+        open: vi.fn(async () => createKnowledgeSessionFixture()),
       },
       runAgent,
     });
@@ -706,10 +699,7 @@ describe("AnswerService", () => {
       planner: createPlanner(),
       diagnostics: { start: () => trace },
       knowledge: {
-        open: vi.fn(async () => ({
-          schema: "专业库 schema",
-          overview: "专业库用途",
-        }) as KnowledgeSession),
+        open: vi.fn(async () => createKnowledgeSessionFixture()),
       },
       runAgent: vi.fn<AgentRunner>(async (input) => {
         return {
@@ -847,11 +837,7 @@ describe("AnswerService", () => {
         router: { route: vi.fn(async () => "professional" as const) },
         planner: createPlanner(),
         knowledge: {
-          open: vi.fn(async () => ({
-            project: "coremail-professional",
-            schema: "专业库 schema",
-            overview: "专业库用途",
-          }) as KnowledgeSession),
+          open: vi.fn(async () => createKnowledgeSessionFixture()),
         },
         runAgent: vi.fn<AgentRunner>(async (input) => {
           input.trace.record({ event: "stop", reason });

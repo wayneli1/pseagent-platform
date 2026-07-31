@@ -51,8 +51,8 @@ export function readLimitFor(requirement: KnowledgeRequirement): number {
 export interface KnowledgeAgentSession {
   readonly project: ProjectKey;
   readonly revision: string;
+  readonly purpose: string;
   readonly schema: string;
-  readonly overview: string;
   search(query: string, topK: number, signal?: AbortSignal): Promise<KnowledgeSearchResult>;
   graph(path: string, topK: number, signal?: AbortSignal): Promise<KnowledgeGraphResult>;
   readPage(path: string, signal?: AbortSignal): Promise<KnowledgePage>;
@@ -654,8 +654,8 @@ async function requestAgentAction(
   const messages = knowledgeAgentMessages({
       question: input.question,
       ...(input.conversationContext === undefined ? {} : { conversationContext: input.conversationContext }),
+      purpose: input.session.purpose,
       schema: input.session.schema,
-      overview: input.session.overview,
       plan: input.plan,
       requirementEvidence: requirementEvidence(state),
       observations: state.observations,

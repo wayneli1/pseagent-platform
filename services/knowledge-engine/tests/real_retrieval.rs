@@ -6,6 +6,7 @@ use std::{
 
 use knowledge_engine::{
     catalog::Catalog,
+    planning_context::load_planning_context,
     project::ProjectKey,
     service::{KnowledgeService, ProjectIndexes},
 };
@@ -69,11 +70,11 @@ fn fixed_professional_snapshot_recalls_multi_part_evidence_pages() {
             ProjectIndexes::new(
                 Catalog::load(
                     ProjectKey::CoremailProfessional,
-                    professional_root,
+                    &professional_root,
                     corpus.revisions.professional.clone(),
                 )
                 .unwrap(),
-                "# professional".to_owned(),
+                load_planning_context(&professional_root).unwrap(),
             ),
         ),
         (
@@ -81,11 +82,11 @@ fn fixed_professional_snapshot_recalls_multi_part_evidence_pages() {
             ProjectIndexes::new(
                 Catalog::load(
                     ProjectKey::PresalesGeneral,
-                    general_root,
+                    &general_root,
                     corpus.revisions.general,
                 )
                 .unwrap(),
-                "# general".to_owned(),
+                load_planning_context(&general_root).unwrap(),
             ),
         ),
     ])

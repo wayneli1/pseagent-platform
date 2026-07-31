@@ -6,6 +6,7 @@ use std::{
 
 use knowledge_engine::{
     catalog::Catalog,
+    planning_context::load_planning_context,
     project::ProjectKey,
     service::{KnowledgeService, ProjectIndexes},
 };
@@ -48,11 +49,11 @@ fn service(professional_page: Option<(&str, &str)>) -> (KnowledgeService, PathBu
             revision.clone(),
         )
         .unwrap(),
-        "# 专业 schema".to_owned(),
+        load_planning_context(&professional).unwrap(),
     );
     let general_indexes = ProjectIndexes::new(
         Catalog::load(ProjectKey::PresalesGeneral, &general, revision).unwrap(),
-        "# 通用 schema".to_owned(),
+        load_planning_context(&general).unwrap(),
     );
     (
         KnowledgeService::new([
@@ -97,14 +98,26 @@ fn search_hit_contains_a_bounded_snippet_and_revision() {
 }
 
 #[test]
-fn project_context_returns_schema_and_overview_from_same_revision() {
+fn project_context_returns_snapshot_fixed_planning_context() {
     let (service, professional, general) = service(None);
     let context = service.context(ProjectKey::CoremailProfessional).unwrap();
 
     assert!(context.schema.contains("专业"));
-    assert!(context.overview.contains("知识库目标"));
-    assert!(!context.overview.contains("概览"));
+    assert!(context.purpose.contains("知识库目标"));
+    assert!(context.planning_overview.contains("概览"));
+    assert_eq!(
+        context.planning_overview_meta.status,
+        knowledge_engine::planning_context::PlanningOverviewStatus::Ready
+    );
     assert!(!context.revision.is_empty());
+
+    fs::write(
+        professional.join("wiki/overview.md"),
+        "# 运行期间不应进入当前快照",
+    )
+    .unwrap();
+    let unchanged = service.context(ProjectKey::CoremailProfessional).unwrap();
+    assert_eq!(unchanged.planning_overview, context.planning_overview);
     fs::remove_dir_all(professional).unwrap();
     fs::remove_dir_all(general).unwrap();
 }
@@ -134,14 +147,14 @@ fn search_reserves_a_candidate_for_one_hop_graph_context() {
                     revision.clone(),
                 )
                 .unwrap(),
-                "# 专业 schema".to_owned(),
+                load_planning_context(&professional).unwrap(),
             ),
         ),
         (
             ProjectKey::PresalesGeneral,
             ProjectIndexes::new(
                 Catalog::load(ProjectKey::PresalesGeneral, &general, revision).unwrap(),
-                "# 通用 schema".to_owned(),
+                load_planning_context(&general).unwrap(),
             ),
         ),
     ])

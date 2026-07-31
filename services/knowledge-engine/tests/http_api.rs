@@ -11,6 +11,7 @@ use axum::{
 use knowledge_engine::{
     catalog::Catalog,
     http::{router, HttpState},
+    planning_context::load_planning_context,
     project::ProjectKey,
     service::{KnowledgeService, ProjectIndexes},
 };
@@ -26,6 +27,7 @@ fn project(name: &str) -> PathBuf {
             .as_nanos()
     ));
     fs::create_dir_all(root.join("wiki/concepts")).unwrap();
+    fs::write(root.join("purpose.md"), "# Purpose").unwrap();
     fs::write(root.join("schema.md"), "# Schema").unwrap();
     fs::write(root.join("wiki/overview.md"), "# Overview").unwrap();
     fs::write(
@@ -50,14 +52,14 @@ fn fixture_router() -> (axum::Router, Vec<PathBuf>) {
                     revision.clone(),
                 )
                 .unwrap(),
-                "# Schema".to_owned(),
+                load_planning_context(&professional).unwrap(),
             ),
         ),
         (
             ProjectKey::PresalesGeneral,
             ProjectIndexes::new(
                 Catalog::load(ProjectKey::PresalesGeneral, &general, revision).unwrap(),
-                "# Schema".to_owned(),
+                load_planning_context(&general).unwrap(),
             ),
         ),
     ])

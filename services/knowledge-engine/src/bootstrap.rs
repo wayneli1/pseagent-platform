@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     catalog::Catalog,
     error::EngineError,
+    planning_context::load_planning_context,
     project::{ProjectKey, ProjectRegistry},
     service::ProjectIndexes,
 };
@@ -17,6 +18,8 @@ use crate::{
 struct IndexManifest {
     project: ProjectKey,
     revision: String,
+    planning_overview_hash: String,
+    planning_overview_renderer_version: String,
     pages: BTreeMap<String, String>,
 }
 
@@ -45,7 +48,7 @@ where
     }
     let root = registry.root(project)?;
     let catalog = Catalog::load(project, root, first_revision.clone())?;
-    let schema = load_schema(root)?;
+    let planning_context = load_planning_context(root)?;
     after_first_head();
     let second_revision = registry.head_revision(project)?;
     if first_revision != second_revision {
@@ -54,22 +57,18 @@ where
     let manifest = IndexManifest {
         project,
         revision: first_revision,
+        planning_overview_hash: planning_context.planning_overview_meta.content_hash.clone(),
+        planning_overview_renderer_version: planning_context
+            .planning_overview_meta
+            .renderer_version
+            .to_owned(),
         pages: catalog
             .pages()
             .map(|page| (page.path.clone(), page.content_hash.clone()))
             .collect(),
     };
     persist_manifest(index_root, &manifest)?;
-    Ok(ProjectIndexes::new(catalog, schema))
-}
-
-fn load_schema(root: &Path) -> Result<String, EngineError> {
-    let path = root.join("schema.md");
-    let metadata = std::fs::metadata(&path).map_err(|_| EngineError::CatalogUnavailable)?;
-    if !metadata.is_file() || metadata.len() > 256 * 1024 {
-        return Err(EngineError::InvalidDocument);
-    }
-    std::fs::read_to_string(path).map_err(|_| EngineError::InvalidDocument)
+    Ok(ProjectIndexes::new(catalog, planning_context))
 }
 
 fn persist_manifest(index_root: &Path, manifest: &IndexManifest) -> Result<(), EngineError> {
@@ -99,7 +98,8 @@ fn manifest_path(root: &Path, project: ProjectKey) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{bootstrap_project, bootstrap_project_with_hook, load_schema, manifest_path};
+    use super::{bootstrap_project, bootstrap_project_with_hook, manifest_path};
+    use crate::planning_context::load_planning_context;
     use crate::project::{ProjectKey, ProjectRegistry};
     use std::{
         fs,
@@ -159,9 +159,11 @@ mod tests {
     #[test]
     fn rejects_an_oversized_schema() {
         let root = temporary("pse-schema");
-        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        fs::write(root.join("purpose.md"), "# Purpose").unwrap();
         fs::write(root.join("schema.md"), vec![b'x'; 256 * 1024 + 1]).unwrap();
-        assert!(load_schema(&root).is_err());
+        fs::write(root.join("wiki/overview.md"), "# Overview").unwrap();
+        assert!(load_planning_context(&root).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -197,6 +199,11 @@ mod tests {
         let bytes = fs::read(&path).unwrap();
         let manifest: super::IndexManifest = serde_json::from_slice(&bytes).unwrap();
         assert!(manifest.pages.is_empty());
+        assert_eq!(manifest.planning_overview_hash.len(), 64);
+        assert_eq!(
+            manifest.planning_overview_renderer_version,
+            "planning-overview-v1"
+        );
         bootstrap_project(
             &registry,
             ProjectKey::CoremailProfessional,

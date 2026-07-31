@@ -30,7 +30,23 @@ function fakeKnowledgeCaller(overrides: {
         ],
       };
     }
-    if (name === "knowledge_context") return { project, revision, schema: "schema", overview: "overview" };
+    if (name === "knowledge_context") {
+      return {
+        project,
+        revision,
+        purpose: "purpose",
+        schema: "schema",
+        planningOverview: "overview body",
+        planningOverviewMeta: {
+          status: "ready",
+          contentHash,
+          rendererVersion: "planning-overview-v1",
+          originalChars: 13,
+          exposedChars: 13,
+          truncated: false,
+        },
+      };
+    }
     if (name === "knowledge_search") {
       return {
         project: overrides.searchProject ?? project,
@@ -96,6 +112,9 @@ describe("KnowledgeSession", () => {
     const session = await KnowledgeSession.open("general", caller);
 
     expect(session.project).toBe("presales-general");
+    expect(session.purpose).toBe("purpose");
+    expect(session.planningOverview).toBe("overview body");
+    expect(session.planningOverviewMeta.contentHash).toBe(contentHash);
     expect(caller.call).toHaveBeenNthCalledWith(2, "knowledge_context", { project: "presales-general" }, undefined);
   });
 

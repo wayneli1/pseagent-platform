@@ -312,8 +312,9 @@ describe("layered formal evidence business regression", () => {
     const plan = await planner.plan({
       scope: "professional",
       question,
+      purpose: "purpose",
       schema: "schema",
-      overview: "overview",
+      planningOverview: "overview",
     });
 
     expect(plan.requirements[0]?.evidenceMode).toBe("direct_only");
@@ -388,8 +389,8 @@ function generalSession(): KnowledgeAgentSession {
   return {
     project: "presales-general",
     revision,
+    purpose: "general purpose",
     schema: "general schema",
-    overview: "general overview",
     search: vi.fn(async () => ({
       project: "presales-general" as const,
       revision,
@@ -427,8 +428,8 @@ function exchangeSession(): KnowledgeAgentSession {
   return {
     project: "coremail-professional",
     revision,
+    purpose: "professional purpose",
     schema: "professional schema",
-    overview: "professional overview",
     search: vi.fn(async () => ({
       project: "coremail-professional" as const,
       revision,

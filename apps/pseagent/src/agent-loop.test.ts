@@ -182,8 +182,8 @@ function fakeSession(options: {
   return {
     project: "coremail-professional" as const,
     revision,
+    purpose: "purpose",
     schema: "schema",
-    overview: "overview",
     search: searchMock,
     graph: graphMock,
     readPage: readPageMock,

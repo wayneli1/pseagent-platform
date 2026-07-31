@@ -28,8 +28,8 @@ describe("support and existence semantics", () => {
   it("gives the agent a bounded related-context contract for omitted target claims", () => {
     const prompt = systemMessage(knowledgeAgentMessages({
       question: "Coremail 是否已经支持 2035 年量子卫星邮件协议？",
+      purpose: "knowledge purpose",
       schema: "schema",
-      overview: "overview",
       plan: {
         subject: "Coremail 协议支持",
         requirements: [{
@@ -64,11 +64,11 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain("正文明确支持 SMTP、但未提及 IMAP 时，对“是否支持 SMTP 和 IMAP”只能标记 partial");
   });
 
-  it("uses overview only to navigate synthesis evidence facets", () => {
-    const prompt = systemMessage(knowledgeAgentMessages({
+  it("keeps planning overview out of the answer agent context", () => {
+    const messages = knowledgeAgentMessages({
       question: "售前工程师的工作职责有哪些？",
+      purpose: "knowledge purpose",
       schema: "schema",
-      overview: "六套售前方法论总览",
       plan: {
         subject: "售前职责",
         requirements: [{
@@ -84,11 +84,13 @@ describe("support and existence semantics", () => {
       remainingTurns: 1,
       remainingRetrievalActions: 6,
       finalOnly: false,
-    }));
+    });
+    const prompt = systemMessage(messages);
 
     expect(prompt).toContain(
-      "overview 只用于识别证据面和扩展查询，不能作为最终引用",
+      "规划时使用的 overview 不是证据，不能作为最终引用",
     );
+    expect(messages[1]?.content).not.toContain("planningOverview");
     expect(prompt).toContain(
       "synthesis_allowed 应从实际候选页收集不同证据面",
     );

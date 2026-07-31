@@ -18,8 +18,17 @@ const healthResultSchema = z.object({
 const contextResultSchema = z.object({
   project: projectSchema,
   revision: revisionSchema,
+  purpose: z.string(),
   schema: z.string(),
-  overview: z.string(),
+  planningOverview: z.string().max(12_000),
+  planningOverviewMeta: z.object({
+    status: z.enum(["ready", "missing", "truncated"]),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    rendererVersion: z.literal("planning-overview-v1"),
+    originalChars: z.number().int().nonnegative(),
+    exposedChars: z.number().int().nonnegative().max(12_000),
+    truncated: z.boolean(),
+  }).strict(),
 }).strict();
 const searchHitSchema = z.object({
   path: safePathSchema,
@@ -59,6 +68,9 @@ export type ProjectKey = z.infer<typeof projectSchema>;
 export type KnowledgePage = z.infer<typeof knowledgePageSchema>;
 export type KnowledgeSearchResult = z.infer<typeof searchResultSchema>;
 export type KnowledgeGraphResult = z.infer<typeof graphResultSchema>;
+export type PlanningOverviewMeta = z.infer<
+  typeof contextResultSchema
+>["planningOverviewMeta"];
 
 const PROJECT_BY_SCOPE = {
   professional: "coremail-professional",
@@ -76,8 +88,10 @@ export class KnowledgeSession {
   private constructor(
     readonly project: ProjectKey,
     readonly revision: string,
+    readonly purpose: string,
     readonly schema: string,
-    readonly overview: string,
+    readonly planningOverview: string,
+    readonly planningOverviewMeta: PlanningOverviewMeta,
     private readonly caller: KnowledgeToolCaller,
   ) {}
 
@@ -95,7 +109,15 @@ export class KnowledgeSession {
         await caller.call("knowledge_context", { project }, signal),
       );
       assertSameSnapshot(project, snapshot.revision, context);
-      return new KnowledgeSession(project, snapshot.revision, context.schema, context.overview, caller);
+      return new KnowledgeSession(
+        project,
+        snapshot.revision,
+        context.purpose,
+        context.schema,
+        context.planningOverview,
+        context.planningOverviewMeta,
+        caller,
+      );
     } catch (error) {
       throw error;
     }

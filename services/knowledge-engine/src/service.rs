@@ -11,20 +11,23 @@ use crate::{
     error::EngineError,
     graph::{GraphHit, KnowledgeGraph},
     lexical::{LexicalIndex, SearchHit},
+    planning_context::{PlanningContext, PlanningOverviewMeta},
     project::ProjectKey,
 };
 
 const MAX_TOP_K: usize = 10;
 const MAX_QUERY_BYTES: usize = 16 * 1024;
 const MAX_SNIPPET_CHARS: usize = 500;
-const MAX_CONTEXT_CHARS: usize = 8_000;
 
 #[derive(Debug)]
 pub struct ProjectIndexes {
     catalog: Arc<Catalog>,
     lexical: LexicalIndex,
     graph: KnowledgeGraph,
+    purpose: Arc<str>,
     schema: Arc<str>,
+    planning_overview: Arc<str>,
+    planning_overview_meta: PlanningOverviewMeta,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,8 +44,10 @@ pub struct ProjectSnapshot {
 pub struct ProjectContext {
     pub project: ProjectKey,
     pub revision: String,
+    pub purpose: String,
     pub schema: String,
-    pub overview: String,
+    pub planning_overview: String,
+    pub planning_overview_meta: PlanningOverviewMeta,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -85,14 +90,17 @@ pub struct KnowledgeService {
 }
 
 impl ProjectIndexes {
-    pub fn new(catalog: Catalog, schema: String) -> Self {
+    pub fn new(catalog: Catalog, context: PlanningContext) -> Self {
         let lexical = LexicalIndex::build(&catalog);
         let graph = KnowledgeGraph::build(&catalog);
         Self {
             catalog: Arc::new(catalog),
             lexical,
             graph,
-            schema: Arc::from(schema),
+            purpose: Arc::from(context.purpose),
+            schema: Arc::from(context.schema),
+            planning_overview: Arc::from(context.planning_overview),
+            planning_overview_meta: context.planning_overview_meta,
         }
     }
 }
@@ -138,16 +146,13 @@ impl KnowledgeService {
 
     pub fn context(&self, project: ProjectKey) -> Result<ProjectContext, EngineError> {
         let indexes = self.indexes(project)?;
-        let purpose_path = indexes.catalog.root().join("purpose.md");
-        let fallback_path = indexes.catalog.root().join("wiki").join("overview.md");
-        let overview = std::fs::read_to_string(&purpose_path)
-            .or_else(|_| std::fs::read_to_string(fallback_path))
-            .map_err(|_| EngineError::CatalogUnavailable)?;
         Ok(ProjectContext {
             project,
             revision: indexes.catalog.revision().to_owned(),
+            purpose: indexes.purpose.to_string(),
             schema: indexes.schema.to_string(),
-            overview: overview.chars().take(MAX_CONTEXT_CHARS).collect(),
+            planning_overview: indexes.planning_overview.to_string(),
+            planning_overview_meta: indexes.planning_overview_meta.clone(),
         })
     }
 

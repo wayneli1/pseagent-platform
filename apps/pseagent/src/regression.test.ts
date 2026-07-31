@@ -108,8 +108,8 @@ function fakeSession(
   return {
     project,
     revision,
+    purpose: "purpose",
     schema: "schema",
-    overview: "overview",
     search: vi.fn(async () => {
       projectsCalled.push(project);
       return {

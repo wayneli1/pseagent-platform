@@ -44,8 +44,17 @@ export const healthResultSchema = z.object({
 export const contextResultSchema = z.object({
   project: projectSchema,
   revision: revisionSchema,
+  purpose: z.string(),
   schema: z.string(),
-  overview: z.string(),
+  planningOverview: z.string().max(12_000),
+  planningOverviewMeta: z.object({
+    status: z.enum(["ready", "missing", "truncated"]),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    rendererVersion: z.literal("planning-overview-v1"),
+    originalChars: z.number().int().nonnegative(),
+    exposedChars: z.number().int().nonnegative().max(12_000),
+    truncated: z.boolean(),
+  }).strict(),
 }).strict();
 const searchHitSchema = z.object({
   path: safeRelativePathSchema,

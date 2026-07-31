@@ -6,8 +6,9 @@ export interface KnowledgePlanInput {
   readonly scope: Exclude<Scope, "normal">;
   readonly question: string;
   readonly conversationContext?: string;
+  readonly purpose: string;
   readonly schema: string;
-  readonly overview: string;
+  readonly planningOverview: string;
   readonly signal?: AbortSignal;
 }
 
