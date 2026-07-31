@@ -6,14 +6,82 @@ export const coverageSchema = z.enum(["complete", "partial", "none"]);
 export const evidenceModeSchema = z.enum(["direct_only", "synthesis_allowed"]);
 export const routeActionSchema = z.object({ action: z.literal("route"), scope: scopeSchema }).strict();
 export const knowledgeRequirementIdSchema = z.string().regex(/^R[1-6]$/u);
+export const evidenceAspectIdSchema = z.string().regex(/^A[1-8]$/u);
+export const evidenceAspectSchema = z.object({
+  id: evidenceAspectIdSchema,
+  label: z.string().trim().min(1).max(256),
+  terms: z.array(z.string().trim().min(1).max(128)).min(1).max(8),
+}).strict().superRefine((aspect, context) => {
+  const normalizedTerms = aspect.terms.map(normalizeSemanticText);
+  if (new Set(normalizedTerms).size !== normalizedTerms.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["terms"],
+      message: "duplicate_aspect_terms",
+    });
+  }
+});
+export const knowledgeQuerySchema = z.object({
+  text: z.string().trim().min(1).max(1_024),
+  aspectIds: z.array(evidenceAspectIdSchema).min(1).max(8),
+}).strict().superRefine((query, context) => {
+  if (new Set(query.aspectIds).size !== query.aspectIds.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["aspectIds"],
+      message: "duplicate_query_aspect_ids",
+    });
+  }
+});
 export const knowledgeRequirementSchema = z.object({
   id: knowledgeRequirementIdSchema,
   question: z.string().trim().min(1).max(1_024),
-  queries: z.array(z.string().trim().min(1).max(1_024)).min(1).max(3),
   evidenceMode: evidenceModeSchema,
+  evidenceAspects: z.array(evidenceAspectSchema).min(1).max(8),
+  queries: z.array(knowledgeQuerySchema).min(1).max(3),
 }).strict().superRefine((requirement, context) => {
+  const aspectIds = requirement.evidenceAspects.map((aspect) => aspect.id);
+  if (new Set(aspectIds).size !== aspectIds.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["evidenceAspects"],
+      message: "duplicate_evidence_aspect_ids",
+    });
+  }
+  requirement.evidenceAspects.forEach((aspect, index) => {
+    if (aspect.id !== `A${index + 1}`) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidenceAspects", index, "id"],
+        message: "evidence_aspect_ids_must_be_sequential",
+      });
+    }
+  });
+
+  const knownAspectIds = new Set(aspectIds);
+  requirement.queries.forEach((query, queryIndex) => {
+    query.aspectIds.forEach((aspectId, aspectIndex) => {
+      if (!knownAspectIds.has(aspectId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["queries", queryIndex, "aspectIds", aspectIndex],
+          message: "query_references_unknown_aspect",
+        });
+      }
+    });
+  });
+  for (const aspectId of aspectIds) {
+    if (!requirement.queries.some((query) => query.aspectIds.includes(aspectId))) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidenceAspects", aspectIds.indexOf(aspectId), "id"],
+        message: "evidence_aspect_requires_query",
+      });
+    }
+  }
+
   const normalizedQueries = requirement.queries.map((query) =>
-    query.toLocaleLowerCase("zh-CN").replace(/\s+/gu, " ").trim());
+    normalizeSemanticText(query.text));
   if (new Set(normalizedQueries).size !== normalizedQueries.length) {
     context.addIssue({
       code: "custom",
@@ -21,10 +89,10 @@ export const knowledgeRequirementSchema = z.object({
       message: "duplicate_queries",
     });
   }
-  if (looksLikeOpaqueKnowledgeIdentifier(requirement.queries[0] ?? "")) {
+  if (looksLikeOpaqueKnowledgeIdentifier(requirement.queries[0]?.text ?? "")) {
     context.addIssue({
       code: "custom",
-      path: ["queries", 0],
+      path: ["queries", 0, "text"],
       message: "primary_query_must_be_semantic",
     });
   }
@@ -244,6 +312,8 @@ export const answerResultSchema = z.object({
 export type Scope = z.infer<typeof scopeSchema>;
 export type EvidenceMode = z.infer<typeof evidenceModeSchema>;
 export type RouteAction = z.infer<typeof routeActionSchema>;
+export type EvidenceAspect = z.infer<typeof evidenceAspectSchema>;
+export type KnowledgeQuery = z.infer<typeof knowledgeQuerySchema>;
 export type KnowledgeRequirement = z.infer<typeof knowledgeRequirementSchema>;
 export type KnowledgePlan = z.infer<typeof knowledgePlanSchema>;
 export type RelatedContextItem = {
@@ -379,4 +449,8 @@ function looksLikeOpaqueKnowledgeIdentifier(query: string): boolean {
   return /^(?:(?:page|wiki|confluence|source|页面|来源|附件)\s*(?:id|编号)?\s*[:#_-]?\s*)?\d{6,}(?:\s*[-_:#]|$)/iu
     .test(normalized)
     || /^(?:[a-f\d]{8}-){3,}[a-f\d-]+$/iu.test(normalized);
+}
+
+function normalizeSemanticText(value: string): string {
+  return value.toLocaleLowerCase("zh-CN").replace(/\s+/gu, " ").trim();
 }

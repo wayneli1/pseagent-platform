@@ -116,8 +116,21 @@ export class AnswerService {
       });
       recordDiagnostic(trace, {
         event: "plan",
-        subject: plan.subject,
-        requirements: plan.requirements,
+        requirementCount: plan.requirements.length,
+        aspectCount: plan.requirements.reduce(
+          (count, requirement) => count + requirement.evidenceAspects.length,
+          0,
+        ),
+        queryCount: plan.requirements.reduce(
+          (count, requirement) => count + requirement.queries.length,
+          0,
+        ),
+        directOnlyCount: plan.requirements.filter(
+          (requirement) => requirement.evidenceMode === "direct_only",
+        ).length,
+        synthesisAllowedCount: plan.requirements.filter(
+          (requirement) => requirement.evidenceMode === "synthesis_allowed",
+        ).length,
       });
       const input = {
         scope,

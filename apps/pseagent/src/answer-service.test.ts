@@ -23,7 +23,15 @@ const knowledgePlan = {
   requirements: [{
     id: "R1" as const,
     question: "产品问题",
-    queries: ["Coremail 产品问题"],
+    evidenceAspects: [{
+      id: "A1" as const,
+      label: "产品证据",
+      terms: ["Coremail", "产品"],
+    }],
+    queries: [{
+      text: "Coremail 产品问题",
+      aspectIds: ["A1" as const],
+    }],
     evidenceMode: "direct_only" as const,
   }],
 };
@@ -302,7 +310,15 @@ describe("AnswerService", () => {
             requirements: [{
               id: "R1" as const,
               question: "产品问题",
-              queries: ["Coremail 产品问题"],
+              evidenceAspects: [{
+                id: "A1" as const,
+                label: "产品证据",
+                terms: ["Coremail", "产品"],
+              }],
+              queries: [{
+                text: "Coremail 产品问题",
+                aspectIds: ["A1" as const],
+              }],
               evidenceMode,
             }],
           })),
@@ -714,7 +730,14 @@ describe("AnswerService", () => {
     await service.answer("不应直接写入诊断的完整问题");
 
     expect(events.map((event) => event.event)).toEqual(["route", "plan", "finish"]);
-    expect(events[1]).toMatchObject({ event: "plan", subject: "Coremail" });
+    expect(events[1]).toMatchObject({
+      event: "plan",
+      requirementCount: 1,
+      aspectCount: 1,
+      queryCount: 1,
+      directOnlyCount: 1,
+      synthesisAllowedCount: 0,
+    });
     expect(events[2]).toMatchObject({
       event: "finish",
       scope: "professional",

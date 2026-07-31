@@ -35,7 +35,15 @@ describe("support and existence semantics", () => {
         requirements: [{
           id: "R1",
           question: "Coremail 是否已经支持 2035 年量子卫星邮件协议？",
-          queries: ["Coremail 2035 年量子卫星邮件协议支持"],
+          evidenceAspects: [{
+            id: "A1",
+            label: "协议支持性",
+            terms: ["量子卫星邮件协议", "支持"],
+          }],
+          queries: [{
+            text: "Coremail 2035 年量子卫星邮件协议支持",
+            aspectIds: ["A1"],
+          }],
           evidenceMode: "direct_only",
         }],
       },
@@ -74,7 +82,15 @@ describe("support and existence semantics", () => {
         requirements: [{
           id: "R1",
           question: "售前工程师的工作职责有哪些",
-          queries: ["售前 工作职责"],
+          evidenceAspects: [{
+            id: "A1",
+            label: "职责领域",
+            terms: ["售前", "职责"],
+          }],
+          queries: [{
+            text: "售前 工作职责",
+            aspectIds: ["A1"],
+          }],
           evidenceMode: "synthesis_allowed",
         }],
       },

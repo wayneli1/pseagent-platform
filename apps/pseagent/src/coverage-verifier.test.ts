@@ -22,7 +22,15 @@ const singleRequirementPlan: KnowledgePlan = {
   requirements: [{
     id: "R1",
     question: "是否支持目标协议",
-    queries: ["Coremail 目标协议支持"],
+    evidenceAspects: [{
+      id: "A1",
+      label: "协议支持性",
+      terms: ["目标协议", "支持"],
+    }],
+    queries: [{
+      text: "Coremail 目标协议支持",
+      aspectIds: ["A1"],
+    }],
     evidenceMode: "direct_only",
   }],
 };
@@ -32,7 +40,15 @@ const synthesisPlan: KnowledgePlan = {
   requirements: [{
     id: "R1",
     question: "售前工程师的工作职责有哪些",
-    queries: ["售前 工作职责"],
+    evidenceAspects: [{
+      id: "A1",
+      label: "职责领域",
+      terms: ["售前", "职责"],
+    }],
+    queries: [{
+      text: "售前 工作职责",
+      aspectIds: ["A1"],
+    }],
     evidenceMode: "synthesis_allowed",
   }],
 };

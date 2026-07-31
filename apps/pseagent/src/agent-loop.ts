@@ -393,7 +393,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
       {
         requirement,
         queries: new Set([
-          ...requirement.queries.map(normalizeQuery),
+          ...requirement.queries.map((query) => normalizeQuery(query.text)),
           normalizeQuery(input.question),
         ]),
         candidatePaths: new Map(),
@@ -600,7 +600,9 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
     });
 
   const requirementSearches = [...state.requirements.values()].map(async (requirementState) => {
-    const seedQueries = expandSeedQueries(requirementState.requirement.queries);
+    const seedQueries = expandSeedQueries(
+      requirementState.requirement.queries.map((query) => query.text),
+    );
     for (const query of seedQueries) requirementState.queries.add(normalizeQuery(query));
     const results = await Promise.all(seedQueries.map(async (query) => {
       recordDiagnostic(input.trace, {
@@ -926,7 +928,7 @@ async function executeRead(
   const candidate = requirementState.candidatePaths.get(page.path);
   const terms = [
     requirementState.requirement.question,
-    ...requirementState.requirement.queries,
+    ...requirementState.requirement.queries.map((query) => query.text),
     ...(candidate === undefined ? [] : candidate.matchedTerms),
   ];
   const content = input.session.compactPage(page, terms);
@@ -1423,7 +1425,11 @@ function titleCoverageScore(
 ): number {
   const normalizedTitle = normalizeTitleText(title);
   const terms = new Set(
-    [requirement.question, ...requirement.queries, ...executedQueries]
+    [
+      requirement.question,
+      ...requirement.queries.map((query) => query.text),
+      ...executedQueries,
+    ]
       .flatMap(titleTerms),
   );
   const matches = [...terms].filter((term) => normalizedTitle.includes(term));

@@ -4,19 +4,33 @@ import { ModelKnowledgePlanner } from "./knowledge-planner.js";
 import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { KNOWLEDGE_PLAN_SYSTEM_PROMPT } from "./prompts.js";
 
+function plannedEvidence(...texts: string[]) {
+  return {
+    evidenceAspects: [{
+      id: "A1" as const,
+      label: "目标证据",
+      terms: ["目标", "证据"],
+    }],
+    queries: texts.map((text) => ({
+      text,
+      aspectIds: ["A1" as const],
+    })),
+  };
+}
+
 const compositePlan = {
   subject: "Coremail 安全网关",
   requirements: [
     {
       id: "R1" as const,
       question: "详细功能清单",
-      queries: ["Coremail 安全网关 功能清单", "CACTER CAC 功能"],
+      ...plannedEvidence("Coremail 安全网关 功能清单", "CACTER CAC 功能"),
       evidenceMode: "direct_only" as const,
     },
     {
       id: "R2" as const,
       question: "POC 注意事项",
-      queries: ["网关 POC 测试要点", "安全网关 POC 注意事项"],
+      ...plannedEvidence("网关 POC 测试要点", "安全网关 POC 注意事项"),
       evidenceMode: "synthesis_allowed" as const,
     },
   ],
@@ -41,7 +55,7 @@ describe("knowledge plan schema", () => {
       requirements: [{
         id: "R1",
         question: "Coremail AI 是什么",
-        queries: ["Coremail AI 新功能"],
+        ...plannedEvidence("Coremail AI 新功能"),
         evidenceMode: "direct_only",
       }],
     }).requirements).toHaveLength(1);
@@ -50,13 +64,28 @@ describe("knowledge plan schema", () => {
   it.each([
     {
       subject: "网关",
-      requirements: [{ id: "R2", question: "功能", queries: ["安全网关功能"] }],
+      requirements: [{
+        id: "R2",
+        question: "功能",
+        ...plannedEvidence("安全网关功能"),
+        evidenceMode: "direct_only",
+      }],
     },
     {
       subject: "网关",
       requirements: [
-        { id: "R1", question: "功能", queries: ["安全网关功能"] },
-        { id: "R1", question: "POC", queries: ["网关 POC"] },
+        {
+          id: "R1",
+          question: "功能",
+          ...plannedEvidence("安全网关功能"),
+          evidenceMode: "direct_only",
+        },
+        {
+          id: "R1",
+          question: "POC",
+          ...plannedEvidence("网关 POC"),
+          evidenceMode: "direct_only",
+        },
       ],
     },
     {
@@ -64,7 +93,8 @@ describe("knowledge plan schema", () => {
       requirements: [{
         id: "R1",
         question: "POC",
-        queries: ["995065939-poc阶段资料", "网关 POC 测试要点"],
+        ...plannedEvidence("995065939-poc阶段资料", "网关 POC 测试要点"),
+        evidenceMode: "direct_only",
       }],
     },
     {
@@ -72,7 +102,41 @@ describe("knowledge plan schema", () => {
       requirements: [{
         id: "R1",
         question: "POC",
-        queries: ["网关 POC", "网关   POC"],
+        ...plannedEvidence("网关 POC", "网关   POC"),
+        evidenceMode: "direct_only",
+      }],
+    },
+    {
+      subject: "网关",
+      requirements: [{
+        id: "R1",
+        question: "POC",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "测试范围",
+          terms: ["范围"],
+        }],
+        queries: [{
+          text: "网关 POC 测试范围",
+          aspectIds: ["A2"],
+        }],
+      }],
+    },
+    {
+      subject: "网关",
+      requirements: [{
+        id: "R1",
+        question: "POC",
+        evidenceMode: "direct_only",
+        evidenceAspects: [
+          { id: "A1", label: "测试范围", terms: ["范围"] },
+          { id: "A2", label: "验收标准", terms: ["验收"] },
+        ],
+        queries: [{
+          text: "网关 POC 测试范围",
+          aspectIds: ["A1"],
+        }],
       }],
     },
   ])("rejects invalid or identifier-led plans", (value) => {
@@ -107,19 +171,19 @@ describe("ModelKnowledgePlanner", () => {
         {
           id: "R1" as const,
           question: "十万用户规模下如何规划多活架构",
-          queries: ["Coremail 十万用户 多活架构"],
+          ...plannedEvidence("Coremail 十万用户 多活架构"),
           evidenceMode: "direct_only" as const,
         },
         {
           id: "R2" as const,
           question: "如何规划容灾方案",
-          queries: ["Coremail 十万用户 容灾方案"],
+          ...plannedEvidence("Coremail 十万用户 容灾方案"),
           evidenceMode: "synthesis_allowed" as const,
         },
         {
           id: "R3" as const,
           question: "镜像同步机制如何实现",
-          queries: ["Coremail 镜像同步机制"],
+          ...plannedEvidence("Coremail 镜像同步机制"),
           evidenceMode: "synthesis_allowed" as const,
         },
       ],
@@ -143,7 +207,8 @@ describe("ModelKnowledgePlanner", () => {
       question: expect.stringMatching(/十万用户.*(?:服务器|存储|容量|硬件)/u),
       evidenceMode: "direct_only",
     });
-    expect(result.requirements[0]?.queries.join(" ")).toMatch(/十万用户.*Coremail.*(?:容量|硬件)/u);
+    expect(result.requirements[0]?.queries.map((query) => query.text).join(" "))
+      .toMatch(/十万用户.*Coremail.*(?:容量|硬件)/u);
     expect(result.requirements.slice(1).map((requirement) => requirement.id))
       .toEqual(["R2", "R3", "R4"]);
   });
@@ -165,7 +230,7 @@ describe("ModelKnowledgePlanner", () => {
         requirements: [{
           id: "R1",
           question: requirementQuestion,
-          queries: [requirementQuestion],
+          ...plannedEvidence(requirementQuestion),
           evidenceMode: "synthesis_allowed",
         }],
       }));
@@ -183,7 +248,31 @@ describe("ModelKnowledgePlanner", () => {
     },
   );
 
-  it("expands presales duty retrieval into complementary evidence facets", async () => {
+  it("preserves model-generated complementary evidence aspects without code augmentation", async () => {
+    const dynamicEvidence = {
+      evidenceAspects: [
+        {
+          id: "A1" as const,
+          label: "需求与方案",
+          terms: ["需求诊断", "解决方案"],
+        },
+        {
+          id: "A2" as const,
+          label: "关系与推进",
+          terms: ["可信顾问", "机会推进"],
+        },
+      ],
+      queries: [
+        {
+          text: "售前需求诊断与解决方案组织",
+          aspectIds: ["A1" as const],
+        },
+        {
+          text: "售前可信顾问与机会推进",
+          aspectIds: ["A2" as const],
+        },
+      ],
+    };
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],
     ) => input.schema.parse({
@@ -191,7 +280,7 @@ describe("ModelKnowledgePlanner", () => {
       requirements: [{
         id: "R1",
         question: "售前工程师的工作职责有哪些？",
-        queries: ["售前工程师的岗位职责"],
+        ...dynamicEvidence,
         evidenceMode: "synthesis_allowed",
       }],
     }));
@@ -206,11 +295,7 @@ describe("ModelKnowledgePlanner", () => {
       question: "售前工程师的工作职责有哪些？",
     });
 
-    expect(result.requirements[0]?.queries).toEqual([
-      "售前工程师的岗位职责",
-      "愿景演示 技术证明 解决方案销售 需求诊断 可信顾问",
-      "机会质量 客户证据 售前冲突沟通场景集",
-    ]);
+    expect(result.requirements[0]).toMatchObject(dynamicEvidence);
   });
 
   it("repairs an invalid model payload", async () => {

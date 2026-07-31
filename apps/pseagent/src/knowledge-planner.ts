@@ -23,23 +23,20 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
     const messages = knowledgePlanMessages(input);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        return enrichSynthesisQueries(
-          input.question,
-          enforceProtectedEvidenceModes(
-            normalizePlanRequirements(
-              input.question,
-              await this.complete(
-                attempt === 1
-                  ? messages
-                  : [
-                      ...messages,
-                      {
-                        role: "user",
-                        content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
-                      },
-                    ],
-                input.signal,
-              ),
+        return enforceProtectedEvidenceModes(
+          normalizePlanRequirements(
+            input.question,
+            await this.complete(
+              attempt === 1
+                ? messages
+                : [
+                    ...messages,
+                    {
+                      role: "user",
+                      content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
+                    },
+                  ],
+              input.signal,
             ),
           ),
         );
@@ -83,9 +80,20 @@ function normalizePlanRequirements(question: string, plan: KnowledgePlan): Knowl
   const capacityRequirement = {
     id: "R1" as const,
     question: `${scale}规模的服务器数量、存储容量和硬件配置参考`,
+    evidenceAspects: [{
+      id: "A1" as const,
+      label: "容量与硬件配置",
+      terms: ["服务器数量", "存储容量", "硬件配置", "资源配置"],
+    }],
     queries: [
-      `${scale} ${product} 服务器数量 存储容量 硬件配置`,
-      `${scale} ${product} 容量规划 资源配置`,
+      {
+        text: `${scale} ${product} 服务器数量 存储容量 硬件配置`,
+        aspectIds: ["A1" as const],
+      },
+      {
+        text: `${scale} ${product} 容量规划 资源配置`,
+        aspectIds: ["A1" as const],
+      },
     ],
     evidenceMode: "direct_only" as const,
   };
@@ -111,29 +119,6 @@ function enforceProtectedEvidenceModes(plan: KnowledgePlan): KnowledgePlan {
   });
 }
 
-function enrichSynthesisQueries(
-  question: string,
-  plan: KnowledgePlan,
-): KnowledgePlan {
-  if (!/(?:售前工程师|售前).{0,8}(?:工作职责|岗位职责|职责|负责)/u.test(question)) {
-    return plan;
-  }
-  return knowledgePlanSchema.parse({
-    ...plan,
-    requirements: plan.requirements.map((requirement) => {
-      if (requirement.evidenceMode !== "synthesis_allowed") return requirement;
-      return {
-        ...requirement,
-        queries: [...new Set([
-          requirement.queries[0],
-          "愿景演示 技术证明 解决方案销售 需求诊断 可信顾问",
-          "机会质量 客户证据 售前冲突沟通场景集",
-        ])].filter((query): query is string => query !== undefined).slice(0, 3),
-      };
-    }),
-  });
-}
-
 const PROTECTED_EVIDENCE_PATTERNS = [
   /(?:是否|能否|有没有|是否具备|是否兼容|是否适配|支不支持|支持哪些)/u,
   /(?:协议|功能|能力|产品).{0,8}(?:支持|兼容|适配)|(?:支持|兼容|适配).{0,8}(?:协议|功能|能力|产品)/u,
@@ -147,7 +132,10 @@ const PROTECTED_EVIDENCE_PATTERNS = [
 function requiresDirectEvidence(
   requirement: KnowledgePlan["requirements"][number],
 ): boolean {
-  const content = [requirement.question, ...requirement.queries].join(" ");
+  const content = [
+    requirement.question,
+    ...requirement.queries.map((query) => query.text),
+  ].join(" ");
   return PROTECTED_EVIDENCE_PATTERNS.some((pattern) => pattern.test(content));
 }
 
@@ -169,7 +157,10 @@ function countInfrastructureAspects(question: string): number {
 function hasStandaloneCapacityRequirement(plan: KnowledgePlan, scale: string): boolean {
   const normalizedScale = scale.replace(/\s+/gu, "");
   return plan.requirements.some((requirement) => {
-    const content = [requirement.question, ...requirement.queries]
+    const content = [
+      requirement.question,
+      ...requirement.queries.map((query) => query.text),
+    ]
       .join(" ")
       .replace(/\s+/gu, "");
     return content.includes(normalizedScale) &&

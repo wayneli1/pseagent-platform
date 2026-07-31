@@ -53,7 +53,15 @@ describe("PSEAgent contracts", () => {
       requirements: [{
         id: "R1",
         question: "售前工程师的工作职责",
-        queries: ["售前 工作职责"],
+        evidenceAspects: [{
+          id: "A1",
+          label: "职责领域",
+          terms: ["售前", "职责"],
+        }],
+        queries: [{
+          text: "售前 工作职责",
+          aspectIds: ["A1"],
+        }],
       }],
     }).success).toBe(false);
 
@@ -62,7 +70,15 @@ describe("PSEAgent contracts", () => {
       requirements: [{
         id: "R1",
         question: "售前工程师的工作职责",
-        queries: ["售前 工作职责"],
+        evidenceAspects: [{
+          id: "A1",
+          label: "职责领域",
+          terms: ["售前", "职责"],
+        }],
+        queries: [{
+          text: "售前 工作职责",
+          aspectIds: ["A1"],
+        }],
         evidenceMode: "synthesis_allowed",
       }],
     }).requirements[0]?.evidenceMode).toBe("synthesis_allowed");
@@ -72,7 +88,15 @@ describe("PSEAgent contracts", () => {
       requirements: [{
         id: "R1",
         question: "售前工程师的工作职责",
-        queries: ["售前 工作职责"],
+        evidenceAspects: [{
+          id: "A1",
+          label: "职责领域",
+          terms: ["售前", "职责"],
+        }],
+        queries: [{
+          text: "售前 工作职责",
+          aspectIds: ["A1"],
+        }],
         evidenceMode: "model_guess",
       }],
     }).success).toBe(false);

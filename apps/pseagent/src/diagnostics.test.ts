@@ -30,12 +30,11 @@ describe("development diagnostic trace", () => {
     trace.record({ event: "route", scope: "professional" });
     trace.record({
       event: "plan",
-      subject: "Coremail password=secret-value",
-      requirements: [{
-        id: "R1",
-        question: "Cookie: session-value，密码demo-pass-2026",
-        queries: ["Bearer live-token", `安全网关${"长".repeat(2_000)}`],
-      }],
+      requirementCount: 1,
+      aspectCount: 1,
+      queryCount: 2,
+      directOnlyCount: 1,
+      synthesisAllowedCount: 0,
     });
     trace.record({
       event: "model_payload",

@@ -30,12 +30,11 @@ export type DiagnosticEvent =
   | { readonly event: "route"; readonly scope: Scope }
   | {
       readonly event: "plan";
-      readonly subject: string;
-      readonly requirements: readonly {
-        readonly id: string;
-        readonly question: string;
-        readonly queries: readonly string[];
-      }[];
+      readonly requirementCount: number;
+      readonly aspectCount: number;
+      readonly queryCount: number;
+      readonly directOnlyCount: number;
+      readonly synthesisAllowedCount: number;
     }
   | {
       readonly event: "search";

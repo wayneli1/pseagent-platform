@@ -355,7 +355,15 @@ describe("fixed 41-question scripted protocol regression", () => {
           requirements: [{
             id: "R1" as const,
             question: testCase.question,
-            queries: [testCase.question],
+            evidenceAspects: [{
+              id: "A1" as const,
+              label: "目标问题",
+              terms: [testCase.question],
+            }],
+            queries: [{
+              text: testCase.question,
+              aspectIds: ["A1" as const],
+            }],
             evidenceMode: "direct_only" as const,
           }],
         })),

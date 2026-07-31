@@ -80,9 +80,20 @@ const dutyPlan: KnowledgePlan = {
   requirements: [{
     id: "R1",
     question: "售前工程师的核心职责领域",
+    evidenceAspects: dutyDomains.map((label, index) => ({
+      id: `A${index + 1}`,
+      label,
+      terms: label.split("与"),
+    })),
     queries: [
-      "售前工程师 工作职责 方法论",
-      "售前 需求 方案 演示 关系 机会推进",
+      {
+        text: "售前工程师 工作职责 方法论",
+        aspectIds: ["A1", "A2", "A3"],
+      },
+      {
+        text: "售前 关系 冲突 机会推进",
+        aspectIds: ["A4", "A5", "A6"],
+      },
     ],
     evidenceMode: "synthesis_allowed",
   }],
@@ -210,9 +221,27 @@ describe("layered formal evidence business regression", () => {
         requirements: [{
           id: "R1",
           question: "Coremail 相比 Exchange 的优势及适用边界",
+          evidenceAspects: [
+            {
+              id: "A1",
+              label: "产品差异化",
+              terms: ["TCO", "定制", "服务", "安全"],
+            },
+            {
+              id: "A2",
+              label: "替换价值与边界",
+              terms: ["运维成本", "数据主权", "适用边界"],
+            },
+          ],
           queries: [
-            "Coremail Exchange 对比 TCO 定制 服务 安全",
-            "Exchange 替换 Coremail 运维成本 数据主权",
+            {
+              text: "Coremail Exchange 对比 TCO 定制 服务 安全",
+              aspectIds: ["A1"],
+            },
+            {
+              text: "Exchange 替换 Coremail 运维成本 数据主权",
+              aspectIds: ["A2"],
+            },
           ],
           evidenceMode: "synthesis_allowed",
         }],
@@ -265,7 +294,15 @@ describe("layered formal evidence business regression", () => {
       requirements: [{
         id: "R1",
         question: "Coremail 是否支持未记载协议",
-        queries: ["Coremail 未记载协议 支持"],
+        evidenceAspects: [{
+          id: "A1",
+          label: "协议支持性",
+          terms: ["未记载协议", "支持"],
+        }],
+        queries: [{
+          text: "Coremail 未记载协议 支持",
+          aspectIds: ["A1"],
+        }],
         evidenceMode: "direct_only",
       }],
     };
@@ -304,7 +341,15 @@ describe("layered formal evidence business regression", () => {
       requirements: [{
         id: "R1",
         question,
-        queries: [question],
+        evidenceAspects: [{
+          id: "A1",
+          label: "岗位职责",
+          terms: ["岗位", "职责"],
+        }],
+        queries: [{
+          text: question,
+          aspectIds: ["A1"],
+        }],
         evidenceMode: "synthesis_allowed",
       }],
     }]));
