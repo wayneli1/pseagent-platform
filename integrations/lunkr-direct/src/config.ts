@@ -5,6 +5,7 @@ export interface LunkrDirectConfig {
   readonly baseUrl: string;
   readonly apiPath: string;
   readonly sessionPath: string;
+  readonly passwordPath: string;
   readonly connectTimeoutMs: number;
   readonly reconnectMaxMs: number;
   readonly messageDedupeTtlMs: number;
@@ -35,6 +36,9 @@ export function loadLunkrConfig(
     sessionPath:
       env.LUNKR_SESSION_PATH?.trim() ||
       join(homedir(), ".config", "pseagent-lunkr", "session.json"),
+    passwordPath:
+      env.LUNKR_PASSWORD_PATH?.trim() ||
+      join(homedir(), ".config", "pseagent-lunkr", "password.dpapi.json"),
     connectTimeoutMs: positiveInteger(env, "LUNKR_CONNECT_TIMEOUT_MS", 30_000),
     reconnectMaxMs: positiveInteger(env, "LUNKR_RECONNECT_MAX_MS", 30_000),
     messageDedupeTtlMs: positiveInteger(env, "LUNKR_MESSAGE_DEDUPE_TTL_MS", 600_000),

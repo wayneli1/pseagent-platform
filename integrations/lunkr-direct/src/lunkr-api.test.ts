@@ -7,6 +7,7 @@ const config: LunkrDirectConfig = {
   baseUrl: "https://lunkr.example.test",
   apiPath: "/lunkr/s/json",
   sessionPath: "unused",
+  passwordPath: "unused",
   connectTimeoutMs: 1_000,
   reconnectMaxMs: 1_000,
   messageDedupeTtlMs: 1_000,

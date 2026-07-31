@@ -1,10 +1,13 @@
 import {
+  DpapiPasswordStore,
   LunkrApi,
   LunkrAuthService,
+  LunkrLoginRequiredError,
   LunkrPseBridge,
   LunkrSocketClient,
   SessionStore,
   createRuntimeLogger,
+  ensureLunkrSession,
   loadLunkrConfig,
   normalizeDirectMessage,
   safeError,
@@ -16,14 +19,29 @@ import {
 
 const config = loadLunkrConfig();
 const store = new SessionStore(config.sessionPath);
-const session = await store.load();
-if (session === undefined) {
-  process.stderr.write("尚未登录 Lunkr，请先执行 npm run lunkr:login。\n");
-  process.exit(1);
-}
+const passwords = new DpapiPasswordStore(config.passwordPath);
 const auth = new LunkrAuthService(config, store);
-if (!(await auth.verify(session))) {
-  process.stderr.write("Lunkr Session 已失效，请重新执行 npm run lunkr:login。\n");
+let session;
+try {
+  const resolved = await ensureLunkrSession({
+    sessions: store,
+    passwords,
+    auth,
+  });
+  session = resolved.session;
+  if (resolved.renewedWithStoredPassword) {
+    process.stderr.write("lunkr.session.renewed_from_stored_password\n");
+  }
+} catch (error) {
+  if (error instanceof LunkrLoginRequiredError) {
+    process.stderr.write(
+      "Lunkr 需要登录；如需保存密码，请执行 npm run lunkr:login -- --store-password。\n",
+    );
+  } else {
+    process.stderr.write(
+      `Lunkr 自动续登失败：${safeError(error)}。请执行 npm run lunkr:login -- --store-password。\n`,
+    );
+  }
   process.exit(1);
 }
 

@@ -5,6 +5,7 @@ describe("loadLunkrConfig", () => {
   it("uses secure production defaults", () => {
     const config = loadLunkrConfig({});
     expect(config.baseUrl).toBe("https://lunkr.coremail.cn");
+    expect(config.passwordPath).toContain("password.dpapi.json");
     expect(config.contextMaxTurns).toBe(6);
     expect(config.contextMaxChars).toBe(12_000);
     expect(config.messageMaxChars).toBe(1_000);
@@ -34,6 +35,12 @@ describe("loadLunkrConfig", () => {
       .toThrow("正整数");
     expect(() => loadLunkrConfig({ LUNKR_MAX_PENDING_PER_PEER: "-1" }))
       .toThrow("正整数");
+  });
+
+  it("allows an explicit DPAPI password store path", () => {
+    expect(loadLunkrConfig({
+      LUNKR_PASSWORD_PATH: "C:\\secure\\lunkr-password.json",
+    }).passwordPath).toBe("C:\\secure\\lunkr-password.json");
   });
 
   it("loads a positive session idle duration", () => {
