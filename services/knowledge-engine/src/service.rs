@@ -15,7 +15,7 @@ use crate::{
     project::ProjectKey,
 };
 
-const MAX_TOP_K: usize = 10;
+const MAX_TOP_K: usize = 20;
 const MAX_QUERY_BYTES: usize = 16 * 1024;
 const MAX_SNIPPET_CHARS: usize = 500;
 
@@ -321,7 +321,8 @@ mod tests {
     fn validates_query_limits() {
         assert!(validate_query("", 5).is_err());
         assert!(validate_query("query", 0).is_err());
-        assert!(validate_query("query", 11).is_err());
+        assert!(validate_query("query", 20).is_ok());
+        assert!(validate_query("query", 21).is_err());
         assert!(validate_query(&"x".repeat(MAX_QUERY_BYTES + 1), 5).is_err());
     }
 

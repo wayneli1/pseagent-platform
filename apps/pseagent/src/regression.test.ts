@@ -13,7 +13,10 @@ import {
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { ModelClient, ModelMessage } from "./model-client.js";
 import { NOT_COVERED_TEXT } from "./response.js";
-import { ScopeRouter } from "./router.js";
+import {
+  isUnambiguouslyGeneralPresalesQuestion,
+  ScopeRouter,
+} from "./router.js";
 
 const projectSchema = z.enum(["coremail-professional", "presales-general"]);
 const regressionCaseSchema = z.object({
@@ -344,7 +347,9 @@ describe("fixed 41-question scripted protocol regression", () => {
     const routeModel = routingModel();
     const routed = await new ScopeRouter(routeModel).route(testCase.question);
     expect(routed).toBe(testCase.expectedScope);
-    expect(routeModel.completeJson).toHaveBeenCalledOnce();
+    expect(routeModel.completeJson).toHaveBeenCalledTimes(
+      isUnambiguouslyGeneralPresalesQuestion(testCase.question) ? 0 : 1,
+    );
 
     const evidence = testCase.expectedScope !== "normal" && (
       testCase.expectedStatus === "answered" || testCase.relatedFacts.length > 0

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { KnowledgeEngine } from "./client.js";
+import { searchInputSchema } from "./schemas.js";
 import { createKnowledgeMcpServer, TOOL_NAMES } from "./server.js";
 
 describe("Knowledge MCP", () => {
@@ -24,4 +25,17 @@ describe("Knowledge MCP", () => {
   });
 
   it("keeps the literal allowlist reviewable", () => expect(TOOL_NAMES).toHaveLength(5));
+
+  it("accepts a twenty-result read-only search window", () => {
+    expect(searchInputSchema.parse({
+      project: "presales-general",
+      query: "多证据面归纳",
+      topK: 20,
+    }).topK).toBe(20);
+    expect(searchInputSchema.safeParse({
+      project: "presales-general",
+      query: "多证据面归纳",
+      topK: 21,
+    }).success).toBe(false);
+  });
 });

@@ -107,10 +107,20 @@ async fn exposes_only_health_context_search_read_and_graph() {
             &app,
             Method::POST,
             "/v1/search",
-            Some(r#"{"project":"coremail-professional","query":"AI","topK":5}"#),
+            Some(r#"{"project":"coremail-professional","query":"AI","topK":20}"#),
         )
         .await,
         200
+    );
+    assert_eq!(
+        request(
+            &app,
+            Method::POST,
+            "/v1/search",
+            Some(r#"{"project":"coremail-professional","query":"AI","topK":21}"#),
+        )
+        .await,
+        400
     );
     assert_eq!(
         request(

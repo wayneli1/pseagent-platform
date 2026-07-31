@@ -101,16 +101,25 @@ const dutyPlan: KnowledgePlan = {
 
 describe("layered formal evidence business regression", () => {
   it("answers presales duties from six formal pages without historical fallback", async () => {
+    const preloadedPageOrder = [
+      dutyPages[3],
+      dutyPages[4],
+      dutyPages[0],
+      dutyPages[1],
+      dutyPages[2],
+      dutyPages[5],
+    ] as const;
+    const citationByPage = new Map(
+      preloadedPageOrder.map((path, index) => [path, index + 1]),
+    );
     const answer = dutyDomains.map(
-      (domain, index) => `${domain}：${dutyBodies.get(dutyPages[index]!)} [${index + 1}]`,
+      (domain, index) =>
+        `${domain}：${dutyBodies.get(dutyPages[index]!)} [${
+          citationByPage.get(dutyPages[index]!)!
+        }]`,
     ).join("\n");
-    const citations = dutyPages.map((_, index) => index + 1);
+    const citations = dutyPages.map((path) => citationByPage.get(path)!);
     const actions: Array<AgentAction | CoverageVerificationAction> = [
-      ...dutyPages.map((path): AgentAction => ({
-        action: "tool",
-        tool: "kb.read_page",
-        input: { requirementId: "R1", path },
-      })),
       {
         action: "final",
         requirements: [{
@@ -165,6 +174,7 @@ describe("layered formal evidence business regression", () => {
     )).toBe(true);
     expect(execution.result.references.map((reference) => reference.path))
       .toEqual(dutyPages);
+    expect(session.readPage).toHaveBeenCalledTimes(6);
     expect(execution).toMatchObject({
       historicalAttempted: false,
       historicalUsed: false,

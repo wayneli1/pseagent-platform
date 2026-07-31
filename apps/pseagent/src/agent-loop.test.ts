@@ -5,7 +5,7 @@ import {
   type CoverageVerifierInput,
 } from "./coverage-verifier.js";
 import type { DiagnosticEvent, DiagnosticTrace } from "./diagnostics.js";
-import { runKnowledgeAgent } from "./agent-loop.js";
+import { readLimitFor, runKnowledgeAgent } from "./agent-loop.js";
 import {
   InvalidModelPayloadError,
   ModelUnavailableError,
@@ -150,6 +150,7 @@ type SearchFixture = {
   readonly path: string;
   readonly title?: string;
   readonly matchedTerms?: string[];
+  readonly snippet?: string;
 };
 
 function fakeSession(options: {
@@ -168,7 +169,7 @@ function fakeSession(options: {
         title: fixture.title ?? fixture.path,
         score: 1 - index / 10,
         matchedTerms: fixture.matchedTerms ?? [query],
-        snippet: `snippet:${query}`,
+        snippet: fixture.snippet ?? `snippet:${query}`,
       })),
     };
   });
@@ -264,6 +265,13 @@ function payloadAt(model: ReturnType<typeof scriptedAgentModel>, index: number) 
       }>;
       citationIndexes: number[];
       remainingReads: number;
+    }>;
+    readEvidence?: Array<{
+      requirementId: string;
+      citation: number;
+      path: string;
+      content: string;
+      aspectIds: string[];
     }>;
     observations?: string[];
   };
@@ -741,6 +749,66 @@ describe("runKnowledgeAgent", () => {
     }]);
   });
 
+  it("prioritizes an exact direct-evidence title over a broader multi-aspect hit", async () => {
+    const question = "Coremail 对比 Exchange 的优势";
+    const plan: KnowledgePlan = {
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question,
+        evidenceMode: "direct_only",
+        evidenceAspects: [
+          { id: "A1", label: "总体对比", terms: ["Coremail", "Exchange"] },
+          { id: "A2", label: "安全能力", terms: ["安全"] },
+        ],
+        queries: [
+          { text: "Coremail Exchange 对比", aspectIds: ["A1"] },
+          { text: "邮件安全能力", aspectIds: ["A2"] },
+        ],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        [question]: [
+          {
+            path: "wiki/concepts/mail-security.md",
+            title: "邮件安全能力",
+          },
+          {
+            path: "wiki/concepts/localization.md",
+            title: "信创适配与现场服务",
+          },
+          {
+            path: "wiki/comparison/coremail-vs-exchange.md",
+            title: "Coremail vs Exchange 对比",
+          },
+        ],
+        "Coremail Exchange 对比": [{
+          path: "wiki/entities/security-gateway.md",
+          title: "邮件安全网关",
+        }],
+        "邮件安全能力": [{
+          path: "wiki/entities/security-gateway.md",
+          title: "邮件安全网关",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/coremail-vs-exchange.md"),
+      final("complete", "正式对比结论 [1]", [1]),
+    ]);
+
+    await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question,
+    });
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0])
+      .toMatchObject({
+        path: "wiki/comparison/coremail-vs-exchange.md",
+      });
+  });
+
   it("prioritizes unread candidates that can cover a missing dynamic aspect", async () => {
     const plan: KnowledgePlan = {
       subject: "动态证据面",
@@ -793,6 +861,512 @@ describe("runKnowledgeAgent", () => {
         readCandidateCount: 0,
       },
     ]);
+  });
+
+  it("requests one final-only rewrite when read evidence covers an omitted aspect", async () => {
+    const plan: KnowledgePlan = {
+      subject: "互补能力",
+      requirements: [{
+        id: "R1",
+        question: "归纳两个互补能力",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "需求诊断", terms: ["需求访谈"] },
+          { id: "A2", label: "信任建立", terms: ["可信顾问"] },
+        ],
+        queries: [
+          { text: "需求诊断资料", aspectIds: ["A1"] },
+          { text: "信任建立资料", aspectIds: ["A2"] },
+        ],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "需求诊断资料": [{
+          path: "wiki/concepts/diagnosis.md",
+          title: "需求诊断",
+        }],
+        "信任建立资料": [{
+          path: "wiki/concepts/trust.md",
+          title: "信任建立",
+        }],
+      },
+    });
+    session.compactPage
+      .mockReturnValueOnce("正文说明需求诊断和需求访谈。")
+      .mockReturnValueOnce("正文说明信任建立和可信顾问。");
+    const model = scriptedAgentModel([
+      readPages(
+        { requirementId: "R1", path: "wiki/concepts/diagnosis.md" },
+        { requirementId: "R1", path: "wiki/concepts/trust.md" },
+      ),
+      final("partial", "需求诊断 [1]", [1]),
+      final("complete", "需求诊断 [1]；信任建立 [2]", [1, 2]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(payloadAt(model, 2).finalOnly).toBe(true);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "answer_aspect_repair_required",
+    );
+  });
+
+  it("requests one final-only rewrite for a directly matched comparison page", async () => {
+    const plan: KnowledgePlan = {
+      subject: "产品差异化对比",
+      requirements: [{
+        id: "R1",
+        question: "Alpha 相比 Beta 有哪些差异化优势，并说明对比边界",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Alpha 与 Beta 的差异化优势及边界",
+          terms: ["Alpha", "Beta", "差异化优势", "对比边界"],
+        }],
+        queries: [{
+          text: "Alpha Beta 差异化优势 对比边界",
+          aspectIds: ["A1"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Alpha Beta 差异化优势 对比边界": [
+          {
+            path: "wiki/comparison/alpha-vs-beta.md",
+            title: "Alpha vs Beta 对比",
+          },
+          {
+            path: "wiki/cases/alpha-project.md",
+            title: "Alpha 项目案例",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/alpha-vs-beta.md"),
+      final("partial", "已确认主要差异，但邻近主题尚未覆盖 [1]", [1]),
+      final("complete", "差异化优势和对比边界均由正式对比页确认 [1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(session.readPage).toHaveBeenCalledTimes(1);
+    expect(payloadAt(model, 2).finalOnly).toBe(true);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "direct_answer_repair_required",
+    );
+  });
+
+  it("defers an adjacent page when a batch already contains the exact comparison", async () => {
+    const plan: KnowledgePlan = {
+      subject: "产品差异化对比",
+      requirements: [{
+        id: "R1",
+        question: "Alpha 相比 Beta 有哪些差异化优势",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Alpha 与 Beta 的差异化优势",
+          terms: ["Alpha", "Beta", "差异化优势"],
+        }],
+        queries: [{
+          text: "Alpha Beta 差异化优势",
+          aspectIds: ["A1"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Alpha Beta 差异化优势": [
+          {
+            path: "wiki/comparison/alpha-vs-beta.md",
+            title: "Alpha vs Beta 对比",
+          },
+          {
+            path: "wiki/cases/alpha-localization.md",
+            title: "Alpha 国产化案例",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      readPages(
+        {
+          requirementId: "R1",
+          path: "wiki/comparison/alpha-vs-beta.md",
+        },
+        {
+          requirementId: "R1",
+          path: "wiki/cases/alpha-localization.md",
+        },
+      ),
+      final("complete", "正式对比页已覆盖差异化优势 [1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(session.readPage).toHaveBeenCalledTimes(1);
+    expect(session.readPage).toHaveBeenCalledWith(
+      "wiki/comparison/alpha-vs-beta.md",
+      undefined,
+    );
+    expect(payloadAt(model, 1).observations?.join("\n")).toContain(
+      "adjacent_comparison_page_deferred",
+    );
+  });
+
+  it("redirects an adjacent single read to the closest exact comparison", async () => {
+    const plan: KnowledgePlan = {
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question: "Alpha 和 Beta 有哪些差异",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Alpha 与 Beta 的差异",
+          terms: ["Alpha", "Beta", "差异"],
+        }],
+        queries: [{
+          text: "Alpha Beta 差异",
+          aspectIds: ["A1"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Alpha Beta 差异": [
+          {
+            path: "wiki/comparison/alpha-vs-beta.md",
+            title: "Alpha vs Beta 对比",
+          },
+          {
+            path: "wiki/cases/alpha-project.md",
+            title: "Alpha 项目案例",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/cases/alpha-project.md"),
+      final("complete", "正式对比页确认了主要差异 [1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(session.readPage).toHaveBeenCalledWith(
+      "wiki/comparison/alpha-vs-beta.md",
+      undefined,
+    );
+    expect(payloadAt(model, 1).observations?.join("\n")).toContain(
+      "direct_comparison_read_redirected",
+    );
+  });
+
+  it("rewrites an uncovered draft once after reading the exact comparison", async () => {
+    const plan: KnowledgePlan = {
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question: "Alpha 和 Beta 有哪些差异",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Alpha 与 Beta 的差异",
+          terms: ["Alpha", "Beta", "差异"],
+        }],
+        queries: [{
+          text: "Alpha Beta 差异",
+          aspectIds: ["A1"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Alpha Beta 差异": [{
+          path: "wiki/comparison/alpha-vs-beta.md",
+          title: "Alpha vs Beta 对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/alpha-vs-beta.md"),
+      final("none"),
+      final("complete", "正式对比页确认了主要差异 [1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "direct_answer_repair_required",
+    );
+  });
+
+  it("rewrites once when the verifier downgrades a directly matched comparison", async () => {
+    const plan: KnowledgePlan = {
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question: "Alpha 与 Beta 有哪些差异",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Alpha 与 Beta 的差异",
+          terms: ["Alpha", "Beta", "差异"],
+        }],
+        queries: [{
+          text: "Alpha Beta 对比",
+          aspectIds: ["A1"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Alpha Beta 对比": [{
+          path: "wiki/comparison/alpha-vs-beta.md",
+          title: "Alpha vs Beta 对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/alpha-vs-beta.md"),
+      final("complete", "第一版差异结论 [1]", [1]),
+      final("complete", "保守差异结论与边界 [1]", [1]),
+    ]);
+    const verifyCoverage = vi.fn()
+      .mockImplementationOnce(async ({ draft }: CoverageVerifierInput) => ({
+        ...draft,
+        requirements: draft.requirements.map((requirement) => ({
+          ...requirement,
+          coverage: "partial" as const,
+        })),
+      }))
+      .mockImplementationOnce(async ({ draft }: CoverageVerifierInput) => draft);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(verifyCoverage).toHaveBeenCalledTimes(2);
+    expect(payloadAt(model, 2).finalOnly).toBe(true);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      '"source":"coverage_verifier"',
+    );
+  });
+
+  it("preloads broad synthesis pages by uncovered aspect before asking for a final", async () => {
+    const plan: KnowledgePlan = {
+      subject: "宽泛归纳",
+      requirements: [{
+        id: "R1",
+        question: "归纳四个互补证据面",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "领域一", terms: ["术语一"] },
+          { id: "A2", label: "领域二", terms: ["术语二"] },
+          { id: "A3", label: "领域三", terms: ["术语三"] },
+          { id: "A4", label: "领域四", terms: ["术语四"] },
+        ],
+        queries: [
+          { text: "领域一与领域二", aspectIds: ["A1", "A2"] },
+          { text: "领域三", aspectIds: ["A3"] },
+          { text: "领域四", aspectIds: ["A4"] },
+        ],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "领域一与领域二 术语一 术语二": [
+          {
+            path: "wiki/a1.md",
+            title: "术语一",
+            matchedTerms: ["术语一"],
+            snippet: "术语一正文",
+          },
+          {
+            path: "wiki/a2.md",
+            title: "术语二",
+            matchedTerms: ["术语二"],
+            snippet: "术语二正文",
+          },
+        ],
+        "领域三": [{
+          path: "wiki/a3.md",
+          title: "术语三",
+          matchedTerms: ["术语三"],
+        }],
+        "领域四": [{
+          path: "wiki/a4.md",
+          title: "术语四",
+          matchedTerms: ["术语四"],
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: [
+            "领域一 [1][2][3][4]；",
+            "领域二 [1][2][3][4]；",
+            "领域三 [1][2][3][4]；",
+            "领域四 [1][2][3][4]。",
+          ].join(""),
+          citations: [1, 2, 3, 4],
+        }],
+        citations: [1, 2, 3, 4],
+      },
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.readPage).toHaveBeenCalledTimes(4);
+    expect(model.calls).toBe(1);
+    expect(result.status).toBe("answered");
+    expect(result.references).toHaveLength(4);
+  });
+
+  it("attributes a broad-query hit only to aspects supported by its own metadata", async () => {
+    const plan: KnowledgePlan = {
+      subject: "互补领域",
+      requirements: [{
+        id: "R1",
+        question: "归纳多个互补领域",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "需求诊断", terms: ["诊断式销售"] },
+          { id: "A2", label: "信任建立", terms: ["可信顾问"] },
+        ],
+        queries: [{
+          text: "售前互补领域",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "售前互补领域 诊断式销售 可信顾问": [
+          {
+            path: "wiki/concepts/diagnosis.md",
+            title: "诊断式销售",
+            matchedTerms: ["诊断式销售"],
+            snippet: "通过问题诊断发现需求。",
+          },
+          {
+            path: "wiki/concepts/trust.md",
+            title: "可信顾问",
+            matchedTerms: ["可信顾问"],
+            snippet: "通过信任方程建立关系。",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/diagnosis.md"),
+      read("R1", "wiki/concepts/trust.md"),
+      final("complete", "需求诊断与信任建立 [1][2]", [1, 2]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    const candidates =
+      payloadAt(model, 0).requirementEvidence?.[0]?.candidates ?? [];
+    expect(candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: "wiki/concepts/diagnosis.md",
+        aspectIds: ["A1"],
+      }),
+      expect.objectContaining({
+        path: "wiki/concepts/trust.md",
+        aspectIds: ["A2"],
+      }),
+    ]));
+  });
+
+  it("widens one synthesis search window without adding queries", async () => {
+    const evidenceAspects = Array.from({ length: 8 }, (_, index) => ({
+      id: `A${index + 1}` as `A${number}`,
+      label: `证据面${index + 1}`,
+      terms: [`术语${index + 1}`],
+    }));
+    const plan = {
+      subject: "多面归纳",
+      requirements: [{
+        id: "R1" as const,
+        question: "归纳多个互补证据面",
+        evidenceMode: "synthesis_allowed" as const,
+        evidenceAspects,
+        queries: [{
+          text: "多面归纳查询",
+          aspectIds: evidenceAspects.map((aspect) => aspect.id),
+        }],
+      }],
+    } satisfies KnowledgePlan;
+    const session = fakeSession();
+    const model = scriptedAgentModel([
+      final("none", "当前资料未覆盖该问题"),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.search).toHaveBeenCalledTimes(2);
+    expect(session.search).toHaveBeenCalledWith(
+      "多面归纳查询 术语1 术语2 术语3 术语4 术语5 术语6 术语7 术语8",
+      20,
+      undefined,
+    );
+  });
+
+  it("keeps a single-aspect query binding when hit metadata uses different wording", async () => {
+    const plan: KnowledgePlan = {
+      subject: "单一领域",
+      requirements: [{
+        id: "R1",
+        question: "说明单一领域",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "需求诊断", terms: ["诊断式销售"] },
+        ],
+        queries: [{
+          text: "售前需求发现",
+          aspectIds: ["A1"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "售前需求发现": [{
+          path: "wiki/concepts/discovery.md",
+          title: "客户问题发现",
+          matchedTerms: ["需求发现"],
+          snippet: "帮助客户看见问题。",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/discovery.md"),
+      final("complete", "需求诊断 [1]", [1]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(
+      payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0],
+    ).toMatchObject({
+      path: "wiki/concepts/discovery.md",
+      aspectIds: ["A1"],
+    });
   });
 
   it("shares candidates from the original full-question search with every requirement", async () => {
@@ -1176,6 +1750,26 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("expands the synthesis read budget to the number of dynamic evidence aspects", () => {
+    const evidenceAspects = Array.from({ length: 8 }, (_, index) => ({
+      id: `A${index + 1}` as `A${number}`,
+      label: `证据面${index + 1}`,
+      terms: [`术语${index + 1}`],
+    }));
+    const requirement = {
+      id: "R1" as const,
+      question: "归纳八个互补证据面",
+      evidenceMode: "synthesis_allowed" as const,
+      evidenceAspects,
+      queries: [{
+        text: "检索八个互补证据面",
+        aspectIds: evidenceAspects.map((aspect) => aspect.id),
+      }],
+    } satisfies KnowledgePlan["requirements"][number];
+
+    expect(readLimitFor(requirement)).toBe(8);
+  });
+
   it("rejects reading a candidate through a different requirement", async () => {
     const plan: KnowledgePlan = {
       subject: "复合问题",
@@ -1435,8 +2029,85 @@ describe("runKnowledgeAgent", () => {
 
     expect(session.compactPage).toHaveBeenCalledWith(
       expect.objectContaining({ path: "wiki/r1.md" }),
-      expect.arrayContaining(["Coremail AI 是什么", "seed-r1", "AI 助手"]),
+      expect.arrayContaining([
+        "Coremail AI 是什么",
+        "seed-r1",
+        "测试证据面",
+        "测试证据",
+        "AI 助手",
+      ]),
     );
+  });
+
+  it("resolves read-page aspects from compacted body content", async () => {
+    const plan: KnowledgePlan = {
+      subject: "互补领域",
+      requirements: [{
+        id: "R1",
+        question: "归纳需求诊断与信任建立",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "需求诊断", terms: ["诊断式销售"] },
+          { id: "A2", label: "信任建立", terms: ["可信顾问"] },
+        ],
+        queries: [{
+          text: "售前互补领域",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "售前互补领域 诊断式销售 可信顾问": [{
+          path: "wiki/concepts/advisor.md",
+          title: "顾问关系",
+          matchedTerms: ["顾问关系"],
+          snippet: "关系方法。",
+        }],
+      },
+    });
+    session.compactPage.mockReturnValue(
+      "正文说明如何成为可信顾问并完成信任建立。",
+    );
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/advisor.md"),
+      final("partial", "信任建立职责 [1]", [1]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(
+      payloadAt(model, 1).requirementEvidence?.[0]?.candidates[0],
+    ).toMatchObject({
+      path: "wiki/concepts/advisor.md",
+      aspectIds: ["A2"],
+      read: true,
+    });
+    expect(
+      payloadAt(model, 1).requirementEvidence?.[0]?.aspects,
+    ).toEqual([
+      {
+        id: "A1",
+        label: "需求诊断",
+        candidateCount: 0,
+        readCandidateCount: 0,
+      },
+      {
+        id: "A2",
+        label: "信任建立",
+        candidateCount: 1,
+        readCandidateCount: 1,
+      },
+    ]);
+    expect(payloadAt(model, 1).readEvidence).toEqual([
+      expect.objectContaining({
+        requirementId: "R1",
+        citation: 1,
+        path: "wiki/concepts/advisor.md",
+        content: "正文说明如何成为可信顾问并完成信任建立。",
+        aspectIds: ["A2"],
+      }),
+    ]);
   });
 
   it("does not accept none while a requirement still has an unread candidate", async () => {

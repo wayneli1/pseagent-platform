@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const projectSchema = z.enum(["coremail-professional", "presales-general"]);
 export const revisionSchema = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u);
-export const topKSchema = z.number().int().min(1).max(10);
+export const topKSchema = z.number().int().min(1).max(20);
 export const safeRelativePathSchema = z
   .string()
   .trim()

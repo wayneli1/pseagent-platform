@@ -215,6 +215,7 @@ describe("ModelKnowledgePlanner", () => {
 
   it.each([
     ["售前工程师的工作职责有哪些？", "售前职责", "synthesis_allowed"],
+    ["对比 Exchange 邮件系统，Coremail 的优势有哪些？", "Coremail 相比 Exchange 的优势及边界", "direct_only"],
     ["Coremail 是否支持目标协议？", "目标协议支持", "direct_only"],
     ["Coremail 适用哪个版本？", "适用版本", "direct_only"],
     ["最大支持多少用户？", "最大用户数", "direct_only"],
@@ -247,6 +248,99 @@ describe("ModelKnowledgePlanner", () => {
       expect(result.requirements[0]?.evidenceMode).toBe(expectedMode);
     },
   );
+
+  it("collapses overview-derived neighbor topics for a direct product comparison", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question: "Coremail 相比 Exchange 的优势及适用边界",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "产品差异", terms: ["定制", "TCO"] },
+          { id: "A2", label: "信创适配", terms: ["国产化"] },
+          { id: "A3", label: "行业案例", terms: ["金融案例"] },
+        ],
+        queries: [
+          { text: "Coremail Exchange 对比优势", aspectIds: ["A1"] },
+          { text: "Coremail Exchange 信创适配", aspectIds: ["A2"] },
+          { text: "Coremail Exchange 行业案例", aspectIds: ["A3"] },
+        ],
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({
+      ...plannerInput(),
+      question: "对比 Exchange 邮件系统，Coremail 的优势有哪些？",
+    });
+
+    expect(result.requirements[0]).toMatchObject({
+      evidenceMode: "direct_only",
+      evidenceAspects: [{
+        id: "A1",
+        label: "对比 Exchange 邮件系统，Coremail 的优势有哪些？",
+      }],
+    });
+    expect(result.requirements[0]?.queries.every(
+      (query) => query.aspectIds.join(",") === "A1",
+    )).toBe(true);
+  });
+
+  it("deterministically caps an otherwise valid model plan at three queries", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question: "Coremail 相比 Exchange 的优势",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "B9",
+          label: "产品对比",
+          terms: [
+            "Coremail",
+            "Exchange",
+            "对比",
+            "优势",
+            "定制",
+            "TCO",
+            "服务",
+            "安全",
+            "边界",
+          ],
+        }],
+        queries: [
+          { text: "Coremail Exchange 对比一", aspectIds: ["B9"] },
+          { text: "Coremail Exchange 对比二", aspectIds: ["B9"] },
+          { text: "Coremail Exchange 对比三", aspectIds: ["B9"] },
+          { text: "Coremail Exchange 对比四", aspectIds: ["B9"] },
+        ],
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({
+      ...plannerInput(),
+      question: "Coremail 相比 Exchange 有哪些优势？",
+    });
+
+    expect(result.requirements[0]?.queries).toHaveLength(3);
+    expect(result.requirements[0]?.evidenceAspects[0]).toMatchObject({
+      id: "A1",
+    });
+    expect(result.requirements[0]?.evidenceAspects[0]?.terms).toHaveLength(8);
+    expect(completeJson).toHaveBeenCalledOnce();
+  });
 
   it("preserves model-generated complementary evidence aspects without code augmentation", async () => {
     const dynamicEvidence = {
@@ -296,6 +390,54 @@ describe("ModelKnowledgePlanner", () => {
     });
 
     expect(result.requirements[0]).toMatchObject(dynamicEvidence);
+  });
+
+  it("balances a broad synthesis query across the existing three-query budget", async () => {
+    const evidenceAspects = Array.from({ length: 6 }, (_, index) => ({
+      id: `A${index + 1}` as `A${number}`,
+      label: `证据面${index + 1}`,
+      terms: [`区分术语${index + 1}`],
+    }));
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: "多面归纳",
+      requirements: [{
+        id: "R1",
+        question: "归纳多个互补证据面",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects,
+        queries: [{
+          text: "多面归纳查询",
+          aspectIds: evidenceAspects.map((aspect) => aspect.id),
+        }],
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({
+      ...plannerInput(),
+      question: "归纳多个互补证据面",
+    });
+
+    expect(result.requirements[0]?.queries).toEqual([
+      {
+        text: "多面归纳查询 区分术语1 区分术语2",
+        aspectIds: ["A1", "A2"],
+      },
+      {
+        text: "多面归纳查询 区分术语3 区分术语4",
+        aspectIds: ["A3", "A4"],
+      },
+      {
+        text: "多面归纳查询 区分术语5 区分术语6",
+        aspectIds: ["A5", "A6"],
+      },
+    ]);
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 
   it("repairs an invalid model payload", async () => {

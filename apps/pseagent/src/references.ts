@@ -7,6 +7,14 @@ export interface ReadEvidence {
   readonly page: KnowledgePage;
 }
 
+export function normalizeTrailingCitationPlacement(value: string): string {
+  return value.replace(
+    /([。！？；.!?;])([ \t]*)(\[\d+\](?:[ \t]*\[\d+\])*)/gu,
+    (_match, punctuation: string, spacing: string, citations: string) =>
+      `${spacing}${citations}${punctuation}`,
+  );
+}
+
 export type FinalValidation = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
 export class ReferenceValidationError extends Error {

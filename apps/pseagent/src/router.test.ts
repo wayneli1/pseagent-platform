@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { normalAnswerMessages, ROUTE_SYSTEM_PROMPT } from "./prompts.js";
-import { ScopeRouter } from "./router.js";
+import {
+  isUnambiguouslyGeneralPresalesQuestion,
+  ScopeRouter,
+} from "./router.js";
 import { PSEAGENT_SELF_CONTEXT } from "./self-context.js";
 
 describe("ScopeRouter", () => {
@@ -21,6 +24,27 @@ describe("ScopeRouter", () => {
     const completeJson = vi.fn(async () => ({ action: "route", scope: expected }));
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
     await expect(new ScopeRouter(model).route(_question)).resolves.toBe(expected);
+  });
+
+  it.each([
+    "售前工程师的工作职责有哪些？",
+    "请综合知识库说明售前工程师通常承担哪些核心工作。",
+    "售前如何做好客户需求访谈和冲突沟通？",
+  ])("routes an unambiguously generic presales question without model drift: %s", async (question) => {
+    const completeJson = vi.fn();
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    await expect(new ScopeRouter(model).route(question)).resolves.toBe("general");
+    expect(completeJson).not.toHaveBeenCalled();
+    expect(isUnambiguouslyGeneralPresalesQuestion(question)).toBe(true);
+  });
+
+  it.each([
+    "Coremail 售前工程师如何介绍产品功能？",
+    "售前工程师如何规划邮件系统迁移？",
+    "售前如何对比 Exchange 与 Coremail？",
+  ])("does not override a product-bound presales question: %s", (question) => {
+    expect(isUnambiguouslyGeneralPresalesQuestion(question)).toBe(false);
   });
 
   it("repairs an invalid route and never silently downgrades", async () => {

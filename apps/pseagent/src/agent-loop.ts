@@ -26,7 +26,10 @@ import {
   type ModelClient,
 } from "./model-client.js";
 import { knowledgeAgentMessages } from "./prompts.js";
-import { ReferenceRegistry } from "./references.js";
+import {
+  normalizeTrailingCitationPlacement,
+  ReferenceRegistry,
+} from "./references.js";
 import { formatKnowledgeFinal, unavailableResult } from "./response.js";
 import {
   recordDiagnostic,
@@ -41,10 +44,14 @@ export const MAX_GRAPH_ACTIONS_PER_REQUIREMENT = 1;
 export const MAX_AGENT_TURNS_PER_REQUIREMENT = 7;
 const RRF_K = 60;
 const SEED_TOP_K = 10;
+const SYNTHESIS_SEED_TOP_K_LIMIT = 20;
 
 export function readLimitFor(requirement: KnowledgeRequirement): number {
   return requirement.evidenceMode === "synthesis_allowed"
-    ? SYNTHESIS_ALLOWED_READ_LIMIT
+    ? Math.max(
+        SYNTHESIS_ALLOWED_READ_LIMIT,
+        requirement.evidenceAspects.length,
+      )
     : DIRECT_ONLY_READ_LIMIT;
 }
 
@@ -112,6 +119,7 @@ type AgentState = {
   >;
   readonly observations: string[];
   citationRepairAttempts: number;
+  answerAspectRepairAttempts: number;
   invalidPayloadTurnRetries: number;
   forceFinal: boolean;
   successfulSeedSearches: number;
@@ -124,6 +132,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
     recordDiagnostic(input.trace, { event: "stop", reason: "seed_unavailable" });
     return unavailableResult(input.scope);
   }
+  await preloadBroadSynthesisEvidence(input, state);
 
   const maxTurns = Math.min(
     40,
@@ -177,6 +186,36 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         state,
       );
       shareFinalAnswerEvidence(input, state, normalizedAction);
+      const answerAspectRepairs = pendingAnswerAspectRepairs(
+        normalizedAction,
+        state,
+      );
+      const directAnswerRepairs = pendingDirectAnswerRepairs(
+        normalizedAction,
+        state,
+      );
+      if (
+        (answerAspectRepairs.length > 0 || directAnswerRepairs.length > 0) &&
+        state.answerAspectRepairAttempts === 0 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.answerAspectRepairAttempts += 1;
+        state.forceFinal = true;
+        if (answerAspectRepairs.length > 0) {
+          observe(state, {
+            type: "answer_aspect_repair_required",
+            requirements: answerAspectRepairs,
+          });
+        }
+        if (directAnswerRepairs.length > 0) {
+          observe(state, {
+            type: "direct_answer_repair_required",
+            requirements: directAnswerRepairs,
+          });
+        }
+        continue;
+      }
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
       if (pendingReviews.length > 0 && !deadlineReached(input)) {
         for (const requirementId of pendingReviews) {
@@ -260,6 +299,25 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         });
         return fallbackNotCovered(input, "coverage_verifier_invalid");
       }
+      const verifiedDirectAnswerRepairs = pendingDirectAnswerRepairs(
+        auditedAction,
+        state,
+      );
+      if (
+        verifiedDirectAnswerRepairs.length > 0 &&
+        state.answerAspectRepairAttempts === 0 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.answerAspectRepairAttempts += 1;
+        state.forceFinal = true;
+        observe(state, {
+          type: "direct_answer_repair_required",
+          source: "coverage_verifier",
+          requirements: verifiedDirectAnswerRepairs,
+        });
+        continue;
+      }
       recordCoverage(
         input,
         auditedAction,
@@ -308,6 +366,66 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
     }
   }
   return fallbackNotCovered(input, "turn_budget_exhausted");
+}
+
+async function preloadBroadSynthesisEvidence(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+): Promise<void> {
+  for (const requirementState of state.requirements.values()) {
+    if (
+      requirementState.requirement.evidenceMode !== "synthesis_allowed" ||
+      requirementState.requirement.evidenceAspects.length < 4
+    ) {
+      continue;
+    }
+    while (
+      requirementState.directReadPaths.size <
+        readLimitFor(requirementState.requirement)
+    ) {
+      const selected: Candidate[] = [];
+      const provisionallyCovered = new Set(requirementState.readAspectIds);
+      for (const candidate of sortedCandidates(requirementState)) {
+        if (
+          requirementState.readPaths.has(candidate.path) ||
+          selected.length >= MAX_BATCH_READS_PER_REQUIREMENT
+        ) {
+          continue;
+        }
+        const gain = [...candidate.aspectIds].filter(
+          (aspectId) => !provisionallyCovered.has(aspectId),
+        );
+        if (gain.length === 0) continue;
+        selected.push(candidate);
+        for (const aspectId of gain) provisionallyCovered.add(aspectId);
+      }
+      if (selected.length === 0) break;
+      const before = requirementState.readAspectIds.size;
+      await Promise.all(selected.map((candidate) =>
+        executeRead(
+          {
+            action: "tool",
+            tool: "kb.read_page",
+            input: {
+              requirementId: requirementState.requirement.id,
+              path: candidate.path,
+            },
+          },
+          input,
+          state,
+          requirementState,
+        )
+      ));
+      if (requirementState.readAspectIds.size === before) break;
+      if (
+        requirementState.requirement.evidenceAspects.every(
+          (aspect) => requirementState.readAspectIds.has(aspect.id),
+        )
+      ) {
+        break;
+      }
+    }
+  }
 }
 
 function recoveryReadAction(
@@ -391,6 +509,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     ])),
     observations: [],
     citationRepairAttempts: 0,
+    answerAspectRepairAttempts: 0,
     invalidPayloadTurnRetries: 0,
     forceFinal: false,
     successfulSeedSearches: 0,
@@ -420,7 +539,8 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
     });
 
   const requirementSearches = [...state.requirements.values()].map(async (requirementState) => {
-    const seedQueries = expandSeedQueries(requirementState.requirement.queries);
+    const seedQueries = expandSeedQueries(requirementState.requirement);
+    const topK = seedTopKFor(requirementState.requirement);
     for (const query of seedQueries) {
       requirementState.queries.add(normalizeQuery(query.text));
     }
@@ -435,7 +555,7 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
       try {
         const result = await input.session.search(
           query.text,
-          SEED_TOP_K,
+          topK,
           toolSignal(input),
         );
         state.successfulSeedSearches += 1;
@@ -489,6 +609,7 @@ async function requestAgentAction(
       schema: input.session.schema,
       plan: input.plan,
       requirementEvidence: requirementEvidence(state),
+      readEvidence: readEvidence(state),
       observations: state.observations,
       references: state.references.list(),
       remainingTurns: maxTurns - turn + 1,
@@ -598,6 +719,52 @@ async function executeToolAction(
       await executeSupplementalSearch(action, input, state, requirementState);
       return;
     case "kb.read_page":
+      {
+        const preferredPath =
+          preferredUnreadDirectComparisonPath(requirementState);
+        if (
+          preferredPath !== undefined &&
+          !isExactDirectComparisonCandidate(
+            requirementState,
+            action.input.path,
+          )
+        ) {
+          observe(state, {
+            type: "direct_comparison_read_redirected",
+            requirementId: action.input.requirementId,
+            requestedPath: action.input.path,
+            selectedPath: preferredPath,
+          });
+          await executeRead(
+            {
+              action: "tool",
+              tool: "kb.read_page",
+              input: {
+                requirementId: action.input.requirementId,
+                path: preferredPath,
+              },
+            },
+            input,
+            state,
+            requirementState,
+          );
+          return;
+        }
+      }
+      if (
+        shouldDeferAdjacentComparisonRead(
+          requirementState,
+          action.input.path,
+          false,
+        )
+      ) {
+        observe(state, {
+          type: "adjacent_comparison_page_deferred",
+          requirementId: action.input.requirementId,
+          path: action.input.path,
+        });
+        return;
+      }
       await executeRead(action, input, state, requirementState);
       return;
     case "kb.graph":
@@ -614,11 +781,52 @@ async function executeBatchReads(
   state: AgentState,
 ): Promise<void> {
   const reserved = new Map<string, number>();
+  const exactRequestedByRequirement = new Set(
+    action.input.pages.flatMap((page) => {
+      const requirementState = state.requirements.get(page.requirementId);
+      return requirementState !== undefined &&
+          isExactDirectComparisonCandidate(requirementState, page.path)
+        ? [page.requirementId]
+        : [];
+    }),
+  );
+  const redirectedRequirements = new Set<string>();
+  const requestedPages = action.input.pages.map((page) => {
+    const requirementState = state.requirements.get(page.requirementId);
+    if (
+      requirementState === undefined ||
+      exactRequestedByRequirement.has(page.requirementId) ||
+      redirectedRequirements.has(page.requirementId) ||
+      isExactDirectComparisonCandidate(requirementState, page.path)
+    ) {
+      return page;
+    }
+    const preferredPath =
+      preferredUnreadDirectComparisonPath(requirementState);
+    if (preferredPath === undefined) return page;
+    redirectedRequirements.add(page.requirementId);
+    observe(state, {
+      type: "direct_comparison_read_redirected",
+      requirementId: page.requirementId,
+      requestedPath: page.path,
+      selectedPath: preferredPath,
+    });
+    return { ...page, path: preferredPath };
+  });
+  const requestedExactComparisons = new Set(
+    requestedPages.flatMap((page) => {
+      const requirementState = state.requirements.get(page.requirementId);
+      return requirementState !== undefined &&
+          isExactDirectComparisonCandidate(requirementState, page.path)
+        ? [page.requirementId]
+        : [];
+    }),
+  );
   const accepted: Array<{
     page: { requirementId: string; path: string };
     requirementState: RequirementState;
   }> = [];
-  for (const page of action.input.pages) {
+  for (const page of requestedPages) {
     const requirementState = state.requirements.get(page.requirementId);
     if (!requirementState) {
       observe(state, {
@@ -630,6 +838,20 @@ async function executeBatchReads(
     if (!requirementState.candidatePaths.has(page.path)) {
       observe(state, {
         type: "path_not_candidate_for_requirement",
+        requirementId: page.requirementId,
+        path: page.path,
+      });
+      continue;
+    }
+    if (
+      shouldDeferAdjacentComparisonRead(
+        requirementState,
+        page.path,
+        requestedExactComparisons.has(page.requirementId),
+      )
+    ) {
+      observe(state, {
+        type: "adjacent_comparison_page_deferred",
         requirementId: page.requirementId,
         path: page.path,
       });
@@ -771,22 +993,35 @@ async function executeRead(
   requirementState.directReadPaths.add(page.path);
   requirementState.citationIndexes.add(reference.index);
   const candidate = requirementState.candidatePaths.get(page.path);
-  for (const aspectId of candidate?.aspectIds ?? []) {
-    requirementState.readAspectIds.add(aspectId);
-  }
   const terms = [
     requirementState.requirement.question,
     ...requirementState.requirement.queries.map((query) => query.text),
+    ...requirementState.requirement.evidenceAspects.flatMap(
+      (aspect) => [aspect.label, ...aspect.terms],
+    ),
     ...(candidate === undefined ? [] : candidate.matchedTerms),
   ];
   const content = input.session.compactPage(page, terms);
+  const resolvedAspectIds = [
+    ...new Set([
+      ...(candidate?.aspectIds ?? []),
+      ...matchingAspectIds(
+        requirementState.requirement,
+        `${page.title}\n${content}`,
+      ),
+    ]),
+  ];
+  for (const aspectId of resolvedAspectIds) {
+    candidate?.aspectIds.add(aspectId);
+    requirementState.readAspectIds.add(aspectId);
+  }
   state.evidenceDocuments.get(requirementState.requirement.id)?.set(
     reference.index,
     {
       title: page.title,
       path: page.path,
       content,
-      aspectIds: [...(candidate?.aspectIds ?? [])],
+      aspectIds: resolvedAspectIds,
     },
   );
   observe(state, {
@@ -794,7 +1029,7 @@ async function executeRead(
     requirementId: requirementState.requirement.id,
     reference: reference.index,
     path: page.path,
-    content,
+    aspectIds: resolvedAspectIds,
   });
   recordDiagnostic(input.trace, {
     event: "read",
@@ -802,7 +1037,7 @@ async function executeRead(
     path: page.path,
     citation: reference.index,
     sectionHeadings: markdownHeadings(content),
-    aspectIds: [...(candidate?.aspectIds ?? [])],
+    aspectIds: resolvedAspectIds,
   });
   shareReadEvidence(
     input,
@@ -833,7 +1068,14 @@ function shareReadEvidence(
     }
     requirementState.readPaths.add(path);
     requirementState.citationIndexes.add(citation);
-    for (const aspectId of targetCandidate.aspectIds) {
+    const resolvedAspectIds = [
+      ...new Set([
+        ...targetCandidate.aspectIds,
+        ...matchingAspectIds(requirementState.requirement, content),
+      ]),
+    ];
+    for (const aspectId of resolvedAspectIds) {
+      targetCandidate.aspectIds.add(aspectId);
       requirementState.readAspectIds.add(aspectId);
     }
     const reference = state.references.resolve([citation])[0];
@@ -842,7 +1084,7 @@ function shareReadEvidence(
         title: reference.title,
         path: reference.path,
         content,
-        aspectIds: [...targetCandidate.aspectIds],
+        aspectIds: resolvedAspectIds,
       });
     }
     observe(state, {
@@ -966,17 +1208,15 @@ function mergeSearchResults(
       candidate.requirementSpecificMatch ||= requirementSpecific;
       candidate.rrfScore += 1 / (RRF_K + index + 1);
       candidate.sourceQueries.add(query);
-      for (const aspectId of [
-        ...aspectIds,
-        ...matchingAspectIds(
-          requirementState.requirement,
-          [
-            hit.title,
-            ...hit.matchedTerms,
-            hit.snippet ?? "",
-          ].join(" "),
-        ),
-      ]) {
+      for (const aspectId of attributedSearchAspectIds(
+        requirementState.requirement,
+        aspectIds,
+        [
+          hit.title,
+          ...hit.matchedTerms,
+          hit.snippet ?? "",
+        ].join(" "),
+      )) {
         candidate.aspectIds.add(aspectId);
       }
       candidate.rankings.push({ query, rank: index + 1, score: hit.score });
@@ -1014,15 +1254,17 @@ function mergeGraphResult(
     candidate.rrfScore += 1 / (RRF_K + index + 1);
     candidate.sourceQueries.add(`graph:${sourcePath}`);
     candidate.graphRelations.add(hit.relation);
-    for (
-      const aspectId of
-        requirementState.candidatePaths.get(sourcePath)?.aspectIds ?? []
-    ) {
-      candidate.aspectIds.add(aspectId);
-    }
-    for (const aspectId of matchingAspectIds(
+    const sourceAspectIds = [
+      ...(requirementState.candidatePaths.get(sourcePath)?.aspectIds ?? []),
+    ];
+    const matchedAspectIds = matchingAspectIds(
       requirementState.requirement,
       hit.title,
+    );
+    for (const aspectId of (
+      sourceAspectIds.length <= 1
+        ? [...new Set([...sourceAspectIds, ...matchedAspectIds])]
+        : matchedAspectIds
     )) {
       candidate.aspectIds.add(aspectId);
     }
@@ -1091,6 +1333,17 @@ function requirementEvidence(state: AgentState) {
       readLimitFor(requirementState.requirement) -
       requirementState.directReadPaths.size,
   }));
+}
+
+function readEvidence(state: AgentState) {
+  return [...state.evidenceDocuments.entries()].flatMap(
+    ([requirementId, documents]) =>
+      [...documents.entries()].map(([citation, document]) => ({
+        requirementId,
+        citation,
+        ...document,
+      })),
+  );
 }
 
 function evidenceByRequirement(state: AgentState): ReadonlyMap<string, ReadonlySet<number>> {
@@ -1288,25 +1541,214 @@ function pendingEvidenceReviews(
   return pending;
 }
 
-function sortedCandidates(requirementState: RequirementState): Candidate[] {
+function pendingAnswerAspectRepairs(
+  action: FinalAction,
+  state: AgentState,
+): Array<{ requirementId: string; missingAspectIds: string[] }> {
+  return action.requirements.flatMap((result) => {
+    const requirementState = state.requirements.get(result.id);
+    if (
+      requirementState === undefined ||
+      result.coverage === "none" ||
+      requirementState.requirement.evidenceMode !== "synthesis_allowed" ||
+      requirementState.requirement.evidenceAspects.length <= 1
+    ) {
+      return [];
+    }
+    const documents =
+      state.evidenceDocuments.get(result.id) ?? new Map();
+    const availableAspectIds = new Set(
+      [...documents.values()].flatMap(
+        (document) => document.aspectIds ?? [],
+      ),
+    );
+    const coveredAspectIds = answerCoveredAspectIds(
+      result.answer,
+      requirementState.requirement,
+      documents,
+    );
+    const missingAspectIds = requirementState.requirement.evidenceAspects
+      .map((aspect) => aspect.id)
+      .filter((aspectId) =>
+        availableAspectIds.has(aspectId) &&
+        !coveredAspectIds.has(aspectId)
+      );
+    return missingAspectIds.length === 0
+      ? []
+      : [{ requirementId: result.id, missingAspectIds }];
+  });
+}
+
+const DIRECT_COMPARISON_QUESTION_PATTERN =
+  /(?:对比|比较|相比|较之|区别|差异|不同|\bvs\.?\b|\bversus\b)/iu;
+
+function isDirectComparisonRequirement(
+  requirement: KnowledgeRequirement,
+): boolean {
+  return requirement.evidenceMode === "direct_only" &&
+    requirement.evidenceAspects.length === 1 &&
+    DIRECT_COMPARISON_QUESTION_PATTERN.test(requirement.question);
+}
+
+function isExactDirectComparisonCandidate(
+  requirementState: RequirementState,
+  path: string,
+): boolean {
+  const candidate = requirementState.candidatePaths.get(path);
+  return candidate !== undefined &&
+    directQuestionTitleCoverageScore(
+      candidate.title,
+      requirementState.requirement,
+    ) > 0;
+}
+
+function preferredUnreadDirectComparisonPath(
+  requirementState: RequirementState,
+): string | undefined {
+  if (!isDirectComparisonRequirement(requirementState.requirement)) {
+    return undefined;
+  }
   return [...requirementState.candidatePaths.values()]
+    .filter((candidate) =>
+      !requirementState.readPaths.has(candidate.path) &&
+      isExactDirectComparisonCandidate(requirementState, candidate.path)
+    )
     .sort((left, right) =>
-      candidateAspectGain(right, requirementState) -
-        candidateAspectGain(left, requirementState) ||
-      candidatePathPriority(left.path, requirementState.requirement) -
-        candidatePathPriority(right.path, requirementState.requirement) ||
-      titleCoverageScore(
+      directQuestionTitleCoverageScore(
         right.title,
         requirementState.requirement,
-        requirementState.queries,
       ) -
+        directQuestionTitleCoverageScore(
+          left.title,
+          requirementState.requirement,
+        ) ||
+      normalizeTitleText(left.title).length -
+        normalizeTitleText(right.title).length ||
+      right.rrfScore - left.rrfScore ||
+      left.path.localeCompare(right.path)
+    )[0]?.path;
+}
+
+function shouldDeferAdjacentComparisonRead(
+  requirementState: RequirementState,
+  path: string,
+  exactCandidateRequested: boolean,
+): boolean {
+  if (
+    !isDirectComparisonRequirement(requirementState.requirement) ||
+    isExactDirectComparisonCandidate(requirementState, path)
+  ) {
+    return false;
+  }
+  return exactCandidateRequested ||
+    [...requirementState.directReadPaths].some((readPath) =>
+      isExactDirectComparisonCandidate(requirementState, readPath)
+    );
+}
+
+function pendingDirectAnswerRepairs(
+  action: FinalAction,
+  state: AgentState,
+): Array<{ requirementId: string; citationIndexes: number[] }> {
+  return action.requirements.flatMap((result) => {
+    const requirementState = state.requirements.get(result.id);
+    if (
+      requirementState === undefined ||
+      result.coverage === "complete" ||
+      !isDirectComparisonRequirement(requirementState.requirement)
+    ) {
+      return [];
+    }
+    const documents = state.evidenceDocuments.get(result.id) ?? new Map();
+    const exactCitations = [...documents.entries()]
+      .filter(([, document]) =>
+        directQuestionTitleCoverageScore(
+          document.title,
+          requirementState.requirement,
+        ) > 0
+      )
+      .map(([citation]) => citation);
+    return exactCitations.length === 0
+      ? []
+      : [{
+          requirementId: result.id,
+          citationIndexes: exactCitations,
+        }];
+  });
+}
+
+function answerCoveredAspectIds(
+  answer: string,
+  requirement: KnowledgeRequirement,
+  documents: ReadonlyMap<
+    number,
+    Omit<CoverageEvidenceDocument, "requirementId" | "citation">
+  >,
+): ReadonlySet<string> {
+  const covered = new Set<string>();
+  for (
+    const segment of normalizeTrailingCitationPlacement(answer)
+      .split(/\n+|(?<=[。！？；])/u)
+  ) {
+    const citations = [...segment.matchAll(/\[(\d+)\]/gu)]
+      .map((match) => Number(match[1]))
+      .filter(Number.isSafeInteger);
+    if (citations.length === 0) continue;
+    const supportedAspectIds = new Set(
+      citations.flatMap(
+        (citation) => documents.get(citation)?.aspectIds ?? [],
+      ),
+    );
+    for (const aspectId of matchingAspectIds(requirement, segment)) {
+      if (supportedAspectIds.has(aspectId)) covered.add(aspectId);
+    }
+  }
+  return covered;
+}
+
+function sortedCandidates(requirementState: RequirementState): Candidate[] {
+  return [...requirementState.candidatePaths.values()]
+    .sort((left, right) => {
+      const pathPriority =
+        candidatePathPriority(left.path, requirementState.requirement) -
+        candidatePathPriority(right.path, requirementState.requirement);
+      const questionTitlePriority =
+        directQuestionTitleCoverageScore(
+          right.title,
+          requirementState.requirement,
+        ) -
+        directQuestionTitleCoverageScore(
+          left.title,
+          requirementState.requirement,
+        );
+      const titlePriority =
+        titleCoverageScore(
+          right.title,
+          requirementState.requirement,
+          requirementState.queries,
+        ) -
         titleCoverageScore(
           left.title,
           requirementState.requirement,
           requirementState.queries,
-        ) ||
-      right.rrfScore - left.rrfScore ||
-      left.path.localeCompare(right.path));
+        );
+      const relevancePriority = right.rrfScore - left.rrfScore;
+      const aspectPriority =
+        candidateAspectGain(right, requirementState) -
+        candidateAspectGain(left, requirementState);
+      return requirementState.requirement.evidenceMode === "direct_only"
+        ? pathPriority ||
+          questionTitlePriority ||
+          titlePriority ||
+          relevancePriority ||
+          aspectPriority ||
+          left.path.localeCompare(right.path)
+        : aspectPriority ||
+          pathPriority ||
+          titlePriority ||
+          relevancePriority ||
+          left.path.localeCompare(right.path);
+    });
 }
 
 function candidatePathPriority(path: string, requirement: KnowledgeRequirement): number {
@@ -1349,21 +1791,39 @@ function titleCoverageScore(
   requirement: KnowledgeRequirement,
   executedQueries: ReadonlySet<string>,
 ): number {
+  return titleCoverageScoreForValues(title, [
+    requirement.question,
+    ...requirement.queries.map((query) => query.text),
+    ...executedQueries,
+  ]);
+}
+
+function directQuestionTitleCoverageScore(
+  title: string,
+  requirement: KnowledgeRequirement,
+): number {
+  return titleCoverageScoreForValues(
+    title,
+    [requirement.question],
+    true,
+  );
+}
+
+function titleCoverageScoreForValues(
+  title: string,
+  values: readonly string[],
+  preserveProductTerms = false,
+): number {
   const normalizedTitle = normalizeTitleText(title);
   const terms = new Set(
-    [
-      requirement.question,
-      ...requirement.queries.map((query) => query.text),
-      ...executedQueries,
-    ]
-      .flatMap(titleTerms),
+    values.flatMap((value) => titleTerms(value, preserveProductTerms)),
   );
   const matches = [...terms].filter((term) => normalizedTitle.includes(term));
   if (matches.length < 2) return 0;
   return matches.reduce((score, term) => score + Math.min(term.length, 4), 0);
 }
 
-function titleTerms(value: string): string[] {
+function titleTerms(value: string, preserveProductTerms = false): string[] {
   return value.toLocaleLowerCase("zh-CN")
     .split(/[^\p{L}\p{N}]+/gu)
     .flatMap((part) => {
@@ -1372,7 +1832,13 @@ function titleTerms(value: string): string[] {
         part.slice(index, index + 2));
     })
     .map(normalizeTitleText)
-    .filter((term) => term.length >= 2 && !TITLE_TERM_STOPWORDS.has(term));
+    .filter((term) =>
+      term.length >= 2 &&
+      (
+        !TITLE_TERM_STOPWORDS.has(term) ||
+        (preserveProductTerms && /[a-z0-9]/iu.test(term))
+      )
+    );
 }
 
 function normalizeTitleText(value: string): string {
@@ -1448,37 +1914,42 @@ function normalizeQuery(query: string): string {
 }
 
 function expandSeedQueries(
-  queries: KnowledgeRequirement["queries"],
+  requirement: KnowledgeRequirement,
 ): Array<{ text: string; aspectIds: string[] }> {
   const expanded = new Map<string, { text: string; aspectIds: Set<string> }>();
-  for (const query of queries) {
-    addExpandedQuery(expanded, query.text, query.aspectIds);
+  for (const query of requirement.queries) {
+    const queryText = enrichSynthesisQuery(
+      requirement,
+      query.text,
+      query.aspectIds,
+    );
+    addExpandedQuery(expanded, queryText, query.aspectIds);
     const variants = [
-      query.text.replaceAll("注意事项", "要点"),
-      query.text.replaceAll("关键注意", "重点"),
-      query.text.replaceAll("操作步骤", "操作流程"),
+      queryText.replaceAll("注意事项", "要点"),
+      queryText.replaceAll("关键注意", "重点"),
+      queryText.replaceAll("操作步骤", "操作流程"),
     ];
     for (const variant of variants) {
       const normalized = normalizeQuery(variant);
-      if (normalized !== normalizeQuery(query.text)) {
+      if (normalized !== normalizeQuery(queryText)) {
         addExpandedQuery(expanded, variant, query.aspectIds);
       }
     }
     if (
-      /poc/iu.test(query.text) &&
+      /poc/iu.test(queryText) &&
       (
-        query.text.includes("注意事项") ||
-        query.text.includes("关键注意") ||
-        query.text.includes("要点")
+        queryText.includes("注意事项") ||
+        queryText.includes("关键注意") ||
+        queryText.includes("要点")
       )
     ) {
       addExpandedQuery(expanded, "POC测试要点", query.aspectIds);
     }
     if (
-      query.text.includes("迁移") &&
-      /(?:执行步骤|操作步骤|操作流程|流程|方法)/u.test(query.text)
+      queryText.includes("迁移") &&
+      /(?:执行步骤|操作步骤|操作流程|流程|方法)/u.test(queryText)
     ) {
-      const toolFocus = `${query.text
+      const toolFocus = `${queryText
         .replace(/(?:执行步骤|操作步骤|操作流程|流程|方法)/gu, " ")
         .replace(/\s+/gu, " ")
         .trim()} 工具`;
@@ -1489,6 +1960,35 @@ function expandSeedQueries(
     text: query.text,
     aspectIds: [...query.aspectIds],
   }));
+}
+
+function enrichSynthesisQuery(
+  requirement: KnowledgeRequirement,
+  queryText: string,
+  aspectIds: readonly string[],
+): string {
+  if (
+    requirement.evidenceMode !== "synthesis_allowed" ||
+    aspectIds.length <= 1
+  ) {
+    return queryText;
+  }
+  const normalizedQuery = normalizeTitleText(queryText);
+  const additions = aspectIds.flatMap((aspectId) => {
+    const aspect = requirement.evidenceAspects.find(
+      (candidate) => candidate.id === aspectId,
+    );
+    if (aspect === undefined) return [];
+    const term = aspect.terms.find((candidate) => {
+      const normalizedTerm = normalizeTitleText(candidate);
+      return normalizedTerm.length >= 2 &&
+        !normalizedQuery.includes(normalizedTerm);
+    });
+    return term === undefined ? [] : [term];
+  });
+  return additions.length === 0
+    ? queryText
+    : `${queryText} ${[...new Set(additions)].join(" ")}`;
 }
 
 function addExpandedQuery(
@@ -1517,6 +2017,26 @@ function matchingAspectIds(
         return normalizedTerm.length >= 2 && normalized.includes(normalizedTerm);
       }))
     .map((aspect) => aspect.id);
+}
+
+function seedTopKFor(requirement: KnowledgeRequirement): number {
+  return requirement.evidenceMode === "synthesis_allowed"
+    ? Math.min(
+        SYNTHESIS_SEED_TOP_K_LIMIT,
+        Math.max(SEED_TOP_K, requirement.evidenceAspects.length * 3),
+      )
+    : SEED_TOP_K;
+}
+
+function attributedSearchAspectIds(
+  requirement: KnowledgeRequirement,
+  queryAspectIds: readonly string[],
+  hitMetadata: string,
+): string[] {
+  const matched = matchingAspectIds(requirement, hitMetadata);
+  return queryAspectIds.length <= 1
+    ? [...new Set([...queryAspectIds, ...matched])]
+    : matched;
 }
 
 function hasOnlyKnownAspectIds(

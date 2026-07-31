@@ -16,6 +16,7 @@ import {
   COVERAGE_VERIFICATION_REPAIR_INSTRUCTION,
   coverageVerificationMessages,
 } from "./prompts.js";
+import { normalizeTrailingCitationPlacement } from "./references.js";
 
 export interface CoverageEvidenceDocument {
   readonly requirementId: string;
@@ -146,6 +147,7 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
     targetSegments,
     input.plan,
     input.evidence,
+    input.draft,
   );
   const materialized = enforceAspectCoverage(
     materializeVerification(
@@ -303,6 +305,21 @@ function validateVerification(
     ) {
       return `retained_target_cannot_have_related_context:${decision.id}`;
     }
+    const plannedAspectIds = new Set(
+      planned.evidenceAspects.map((aspect) => aspect.id),
+    );
+    const unknownCoveredAspectId = decision.coveredAspectIds?.find(
+      (aspectId) => !plannedAspectIds.has(aspectId),
+    );
+    if (unknownCoveredAspectId !== undefined) {
+      return `covered_aspect_not_in_plan:${decision.id}:${unknownCoveredAspectId}`;
+    }
+    if (
+      decision.targetDecision === "not_covered" &&
+      (decision.coveredAspectIds?.length ?? 0) > 0
+    ) {
+      return `not_covered_cannot_cover_aspects:${decision.id}`;
+    }
     const relatedContext = draft.relatedContext ?? [];
     if (
       decision.retainedRelatedContextIndexes.length > 0 &&
@@ -444,6 +461,7 @@ function verificationSummaries(
   }[],
   plan: KnowledgePlan,
   evidence: readonly CoverageEvidenceDocument[],
+  draft: FinalAction,
 ): CoverageVerificationSummary[] {
   return verified.requirements.map((decision, index) => {
     const synthesized = new Set(
@@ -453,22 +471,42 @@ function verificationSummaries(
       decision.retainedTargetSegmentIndexes.filter(
         (segmentIndex) => !synthesized.has(segmentIndex),
       ).length;
-    const retainedCitations = new Set(
-      decision.retainedTargetSegmentIndexes.flatMap(
-        (segmentIndex) =>
-          targetSegments[index]?.segments[segmentIndex]?.citations ?? [],
-      ),
+    const plannedRequirement = plan.requirements[index];
+    const plannedAspectIds =
+      plannedRequirement?.evidenceAspects.map((aspect) => aspect.id) ?? [];
+    const retainedSegments = decision.retainedTargetSegmentIndexes.flatMap(
+      (segmentIndex) => {
+        const segment = targetSegments[index]?.segments[segmentIndex];
+        return segment === undefined ? [] : [segment];
+      },
     );
-    const coveredAspectIds = new Set(
+    const retainedCitations = new Set(
+      retainedSegments.flatMap((segment) => segment.citations),
+    );
+    const supportedAspectIds = new Set(
       evidence
         .filter((document) =>
           document.requirementId === decision.id &&
           retainedCitations.has(document.citation))
         .flatMap((document) => document.aspectIds ?? []),
     );
-    const plannedAspectIds =
-      plan.requirements[index]?.evidenceAspects.map((aspect) => aspect.id) ??
-        [];
+    const allCitedSegmentsRetained =
+      decision.retainedTargetSegmentIndexes.length ===
+        (targetSegments[index]?.segments.length ?? 0);
+    const coverageText = allCitedSegmentsRetained
+      ? draft.requirements[index]?.answer ?? ""
+      : retainedSegments.map((segment) => segment.text).join("\n");
+    const semanticallyCoveredAspectIds = new Set([
+      ...(decision.coveredAspectIds ?? []),
+      ...(plannedRequirement === undefined
+        ? []
+        : matchingPlannedAspectIds(plannedRequirement, coverageText)),
+    ]);
+    const coveredAspectIds = new Set(
+      [...semanticallyCoveredAspectIds].filter(
+        (aspectId) => supportedAspectIds.has(aspectId),
+      ),
+    );
     const coveredAspectCount = plannedAspectIds.filter(
       (aspectId) => coveredAspectIds.has(aspectId),
     ).length;
@@ -489,6 +527,28 @@ function verificationSummaries(
           }),
     };
   });
+}
+
+function matchingPlannedAspectIds(
+  requirement: KnowledgePlan["requirements"][number],
+  value: string,
+): string[] {
+  const normalizedValue = normalizeCoverageText(value);
+  return requirement.evidenceAspects
+    .filter((aspect) =>
+      [aspect.label, ...aspect.terms].some((term) => {
+        const normalizedTerm = normalizeCoverageText(term);
+        return normalizedTerm.length >= 2 &&
+          normalizedValue.includes(normalizedTerm);
+      }))
+    .map((aspect) => aspect.id);
+}
+
+function normalizeCoverageText(value: string): string {
+  return value.toLocaleLowerCase("zh-CN").replace(
+    /[\s\p{P}\p{S}]+/gu,
+    "",
+  );
 }
 
 function enforceAspectCoverage(
@@ -545,7 +605,7 @@ function addSynthesisDisclosure(answer: string): string {
 }
 
 function splitTargetSegments(answer: string): TargetSegment[] {
-  const pieces = answer
+  const pieces = normalizeTrailingCitationPlacement(answer)
     .split(/\r?\n+/u)
     .flatMap((line) => line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [])
     .map((piece) => piece.trim())

@@ -153,6 +153,40 @@ const evidence = [
 ] as const;
 
 describe("verifyKnowledgeCoverage", () => {
+  it("keeps a sentence citation attached when it follows punctuation", async () => {
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "正文直接确认目标协议。 [1]",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+
+    const result = await verifyKnowledgeCoverage({
+      question: "是否支持目标协议",
+      plan: singleRequirementPlan,
+      draft,
+      evidence,
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
+          reason: "direct_support",
+        }],
+      } as CoverageVerificationAction),
+    });
+
+    expect(result.requirements[0]).toEqual(draft.requirements[0]);
+  });
+
   it("downgrades complete when cited pages do not cover every dynamic aspect", async () => {
     const plan: KnowledgePlan = {
       subject: "互补能力",
@@ -202,6 +236,7 @@ describe("verifyKnowledgeCoverage", () => {
           retainedTargetSegmentIndexes: [0],
           synthesizedTargetSegmentIndexes: [0],
           retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
           reason: "synthesized_support",
         }],
       } as CoverageVerificationAction),
@@ -222,6 +257,231 @@ describe("verifyKnowledgeCoverage", () => {
       coveredAspectCount: 1,
       missingAspectCount: 1,
     }]);
+  });
+
+  it("does not count a cited page aspect that the retained answer never states", async () => {
+    const plan: KnowledgePlan = {
+      subject: "互补能力",
+      requirements: [{
+        id: "R1",
+        question: "归纳两个互补能力面",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "需求诊断", terms: ["需求访谈"] },
+          { id: "A2", label: "信任建立", terms: ["可信顾问"] },
+        ],
+        queries: [{
+          text: "售前互补能力",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "售前需要做好需求诊断 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const onVerified = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "归纳两个互补能力面",
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "综合方法",
+        path: "wiki/synthesis/methods.md",
+        content: "正文同时说明需求诊断与可信顾问。",
+        aspectIds: ["A1", "A2"],
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [0],
+          retainedRelatedContextIndexes: [],
+          reason: "synthesized_support",
+        }],
+      } as CoverageVerificationAction),
+      onVerified,
+    });
+
+    expect(result.requirements[0]).toMatchObject({
+      coverage: "partial",
+      citations: [1],
+    });
+    expect(onVerified).toHaveBeenCalledWith([
+      expect.objectContaining({
+        coveredAspectCount: 1,
+        missingAspectCount: 1,
+      }),
+    ]);
+  });
+
+  it("accepts semantically equivalent aspect wording confirmed by the verifier", async () => {
+    const plan: KnowledgePlan = {
+      subject: "职责归纳",
+      requirements: [{
+        id: "R1",
+        question: "归纳两个职责领域",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "产品演示", terms: ["技术证明"] },
+          { id: "A2", label: "冲突沟通", terms: ["异议处理"] },
+        ],
+        queries: [{
+          text: "职责领域",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: [
+          "方案展示需要按客户角色控制内容深度 [1]。",
+          "客户质疑应转化为可协商的需要 [2]。",
+        ].join("\n"),
+        citations: [1, 2],
+      }],
+      citations: [1, 2],
+    };
+    const onVerified = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "归纳两个职责领域",
+      plan,
+      draft,
+      evidence: [
+        {
+          requirementId: "R1",
+          citation: 1,
+          title: "演示方法",
+          path: "wiki/concepts/demo.md",
+          content: "正文说明愿景演示、技术证明与角色分层。",
+          aspectIds: ["A1"],
+        },
+        {
+          requirementId: "R1",
+          citation: 2,
+          title: "沟通方法",
+          path: "wiki/concepts/conflict.md",
+          content: "正文说明冲突沟通、客户异议与需要辨析。",
+          aspectIds: ["A2"],
+        },
+      ],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0, 1],
+          synthesizedTargetSegmentIndexes: [0, 1],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1", "A2"],
+          reason: "synthesized_support",
+        }],
+      } as CoverageVerificationAction),
+      onVerified,
+    });
+
+    expect(result.requirements[0]?.coverage).toBe("complete");
+    expect(onVerified).toHaveBeenCalledWith([
+      expect.objectContaining({
+        coveredAspectCount: 2,
+        missingAspectCount: 0,
+      }),
+    ]);
+  });
+
+  it("counts an aspect named at paragraph start when its citation appears later", async () => {
+    const plan: KnowledgePlan = {
+      subject: "职责归纳",
+      requirements: [{
+        id: "R1",
+        question: "归纳两个职责领域",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "需求诊断", terms: ["需求访谈"] },
+          { id: "A2", label: "信任建立", terms: ["可信顾问"] },
+        ],
+        queries: [{
+          text: "职责领域",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: [
+          "**需求诊断**：先澄清客户现状。",
+          "再用需求访谈确认问题与影响 [1]。",
+          "**信任建立**：先倾听并共同界定问题。",
+          "再以可信顾问方式给出透明建议 [2]。",
+        ].join("\n"),
+        citations: [1, 2],
+      }],
+      citations: [1, 2],
+    };
+    const onVerified = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "归纳两个职责领域",
+      plan,
+      draft,
+      evidence: [
+        {
+          requirementId: "R1",
+          citation: 1,
+          title: "需求诊断",
+          path: "wiki/concepts/diagnosis.md",
+          content: "正文说明需求访谈。",
+          aspectIds: ["A1"],
+        },
+        {
+          requirementId: "R1",
+          citation: 2,
+          title: "可信顾问",
+          path: "wiki/concepts/trust.md",
+          content: "正文说明可信顾问。",
+          aspectIds: ["A2"],
+        },
+      ],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0, 1],
+          synthesizedTargetSegmentIndexes: [0, 1],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
+          reason: "synthesized_support",
+        }],
+      } as CoverageVerificationAction),
+      onVerified,
+    });
+
+    expect(result.requirements[0]?.coverage).toBe("complete");
+    expect(onVerified).toHaveBeenCalledWith([
+      expect.objectContaining({
+        coveredAspectCount: 2,
+        missingAspectCount: 0,
+      }),
+    ]);
   });
 
   it("retains synthesized segments with deterministic disclosure and support counts", async () => {

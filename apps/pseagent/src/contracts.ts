@@ -218,6 +218,7 @@ const coverageVerificationRequirementSchema = z.object({
   retainedTargetSegmentIndexes: z.array(z.number().int().nonnegative()).max(64),
   synthesizedTargetSegmentIndexes: z.array(z.number().int().nonnegative()).max(64),
   retainedRelatedContextIndexes: z.array(z.number().int().nonnegative()).max(3),
+  coveredAspectIds: z.array(evidenceAspectIdSchema).max(8).optional(),
   reason: coverageVerificationReasonSchema,
 }).strict().superRefine((requirement, context) => {
   for (const [field, message] of [
@@ -245,6 +246,21 @@ const coverageVerificationRequirementSchema = z.object({
         message,
       });
     }
+  }
+  const coveredAspectIds = requirement.coveredAspectIds ?? [];
+  if (
+    new Set(coveredAspectIds).size !== coveredAspectIds.length ||
+    coveredAspectIds.some(
+      (value, index) =>
+        index > 0 &&
+        Number(value.slice(1)) <= Number(coveredAspectIds[index - 1]!.slice(1)),
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["coveredAspectIds"],
+      message: "covered_aspect_ids_must_be_unique_and_ordered",
+    });
   }
 });
 export const coverageVerificationActionSchema = z.object({
