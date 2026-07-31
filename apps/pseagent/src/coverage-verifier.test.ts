@@ -264,7 +264,7 @@ describe("verifyKnowledgeCoverage", () => {
     }]);
   });
 
-  it("deterministically verifies the six-facet presales duty synthesis", async () => {
+  it("does not bypass the verifier for a business-specific synthesis question", async () => {
     const fullDutyDraft: FinalAction = {
       action: "final",
       requirements: [{
@@ -289,9 +289,17 @@ describe("verifyKnowledgeCoverage", () => {
       path: path!,
       content: `# ${title}\n正式知识正文`,
     }));
-    const completeJson = vi.fn(async () => {
-      throw new InvalidModelPayloadError();
-    });
+    const completeJson = vi.fn(async () => ({
+      action: "verify" as const,
+      requirements: [{
+        id: "R1",
+        targetDecision: "retain" as const,
+        retainedTargetSegmentIndexes: [0],
+        synthesizedTargetSegmentIndexes: [0],
+        retainedRelatedContextIndexes: [],
+        reason: "synthesized_support" as const,
+      }],
+    }));
     const onVerified = vi.fn();
 
     const result = await verifyKnowledgeCoverage({
@@ -303,22 +311,22 @@ describe("verifyKnowledgeCoverage", () => {
       onVerified,
     });
 
-    expect(completeJson).not.toHaveBeenCalled();
+    expect(completeJson).toHaveBeenCalledOnce();
     expect(result.requirements[0]).toMatchObject({
       coverage: "complete",
       citations: [1, 2, 3, 4, 5, 6],
     });
-    expect(result.requirements[0]?.answer).toContain("需求诊断与访谈");
-    expect(result.requirements[0]?.answer).toContain("方案组织与价值表达");
-    expect(result.requirements[0]?.answer).toContain("产品演示与技术证明");
-    expect(result.requirements[0]?.answer).toContain("客户关系与可信顾问");
-    expect(result.requirements[0]?.answer).toContain("冲突沟通与异议处理");
-    expect(result.requirements[0]?.answer).toContain("机会管理与项目推进");
+    expect(result.requirements[0]?.answer).toContain(
+      "模型草稿会由正式六页证据映射替换",
+    );
+    expect(result.requirements[0]?.answer).not.toContain(
+      "需求诊断与访谈",
+    );
     expect(onVerified).toHaveBeenCalledWith([{
       id: "R1",
       reason: "synthesized_support",
       retainedDirectSegmentCount: 0,
-      retainedSynthesizedSegmentCount: 6,
+      retainedSynthesizedSegmentCount: 1,
       removedSegmentCount: 0,
     }]);
   });

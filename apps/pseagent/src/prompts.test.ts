@@ -117,7 +117,7 @@ describe("support and existence semantics", () => {
       "synthesis_allowed 应从实际候选页收集不同证据面",
     );
     expect(prompt).toContain(
-      "不得为了耗尽六页而读取重复页面",
+      "不得为了耗尽读页预算而读取重复页面",
     );
     expect(prompt).toContain(
       "direct_only 仍只接受实际读取正文的直接结论",
@@ -129,13 +129,13 @@ describe("support and existence semantics", () => {
       "aspectIds 只是检索导航标记，不是正文支持",
     );
     expect(prompt).toContain(
-      "不得仅因缺少专门岗位说明页而降为 partial 或 none",
+      "不得仅因缺少与用户问题同名的专门页面而降级",
     );
     expect(prompt).toContain(
-      "需求诊断、方案组织与价值表达、产品演示与技术证明、客户关系与可信顾问、冲突沟通与异议处理、机会管理与项目推进",
+      "不同方法论、比较、案例或概念页面可以共同支持保守归纳",
     );
     expect(prompt).toContain(
-      "职责领域名称必须和对应说明、引用写在同一句段",
+      "归纳得到的领域名称必须和对应说明、引用写在同一句段",
     );
   });
 
@@ -161,13 +161,13 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain("始终只能直接支持");
     expect(prompt).toContain("多篇正文冲突时只能保留明确披露冲突的句段");
     expect(prompt).toContain(
-      "把方法论动作重新组织为岗位职责属于跨页归纳",
+      "把不同页面中的动作、机制或案例重新组织为更高层类别属于跨页归纳",
     );
     expect(prompt).toContain(
-      "不得仅因缺少专门岗位说明页而把已充分覆盖的职责答案降为 partial",
+      "不得仅因缺少与用户问题同名的专门页面而降级",
     );
     expect(prompt).toContain(
-      "冲突场景页可以支持“冲突沟通与异议处理”这一职责领域",
+      "单个相邻场景页面不能独自证明完整的多面归纳",
     );
     expect(prompt).toContain("targetDecision=retain");
     expect(prompt).toContain("targetDecision=retain_partial");

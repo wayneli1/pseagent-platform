@@ -1979,52 +1979,7 @@ describe("runKnowledgeAgent", () => {
     expect(result.references).toHaveLength(1);
   });
 
-  it("reads a missing presales duty facet before accepting a complete synthesis", async () => {
-    const question = "售前工程师的工作职责有哪些？";
-    const session = fakeSession({
-      hits: {
-        "seed-r1": [
-          {
-            path: "wiki/synthesis/售前诊断式对话框架.md",
-            title: "售前诊断式对话框架",
-          },
-          {
-            path: "wiki/concepts/可信顾问.md",
-            title: "可信顾问",
-          },
-        ],
-      },
-    });
-    const completeAnswer = [
-      "需求诊断[1]",
-      "方案组织[1]",
-      "产品演示与技术证明[1]",
-      "客户关系与可信顾问[2]",
-      "冲突沟通与异议处理[1]",
-      "机会管理与项目推进[1]",
-    ].join("；");
-    const model = scriptedAgentModel([
-      read("R1", "wiki/synthesis/售前诊断式对话框架.md"),
-      final("complete", "需求诊断、方案组织、产品演示、冲突沟通与机会管理[1]。", [1]),
-      final("complete", completeAnswer, [1, 2]),
-    ]);
-
-    const result = await runKnowledgeAgent({
-      ...agentInput(model, session, synthesisPlan),
-      scope: "general",
-      question,
-    });
-
-    expect(session.readPage).toHaveBeenCalledWith(
-      "wiki/concepts/可信顾问.md",
-      undefined,
-    );
-    expect(model.calls).toBe(3);
-    expect(result.status).toBe("answered");
-    expect(result.answer).toContain("客户关系与可信顾问");
-  });
-
-  it("preloads all six observed presales duty facets before asking for synthesis", async () => {
+  it("does not preload pages for a business-specific synthesis question", async () => {
     const question = "售前工程师的工作职责有哪些？";
     const query1 = "售前工程师工作职责 售前方法论 岗位职责归纳";
     const query2 = "愿景演示 技术证明 解决方案销售 需求诊断 可信顾问";
@@ -2054,18 +2009,8 @@ describe("runKnowledgeAgent", () => {
       },
     });
     const model = scriptedAgentModel([
-      final(
-        "complete",
-        [
-          "需求诊断[1]",
-          "方案组织[2]",
-          "产品演示与技术证明[3]",
-          "客户关系与可信顾问[4]",
-          "冲突沟通与异议处理[5]",
-          "机会管理与项目推进[6]",
-        ].join("；"),
-        [1, 2, 3, 4, 5, 6],
-      ),
+      read("R1", pages[0]!.path),
+      final("complete", "根据已读正文进行保守归纳 [1]", [1]),
     ]);
 
     const result = await runKnowledgeAgent({
@@ -2074,11 +2019,13 @@ describe("runKnowledgeAgent", () => {
       question,
     });
 
-    expect(session.readPage).toHaveBeenCalledTimes(6);
     expect(payloadAt(model, 0).requirementEvidence?.[0]?.citationIndexes)
-      .toHaveLength(6);
+      .toEqual([]);
+    expect(session.readPage).toHaveBeenCalledTimes(1);
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.citationIndexes)
+      .toHaveLength(0);
     expect(result.status).toBe("answered");
-    expect(result.references).toHaveLength(6);
+    expect(result.references).toHaveLength(1);
   });
 
   it("requests a shorter closed JSON after the provider aborts a payload", async () => {

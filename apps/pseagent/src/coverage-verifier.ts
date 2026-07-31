@@ -78,18 +78,6 @@ export function notCoveredRequirementAnswer(question: string): string {
 export async function verifyKnowledgeCoverage(
   input: CoverageVerifierInput,
 ): Promise<FinalAction> {
-  const deterministicDutySynthesis =
-    buildDeterministicPresalesDutySynthesis(input);
-  if (deterministicDutySynthesis !== undefined) {
-    input.onVerified?.([{
-      id: deterministicDutySynthesis.requirements[0]!.id,
-      reason: "synthesized_support",
-      retainedDirectSegmentCount: 0,
-      retainedSynthesizedSegmentCount: 6,
-      removedSegmentCount: 0,
-    }]);
-    return deterministicDutySynthesis;
-  }
   const targetSegments = input.draft.requirements.map((requirement) => ({
     id: requirement.id,
     segments: splitTargetSegments(requirement.answer),
@@ -172,92 +160,6 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
   );
   input.onVerified?.(summaries);
   return materialized;
-}
-
-const DETERMINISTIC_PRESALES_DUTY_FACETS = [
-  {
-    title: /诊断式对话框架|需求诊断|需求访谈/u,
-    answer: (citation: number) =>
-      `**需求诊断与访谈**：通过诊断式对话识别客户问题、业务影响与改变理由 [${citation}]。`,
-  },
-  {
-    title: /^解决方案销售$|方案组织|购买愿景/u,
-    answer: (citation: number) =>
-      `**方案组织与价值表达**：把诊断结果组织为解决方案、购买愿景和可验证价值 [${citation}]。`,
-  },
-  {
-    title: /愿景演示.*技术证明|技术证明.*愿景演示/u,
-    answer: (citation: number) =>
-      `**产品演示与技术证明**：按业务愿景与技术验证目标组织演示和证明 [${citation}]。`,
-  },
-  {
-    title: /可信顾问/u,
-    answer: (citation: number) =>
-      `**客户关系与可信顾问**：通过专业判断、可靠性和共同界定问题逐步建立客户信任 [${citation}]。`,
-  },
-  {
-    title: /冲突沟通|异议处理/u,
-    answer: (citation: number) =>
-      `**冲突沟通与异议处理**：处理客户质疑、投诉以及销售、产品等内部协同冲突 [${citation}]。`,
-  },
-  {
-    title: /机会质量.*客户证据|客户证据.*机会质量|机会管理|项目推进/u,
-    answer: (citation: number) =>
-      `**机会管理与项目推进**：用可观察的客户证据判断机会质量和阶段推进依据 [${citation}]。`,
-  },
-] as const;
-
-function buildDeterministicPresalesDutySynthesis(
-  input: CoverageVerifierInput,
-): FinalAction | undefined {
-  if (
-    !/(?:售前工程师|售前).{0,8}(?:工作职责|岗位职责|职责|负责)/u.test(
-      input.question,
-    ) ||
-    input.plan.requirements.length !== 1 ||
-    input.draft.requirements.length !== 1
-  ) {
-    return undefined;
-  }
-  const planned = input.plan.requirements[0]!;
-  const draft = input.draft.requirements[0]!;
-  if (
-    planned.evidenceMode !== "synthesis_allowed" ||
-    draft.id !== planned.id ||
-    draft.coverage !== "complete"
-  ) {
-    return undefined;
-  }
-  const requirementEvidence = input.evidence.filter(
-    (document) =>
-      document.requirementId === planned.id &&
-      document.content.trim().length > 0,
-  );
-  const selected: CoverageEvidenceDocument[] = [];
-  for (const facet of DETERMINISTIC_PRESALES_DUTY_FACETS) {
-    const document = requirementEvidence.find((candidate) =>
-      facet.title.test(candidate.title) &&
-      !selected.some((item) => item.citation === candidate.citation));
-    if (document === undefined) return undefined;
-    selected.push(document);
-  }
-  const citations = selected.map((document) => document.citation);
-  const answer = [
-    SYNTHESIS_DISCLOSURE,
-    "本知识库未提供具体企业的岗位说明书；以下职责来自通用售前方法论的保守归纳：",
-    ...DETERMINISTIC_PRESALES_DUTY_FACETS.map((facet, index) =>
-      facet.answer(citations[index]!)),
-  ].join("\n");
-  return {
-    action: "final",
-    requirements: [{
-      id: planned.id,
-      coverage: "complete",
-      answer,
-      citations,
-    }],
-    citations,
-  };
 }
 
 function coverageVerificationModelResponseSchema(draft: FinalAction) {
