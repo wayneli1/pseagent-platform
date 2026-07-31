@@ -33,7 +33,7 @@ function plannedEvidence(
 
 it("puts requirement-bound strict knowledge action shapes in the model prompt", () => {
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
-    '{"action":"tool","tool":"kb.search","input":{"requirementId":"R1","query":"...","topK":5}}',
+    '{"action":"tool","tool":"kb.search","input":{"requirementId":"R1","query":"...","aspectIds":["A1"],"topK":5}}',
   );
   expect(KNOWLEDGE_AGENT_SYSTEM_PROMPT).toContain(
     '{"action":"tool","tool":"kb.read_page","input":{"requirementId":"R1","path":"..."}}',
@@ -88,7 +88,7 @@ it("defines evidence-bounded adaptive answer depth in the knowledge prompt", () 
 const search = (requirementId: string, query: string, topK = 5): AgentAction => ({
   action: "tool",
   tool: "kb.search",
-  input: { requirementId, query, topK },
+  input: { requirementId, query, aspectIds: ["A1"], topK },
 });
 const read = (requirementId: string, path: string): AgentAction => ({
   action: "tool",
@@ -253,7 +253,14 @@ function payloadAt(model: ReturnType<typeof scriptedAgentModel>, index: number) 
         rrfScore: number;
         sourceQueries: string[];
         rankings: Array<{ query: string; rank: number; score: number }>;
+        aspectIds: string[];
         read: boolean;
+      }>;
+      aspects: Array<{
+        id: string;
+        label: string;
+        candidateCount: number;
+        readCandidateCount: number;
       }>;
       citationIndexes: number[];
       remainingReads: number;
@@ -719,12 +726,73 @@ describe("runKnowledgeAgent", () => {
     expect(candidates[0]).toMatchObject({
       path: "wiki/shared.md",
       sourceQueries: ["功能查询", "POC 查询"],
+      aspectIds: ["A1"],
       rankings: [
         { query: "功能查询", rank: 1, score: 1 },
         { query: "POC 查询", rank: 1, score: 1 },
       ],
     });
     expect(candidates[0]?.rrfScore).toBeGreaterThan(candidates[1]?.rrfScore ?? 0);
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.aspects).toEqual([{
+      id: "A1",
+      label: "测试证据面",
+      candidateCount: 3,
+      readCandidateCount: 0,
+    }]);
+  });
+
+  it("prioritizes unread candidates that can cover a missing dynamic aspect", async () => {
+    const plan: KnowledgePlan = {
+      subject: "动态证据面",
+      requirements: [{
+        id: "R1",
+        question: "归纳两个互补证据面",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "证据面一", terms: ["证据一"] },
+          { id: "A2", label: "证据面二", terms: ["证据二"] },
+        ],
+        queries: [
+          { text: "查询证据一", aspectIds: ["A1"] },
+          { text: "查询证据二", aspectIds: ["A2"] },
+        ],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "查询证据一": [{ path: "wiki/a-one.md" }],
+        "查询证据二": [{ path: "wiki/a-two.md" }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/a-one.md"),
+      read("R1", "wiki/a-two.md"),
+      final("complete", "两个证据面均已覆盖 [1][2]", [1, 2]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    const afterFirstRead =
+      payloadAt(model, 1).requirementEvidence?.[0];
+    expect(afterFirstRead?.candidates[0]).toMatchObject({
+      path: "wiki/a-two.md",
+      aspectIds: ["A2"],
+      read: false,
+    });
+    expect(afterFirstRead?.aspects).toEqual([
+      {
+        id: "A1",
+        label: "证据面一",
+        candidateCount: 1,
+        readCandidateCount: 1,
+      },
+      {
+        id: "A2",
+        label: "证据面二",
+        candidateCount: 1,
+        readCandidateCount: 0,
+      },
+    ]);
   });
 
   it("shares candidates from the original full-question search with every requirement", async () => {
@@ -1329,6 +1397,29 @@ describe("runKnowledgeAgent", () => {
 
     expect(session.search).toHaveBeenCalledTimes(2);
     expect(payloadAt(model, 1).observations?.join("\n")).toContain("duplicate_query");
+  });
+
+  it("rejects supplemental searches bound to an unknown dynamic aspect", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    const model = scriptedAgentModel([
+      {
+        action: "tool",
+        tool: "kb.search",
+        input: {
+          requirementId: "R1",
+          query: "补充查询",
+          aspectIds: ["A2"],
+          topK: 5,
+        },
+      },
+      final("none", "当前资料未覆盖该问题"),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session));
+
+    expect(session.search).toHaveBeenCalledTimes(2);
+    expect(payloadAt(model, 1).observations?.join("\n"))
+      .toContain("unknown_search_aspect");
   });
 
   it("passes requirement-specific terms into section compaction", async () => {

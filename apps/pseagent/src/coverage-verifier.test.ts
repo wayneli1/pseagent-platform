@@ -153,6 +153,77 @@ const evidence = [
 ] as const;
 
 describe("verifyKnowledgeCoverage", () => {
+  it("downgrades complete when cited pages do not cover every dynamic aspect", async () => {
+    const plan: KnowledgePlan = {
+      subject: "互补能力",
+      requirements: [{
+        id: "R1",
+        question: "归纳两个互补能力面",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "能力一", terms: ["能力一"] },
+          { id: "A2", label: "能力二", terms: ["能力二"] },
+        ],
+        queries: [
+          { text: "能力一资料", aspectIds: ["A1"] },
+          { text: "能力二资料", aspectIds: ["A2"] },
+        ],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "当前证据只说明能力一 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const onVerified = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "归纳两个互补能力面",
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "能力一",
+        path: "wiki/concepts/能力一.md",
+        content: "正文说明能力一。",
+        aspectIds: ["A1"],
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [0],
+          retainedRelatedContextIndexes: [],
+          reason: "synthesized_support",
+        }],
+      } as CoverageVerificationAction),
+      onVerified,
+    });
+
+    expect(result.requirements[0]).toMatchObject({
+      id: "R1",
+      coverage: "partial",
+      citations: [1],
+    });
+    expect(onVerified).toHaveBeenCalledWith([{
+      id: "R1",
+      reason: "synthesized_support",
+      retainedDirectSegmentCount: 0,
+      retainedSynthesizedSegmentCount: 1,
+      removedSegmentCount: 0,
+      coveredAspectCount: 1,
+      missingAspectCount: 1,
+    }]);
+  });
+
   it("retains synthesized segments with deterministic disclosure and support counts", async () => {
     const onVerified = vi.fn();
     const result = await verifyKnowledgeCoverage({

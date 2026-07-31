@@ -159,7 +159,12 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
       {
         action: "tool",
         tool: "kb.search",
-        input: { requirementId: "R1", query: testCase.question, topK: 5 },
+        input: {
+          requirementId: "R1",
+          query: testCase.question,
+          aspectIds: ["A1"],
+          topK: 5,
+        },
       },
       { action: "tool", tool: "kb.read_page", input: { requirementId: "R1", path } },
       {
@@ -181,7 +186,12 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
       {
         action: "tool",
         tool: "kb.search",
-        input: { requirementId: "R1", query: testCase.question, topK: 5 },
+        input: {
+          requirementId: "R1",
+          query: testCase.question,
+          aspectIds: ["A1"],
+          topK: 5,
+        },
       },
       { action: "tool", tool: "kb.read_page", input: { requirementId: "R1", path } },
       {
@@ -204,7 +214,12 @@ function actionsFor(testCase: RegressionCase): AgentAction[] {
     {
       action: "tool",
       tool: "kb.search",
-      input: { requirementId: "R1", query: testCase.question, topK: 5 },
+      input: {
+        requirementId: "R1",
+        query: testCase.question,
+        aspectIds: ["A1"],
+        topK: 5,
+      },
     },
     {
       action: "final",

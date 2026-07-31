@@ -83,6 +83,7 @@ type Candidate = {
   readonly matchedTerms: Set<string>;
   readonly snippets: Set<string>;
   readonly graphRelations: Set<string>;
+  readonly aspectIds: Set<string>;
   requirementSpecificMatch: boolean;
 };
 
@@ -93,6 +94,7 @@ type RequirementState = {
   readonly readPaths: Set<string>;
   readonly directReadPaths: Set<string>;
   readonly citationIndexes: Set<number>;
+  readonly readAspectIds: Set<string>;
   supplementalSearches: number;
   graphActions: number;
   noGainRounds: number;
@@ -400,6 +402,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
         readPaths: new Set(),
         directReadPaths: new Set(),
         citationIndexes: new Set(),
+        readAspectIds: new Set(),
         supplementalSearches: 0,
         graphActions: 0,
         noGainRounds: 0,
@@ -584,7 +587,8 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
     event: "search",
     requirementId: "GLOBAL",
     phase: "seed",
-    query: globalQuery,
+    queryChars: globalQuery.length,
+    aspectIds: [],
   });
   const globalSearch = input.session.search(globalQuery, SEED_TOP_K, toolSignal(input))
     .then((result) => {
@@ -600,35 +604,38 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
     });
 
   const requirementSearches = [...state.requirements.values()].map(async (requirementState) => {
-    const seedQueries = expandSeedQueries(
-      requirementState.requirement.queries.map((query) => query.text),
-    );
-    for (const query of seedQueries) requirementState.queries.add(normalizeQuery(query));
+    const seedQueries = expandSeedQueries(requirementState.requirement.queries);
+    for (const query of seedQueries) {
+      requirementState.queries.add(normalizeQuery(query.text));
+    }
     const results = await Promise.all(seedQueries.map(async (query) => {
       recordDiagnostic(input.trace, {
         event: "search",
         requirementId: requirementState.requirement.id,
         phase: "seed",
-        query,
+        queryChars: query.text.length,
+        aspectIds: query.aspectIds,
       });
       try {
-        const result = await input.session.search(query, SEED_TOP_K, toolSignal(input));
+        const result = await input.session.search(
+          query.text,
+          SEED_TOP_K,
+          toolSignal(input),
+        );
         state.successfulSeedSearches += 1;
-        return { query, result };
+        return { query: query.text, aspectIds: query.aspectIds, result };
       } catch {
         observe(state, {
           type: "seed_search_unavailable",
           requirementId: requirementState.requirement.id,
-          query,
+          query: query.text,
         });
         return undefined;
       }
     }));
     return {
       requirementState,
-      successful: results.filter(
-      (item): item is { query: string; result: KnowledgeSearchResult } => item !== undefined,
-      ),
+      successful: results.filter((item) => item !== undefined),
     };
   });
 
@@ -639,7 +646,13 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
   for (const { requirementState, successful } of requirementResults) {
     let gained = mergeSearchResults(requirementState, successful);
     if (globalResult) {
-      gained = mergeSearchResults(requirementState, [globalResult], false) || gained;
+      gained = mergeSearchResults(requirementState, [{
+        ...globalResult,
+        aspectIds: matchingAspectIds(
+          requirementState.requirement,
+          globalResult.query,
+        ),
+      }], false) || gained;
     }
     if (!gained) requirementState.noGainRounds = 1;
     observeCandidates(state, requirementState, "seed_search_result", input.trace);
@@ -755,6 +768,17 @@ async function executeToolAction(
   }
   switch (action.tool) {
     case "kb.search":
+      if (!hasOnlyKnownAspectIds(
+        requirementState.requirement,
+        action.input.aspectIds,
+      )) {
+        observe(state, {
+          type: "unknown_search_aspect",
+          requirementId: requirementState.requirement.id,
+          aspectIds: action.input.aspectIds,
+        });
+        return;
+      }
       await executeSupplementalSearch(action, input, state, requirementState);
       return;
     case "kb.read_page":
@@ -874,10 +898,15 @@ async function executeSupplementalSearch(
     event: "search",
     requirementId: requirementState.requirement.id,
     phase: "supplemental",
-    query: action.input.query,
+    queryChars: action.input.query.length,
+    aspectIds: action.input.aspectIds,
   });
   const result = await input.session.search(action.input.query, action.input.topK, toolSignal(input));
-  const gained = mergeSearchResults(requirementState, [{ query: action.input.query, result }]);
+  const gained = mergeSearchResults(requirementState, [{
+    query: action.input.query,
+    aspectIds: action.input.aspectIds,
+    result,
+  }]);
   requirementState.noGainRounds = gained ? 0 : requirementState.noGainRounds + 1;
   if (requirementState.noGainRounds >= 2) requirementState.searchStopped = true;
   observeCandidates(state, requirementState, "supplemental_search_result", input.trace);
@@ -926,6 +955,9 @@ async function executeRead(
   requirementState.directReadPaths.add(page.path);
   requirementState.citationIndexes.add(reference.index);
   const candidate = requirementState.candidatePaths.get(page.path);
+  for (const aspectId of candidate?.aspectIds ?? []) {
+    requirementState.readAspectIds.add(aspectId);
+  }
   const terms = [
     requirementState.requirement.question,
     ...requirementState.requirement.queries.map((query) => query.text),
@@ -938,6 +970,7 @@ async function executeRead(
       title: page.title,
       path: page.path,
       content,
+      aspectIds: [...(candidate?.aspectIds ?? [])],
     },
   );
   observe(state, {
@@ -953,6 +986,7 @@ async function executeRead(
     path: page.path,
     citation: reference.index,
     sectionHeadings: markdownHeadings(content),
+    aspectIds: [...(candidate?.aspectIds ?? [])],
   });
   shareReadEvidence(
     input,
@@ -983,12 +1017,16 @@ function shareReadEvidence(
     }
     requirementState.readPaths.add(path);
     requirementState.citationIndexes.add(citation);
+    for (const aspectId of targetCandidate.aspectIds) {
+      requirementState.readAspectIds.add(aspectId);
+    }
     const reference = state.references.resolve([citation])[0];
     if (reference !== undefined) {
       state.evidenceDocuments.get(toRequirementId)?.set(citation, {
         title: reference.title,
         path: reference.path,
         content,
+        aspectIds: [...targetCandidate.aspectIds],
       });
     }
     observe(state, {
@@ -1027,7 +1065,18 @@ function shareFinalAnswerEvidence(
       if (source === undefined || document === undefined) continue;
       targetState.citationIndexes.add(citation);
       targetState.readPaths.add(document.path);
-      targetDocuments.set(citation, document);
+      for (
+        const aspectId of
+          targetState.candidatePaths.get(document.path)?.aspectIds ?? []
+      ) {
+        targetState.readAspectIds.add(aspectId);
+      }
+      targetDocuments.set(citation, {
+        ...document,
+        aspectIds: [
+          ...(targetState.candidatePaths.get(document.path)?.aspectIds ?? []),
+        ],
+      });
       observe(state, {
         type: "evidence_shared",
         fromRequirementId: source[0],
@@ -1073,11 +1122,15 @@ async function executeGraph(
 
 function mergeSearchResults(
   requirementState: RequirementState,
-  searches: readonly { query: string; result: KnowledgeSearchResult }[],
+  searches: readonly {
+    query: string;
+    aspectIds: readonly string[];
+    result: KnowledgeSearchResult;
+  }[],
   requirementSpecific = true,
 ): boolean {
   let gained = false;
-  for (const { query, result } of searches) {
+  for (const { query, aspectIds, result } of searches) {
     result.hits.forEach((hit, index) => {
       const existing = requirementState.candidatePaths.get(hit.path);
       if (!existing) gained = true;
@@ -1090,12 +1143,26 @@ function mergeSearchResults(
         matchedTerms: new Set<string>(),
         snippets: new Set<string>(),
         graphRelations: new Set<string>(),
+        aspectIds: new Set<string>(),
         requirementSpecificMatch: false,
       };
       candidate.title = hit.title;
       candidate.requirementSpecificMatch ||= requirementSpecific;
       candidate.rrfScore += 1 / (RRF_K + index + 1);
       candidate.sourceQueries.add(query);
+      for (const aspectId of [
+        ...aspectIds,
+        ...matchingAspectIds(
+          requirementState.requirement,
+          [
+            hit.title,
+            ...hit.matchedTerms,
+            hit.snippet ?? "",
+          ].join(" "),
+        ),
+      ]) {
+        candidate.aspectIds.add(aspectId);
+      }
       candidate.rankings.push({ query, rank: index + 1, score: hit.score });
       for (const term of hit.matchedTerms) candidate.matchedTerms.add(term);
       if (hit.snippet) candidate.snippets.add(hit.snippet.slice(0, 500));
@@ -1123,6 +1190,7 @@ function mergeGraphResult(
       matchedTerms: new Set<string>(),
       snippets: new Set<string>(),
       graphRelations: new Set<string>(),
+      aspectIds: new Set<string>(),
       requirementSpecificMatch: true,
     };
     candidate.title = hit.title;
@@ -1130,6 +1198,18 @@ function mergeGraphResult(
     candidate.rrfScore += 1 / (RRF_K + index + 1);
     candidate.sourceQueries.add(`graph:${sourcePath}`);
     candidate.graphRelations.add(hit.relation);
+    for (
+      const aspectId of
+        requirementState.candidatePaths.get(sourcePath)?.aspectIds ?? []
+    ) {
+      candidate.aspectIds.add(aspectId);
+    }
+    for (const aspectId of matchingAspectIds(
+      requirementState.requirement,
+      hit.title,
+    )) {
+      candidate.aspectIds.add(aspectId);
+    }
     requirementState.candidatePaths.set(hit.path, candidate);
   });
   return gained;
@@ -1153,8 +1233,14 @@ function observeCandidates(
     candidates: sortedCandidates(requirementState).slice(0, 10).map((candidate) => ({
       path: candidate.path,
       rrfScore: roundedScore(candidate.rrfScore),
-      sourceQueries: [...candidate.sourceQueries],
+      sourceQueryCount: candidate.sourceQueries.size,
       graphRelations: [...candidate.graphRelations],
+      aspectIds: [...candidate.aspectIds],
+    })),
+    aspects: aspectStatuses(requirementState).map((aspect) => ({
+      id: aspect.id,
+      candidateCount: aspect.candidateCount,
+      readCandidateCount: aspect.readCandidateCount,
     })),
   });
 }
@@ -1163,6 +1249,7 @@ function requirementEvidence(state: AgentState) {
   return [...state.requirements.values()].map((requirementState) => ({
     id: requirementState.requirement.id,
     question: requirementState.requirement.question,
+    aspects: aspectStatuses(requirementState),
     candidates: sortedCandidates(requirementState).slice(0, 10).map((candidate) => {
       const read = requirementState.readPaths.has(candidate.path);
       return {
@@ -1176,6 +1263,7 @@ function requirementEvidence(state: AgentState) {
         ? []
         : [...candidate.snippets].slice(0, 1).map((snippet) => snippet.slice(0, 240)),
       graphRelations: [...candidate.graphRelations].slice(0, 3),
+      aspectIds: [...candidate.aspectIds],
       read,
     };
     }),
@@ -1244,6 +1332,16 @@ function recordCoverage(
               retainedSynthesizedSegmentCount:
                 summary.retainedSynthesizedSegmentCount,
               removedSegmentCount: summary.removedSegmentCount,
+              ...(summary.coveredAspectCount === undefined
+                ? {}
+                : {
+                    coveredAspectCount: summary.coveredAspectCount,
+                  }),
+              ...(summary.missingAspectCount === undefined
+                ? {}
+                : {
+                    missingAspectCount: summary.missingAspectCount,
+                  }),
             }),
       };
     }),
@@ -1346,7 +1444,6 @@ function pendingEvidenceReviews(
 ): string[] {
   const pending: string[] = [];
   for (const result of action.requirements) {
-    if (result.coverage === "complete") continue;
     const requirementState = state.requirements.get(result.id);
     if (
       !requirementState ||
@@ -1359,7 +1456,18 @@ function pendingEvidenceReviews(
     }
     const hasUnreadCandidate = [...requirementState.candidatePaths.keys()]
       .some((path) => !requirementState.readPaths.has(path));
-    if (hasUnreadCandidate) pending.push(result.id);
+    const hasUnreadAspectCandidate = [...requirementState.candidatePaths.values()]
+      .some((candidate) =>
+        !requirementState.readPaths.has(candidate.path) &&
+        [...candidate.aspectIds].some(
+          (aspectId) => !requirementState.readAspectIds.has(aspectId),
+        ));
+    if (
+      hasUnreadCandidate &&
+      (result.coverage !== "complete" || hasUnreadAspectCandidate)
+    ) {
+      pending.push(result.id);
+    }
   }
   return pending;
 }
@@ -1367,6 +1475,8 @@ function pendingEvidenceReviews(
 function sortedCandidates(requirementState: RequirementState): Candidate[] {
   return [...requirementState.candidatePaths.values()]
     .sort((left, right) =>
+      candidateAspectGain(right, requirementState) -
+        candidateAspectGain(left, requirementState) ||
       candidatePathPriority(left.path, requirementState.requirement) -
         candidatePathPriority(right.path, requirementState.requirement) ||
       titleCoverageScore(
@@ -1504,6 +1614,7 @@ function actionFingerprint(action: ToolAction): string {
       action.tool,
       action.input.requirementId,
       normalizeQuery(action.input.query),
+      [...action.input.aspectIds].sort(),
       action.input.topK,
     ]);
   }
@@ -1520,37 +1631,116 @@ function normalizeQuery(query: string): string {
   return query.toLocaleLowerCase("zh-CN").replace(/\s+/gu, " ").trim();
 }
 
-function expandSeedQueries(queries: readonly string[]): string[] {
-  const expanded = new Map<string, string>();
+function expandSeedQueries(
+  queries: KnowledgeRequirement["queries"],
+): Array<{ text: string; aspectIds: string[] }> {
+  const expanded = new Map<string, { text: string; aspectIds: Set<string> }>();
   for (const query of queries) {
-    expanded.set(normalizeQuery(query), query);
+    addExpandedQuery(expanded, query.text, query.aspectIds);
     const variants = [
-      query.replaceAll("注意事项", "要点"),
-      query.replaceAll("关键注意", "重点"),
-      query.replaceAll("操作步骤", "操作流程"),
+      query.text.replaceAll("注意事项", "要点"),
+      query.text.replaceAll("关键注意", "重点"),
+      query.text.replaceAll("操作步骤", "操作流程"),
     ];
     for (const variant of variants) {
       const normalized = normalizeQuery(variant);
-      if (normalized !== normalizeQuery(query)) expanded.set(normalized, variant);
+      if (normalized !== normalizeQuery(query.text)) {
+        addExpandedQuery(expanded, variant, query.aspectIds);
+      }
     }
     if (
-      /poc/iu.test(query) &&
-      (query.includes("注意事项") || query.includes("关键注意") || query.includes("要点"))
+      /poc/iu.test(query.text) &&
+      (
+        query.text.includes("注意事项") ||
+        query.text.includes("关键注意") ||
+        query.text.includes("要点")
+      )
     ) {
-      expanded.set(normalizeQuery("POC测试要点"), "POC测试要点");
+      addExpandedQuery(expanded, "POC测试要点", query.aspectIds);
     }
     if (
-      query.includes("迁移") &&
-      /(?:执行步骤|操作步骤|操作流程|流程|方法)/u.test(query)
+      query.text.includes("迁移") &&
+      /(?:执行步骤|操作步骤|操作流程|流程|方法)/u.test(query.text)
     ) {
-      const toolFocus = `${query
+      const toolFocus = `${query.text
         .replace(/(?:执行步骤|操作步骤|操作流程|流程|方法)/gu, " ")
         .replace(/\s+/gu, " ")
         .trim()} 工具`;
-      expanded.set(normalizeQuery(toolFocus), toolFocus);
+      addExpandedQuery(expanded, toolFocus, query.aspectIds);
     }
   }
-  return [...expanded.values()];
+  return [...expanded.values()].map((query) => ({
+    text: query.text,
+    aspectIds: [...query.aspectIds],
+  }));
+}
+
+function addExpandedQuery(
+  expanded: Map<string, { text: string; aspectIds: Set<string> }>,
+  text: string,
+  aspectIds: readonly string[],
+): void {
+  const normalized = normalizeQuery(text);
+  const entry = expanded.get(normalized) ?? {
+    text,
+    aspectIds: new Set<string>(),
+  };
+  for (const aspectId of aspectIds) entry.aspectIds.add(aspectId);
+  expanded.set(normalized, entry);
+}
+
+function matchingAspectIds(
+  requirement: KnowledgeRequirement,
+  value: string,
+): string[] {
+  const normalized = normalizeTitleText(value);
+  return requirement.evidenceAspects
+    .filter((aspect) =>
+      [aspect.label, ...aspect.terms].some((term) => {
+        const normalizedTerm = normalizeTitleText(term);
+        return normalizedTerm.length >= 2 && normalized.includes(normalizedTerm);
+      }))
+    .map((aspect) => aspect.id);
+}
+
+function hasOnlyKnownAspectIds(
+  requirement: KnowledgeRequirement,
+  aspectIds: readonly string[],
+): boolean {
+  const known = new Set(
+    requirement.evidenceAspects.map((aspect) => aspect.id),
+  );
+  return aspectIds.every((aspectId) => known.has(aspectId));
+}
+
+function candidateAspectGain(
+  candidate: Candidate,
+  requirementState: RequirementState,
+): number {
+  return [...candidate.aspectIds].filter(
+    (aspectId) => !requirementState.readAspectIds.has(aspectId),
+  ).length;
+}
+
+function aspectStatuses(
+  requirementState: RequirementState,
+): Array<{
+  id: string;
+  label: string;
+  candidateCount: number;
+  readCandidateCount: number;
+}> {
+  return requirementState.requirement.evidenceAspects.map((aspect) => ({
+    id: aspect.id,
+    label: aspect.label,
+    candidateCount: [...requirementState.candidatePaths.values()]
+      .filter((candidate) => candidate.aspectIds.has(aspect.id)).length,
+    readCandidateCount: [...requirementState.candidatePaths.values()]
+      .filter((candidate) =>
+        candidate.aspectIds.has(aspect.id) &&
+        requirementState.readPaths.has(candidate.path))
+      .length,
+  }));
 }
 
 function deadlineReached(input: KnowledgeAgentInput): boolean {

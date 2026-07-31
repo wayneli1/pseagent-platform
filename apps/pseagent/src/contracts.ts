@@ -125,8 +125,17 @@ const searchActionSchema = z.object({
   input: z.object({
     requirementId: knowledgeRequirementIdSchema,
     query: z.string().trim().min(1).max(16_384),
+    aspectIds: z.array(evidenceAspectIdSchema).min(1).max(8),
     topK: z.number().int().min(1).max(10).default(5),
-  }).strict(),
+  }).strict().superRefine((input, context) => {
+    if (new Set(input.aspectIds).size !== input.aspectIds.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["aspectIds"],
+        message: "duplicate_search_aspect_ids",
+      });
+    }
+  }),
 }).strict();
 const readActionSchema = z.object({
   action: z.literal("tool"),

@@ -110,6 +110,33 @@ describe("PSEAgent contracts", () => {
     })).toThrow();
   });
 
+  it("requires distinct aspect bindings on supplemental searches", () => {
+    expect(agentActionSchema.parse({
+      action: "tool",
+      tool: "kb.search",
+      input: {
+        requirementId: "R1",
+        query: "补充语义查询",
+        aspectIds: ["A1", "A2"],
+        topK: 5,
+      },
+    })).toMatchObject({
+      tool: "kb.search",
+      input: { aspectIds: ["A1", "A2"] },
+    });
+
+    expect(() => agentActionSchema.parse({
+      action: "tool",
+      tool: "kb.search",
+      input: {
+        requirementId: "R1",
+        query: "补充语义查询",
+        aspectIds: ["A1", "A1"],
+        topK: 5,
+      },
+    })).toThrow();
+  });
+
   it("accepts parallel reads for distinct pages and rejects an exact duplicate pair", () => {
     expect(agentActionSchema.parse({
       action: "tool",

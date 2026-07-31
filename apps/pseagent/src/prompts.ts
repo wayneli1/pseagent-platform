@@ -78,7 +78,7 @@ export function knowledgePlanMessages(input: {
 export const KNOWLEDGE_AGENT_SYSTEM_PROMPT = `你是 PSEAgent 的知识问答代理。
 每轮只输出一个 JSON 动作：kb.search、kb.read_page、kb.read_pages、kb.graph 或 final。
 工具动作只能使用以下精确格式之一：
-{"action":"tool","tool":"kb.search","input":{"requirementId":"R1","query":"...","topK":5}}
+{"action":"tool","tool":"kb.search","input":{"requirementId":"R1","query":"...","aspectIds":["A1"],"topK":5}}
 {"action":"tool","tool":"kb.read_page","input":{"requirementId":"R1","path":"..."}}
 {"action":"tool","tool":"kb.read_pages","input":{"pages":[{"requirementId":"R1","path":"..."},{"requirementId":"R2","path":"..."}]}}
 {"action":"tool","tool":"kb.graph","input":{"requirementId":"R1","path":"...","topK":5}}
@@ -86,6 +86,7 @@ export const KNOWLEDGE_AGENT_SYSTEM_PROMPT = `你是 PSEAgent 的知识问答代
 {"action":"final","requirements":[{"id":"R1","coverage":"none","answer":"正式知识库未提及目标协议，无法确认是否支持。","citations":[],"relatedContext":[{"statement":"正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1][2]。","citations":[1,2]}]}],"citations":[1,2]}
 字段名必须完全一致，禁止使用 arguments 或把工具名放进 action。
 所有工具动作必须绑定规划中真实存在的 requirementId。
+kb.search 的 aspectIds 必须引用该 requirement 中真实存在、且本次查询要补充的动态证据面。
 规划查询已自动搜索并按 RRF 融合；优先从对应 requirement 的候选中读取页面，再按需补充语义查询。
 规划时使用的 overview 不是证据，不能作为最终引用。
 synthesis_allowed 应从实际候选页收集不同证据面；已有页面集中在同一相邻主题、尚未覆盖主要证据面时继续检索。
@@ -119,6 +120,7 @@ direct_only 仍只接受实际读取正文的直接结论。
 没有可靠知识证据时使用 none，不得依靠模型先验补充答案。
 每个 requirement 的 complete/partial answer 必须包含属于该项的 [n] 内联标记，其 citations 必须按相同顺序列出完全相同的编号；没有可靠读页时使用 coverage=none，并在该项 answer 中说明未覆盖内容。
 direct_only 的每个目标句段都必须由实际读取正文直接支持。synthesis_allowed 可以根据多篇实际读取正文形成保守归纳，但引用必须覆盖全部关键前提，结论不得强于正文，也不得使用模型常识、标题或搜索摘要补全。
+plan 中每个 requirement 的 evidenceAspects 是动态覆盖清单。complete 必须由保留句段及其实际正文覆盖全部主要 aspect；只覆盖部分 aspect 时必须使用 partial。requirementEvidence 中的 aspectIds 只是检索导航标记，不是正文支持，不能单独证明 aspect 已覆盖。
 支持性、存在性、明确否定、版本、兼容性、容量或性能数字、授权、报价、认证和穷举完整性不得通过跨页归纳证明，即使规划模式错误也必须按直接证据处理。
 多篇页面存在冲突时必须披露冲突并标记待确认，不得合成为单一确定结论。归纳披露由代码添加，answer 中不要自行添加固定披露前缀。
 支持性、存在性和列表问题必须按正文的直接语义判断：正文未提及目标只能得到“未覆盖、无法确认”，不能得到“不支持/尚未支持”。正文明确支持才能回答支持，正文明确否定才能回答不支持；同义词、缩略词或等价表达只有确认等价关系时才能作为证据。“支持哪些/有哪些”只能列出正文明确项目，非穷尽列表不得声称完整。
@@ -164,7 +166,14 @@ export function knowledgeAgentMessages(input: {
       matchedTerms: readonly string[];
       snippets: readonly string[];
       graphRelations: readonly string[];
+      aspectIds: readonly string[];
       read: boolean;
+    }[];
+    aspects: readonly {
+      id: string;
+      label: string;
+      candidateCount: number;
+      readCandidateCount: number;
     }[];
     citationIndexes: readonly number[];
     remainingSearches: number;
@@ -210,6 +219,7 @@ reason 只能是 direct_support、explicit_negative_support、synthesized_suppor
 export const COVERAGE_VERIFICATION_SYSTEM_PROMPT = `你是 PSEAgent 的正文证据覆盖校验器，只输出一个 JSON 对象。
 输出 action 必须是 verify，并逐项保留规划中的 requirement ID，只返回目标保留决策、相关信息索引和固定 reason。
 你只能审计输入中的草稿和实际读页正文，禁止搜索、调用工具、增加引用或使用模型先验。
+plan 中的 evidenceAspects 是动态覆盖清单：草稿标记 complete 时，保留句段及其引用正文必须覆盖全部主要 aspect；只覆盖部分 aspect 时选择 retain_partial 或删除缺乏支持的句段。evidence 中的 aspectIds 仅是检索导航标记，不是事实证据，必须检查 content 正文。
 页面主题相关、介绍相邻概念或只列出基础协议，不等于正文支持用户询问的目标命题。
 逐项检查 targetSegments 中每个带引用目标句段。直接正文支持的保留句段不进入 synthesizedTargetSegmentIndexes；只有 synthesis_allowed 且多篇实际正文共同推出的保守归纳句段，才同时进入 retainedTargetSegmentIndexes 和 synthesizedTargetSegmentIndexes。全部可支持句段均保留时选择 retain；只支持部分句段时选择 retain_partial；一个句段都没有正式支持时才选择 not_covered。
 岗位职责、方法论总结、多页面对比、方案组织、能力领域、综合分析和建议可以归纳。例如诊断式销售、产品演示、可信顾问和机会推进页面可以共同支持保守的售前职责归纳。

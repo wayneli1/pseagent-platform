@@ -40,7 +40,8 @@ export type DiagnosticEvent =
       readonly event: "search";
       readonly requirementId: string;
       readonly phase: "seed" | "supplemental";
-      readonly query: string;
+      readonly queryChars: number;
+      readonly aspectIds: readonly string[];
     }
   | {
       readonly event: "candidates";
@@ -49,8 +50,14 @@ export type DiagnosticEvent =
       readonly candidates: readonly {
         readonly path: string;
         readonly rrfScore: number;
-        readonly sourceQueries: readonly string[];
+        readonly sourceQueryCount: number;
         readonly graphRelations: readonly string[];
+        readonly aspectIds: readonly string[];
+      }[];
+      readonly aspects: readonly {
+        readonly id: string;
+        readonly candidateCount: number;
+        readonly readCandidateCount: number;
       }[];
     }
   | {
@@ -59,6 +66,7 @@ export type DiagnosticEvent =
       readonly path: string;
       readonly citation: number;
       readonly sectionHeadings: readonly string[];
+      readonly aspectIds: readonly string[];
     }
   | {
       readonly event: "evidence_shared";
@@ -78,6 +86,8 @@ export type DiagnosticEvent =
         readonly retainedDirectSegmentCount?: number;
         readonly retainedSynthesizedSegmentCount?: number;
         readonly removedSegmentCount?: number;
+        readonly coveredAspectCount?: number;
+        readonly missingAspectCount?: number;
       }[];
       readonly reasons?: readonly {
         readonly id: string;

@@ -23,6 +23,7 @@ export interface CoverageEvidenceDocument {
   readonly title: string;
   readonly path: string;
   readonly content: string;
+  readonly aspectIds?: readonly string[];
 }
 
 interface TargetSegment {
@@ -40,6 +41,8 @@ export interface CoverageVerificationSummary {
   readonly retainedDirectSegmentCount: number;
   readonly retainedSynthesizedSegmentCount: number;
   readonly removedSegmentCount: number;
+  readonly coveredAspectCount?: number;
+  readonly missingAspectCount?: number;
 }
 
 export interface CoverageVerifierInput {
@@ -139,19 +142,36 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
       removedSegmentCount:
         targetSegments.find((target) => target.id === requirement.id)
           ?.segments.length ?? 0,
+      ...(requirement.evidenceAspects.length <= 1
+        ? {}
+        : {
+            coveredAspectCount: 0,
+            missingAspectCount: requirement.evidenceAspects.length,
+          }),
     }));
     input.onVerified?.(reasons);
     throw new InvalidCoverageVerificationError(lastInvalidReason);
   }
 
-  input.onVerified?.(verificationSummaries(verified, targetSegments));
-  return materializeVerification(
-    input.draft,
+  const summaries = verificationSummaries(
     verified,
     targetSegments,
     input.plan,
-    input.question,
+    input.evidence,
   );
+  const materialized = enforceAspectCoverage(
+    materializeVerification(
+      input.draft,
+      verified,
+      targetSegments,
+      input.plan,
+      input.question,
+    ),
+    input.plan,
+    summaries,
+  );
+  input.onVerified?.(summaries);
+  return materialized;
 }
 
 const DETERMINISTIC_PRESALES_DUTY_FACETS = [
@@ -520,6 +540,8 @@ function verificationSummaries(
     readonly id: string;
     readonly segments: readonly TargetSegment[];
   }[],
+  plan: KnowledgePlan,
+  evidence: readonly CoverageEvidenceDocument[],
 ): CoverageVerificationSummary[] {
   return verified.requirements.map((decision, index) => {
     const synthesized = new Set(
@@ -529,6 +551,25 @@ function verificationSummaries(
       decision.retainedTargetSegmentIndexes.filter(
         (segmentIndex) => !synthesized.has(segmentIndex),
       ).length;
+    const retainedCitations = new Set(
+      decision.retainedTargetSegmentIndexes.flatMap(
+        (segmentIndex) =>
+          targetSegments[index]?.segments[segmentIndex]?.citations ?? [],
+      ),
+    );
+    const coveredAspectIds = new Set(
+      evidence
+        .filter((document) =>
+          document.requirementId === decision.id &&
+          retainedCitations.has(document.citation))
+        .flatMap((document) => document.aspectIds ?? []),
+    );
+    const plannedAspectIds =
+      plan.requirements[index]?.evidenceAspects.map((aspect) => aspect.id) ??
+        [];
+    const coveredAspectCount = plannedAspectIds.filter(
+      (aspectId) => coveredAspectIds.has(aspectId),
+    ).length;
     return {
       id: decision.id,
       reason: decision.reason,
@@ -537,8 +578,55 @@ function verificationSummaries(
       removedSegmentCount:
         (targetSegments[index]?.segments.length ?? 0) -
         decision.retainedTargetSegmentIndexes.length,
+      ...(plannedAspectIds.length <= 1
+        ? {}
+        : {
+            coveredAspectCount,
+            missingAspectCount:
+              plannedAspectIds.length - coveredAspectCount,
+          }),
     };
   });
+}
+
+function enforceAspectCoverage(
+  action: FinalAction,
+  plan: KnowledgePlan,
+  summaries: readonly CoverageVerificationSummary[],
+): FinalAction {
+  const requirements = action.requirements.map((requirement, index) => {
+    const plannedAspectCount =
+      plan.requirements[index]?.evidenceAspects.length ?? 0;
+    const summary = summaries[index];
+    if (
+      requirement.coverage !== "complete" ||
+      plannedAspectCount <= 1 ||
+      summary === undefined ||
+      (summary.missingAspectCount ?? 0) === 0
+    ) {
+      return requirement;
+    }
+    return {
+      ...requirement,
+      coverage: "partial" as const,
+      answer: [
+        requirement.answer,
+        "部分规划证据面尚未获得已引用正文支持，需进一步确认。",
+      ].join("\n"),
+    };
+  });
+  return {
+    ...action,
+    requirements,
+    citations: stableUnique(
+      requirements.flatMap((requirement) => [
+        ...requirement.citations,
+        ...(requirement.relatedContext ?? []).flatMap(
+          (related) => related.citations,
+        ),
+      ]),
+    ),
+  };
 }
 
 function addSynthesisDisclosureIfNeeded(

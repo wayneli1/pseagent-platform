@@ -23,6 +23,12 @@ describe("support and existence semantics", () => {
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
       "不同事实风险必须拆成不同 requirement",
     );
+    expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
+      '"evidenceAspects":[{"id":"A1","label":"动态证据面","terms":["库内术语"]}]',
+    );
+    expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
+      '"queries":[{"text":"完整语义查询","aspectIds":["A1"]}]',
+    );
   });
 
   it("gives the agent a bounded related-context contract for omitted target claims", () => {
@@ -115,6 +121,12 @@ describe("support and existence semantics", () => {
     );
     expect(prompt).toContain(
       "direct_only 仍只接受实际读取正文的直接结论",
+    );
+    expect(prompt).toContain(
+      "evidenceAspects 是动态覆盖清单",
+    );
+    expect(prompt).toContain(
+      "aspectIds 只是检索导航标记，不是正文支持",
     );
     expect(prompt).toContain(
       "不得仅因缺少专门岗位说明页而降为 partial 或 none",
