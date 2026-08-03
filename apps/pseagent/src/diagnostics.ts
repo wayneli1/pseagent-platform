@@ -16,6 +16,7 @@ export type PseStopReason =
   | "invalid_model_payload"
   | "invalid_final"
   | "turn_budget_exhausted"
+  | "evidence_review_unavailable"
   | "coverage_verifier_unavailable"
   | "coverage_verifier_invalid";
 

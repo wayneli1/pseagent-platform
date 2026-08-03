@@ -106,7 +106,6 @@ type RequirementState = {
   graphActions: number;
   noGainRounds: number;
   searchStopped: boolean;
-  lastCoverageGateDirectReadCount?: number;
 };
 
 type AgentState = {
@@ -218,19 +217,47 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       }
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
       if (pendingReviews.length > 0 && !deadlineReached(input)) {
-        for (const requirementId of pendingReviews) {
-          const requirementState = state.requirements.get(requirementId);
-          if (requirementState) {
-            requirementState.lastCoverageGateDirectReadCount =
-              requirementState.directReadPaths.size;
-          }
-        }
         observe(state, {
           type: "coverage_gate_requires_read",
           requirements: pendingReviews,
         });
+        const forcedRead = recoveryReadAction(state, pendingReviews);
+        if (forcedRead === undefined) {
+          recordDiagnostic(input.trace, {
+            event: "stop",
+            reason: "evidence_review_unavailable",
+          });
+          return unavailableResult(input.scope);
+        }
+        const readsBefore = directReadCount(state, pendingReviews);
+        try {
+          await executeToolAction(forcedRead, input, state);
+        } catch {
+          recordDiagnostic(input.trace, {
+            event: "stop",
+            reason: "evidence_review_unavailable",
+          });
+          return unavailableResult(input.scope);
+        }
+        const readsAfter = directReadCount(state, pendingReviews);
+        if (readsAfter <= readsBefore) {
+          recordDiagnostic(input.trace, {
+            event: "stop",
+            reason: "evidence_review_unavailable",
+          });
+          return unavailableResult(input.scope);
+        }
+        state.forceFinal = true;
+        observe(state, {
+          type: "coverage_gate_forced_read",
+          pages: forcedRead.input.pages,
+        });
         if (turn < maxTurns) continue;
-        return fallbackNotCovered(input, "turn_budget_exhausted");
+        recordDiagnostic(input.trace, {
+          event: "stop",
+          reason: "turn_budget_exhausted",
+        });
+        return unavailableResult(input.scope);
       }
       const validation = state.references.validateFinal(
         normalizedAction,
@@ -430,21 +457,33 @@ async function preloadBroadSynthesisEvidence(
 
 function recoveryReadAction(
   state: AgentState,
+  requirementIds?: readonly string[],
 ): Extract<ToolAction, { tool: "kb.read_pages" }> | undefined {
+  const selectedRequirementIds = requirementIds === undefined
+    ? undefined
+    : new Set(requirementIds);
   const pages = [...state.requirements.values()].flatMap((requirementState) => {
     if (
-      requirementState.directReadPaths.size >=
-        readLimitFor(requirementState.requirement)
+      selectedRequirementIds !== undefined &&
+      !selectedRequirementIds.has(requirementState.requirement.id)
     ) {
       return [];
     }
-    const candidate = sortedCandidates(requirementState)
-      .find((item) => !requirementState.readPaths.has(item.path));
-    return candidate === undefined
+    if (
+      !hasRemainingReadCapacity(requirementState)
+    ) {
+      return [];
+    }
+    const preferredPath = preferredUnreadDirectComparisonPath(
+      requirementState,
+    );
+    const path = preferredPath ?? sortedCandidates(requirementState)
+      .find((item) => !requirementState.readPaths.has(item.path))?.path;
+    return path === undefined
       ? []
       : [{
           requirementId: requirementState.requirement.id,
-          path: candidate.path,
+          path,
         }];
   });
   if (pages.length === 0) return undefined;
@@ -868,8 +907,7 @@ async function executeBatchReads(
     }
     if (
       requirementState.readPaths.has(page.path) ||
-      requirementState.directReadPaths.size + pending >=
-        readLimitFor(requirementState.requirement)
+      !canReadEvidencePath(requirementState, page.path, pending)
     ) {
       observe(state, {
         type: "requirement_read_budget_exhausted",
@@ -966,8 +1004,7 @@ async function executeRead(
   }
   if (
     requirementState.readPaths.has(action.input.path) ||
-    requirementState.directReadPaths.size >=
-      readLimitFor(requirementState.requirement)
+    !canReadEvidencePath(requirementState, action.input.path)
   ) {
     observe(state, {
       type: "requirement_read_budget_exhausted",
@@ -979,8 +1016,7 @@ async function executeRead(
   const page = await input.session.readPage(action.input.path, toolSignal(input));
   if (
     requirementState.readPaths.has(page.path) ||
-    requirementState.directReadPaths.size >=
-      readLimitFor(requirementState.requirement)
+    !canReadEvidencePath(requirementState, page.path)
   ) {
     return;
   }
@@ -1516,10 +1552,7 @@ function pendingEvidenceReviews(
     const requirementState = state.requirements.get(result.id);
     if (
       !requirementState ||
-      requirementState.directReadPaths.size >=
-        readLimitFor(requirementState.requirement) ||
-      requirementState.lastCoverageGateDirectReadCount ===
-        requirementState.directReadPaths.size
+      !hasRemainingReadCapacity(requirementState)
     ) {
       continue;
     }
@@ -1539,6 +1572,18 @@ function pendingEvidenceReviews(
     }
   }
   return pending;
+}
+
+function directReadCount(
+  state: AgentState,
+  requirementIds: readonly string[],
+): number {
+  return requirementIds.reduce(
+    (count, requirementId) =>
+      count +
+      (state.requirements.get(requirementId)?.directReadPaths.size ?? 0),
+    0,
+  );
 }
 
 function pendingAnswerAspectRepairs(
@@ -1627,6 +1672,31 @@ function preferredUnreadDirectComparisonPath(
       right.rrfScore - left.rrfScore ||
       left.path.localeCompare(right.path)
     )[0]?.path;
+}
+
+function hasRemainingReadCapacity(
+  requirementState: RequirementState,
+): boolean {
+  return requirementState.directReadPaths.size <
+      readLimitFor(requirementState.requirement) ||
+    preferredUnreadDirectComparisonPath(requirementState) !== undefined;
+}
+
+function canReadEvidencePath(
+  requirementState: RequirementState,
+  path: string,
+  pendingReads = 0,
+): boolean {
+  if (
+    requirementState.directReadPaths.size + pendingReads <
+      readLimitFor(requirementState.requirement)
+  ) {
+    return true;
+  }
+  return isExactDirectComparisonCandidate(requirementState, path) &&
+    ![...requirementState.directReadPaths].some((readPath) =>
+      isExactDirectComparisonCandidate(requirementState, readPath)
+    );
 }
 
 function shouldDeferAdjacentComparisonRead(
@@ -1824,8 +1894,8 @@ function titleCoverageScoreForValues(
 }
 
 function titleTerms(value: string, preserveProductTerms = false): string[] {
-  return value.toLocaleLowerCase("zh-CN")
-    .split(/[^\p{L}\p{N}]+/gu)
+  return (value.toLocaleLowerCase("zh-CN")
+    .match(/\p{Script=Han}+|[\p{Script=Latin}\p{N}]+/gu) ?? [])
     .flatMap((part) => {
       if (!/^\p{Script=Han}+$/u.test(part) || part.length <= 4) return [part];
       return Array.from({ length: part.length - 1 }, (_, index) =>
@@ -1853,8 +1923,7 @@ function hasAvailableToolAction(state: AgentState): boolean {
       (!requirementState.searchStopped &&
         requirementState.supplementalSearches < MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT) ||
       (unreadCandidate &&
-        requirementState.directReadPaths.size <
-          readLimitFor(requirementState.requirement)) ||
+        hasRemainingReadCapacity(requirementState)) ||
       (requirementState.candidatePaths.size > 0 &&
         requirementState.graphActions < MAX_GRAPH_ACTIONS_PER_REQUIREMENT)
     );
@@ -1869,10 +1938,18 @@ function countRemainingToolActions(state: AgentState): number {
     }
     const unreadCandidates = [...requirementState.candidatePaths.keys()]
       .filter((path) => !requirementState.readPaths.has(path)).length;
-    remaining += Math.min(
-      unreadCandidates,
+    const standardReadCapacity = Math.max(
+      0,
       readLimitFor(requirementState.requirement) -
         requirementState.directReadPaths.size,
+    );
+    const exactComparisonReserve =
+        preferredUnreadDirectComparisonPath(requirementState) === undefined
+      ? 0
+      : 1;
+    remaining += Math.min(
+      unreadCandidates,
+      standardReadCapacity + exactComparisonReserve,
     );
     if (
       requirementState.candidatePaths.size > 0 &&

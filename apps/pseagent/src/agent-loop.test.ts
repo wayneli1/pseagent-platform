@@ -961,6 +961,103 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("recognizes mixed Chinese-English product titles and forces the exact comparison read", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Coremail 与 Exchange 对比",
+      requirements: [{
+        id: "R1",
+        question: "对比exchange邮件系统，coremail的优势有哪些呢",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Coremail 与 Exchange 的优势对比",
+          terms: ["Coremail", "Exchange", "优势", "对比"],
+        }],
+        queries: [{
+          text: "邮件系统优势",
+          aspectIds: ["A1"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "邮件系统优势": [{
+          path: "wiki/comparisons/localization.md",
+          title: "信创技术栈适配矩阵",
+        }, {
+          path: "wiki/comparison/coremail-vs-exchange.md",
+          title: "Coremail vs Exchange 对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      final("none"),
+      final("complete", "正式对比页确认了 Coremail 的主要优势 [1]。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.readPage).toHaveBeenCalledTimes(1);
+    expect(session.readPage).toHaveBeenCalledWith(
+      "wiki/comparison/coremail-vs-exchange.md",
+      undefined,
+    );
+    expect(payloadAt(model, 1).finalOnly).toBe(true);
+    expect(payloadAt(model, 1).observations?.join("\n")).toContain(
+      "coverage_gate_forced_read",
+    );
+    expect(result.status).toBe("answered");
+  });
+
+  it("reserves an exact comparison read after adjacent pages used the normal budget", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Coremail 与 Exchange 对比",
+      requirements: [{
+        id: "R1",
+        question: "对比 Exchange 邮件系统，Coremail 有哪些优势",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Coremail 与 Exchange 的优势对比",
+          terms: ["Coremail", "Exchange", "优势"],
+        }],
+        queries: [{ text: "宽泛对比", aspectIds: ["A1"] }],
+      }],
+    };
+    const adjacentPaths = [
+      "wiki/concepts/migration.md",
+      "wiki/concepts/localization.md",
+      "wiki/concepts/security.md",
+    ];
+    const exactPath = "wiki/comparison/coremail-vs-exchange.md";
+    const session = fakeSession({
+      hits: {
+        "宽泛对比": adjacentPaths.map((path) => ({ path })),
+        "精确产品对比": [{
+          path: exactPath,
+          title: "Coremail vs Exchange 对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", adjacentPaths[0]!),
+      read("R1", adjacentPaths[1]!),
+      read("R1", adjacentPaths[2]!),
+      search("R1", "精确产品对比"),
+      final("none"),
+      final("complete", "正式对比页确认了主要优势 [4]。", [4]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.readPage).toHaveBeenCalledTimes(4);
+    expect(session.readPage).toHaveBeenLastCalledWith(exactPath, undefined);
+    expect(result.status).toBe("answered");
+    expect(result.references.map((reference) => reference.path)).toEqual([
+      exactPath,
+    ]);
+  });
+
   it("defers an adjacent page when a batch already contains the exact comparison", async () => {
     const plan: KnowledgePlan = {
       subject: "产品差异化对比",
@@ -2205,7 +2302,6 @@ describe("runKnowledgeAgent", () => {
     });
     const model = scriptedAgentModel([
       final("none", "当前资料未覆盖该问题"),
-      read("R1", "wiki/r1.md"),
       final("complete", "读取后确认[1]", [1]),
     ]);
 
@@ -2230,7 +2326,6 @@ describe("runKnowledgeAgent", () => {
     const model = scriptedAgentModel([
       read("R1", "wiki/concepts/first.md"),
       final("partial", "当前仅确认部分内容[1]，其余待确认。", [1]),
-      read("R1", "wiki/concepts/second.md"),
       final("complete", "两页共同确认[1][2]", [1, 2]),
     ]);
 
@@ -2260,7 +2355,6 @@ describe("runKnowledgeAgent", () => {
       read("R1", paths[1]!),
       read("R1", paths[2]!),
       final("partial", "三类职责已经确认", [1, 2, 3]),
-      read("R1", paths[3]!),
       final("complete", "四类职责共同构成归纳", [1, 2, 3, 4]),
     ]);
 
@@ -2418,7 +2512,6 @@ describe("runKnowledgeAgent", () => {
         { requirementId: "R2", path: "wiki/r2-second.md" },
       ),
       firstFinal,
-      read("R1", "wiki/r1-second.md"),
       finalAfterR1Read,
       finalAfterR1Read,
     ]);
@@ -2429,8 +2522,8 @@ describe("runKnowledgeAgent", () => {
       verifyCoverage,
     });
 
-    expect(model.calls).toBe(6);
-    const gateObservations = (payloadAt(model, 5).observations ?? [])
+    expect(model.calls).toBe(5);
+    const gateObservations = (payloadAt(model, 4).observations ?? [])
       .map((observation) => JSON.parse(observation) as {
         type?: string;
         requirements?: string[];
