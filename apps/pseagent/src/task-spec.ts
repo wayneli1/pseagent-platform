@@ -380,6 +380,14 @@ function distributiveEntityItems(
   }
   selected.sort((left, right) => left.index - right.index);
   if (selected.length < 2) return { items: [], unresolved: true };
+  const first = selected[0]!;
+  const last = selected[selected.length - 1]!;
+  if (
+    sourceText.slice(0, first.index).trim() ||
+    sourceText.slice(last.index + last.text.length).trim()
+  ) {
+    return { items: [], unresolved: true };
+  }
   for (let index = 1; index < selected.length; index += 1) {
     const previous = selected[index - 1]!;
     const next = selected[index]!;
@@ -514,9 +522,6 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
   }
 }
 
-const STRONG_PRODUCT_FACT_PATTERN =
-  /(?:协议|兼容|适配|版本|补丁|授权|报价|费用|认证|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发)/iu;
-
 const PRODUCT_FACT_CONTEXT_PATTERN =
   /(?:产品|系统|平台|协议|接口|组件|模块|软件|应用|终端|环境|双活)/iu;
 
@@ -524,17 +529,20 @@ const PROTECTED_NUMERIC_FACT_PATTERN =
   /\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|%)/iu;
 
 const CUSTOMER_RELATIONSHIP_SUPPORT_FRAGMENT_PATTERN =
-  /(?:客户(?:侧)?支持(?:者|团队)?|内部支持者|业务支持者)(?:\s*支持(?:项目|机会|推进)?)?|(?:(?:客户(?:侧)?|内部)?(?:人员|团队|管理层))\s*支持(?:项目|机会|推进)?/gu;
-
-const STRONG_ENUMERABLE_FACT_OBJECT_PATTERN =
-  /(?:接口|协议|版本|补丁|授权|报价|费用|认证|容量|性能|并发|案例|部署|架构|配置)/iu;
-
-const CONTEXTUAL_ENUMERABLE_FACT_OBJECT_PATTERN = /(?:功能|能力|组件|模块|清单|列表)/u;
+  /(?:客户(?:侧)?支持(?:者|团队)?|内部支持者|业务支持者)(?:\s*支持(?:项目|机会|客户(?:推进)?|推进)?)?|(?:(?:客户(?:侧)?|内部)?(?:人员|团队|管理层))\s*支持(?:项目|机会|客户(?:推进)?|推进)/gu;
 
 const PRODUCT_FACT_HINT_PATTERN =
-  /(?:当前|现状|是否|哪些|什么|具备|确认|核实|支持|清单|列表|列出|有无|有没有|存在)/u;
+  /(?:当前|现状|是否|哪些|什么|具备|确认|核实|支持|清单|列表|列出|盘点|有无|有没有|存在)/u;
 
 const ORGANIZATIONAL_CAPABILITY_PATTERN = /团队/u;
+
+const CHANGE_OBJECTIVE_PATTERN = /(?:提升|优化|改造|升级)/u;
+
+const CHANGE_OBJECTIVE_GLOBAL_PATTERN = /(?:提升|优化|改造|升级)/gu;
+
+const CHANGE_COLLECTION_PATTERN = /(?:建议|方案|行动|规划|筹划)/u;
+
+const DECISION_OR_ORGANIZATIONAL_PATTERN = /(?:应该|继续|推进|条件|团队)/u;
 
 const OPPORTUNITY_FORECAST_PATTERN =
   /(?:赢率|胜率|成交概率|成功概率|机会(?:质量|预测|判断)|销售预测|预测(?:结果|概率))/u;
@@ -558,19 +566,18 @@ function requiresDirectEvidence(
 function requiresDirectProductEvidence(
   value: string,
 ): boolean {
-  if (STRONG_PRODUCT_FACT_PATTERN.test(value)) return true;
   if (hasLocalContextualProductFact(value)) return true;
   if (hasLocalProductSupportFact(value)) return true;
-  return hasLocalExhaustiveFact(value);
+  if (hasExplicitAttributeQuestion(value)) return true;
+  return hasQuantifiedOrStateFact(value);
 }
 
 function hasLocalContextualProductFact(value: string): boolean {
   return [...value.matchAll(/(?:功能|能力)/gu)].some((match) => {
     const local = localTextWindow(value, match.index ?? 0, match[0].length);
-    const following = value.slice((match.index ?? 0) + match[0].length);
-    return PRODUCT_FACT_HINT_PATTERN.test(local) &&
+    return (PRODUCT_FACT_CONTEXT_PATTERN.test(local) || PRODUCT_FACT_HINT_PATTERN.test(local)) &&
       !(ORGANIZATIONAL_CAPABILITY_PATTERN.test(local) && !/(?:当前|现状)/u.test(local)) &&
-      !/^\s*(?:需要)?(?:提升|优化|改造|建议|筹划|规划)/u.test(following);
+      !isDirectlyChangeGoverned(value, match.index ?? 0, match[0].length);
   });
 }
 
@@ -578,21 +585,52 @@ function hasLocalProductSupportFact(value: string): boolean {
   return /支持/u.test(value);
 }
 
-function hasLocalExhaustiveFact(value: string): boolean {
-  const objects = [...value.matchAll(/(?:接口|协议|版本|补丁|授权|报价|费用|认证|容量|性能|并发|案例|部署|架构|配置|功能|能力|组件|模块|清单|列表)/gu)];
-  return [...value.matchAll(/(?:全部|所有|全量|完整(?:列表|清单)?)/gu)].some((marker) =>
-    objects.some((object) => {
-      const markerIndex = marker.index ?? 0;
-      const objectIndex = object.index ?? 0;
-      if (Math.abs(markerIndex - objectIndex) > 12) return false;
-      const local = localTextWindow(value, objectIndex, object[0].length);
-      const isContextualObject = CONTEXTUAL_ENUMERABLE_FACT_OBJECT_PATTERN.test(object[0]);
-      const hasProductContext = PRODUCT_FACT_CONTEXT_PATTERN.test(local);
-      if (isContextualObject && !hasProductContext) return false;
-      if (!STRONG_ENUMERABLE_FACT_OBJECT_PATTERN.test(object[0]) && !isContextualObject) return false;
-      const following = value.slice(objectIndex + object[0].length, objectIndex + object[0].length + 8);
-      return !/^\s*(?:方式)?(?:优化|改造|提升|建议|行动|方案)/u.test(following);
-    }));
+function hasExplicitAttributeQuestion(value: string): boolean {
+  if (DECISION_OR_ORGANIZATIONAL_PATTERN.test(value) || CHANGE_COLLECTION_PATTERN.test(value)) {
+    return false;
+  }
+  if (/(?:兼容|适配).{0,8}(?:如何|怎样)/u.test(value)) return true;
+  return /[\p{L}\p{N}]{2,}(?:是否|哪些|什么|有无|有没有)/u.test(value) ||
+    /(?:确认|核实|盘点|列出)\s*[\p{L}\p{N}]{2,}/u.test(value);
+}
+
+function hasQuantifiedOrStateFact(value: string): boolean {
+  return [...value.matchAll(/(?:全部|所有|全量|完整|当前|现有|实际)/gu)].some((modifier) => {
+    const index = modifier.index ?? 0;
+    const phrase = value.slice(index, nextPhraseBoundary(value, index));
+    const afterModifier = phrase.slice(modifier[0].length).trim();
+    return afterModifier.length >= 2 && !isChangeCollection(phrase);
+  });
+}
+
+function isDirectlyChangeGoverned(value: string, index: number, length: number): boolean {
+  const sentenceStart = Math.max(
+    value.lastIndexOf("，", index),
+    value.lastIndexOf(",", index),
+    value.lastIndexOf("。", index),
+    value.lastIndexOf("；", index),
+    value.lastIndexOf(";", index),
+  ) + 1;
+  const before = value.slice(sentenceStart, index);
+  const after = value.slice(index + length, nextPhraseBoundary(value, index + length));
+  const changes = [...before.matchAll(CHANGE_OBJECTIVE_GLOBAL_PATTERN)];
+  const latestChange = changes[changes.length - 1];
+  const laterIndependentFact = latestChange === undefined
+    ? undefined
+    : [...before.matchAll(/(?:当前|现状|确认|核实|列出|盘点|建议|方案|行动|规划|筹划)/gu)]
+      .reverse()
+      .find((match) => (match.index ?? -1) > (latestChange.index ?? -1));
+  return (latestChange !== undefined && laterIndependentFact === undefined) ||
+    /^\s*(?:如何\s*)?(?:提升|优化|改造|升级|需要提升|改进)/u.test(after);
+}
+
+function isChangeCollection(phrase: string): boolean {
+  return CHANGE_COLLECTION_PATTERN.test(phrase) || CHANGE_OBJECTIVE_PATTERN.test(phrase);
+}
+
+function nextPhraseBoundary(value: string, index: number): number {
+  const boundary = value.slice(index).search(/[，,；;。！？!?]/u);
+  return boundary < 0 ? value.length : index + boundary;
 }
 
 function localTextWindow(value: string, index: number, length: number): string {

@@ -523,6 +523,58 @@ describe("DeterministicTaskSpecGuard", () => {
   );
 
   it.each([
+    ["技术团队支持高可用部署吗", false],
+    ["售前团队支持客户推进", true],
+    ["团队支持项目推进并确认是否支持量子安全算法", false],
+    ["是否支持量子安全算法并由团队支持项目推进", false],
+  ] as const)(
+    "keeps only explicit organizational support local: %s",
+    (question, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", "unknown");
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
+    ["盘点系统功能", false],
+    ["提升系统功能", true],
+    ["优化系统功能", true],
+    ["改造系统功能", true],
+    ["提升系统功能并盘点系统功能", false],
+  ] as const)(
+    "treats product attributes as facts unless directly governed by a change objective: %s",
+    (question, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", "unknown");
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
+    ["列出所有加密算法", false],
+    ["全部灾备模式", false],
+    ["所有审计机制", false],
+    ["完整迁移改造建议", true],
+    ["给出所有版本升级建议", true],
+    ["给出改进建议并说明当前产品型号", false],
+    ["当前设备型号", false],
+  ] as const)(
+    "uses quantified and state-modified noun phrases without an object whitelist: %s",
+    (question, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", "unknown");
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
     ["如何提升销售能力", "产品版本和全部接口", "product", true],
     ["支持IPv6吗", "普通标签", "unknown", false],
     ["支持双活吗", "普通标签", "unknown", false],
@@ -575,6 +627,8 @@ describe("DeterministicTaskSpecGuard", () => {
   it.each([
     "随后摸清系统功能现状并继而筹划销售建议",
     "继而筹划销售建议并随后摸清系统功能现状",
+    "如何提升销售能力随后摸清系统有哪些功能",
+    "系统有哪些功能继而筹划提升建议",
   ])("protects a local fact regardless of unlisted surrounding action wording: %s", (question) => {
     const result = guardSingleObligation(question, "synthesis", "unknown");
     expect(result.ok).toBe(false);
@@ -710,6 +764,26 @@ describe("DeterministicTaskSpecGuard", () => {
       "和利时与乙公司各自采用方案",
       ["和利时", "乙公司"],
     ).ok).toBe(true);
+  });
+
+  it("requires anchors to cover both ends of a conjunction-only distributive list", () => {
+    const question = "和利时与乙公司各自采用方案";
+    const incomplete = guardIndependentParallelObligations(question, ["利时", "乙公司"]);
+    const complete = guardIndependentParallelObligations(question, ["和利时", "乙公司"]);
+
+    expect(incomplete.issues).toContainEqual(expect.objectContaining({
+      code: "distributive_entity_group_unresolved",
+    }));
+    expect(complete.ok).toBe(true);
+  });
+
+  it("preserves conjunctions inside strongly separated anchored entity names", () => {
+    const result = guardIndependentParallelObligations(
+      "研发与创新中心、甲公司分别采用方案",
+      ["研发与创新中心", "甲公司"],
+    );
+    expect(result.ok).toBe(true);
+    expect(result.mappedExplicitEntityCount).toBe(2);
   });
 
   it("fails closed when a strongly separated distributive list cannot form two entities", () => {
