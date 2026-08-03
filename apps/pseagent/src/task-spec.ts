@@ -358,11 +358,18 @@ function distributiveEntityItems(
     return { items: parallelEntityItems(sourceText, true), unresolved: false };
   }
 
-  const candidates = stableUniqueText(anchoredEntitySourceTexts)
+  const foldedSourceText = sourceText.toLocaleLowerCase("zh-CN");
+  const anchoredCandidates = anchoredEntitySourceTexts
     .filter((candidate) => isPlausibleExplicitEntity(candidate))
+    .map((candidate) => candidate.trim())
+    .filter((candidate) => foldedSourceText.includes(candidate.toLocaleLowerCase("zh-CN")));
+  const normalizedCandidates = anchoredCandidates.map(normalizeSemanticText);
+  if (new Set(normalizedCandidates).size !== normalizedCandidates.length) {
+    return { items: [], unresolved: true };
+  }
+  const candidates = anchoredCandidates
     .sort((left, right) => right.length - left.length || left.localeCompare(right));
   const selected: Array<{ text: string; index: number }> = [];
-  const foldedSourceText = sourceText.toLocaleLowerCase("zh-CN");
   for (const candidate of candidates) {
     const index = foldedSourceText.indexOf(candidate.toLocaleLowerCase("zh-CN"));
     if (index < 0) continue;
@@ -399,10 +406,6 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
     const issues: TaskSpecGuardIssue[] = [];
     const question = input.resolvedQuestion.standaloneQuestion;
     const spec = input.taskSpec;
-    const entitiesById = new Map(
-      spec.entities.map((entity) => [entity.id, entity] as const),
-    );
-
     for (const entity of spec.entities) {
       if (!containsSemanticText(question, entity.sourceText)) {
         issues.push({
@@ -429,11 +432,7 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
             obligationId: obligation.id,
           });
         }
-        const targetEntities = obligation.targetEntityIds.flatMap((entityId) => {
-          const entity = entitiesById.get(entityId);
-          return entity === undefined ? [] : [entity];
-        });
-        if (requiresDirectEvidence(obligation, obligation.sourceText, targetEntities)) {
+        if (requiresDirectEvidence(obligation, obligation.sourceText)) {
           issues.push({
             code: "protected_fact_not_direct",
             severity: "error",
@@ -535,21 +534,21 @@ const CONTEXTUAL_ENUMERABLE_FACT_OBJECT_PATTERN = /(?:功能|能力|组件|模�
 const PRODUCT_FACT_HINT_PATTERN =
   /(?:当前|现状|是否|哪些|什么|具备|确认|核实|支持|清单|列表|列出|有无|有没有|存在)/u;
 
+const ORGANIZATIONAL_CAPABILITY_PATTERN = /团队/u;
+
 const OPPORTUNITY_FORECAST_PATTERN =
   /(?:赢率|胜率|成交概率|成功概率|机会(?:质量|预测|判断)|销售预测|预测(?:结果|概率))/u;
 
 function requiresDirectEvidence(
   obligation: TaskSpec["deliverables"][number]["obligations"][number],
   value: string,
-  targetEntities: readonly TaskSpec["entities"][number][],
 ): boolean {
   if (obligation.evidencePolicy === "direct") return false;
-  const productTarget = targetEntities.some((entity) => entity.role === "product");
   const productFactText = value.replace(
     CUSTOMER_RELATIONSHIP_SUPPORT_FRAGMENT_PATTERN,
     " ",
   );
-  if (requiresDirectProductEvidence(productFactText, productTarget)) {
+  if (requiresDirectProductEvidence(productFactText)) {
     return true;
   }
   return PROTECTED_NUMERIC_FACT_PATTERN.test(value) &&
@@ -558,30 +557,32 @@ function requiresDirectEvidence(
 
 function requiresDirectProductEvidence(
   value: string,
-  productTarget: boolean,
 ): boolean {
   if (STRONG_PRODUCT_FACT_PATTERN.test(value)) return true;
-  if (hasLocalContextualProductFact(value, productTarget)) return true;
-  if (hasLocalProductSupportFact(value, productTarget)) return true;
-  return hasLocalExhaustiveFact(value, productTarget);
+  if (hasLocalContextualProductFact(value)) return true;
+  if (hasLocalProductSupportFact(value)) return true;
+  return hasLocalExhaustiveFact(value);
 }
 
-function hasLocalContextualProductFact(value: string, productTarget: boolean): boolean {
+function hasLocalContextualProductFact(value: string): boolean {
   return [...value.matchAll(/(?:功能|能力)/gu)].some((match) => {
     const local = localTextWindow(value, match.index ?? 0, match[0].length);
-    return (productTarget || PRODUCT_FACT_CONTEXT_PATTERN.test(local)) &&
-      PRODUCT_FACT_HINT_PATTERN.test(local);
+    const following = value.slice((match.index ?? 0) + match[0].length);
+    return PRODUCT_FACT_HINT_PATTERN.test(local) &&
+      !(ORGANIZATIONAL_CAPABILITY_PATTERN.test(local) && !/(?:当前|现状)/u.test(local)) &&
+      !/^\s*(?:需要)?(?:提升|优化|改造|建议|筹划|规划)/u.test(following);
   });
 }
 
-function hasLocalProductSupportFact(value: string, productTarget: boolean): boolean {
+function hasLocalProductSupportFact(value: string): boolean {
   return [...value.matchAll(/支持/gu)].some((match) => {
     const local = localTextWindow(value, match.index ?? 0, match[0].length);
-    return productTarget || PRODUCT_FACT_CONTEXT_PATTERN.test(local);
+    return PRODUCT_FACT_CONTEXT_PATTERN.test(local) ||
+      /(?:IPv\d+|SMTP|IMAP|POP3|LDAP|SAML|OAuth|OIDC|API|SDK|协议)/iu.test(local);
   });
 }
 
-function hasLocalExhaustiveFact(value: string, productTarget: boolean): boolean {
+function hasLocalExhaustiveFact(value: string): boolean {
   const objects = [...value.matchAll(/(?:接口|协议|版本|补丁|授权|报价|费用|认证|容量|性能|并发|案例|部署|架构|配置|功能|能力|组件|模块|清单|列表)/gu)];
   return [...value.matchAll(/(?:全部|所有|全量|完整(?:列表|清单)?)/gu)].some((marker) =>
     objects.some((object) => {
@@ -590,7 +591,7 @@ function hasLocalExhaustiveFact(value: string, productTarget: boolean): boolean 
       if (Math.abs(markerIndex - objectIndex) > 12) return false;
       const local = localTextWindow(value, objectIndex, object[0].length);
       const isContextualObject = CONTEXTUAL_ENUMERABLE_FACT_OBJECT_PATTERN.test(object[0]);
-      const hasProductContext = productTarget || PRODUCT_FACT_CONTEXT_PATTERN.test(local);
+      const hasProductContext = PRODUCT_FACT_CONTEXT_PATTERN.test(local);
       if (isContextualObject && !hasProductContext) return false;
       if (!STRONG_ENUMERABLE_FACT_OBJECT_PATTERN.test(object[0]) && !isContextualObject) return false;
       const following = value.slice(objectIndex + object[0].length, objectIndex + object[0].length + 8);

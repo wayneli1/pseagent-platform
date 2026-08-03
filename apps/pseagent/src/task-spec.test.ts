@@ -56,6 +56,7 @@ function guardSingleObligation(
   obligationLabel = question,
   obligationSourceText = question,
   deliverableLabel = question,
+  entityLabel = question,
 ) {
   return new DeterministicTaskSpecGuard().validate({
     resolvedQuestion: {
@@ -67,7 +68,7 @@ function guardSingleObligation(
     },
     taskSpec: taskSpecSchema.parse({
       subject: question,
-      entities: [{ id: "E1", label: question, role, sourceText: question }],
+      entities: [{ id: "E1", label: entityLabel, role, sourceText: question }],
       deliverables: [{
         id: "D1",
         label: deliverableLabel,
@@ -522,6 +523,31 @@ describe("DeterministicTaskSpecGuard", () => {
   );
 
   it.each([
+    ["如何提升销售能力", "产品版本和全部接口", "product", true],
+    ["支持IPv6吗", "普通标签", "unknown", false],
+    ["系统有哪些功能", "普通标签", "target", false],
+    ["团队有哪些能力需要提升", "普通标签", "target", true],
+    ["销售能力现状", "普通标签", "target", false],
+  ] as const)(
+    "does not let entity role or label control fact protection: %s",
+    (sourceText, entityLabel, role, expectedOk) => {
+      const result = guardSingleObligation(
+        sourceText,
+        "synthesis",
+        role,
+        sourceText,
+        sourceText,
+        sourceText,
+        entityLabel,
+      );
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
     ["系统有哪些功能", "如何提升销售能力", "给出销售建议", "product", false],
     ["识别客户支持者", "邮件系统支持现状", "确认产品支持", "target", true],
   ] as const)(
@@ -541,6 +567,17 @@ describe("DeterministicTaskSpecGuard", () => {
       )).toBe(!expectedOk);
     },
   );
+
+  it.each([
+    "随后摸清系统功能现状并继而筹划销售建议",
+    "继而筹划销售建议并随后摸清系统功能现状",
+  ])("protects a local fact regardless of unlisted surrounding action wording: %s", (question) => {
+    const result = guardSingleObligation(question, "synthesis", "unknown");
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      code: "protected_fact_not_direct",
+    }));
+  });
 
   it("does not let a trailing recommendation suppress an earlier product fact", () => {
     const question = "系统有哪些功能并给出提升建议";
@@ -679,6 +716,22 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(result.issues).toContainEqual(expect.objectContaining({
       code: "distributive_entity_group_unresolved",
     }));
+  });
+
+  it("fails closed for duplicate, ambiguous, or only-wide anchored entity sources", () => {
+    const question = "天地和科技与乙公司各自采用方案";
+    const duplicate = guardIndependentParallelObligations(question, ["天地和科技", "乙公司", "乙公司"]);
+    const wideOnly = guardIndependentParallelObligations(question, ["天地和科技与乙公司"]);
+    const longestWins = guardIndependentParallelObligations(question, ["天地", "天地和科技", "乙公司"]);
+
+    expect(duplicate.issues).toContainEqual(expect.objectContaining({
+      code: "distributive_entity_group_unresolved",
+    }));
+    expect(wideOnly.issues).toContainEqual(expect.objectContaining({
+      code: "distributive_entity_group_unresolved",
+    }));
+    expect(longestWins.ok).toBe(true);
+    expect(longestWins.mappedExplicitEntityCount).toBe(2);
   });
 
   it.each([
