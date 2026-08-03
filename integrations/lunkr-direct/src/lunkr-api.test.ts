@@ -48,6 +48,51 @@ describe("LunkrApi", () => {
     }
   });
 
+  it("sends a long answer as one native text post", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () =>
+      new Response(JSON.stringify({ code: "S_OK" })));
+    await new LunkrApi(config, session, fetchImpl).sendPost(
+      "#peer#U",
+      "PSEAgent 问题 #7 的完整回答.txt",
+      "一段超过普通消息限制的完整回答",
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [input, init] = fetchImpl.mock.calls[0]!;
+    expect(String(input)).toContain("func=cim.file%3AuploadPost");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      uid: "#peer#U",
+      fileInfo: {
+        title: "PSEAgent 问题 #7 的完整回答.txt",
+        content: "一段超过普通消息限制的完整回答",
+      },
+    });
+  });
+
+  it("validates native text post inputs before sending", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const api = new LunkrApi(config, session, fetchImpl);
+
+    await expect(api.sendPost("#group#G", "回答.txt", "正文"))
+      .rejects.toThrow("只允许");
+    await expect(api.sendPost("#peer#U", "  ", "正文"))
+      .rejects.toThrow("标题不能为空");
+    await expect(api.sendPost("#peer#U", "回答.txt", "  "))
+      .rejects.toThrow("正文不能为空");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("reports native text post response failures", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () =>
+      new Response(JSON.stringify({ code: "E_DENIED" })));
+
+    await expect(new LunkrApi(config, session, fetchImpl).sendPost(
+      "#peer#U",
+      "回答.txt",
+      "正文",
+    )).rejects.toThrow("长回答发送失败（code=E_DENIED）");
+  });
+
   it("refuses group destinations", async () => {
     await expect(new LunkrApi(config, session).sendText("#group#G", "hello"))
       .rejects.toThrow("只允许");

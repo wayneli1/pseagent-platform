@@ -36,6 +36,30 @@ export class LunkrApi {
       }
     }
   }
+
+  async sendPost(peerUid: string, title: string, content: string): Promise<void> {
+    if (!peerUid.endsWith("#U")) throw new Error("只允许向 Lunkr 私聊用户回复");
+    if (title.trim() === "") throw new Error("Lunkr 长回答标题不能为空");
+    if (content.trim() === "") throw new Error("Lunkr 长回答正文不能为空");
+
+    const response = await this.client.lunkr({
+      apiPath: this.config.apiPath,
+      func: "cim.file:uploadPost",
+      sid: this.session.sid,
+      cookie: cookieHeader(this.session),
+      body: {
+        uid: peerUid,
+        fileInfo: { title, content },
+      },
+    });
+    if (
+      response.status < 200 ||
+      response.status >= 300 ||
+      response.body.code !== "S_OK"
+    ) {
+      throw new Error(`Lunkr 长回答发送失败（code=${response.body.code}）`);
+    }
+  }
 }
 
 export function splitText(text: string, maxChars = 1_000): string[] {
