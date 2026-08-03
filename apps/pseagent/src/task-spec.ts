@@ -247,10 +247,7 @@ export function extractExplicitQuestionSignals(question: string): ExplicitQuesti
   for (const match of question.matchAll(listPattern)) {
     const sourceText = match.groups?.list?.trim();
     if (!sourceText) continue;
-    const items = sourceText
-      .split(/(?:、|，|,|\s+(?:和|与|及)\s*|\s+vs\.?\s*)/iu)
-      .map(cleanExplicitEntity)
-      .filter((item) => isPlausibleExplicitEntity(item));
+    const items = parallelEntityItems(sourceText);
     if (items.length >= 2) entityGroups.push({ sourceText, items });
   }
   const comparisonPattern = /(?<left>[\p{L}\p{N}·（）()._-]{2,64}?)\s*(?:vs\.?|versus|与|和)\s*(?<right>[\p{L}\p{N}·（）()._-]{2,64}?)(?=\s*(?:的)?(?:差异|区别|对比|比较))/giu;
@@ -265,15 +262,12 @@ export function extractExplicitQuestionSignals(question: string): ExplicitQuesti
       });
     }
   }
-  const bareParallelListPattern =
-    /(?:^|[，,；;。！？!?])\s*(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)\s*(?=各自(?:采用|使用|选择|实施).{0,12}(?:什么|哪些|何种)(?:方案|架构|产品|系统)?)/gu;
-  for (const match of question.matchAll(bareParallelListPattern)) {
+  const distributiveParallelListPattern =
+    /(?:^|[，,；;。！？!?])\s*(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)\s*(?=(?:各自|分别|逐一|逐个))/gu;
+  for (const match of question.matchAll(distributiveParallelListPattern)) {
     const sourceText = match.groups?.list?.trim();
     if (!sourceText) continue;
-    const items = sourceText
-      .split(/(?:、|，|,|\s+(?:和|与|及)\s*)/u)
-      .map(cleanExplicitEntity)
-      .filter((item) => isPlausibleExplicitEntity(item));
+    const items = parallelEntityItems(sourceText);
     if (items.length >= 2) entityGroups.push({ sourceText, items });
   }
 
@@ -327,6 +321,21 @@ function cleanExplicitEntity(value: string): string {
     .trim();
 }
 
+function parallelEntityItems(sourceText: string): string[] {
+  return sourceText
+    .split(/(?:、|，|,)/u)
+    .flatMap(splitConjoinedEntitySegment)
+    .map(cleanExplicitEntity)
+    .filter((item) => isPlausibleExplicitEntity(item));
+}
+
+function splitConjoinedEntitySegment(segment: string): string[] {
+  const parts = segment.split(/(?:\s*(?:和|与|及)\s*|\s+vs\.?\s*)/iu);
+  return parts.length > 1 && parts.every((part) => [...part.trim()].length >= 2)
+    ? parts
+    : [segment];
+}
+
 export class DeterministicTaskSpecGuard implements TaskSpecGuard {
   validate(input: {
     readonly resolvedQuestion: ResolvedQuestion;
@@ -335,6 +344,9 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
     const issues: TaskSpecGuardIssue[] = [];
     const question = input.resolvedQuestion.standaloneQuestion;
     const spec = input.taskSpec;
+    const entitiesById = new Map(
+      spec.entities.map((entity) => [entity.id, entity] as const),
+    );
 
     for (const entity of spec.entities) {
       if (!containsSemanticText(question, entity.sourceText)) {
@@ -363,7 +375,11 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
           });
         }
         const obligationText = `${obligation.label} ${obligation.sourceText}`;
-        if (requiresDirectEvidence(obligation, obligationText)) {
+        const targetEntities = obligation.targetEntityIds.flatMap((entityId) => {
+          const entity = entitiesById.get(entityId);
+          return entity === undefined ? [] : [entity];
+        });
+        if (requiresDirectEvidence(obligation, obligationText, targetEntities)) {
           issues.push({
             code: "protected_fact_not_direct",
             severity: "error",
@@ -437,13 +453,15 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
   }
 }
 
-const PROTECTED_PRODUCT_FACT_PATTERN =
-  /(?:是否|能否|有没有|是否具备|支不支持|兼容|适配|版本|补丁|授权|报价|费用|认证|全部|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发)/iu;
+const STRONG_PRODUCT_FACT_PATTERN =
+  /(?:协议|兼容|适配|版本|补丁|授权|报价|费用|认证|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发)/iu;
 
-const NON_RELATIONAL_PRODUCT_FACT_PATTERN =
-  /(?:兼容|适配|版本|补丁|授权|报价|费用|认证|全部|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发)/iu;
+const CONTEXTUAL_PRODUCT_FACT_PATTERN = /(?:功能|能力)/u;
 
 const PRODUCT_SUPPORT_FACT_PATTERN = /支持/iu;
+
+const PRODUCT_FACT_CONTEXT_PATTERN =
+  /(?:产品|系统|平台|协议|接口|服务|组件|模块|软件|应用|终端|环境|双活)/iu;
 
 const PROTECTED_NUMERIC_FACT_PATTERN =
   /\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|%)/iu;
@@ -457,17 +475,19 @@ const OPPORTUNITY_FORECAST_PATTERN =
 function requiresDirectEvidence(
   obligation: TaskSpec["deliverables"][number]["obligations"][number],
   value: string,
+  targetEntities: readonly TaskSpec["entities"][number][],
 ): boolean {
   if (obligation.evidencePolicy === "direct") return false;
   const customerRelationshipSupport =
     CUSTOMER_RELATIONSHIP_SUPPORT_PATTERN.test(value);
+  const productFactContext =
+    targetEntities.some((entity) => entity.role === "product") ||
+    PRODUCT_FACT_CONTEXT_PATTERN.test(value);
   if (
+    STRONG_PRODUCT_FACT_PATTERN.test(value) ||
+    (productFactContext && CONTEXTUAL_PRODUCT_FACT_PATTERN.test(value)) ||
     (
-      PROTECTED_PRODUCT_FACT_PATTERN.test(value) &&
-      (!customerRelationshipSupport ||
-        NON_RELATIONAL_PRODUCT_FACT_PATTERN.test(value))
-    ) ||
-    (
+      productFactContext &&
       PRODUCT_SUPPORT_FACT_PATTERN.test(value) &&
       !customerRelationshipSupport
     )

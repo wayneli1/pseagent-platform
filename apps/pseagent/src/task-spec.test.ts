@@ -49,6 +49,81 @@ function parallelEntityTaskSpec(entityLabels = ["工行", "华为", "比亚迪"]
   };
 }
 
+function guardSingleObligation(
+  question: string,
+  evidencePolicy: "direct" | "synthesis" | "customer_input",
+  role: "product" | "target" = "product",
+) {
+  return new DeterministicTaskSpecGuard().validate({
+    resolvedQuestion: {
+      rawQuestion: question,
+      standaloneQuestion: question,
+      contextUsed: false,
+      inheritedSubjects: [],
+      corrections: [],
+    },
+    taskSpec: taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: question, role, sourceText: question }],
+      deliverables: [{
+        id: "D1",
+        label: question,
+        kind: "diagnosis",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: question,
+          targetEntityIds: ["E1"],
+          evidencePolicy,
+          domains: [evidencePolicy === "customer_input"
+            ? "presales-general"
+            : "coremail-professional"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    }),
+  });
+}
+
+function guardBroadParallelObligation(question: string, entities: readonly string[]) {
+  return new DeterministicTaskSpecGuard().validate({
+    resolvedQuestion: {
+      rawQuestion: question,
+      standaloneQuestion: question,
+      contextUsed: false,
+      inheritedSubjects: [],
+      corrections: [],
+    },
+    taskSpec: taskSpecSchema.parse({
+      subject: question,
+      entities: entities.map((entity, index) => ({
+        id: `E${index + 1}`,
+        label: entity,
+        role: "reference",
+        sourceText: entity,
+      })),
+      deliverables: [{
+        id: "D1",
+        label: question,
+        kind: "comparison",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: question,
+          targetEntityIds: entities.map((_, index) => `E${index + 1}`),
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    }),
+  });
+}
+
 describe("taskSpecSchema", () => {
   it("accepts sequential entities, deliverables and obligations", () => {
     expect(taskSpecSchema.parse(parallelEntityTaskSpec())).toMatchObject({
@@ -375,6 +450,34 @@ describe("DeterministicTaskSpecGuard", () => {
     }));
   });
 
+  it.each([
+    ["产品具备哪些功能", "synthesis", "product", false],
+    ["系统有什么能力", "synthesis", "product", false],
+    ["支持哪些协议", "synthesis", "product", false],
+    ["产品是否兼容目标环境", "synthesis", "product", false],
+    ["产品适配哪些终端", "synthesis", "product", false],
+    ["产品版本是什么", "synthesis", "product", false],
+    ["版本信息是否最新", "synthesis", "target", false],
+    ["目标环境兼容性如何", "synthesis", "target", false],
+    ["机会赢率50%，并确认产品功能", "customer_input", "product", false],
+    ["是否应该继续推进这个机会", "synthesis", "target", true],
+    ["是否具备继续推进条件", "synthesis", "target", true],
+    ["销售能力如何提升", "synthesis", "target", true],
+    ["团队能力是否足够", "synthesis", "target", true],
+    ["下一步行动建议是什么", "synthesis", "target", true],
+    ["如何获得客户支持", "synthesis", "target", true],
+  ] as const)(
+    "classifies direct product facts without rejecting %s as a diagnostic request",
+    (question, evidencePolicy, role, expectedOk) => {
+      const result = guardSingleObligation(question, evidencePolicy, role);
+
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
   it("finds separate explicit requests in a diagnosis and action question", () => {
     const signals = extractExplicitQuestionSignals(
       "目前客户在POC阶段，但销售获取不到客户侧的信息，我们的赢率如何，要怎样做才能提升赢率？",
@@ -437,6 +540,34 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(result.issues.filter((issue) =>
       issue.code === "explicit_entity_without_required_obligation",
     )).toHaveLength(2);
+  });
+
+  it.each([
+    ["甲公司、乙公司分别采用什么方案", ["甲公司", "乙公司"]],
+    ["甲公司与乙公司各自采用什么方案", ["甲公司", "乙公司"]],
+    ["甲公司、乙公司各自部署哪种产品", ["甲公司", "乙公司"]],
+    ["甲公司、乙公司、丙公司逐一采用什么方案", ["甲公司", "乙公司", "丙公司"]],
+    ["请分别说明甲公司、乙公司各自采用什么方案", ["甲公司", "乙公司"]],
+    ["太和医院、甲公司分别采用什么方案", ["太和医院", "甲公司"]],
+  ] as const)(
+    "detects distributive parallel entities and fails closed for a broad obligation: %s",
+    (question, expectedEntities) => {
+      const extracted = extractExplicitQuestionSignals(question).entityGroups
+        .flatMap((group) => group.items);
+      expect(extracted).toEqual(expect.arrayContaining([...expectedEntities]));
+
+      const result = guardBroadParallelObligation(question, expectedEntities);
+      expect(result.ok).toBe(false);
+      expect(result.mappedExplicitEntityCount).toBe(0);
+      expect(result.issues.filter((issue) =>
+        issue.code === "explicit_entity_without_required_obligation",
+      )).toHaveLength(expectedEntities.length);
+    },
+  );
+
+  it("does not infer parallel entities from an ordinary conjunction without a distributive marker", () => {
+    const signals = extractExplicitQuestionSignals("客户和合作伙伴需要共同推进机会");
+    expect(signals.entityGroups).toEqual([]);
   });
 
   it("splits independent action verbs without treating their wording as fixed dimensions", () => {
