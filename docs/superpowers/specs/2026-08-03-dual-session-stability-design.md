@@ -152,3 +152,65 @@ Coremail XT6 常见部署方式 单机部署 单节点 多机部署 分布式部
 
 Windows 控制助手无法稳定绑定本机两个同名 Coremail 论客窗口，因此本轮双会话验收使用
 两套独立 PSEAgent 运行时；不以 UI 自动化结果冒充消息通道结论。
+
+## 9. 复测暴露的第二层状态漂移
+
+阶段 58 后的两套独立运行时复测仍出现明显状态漂移：会话 A 为
+`answered=6/partially_answered=4`，会话 B 为
+`answered=2/partially_answered=7/not_covered=1`，同题 status 仅 4/10 一致。
+两套会话仍均为 10/10 `final`，没有 unavailable、异常或 scope 串线。
+
+隔离诊断进一步确认：
+
+- P04 已读取 `wiki/comparison/第三方邮件系统迁移方式对比.md`。草稿为
+  `complete`，覆盖校验器保留三条直接支持句段、删除一条无支持扩展句段后，将整项
+  降为 `partial`。
+- P05 已读取 `wiki/concepts/审计管理.md`。过滤后的保留句段覆盖 4/4 动态
+  evidence aspect，但因为删除了三条无支持扩展句段，整项仍被固定映射为 `partial`。
+
+这说明旧契约把“草稿曾包含应删除的句段”和“过滤后的答案仍缺少用户所问内容”混为
+一谈。前者是校验器成功清理草稿，后者才应决定最终 coverage。
+
+## 10. 过滤后覆盖状态重建
+
+覆盖校验器继续只允许模型选择保留索引，代码继续确定性复制保留句段、删除未支持
+句段。`retain_partial` 不再无条件等于最终 `partial`；代码在完成过滤后按动态
+evidence aspect 重建 coverage。
+
+只有同时满足以下全部条件，过滤后的 requirement 才可恢复为 `complete`：
+
+1. 至少保留一个目标句段，且保留引用均属于该 requirement 的实际读页证据。
+2. `coveredAspectCount` 等于规划的 evidence aspect 总数。
+3. `missingAspectCount` 为 0。
+4. 覆盖计数必须由保留句段的语义表达与其引用正文的 aspect 归属共同确认，不能只依赖
+   搜索标签、标题或未保留草稿。
+5. 校验决策不是 `not_covered`；没有保留句段时绝不恢复。
+
+单 aspect requirement 也必须生成 `coveredAspectCount/missingAspectCount`，不得因
+数量为一而隐藏覆盖缺口。若任一 aspect 未覆盖，或过滤后没有正式支持句段，仍分别保持
+`partial` 或 `none`。
+
+恢复 `complete` 不会把被删除句段放回答案，也不会改变校验 reason、删除数量或引用
+集合。诊断仍保留 `partial_support` 与 `removedSegmentCount`，用于识别模型草稿质量；
+最终 status 只表达过滤后对用户问题的覆盖程度。
+
+## 11. 单证据面直接查询补全
+
+阶段 58 只在一条 direct query 映射多个 aspect 时追加动态 terms。实际复测中，规划器
+有时把宽泛问题收敛成单个 aspect；此时同一问题仍可能因查询未带区分术语而漏掉正式
+页面。
+
+因此 direct query 术语补全扩展到一个或多个 aspect：
+
+- 仍只使用当次规划的 `evidenceAspects[].terms`，不写题号、业务答案或固定页面。
+- 每个映射 aspect 最多追加两个 query 中尚未出现的 term。
+- 查询数、aspect 映射、模型调用、读页预算和 1,024 字符上限不变。
+- `synthesis_allowed` 的既有查询平衡逻辑不变。
+
+## 12. 修订验收
+
+- 覆盖校验单测必须证明：删除无支持扩展句段后，若过滤答案仍覆盖全部规划 aspect，
+  则返回 `complete`；缺少任一 aspect 时仍为 `partial`；全部删除时仍为 `none`。
+- 单 aspect 的覆盖计数必须可见，且 direct query 会追加其缺失动态术语。
+- 再运行两套独立会话的同一 P01–P10，并逐题比较 status；探针 mismatch 继续以非零
+  退出码暴露，不因本修订放宽预期。

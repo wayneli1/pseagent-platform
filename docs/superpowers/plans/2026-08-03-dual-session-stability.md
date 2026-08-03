@@ -75,7 +75,60 @@ git diff --check
 
 只暂存 Planner 与测试并创建阶段 58 提交。
 
-## 阶段 59：双会话复测与验收记录
+## 阶段 59：冻结过滤后覆盖状态修订
+
+**文件：**
+
+- 修改 `docs/superpowers/specs/2026-08-03-dual-session-stability-design.md`
+- 修改 `docs/superpowers/plans/2026-08-03-dual-session-stability.md`
+
+**步骤：**
+
+1. 记录阶段 58 后两套会话的逐题状态分布与一致性。
+2. 记录 P04/P05 的无正文诊断证据，区分“句段被清理”和“问题仍有缺口”。
+3. 冻结过滤后按动态 aspect 重建 coverage 的充分条件与安全边界。
+4. 冻结单 aspect direct query 动态术语补全规则。
+5. 运行文档占位符扫描和 `git diff --check`。
+
+只暂存两份设计/计划文档并创建阶段 59 提交。
+
+## 阶段 60：按过滤后的证据面重建 coverage
+
+**文件：**
+
+- 修改 `apps/pseagent/src/coverage-verifier.ts`
+- 修改 `apps/pseagent/src/coverage-verifier.test.ts`
+
+**步骤：**
+
+1. 先新增失败测试：全部 aspect 仍被保留句段和正式正文覆盖时，删除扩展句段后应恢复
+   `complete`。
+2. 新增反例：缺少任一 aspect 时保持 `partial`，全部删除时保持 `none`。
+3. 对单 aspect 也输出覆盖计数。
+4. 在确定性物化后仅按完整覆盖条件恢复 coverage，不恢复任何被删文本或引用。
+5. 运行覆盖校验聚焦测试、PSEAgent 全量测试、类型检查、构建和
+   `git diff --check`。
+
+只暂存覆盖校验器与测试并创建阶段 60 提交。
+
+## 阶段 61：补全单证据面直接查询术语
+
+**文件：**
+
+- 修改 `apps/pseagent/src/knowledge-planner.ts`
+- 修改 `apps/pseagent/src/knowledge-planner.test.ts`
+
+**步骤：**
+
+1. 先新增单 aspect direct query 的失败测试。
+2. 移除“必须映射多个 aspect”限制，复用阶段 58 的动态术语、去重与长度边界。
+3. 验证 synthesis query 行为不变。
+4. 运行 Planner 聚焦测试、PSEAgent 全量测试、类型检查、构建和
+   `git diff --check`。
+
+只暂存 Planner 与测试并创建阶段 61 提交。
+
+## 阶段 62：双会话复测与验收记录
 
 **文件：**
 
@@ -88,7 +141,7 @@ git diff --check
 3. 对比每题 scope、status、引用数、停止原因和耗时。
 4. 运行全仓 TypeScript 测试、类型检查、工作区构建和 `git diff --check`。
 5. 记录修复前后结果、剩余边界和 Windows UI 验收限制，不记录回答或知识正文。
-6. 只暂存验收记录并创建阶段 59 提交。
+6. 只暂存验收记录并创建阶段 62 提交。
 
-如果真实复测仍存在预期页面召回缺失，阶段 59 不得写“通过”；必须保留失败记录，回到
+如果真实复测仍存在预期页面召回缺失，阶段 62 不得写“通过”；必须保留失败记录，回到
 新的设计阶段继续修复后再验收。
