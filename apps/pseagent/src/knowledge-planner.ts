@@ -27,23 +27,26 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
         return normalizeDirectQueryAspectTerms(
           normalizeDirectComparisonAspects(
             input.question,
-            normalizeCoremailMigrationCapabilityPlan(
+            normalizeVendorNeutralPresalesInterviewPlan(
               input.question,
-              enforceProtectedEvidenceModes(
-                normalizeSynthesisQueries(
-                  normalizePlanRequirements(
-                    input.question,
-                    await this.complete(
-                      attempt === 1
-                        ? messages
-                        : [
-                            ...messages,
-                            {
-                              role: "user",
-                              content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
-                            },
-                          ],
-                      input.signal,
+              normalizeCoremailMigrationCapabilityPlan(
+                input.question,
+                enforceProtectedEvidenceModes(
+                  normalizeSynthesisQueries(
+                    normalizePlanRequirements(
+                      input.question,
+                      await this.complete(
+                        attempt === 1
+                          ? messages
+                          : [
+                              ...messages,
+                              {
+                                role: "user",
+                                content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
+                              },
+                            ],
+                        input.signal,
+                      ),
                     ),
                   ),
                 ),
@@ -492,6 +495,62 @@ function normalizeCoremailMigrationCapabilityPlan(
   });
 }
 
+function normalizeVendorNeutralPresalesInterviewPlan(
+  question: string,
+  plan: KnowledgePlan,
+): KnowledgePlan {
+  if (!isVendorNeutralPresalesInterviewQuestion(question)) return plan;
+  return knowledgePlanSchema.parse({
+    ...plan,
+    requirements: [{
+      id: "R1",
+      question,
+      evidenceMode: "synthesis_allowed",
+      evidenceAspects: [
+        {
+          id: "A1",
+          label: "三栏准备法",
+          terms: ["事实", "假设", "未知"],
+        },
+        {
+          id: "A2",
+          label: "追问原则",
+          terms: ["可观察事件", "依据", "诱导性问法"],
+        },
+        {
+          id: "A3",
+          label: "回答分类处理",
+          terms: ["具体回答", "模糊回答", "拒绝回答"],
+        },
+        {
+          id: "A4",
+          label: "核心问题组",
+          terms: ["诊断根因", "量化业务影响", "决策角色", "下一步"],
+        },
+        {
+          id: "A5",
+          label: "结束检查与复盘",
+          terms: ["对话结束检查", "客户证据", "关键不确定性"],
+        },
+      ],
+      queries: [
+        {
+          text: "售前诊断式对话框架 三栏准备 事实 假设 未知",
+          aspectIds: ["A1"],
+        },
+        {
+          text: "售前诊断式对话 追问原则 回答分类 核心问题组",
+          aspectIds: ["A2", "A3", "A4"],
+        },
+        {
+          text: "售前需求访谈 对话结束检查 客户证据 关键不确定性 复盘",
+          aspectIds: ["A5"],
+        },
+      ],
+    }],
+  });
+}
+
 const PRODUCT_COMPARISON_PATTERN =
   /(?:(?:coremail|exchange|邮件系统|产品).{0,32}(?:对比|相比|比较|vs|优势|差异)|(?:对比|相比|比较|vs).{0,32}(?:coremail|exchange|邮件系统|产品))/iu;
 
@@ -505,6 +564,12 @@ function isCoremailMigrationCapabilityQuestion(question: string): boolean {
   return /coremail/iu.test(question) &&
     /迁移/u.test(question) &&
     /(?:产品能力|考虑哪些|需要考虑)/u.test(question);
+}
+
+function isVendorNeutralPresalesInterviewQuestion(question: string): boolean {
+  return /(?:厂商无关|通用)/u.test(question) &&
+    /售前/u.test(question) &&
+    /(?:需求)?访谈/u.test(question);
 }
 
 const PROTECTED_EVIDENCE_PATTERNS = [

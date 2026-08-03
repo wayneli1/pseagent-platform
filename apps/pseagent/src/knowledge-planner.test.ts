@@ -330,6 +330,43 @@ describe("ModelKnowledgePlanner", () => {
       .toEqual(new Set(["A1", "A2", "A3", "A4"]));
   });
 
+  it("stabilizes vendor-neutral presales interview planning", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: "售前访谈",
+      requirements: [{
+        id: "R1",
+        question: "访谈方法",
+        ...plannedEvidence("售前访谈"),
+        evidenceMode: "direct_only",
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({
+      ...plannerInput(),
+      scope: "general",
+      question: "如何开展厂商无关的售前需求访谈？",
+    });
+
+    expect(result.requirements).toHaveLength(1);
+    expect(result.requirements[0]?.evidenceMode).toBe("synthesis_allowed");
+    expect(result.requirements[0]?.evidenceAspects.map((aspect) => aspect.label))
+      .toEqual([
+        "三栏准备法",
+        "追问原则",
+        "回答分类处理",
+        "核心问题组",
+        "结束检查与复盘",
+      ]);
+    expect(new Set(result.requirements[0]?.queries.flatMap((query) => query.aspectIds)))
+      .toEqual(new Set(["A1", "A2", "A3", "A4", "A5"]));
+  });
+
   it("deterministically caps an otherwise valid model plan at three queries", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],
