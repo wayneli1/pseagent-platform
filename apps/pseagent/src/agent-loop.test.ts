@@ -1467,6 +1467,43 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
+  it("adds a stable matrix query for Xinchuang compatibility questions", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Coremail 信创兼容性",
+      requirements: [{
+        id: "R1",
+        question: "Coremail 在信创环境中的兼容性如何",
+        ...plannedEvidence("Coremail 信创环境兼容性 CPU 操作系统 数据库"),
+        evidenceMode: "direct_only",
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Coremail 信创环境兼容性 CPU 操作系统 数据库": [{
+          path: "wiki/concepts/单一项目实例.md",
+        }],
+        "信创技术栈适配矩阵": [{
+          path: "wiki/comparisons/信创技术栈适配矩阵.md",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparisons/信创技术栈适配矩阵.md"),
+      final("complete", "适配矩阵列出了已验证的技术栈 [1]。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.search).toHaveBeenCalledWith(
+      "信创技术栈适配矩阵",
+      10,
+      undefined,
+    );
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe("wiki/comparisons/信创技术栈适配矩阵.md");
+    expect(result.status).toBe("answered");
+  });
+
   it("ranks curated knowledge pages ahead of query indexes and raw source pages", async () => {
     const session = fakeSession({
       hits: {

@@ -1956,6 +1956,20 @@ function expandSeedQueries(
       addExpandedQuery(expanded, toolFocus, query.aspectIds);
     }
   }
+  const compatibilityIntent = [
+    requirement.question,
+    ...requirement.queries.map((query) => query.text),
+  ].join(" ");
+  if (
+    compatibilityIntent.includes("信创") &&
+    /(?:兼容|适配)/u.test(compatibilityIntent)
+  ) {
+    addExpandedQuery(
+      expanded,
+      "信创技术栈适配矩阵",
+      requirement.evidenceAspects.map((aspect) => aspect.id),
+    );
+  }
   return [...expanded.values()].map((query) => ({
     text: query.text,
     aspectIds: [...query.aspectIds],
