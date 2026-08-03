@@ -88,6 +88,19 @@ export type DiagnosticEvent =
       readonly aspectIds: readonly string[];
     }
   | {
+      /** Emitted before coverage-unit seed-unavailable early return. */
+      readonly event: "coverage_unit_seed_snapshot";
+      readonly reason: "all_seed_unavailable";
+      readonly requirements: readonly {
+        readonly id: string;
+        readonly candidateCount: number;
+        readonly readCandidateCount: number;
+        readonly unreadCandidateCount: number;
+        readonly remainingReads: number;
+        readonly seedSearchStatus: "success" | "empty" | "unavailable";
+      }[];
+    }
+  | {
       readonly event: "candidates";
       readonly requirementId: string;
       readonly source: "seed_search_result" | "supplemental_search_result" | "graph_result";

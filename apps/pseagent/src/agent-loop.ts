@@ -128,6 +128,16 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
   const state = createAgentState(input);
   await executeSeedSearches(input, state);
   if (state.successfulSeedSearches === 0) {
+    if (input.plan.retrievalStrategy === "coverage_units") {
+      recordDiagnostic(input.trace, {
+        event: "coverage_unit_seed_snapshot",
+        reason: "all_seed_unavailable",
+        requirements: input.plan.requirements.map((requirement) => ({
+          id: requirement.id,
+          ...coverageRetrievalDiagnostics(state.requirements.get(requirement.id)),
+        })),
+      });
+    }
     recordDiagnostic(input.trace, { event: "stop", reason: "seed_unavailable" });
     return unavailableResult(input.scope);
   }

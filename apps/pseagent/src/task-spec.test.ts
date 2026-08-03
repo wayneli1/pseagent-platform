@@ -183,6 +183,44 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("does not treat an interrogative customer-support relationship as a product fact", () => {
+    const question = "是否有客户支持并识别内部支持者？";
+    const result = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec: taskSpecSchema.parse({
+        subject: "客户支持关系",
+        entities: [{ id: "E1", label: "客户", role: "target", sourceText: "客户" }],
+        deliverables: [{
+          id: "D1",
+          label: question,
+          kind: "recommendation",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O1",
+            label: question,
+            targetEntityIds: ["E1"],
+            evidencePolicy: "synthesis",
+            domains: ["presales-general"],
+            required: true,
+            sourceText: question,
+          }],
+        }],
+      }),
+    });
+
+    expect(result.issues).not.toContainEqual(expect.objectContaining({
+      code: "protected_fact_not_direct",
+    }));
+    expect(result.ok).toBe(true);
+  });
+
   it("allows customer-input opportunity forecasts even when a percentage is mentioned", () => {
     const question = "当前机会赢率可能是50%，需要哪些客户信息才能判断？";
     const result = new DeterministicTaskSpecGuard().validate({
@@ -221,6 +259,122 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(result.ok).toBe(true);
   });
 
+  it.each([
+    ["支持 IPv6 吗", "IPv6"],
+    ["有没有双活能力", "双活能力"],
+  ])("rejects synthesis for protected product facts: %s", (question, entityText) => {
+    const result = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec: taskSpecSchema.parse({
+        subject: entityText,
+        entities: [{ id: "E1", label: entityText, role: "product", sourceText: entityText }],
+        deliverables: [{
+          id: "D1",
+          label: question,
+          kind: "fact",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O1",
+            label: question,
+            targetEntityIds: ["E1"],
+            evidencePolicy: "synthesis",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: question,
+          }],
+        }],
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      code: "protected_fact_not_direct",
+    }));
+  });
+
+  it("does not let a customer-input forecast bypass a product version fact", () => {
+    const question = "当前机会赢率50%，并确认产品版本";
+    const result = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec: taskSpecSchema.parse({
+        subject: "当前机会",
+        entities: [{ id: "E1", label: "当前机会", role: "target", sourceText: "当前机会" }],
+        deliverables: [{
+          id: "D1",
+          label: question,
+          kind: "diagnosis",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O1",
+            label: question,
+            targetEntityIds: ["E1"],
+            evidencePolicy: "customer_input",
+            domains: ["presales-general"],
+            required: true,
+            sourceText: question,
+          }],
+        }],
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      code: "protected_fact_not_direct",
+    }));
+  });
+
+  it("does not let a customer-support relationship suppress a version fact", () => {
+    const question = "如何获得客户支持并确认产品版本";
+    const result = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec: taskSpecSchema.parse({
+        subject: "产品版本",
+        entities: [{ id: "E1", label: "产品", role: "product", sourceText: "产品" }],
+        deliverables: [{
+          id: "D1",
+          label: question,
+          kind: "fact",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O1",
+            label: question,
+            targetEntityIds: ["E1"],
+            evidencePolicy: "synthesis",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: question,
+          }],
+        }],
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      code: "protected_fact_not_direct",
+    }));
+  });
+
   it("finds separate explicit requests in a diagnosis and action question", () => {
     const signals = extractExplicitQuestionSignals(
       "目前客户在POC阶段，但销售获取不到客户侧的信息，我们的赢率如何，要怎样做才能提升赢率？",
@@ -237,6 +391,52 @@ describe("DeterministicTaskSpecGuard", () => {
     const entities = extractExplicitQuestionSignals(value).entityGroups
       .flatMap((group) => group.items);
     expect(entities).toEqual(expect.arrayContaining(expected));
+  });
+
+  it("detects a bare parallel list and rejects a broad multi-target obligation", () => {
+    const question = "甲公司、乙公司各自采用什么方案";
+    const signals = extractExplicitQuestionSignals(question);
+    expect(signals.entityGroups.flatMap((group) => group.items)).toEqual(
+      expect.arrayContaining(["甲公司", "乙公司"]),
+    );
+    const result = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec: taskSpecSchema.parse({
+        subject: "并列方案",
+        entities: [
+          { id: "E1", label: "甲公司", role: "reference", sourceText: "甲公司" },
+          { id: "E2", label: "乙公司", role: "reference", sourceText: "乙公司" },
+        ],
+        deliverables: [{
+          id: "D1",
+          label: question,
+          kind: "comparison",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O1",
+            label: question,
+            targetEntityIds: ["E1", "E2"],
+            evidencePolicy: "direct",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: question,
+          }],
+        }],
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.mappedExplicitEntityCount).toBe(0);
+    expect(result.issues.filter((issue) =>
+      issue.code === "explicit_entity_without_required_obligation",
+    )).toHaveLength(2);
   });
 
   it("splits independent action verbs without treating their wording as fixed dimensions", () => {

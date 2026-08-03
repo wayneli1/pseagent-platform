@@ -265,6 +265,17 @@ export function extractExplicitQuestionSignals(question: string): ExplicitQuesti
       });
     }
   }
+  const bareParallelListPattern =
+    /(?:^|[，,；;。！？!?])\s*(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)\s*(?=各自(?:采用|使用|选择|实施).{0,12}(?:什么|哪些|何种)(?:方案|架构|产品|系统)?)/gu;
+  for (const match of question.matchAll(bareParallelListPattern)) {
+    const sourceText = match.groups?.list?.trim();
+    if (!sourceText) continue;
+    const items = sourceText
+      .split(/(?:、|，|,|\s+(?:和|与|及)\s*)/u)
+      .map(cleanExplicitEntity)
+      .filter((item) => isPlausibleExplicitEntity(item));
+    if (items.length >= 2) entityGroups.push({ sourceText, items });
+  }
 
   const requestClauses: string[] = [];
   for (const rawSegment of question.split(/[，,；;。！？!?]+/u)) {
@@ -352,11 +363,7 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
           });
         }
         const obligationText = `${obligation.label} ${obligation.sourceText}`;
-        if (
-          PROTECTED_FACT_PATTERN.test(obligationText) &&
-          obligation.evidencePolicy !== "direct" &&
-          !isCustomerInputOpportunityForecast(obligation, obligationText)
-        ) {
+        if (requiresDirectEvidence(obligation, obligationText)) {
           issues.push({
             code: "protected_fact_not_direct",
             severity: "error",
@@ -430,18 +437,54 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
   }
 }
 
-const PROTECTED_FACT_PATTERN =
-  /(?:(?:是否|能否|有没有|是否具备|支不支持)\s*(?:已经)?\s*(?:支持|兼容|适配)|(?:协议|功能|能力|产品|系统|平台|版本|环境).{0,12}(?:支持|兼容|适配)|(?:支持|兼容|适配).{0,12}(?:协议|功能|能力|产品|系统|平台|版本|环境)|版本|补丁|授权|报价|费用|认证|全部|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发|\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|%))/iu;
+const PROTECTED_PRODUCT_FACT_PATTERN =
+  /(?:是否|能否|有没有|是否具备|支不支持|兼容|适配|版本|补丁|授权|报价|费用|认证|全部|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发)/iu;
+
+const NON_RELATIONAL_PRODUCT_FACT_PATTERN =
+  /(?:兼容|适配|版本|补丁|授权|报价|费用|认证|全部|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发)/iu;
+
+const PRODUCT_SUPPORT_FACT_PATTERN = /支持/iu;
+
+const PROTECTED_NUMERIC_FACT_PATTERN =
+  /\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|%)/iu;
+
+const CUSTOMER_RELATIONSHIP_SUPPORT_PATTERN =
+  /(?:客户支持|内部支持者|客户侧支持|业务支持者)/u;
 
 const OPPORTUNITY_FORECAST_PATTERN =
   /(?:赢率|胜率|成交概率|成功概率|机会(?:质量|预测|判断)|销售预测|预测(?:结果|概率))/u;
+
+function requiresDirectEvidence(
+  obligation: TaskSpec["deliverables"][number]["obligations"][number],
+  value: string,
+): boolean {
+  if (obligation.evidencePolicy === "direct") return false;
+  const customerRelationshipSupport =
+    CUSTOMER_RELATIONSHIP_SUPPORT_PATTERN.test(value);
+  if (
+    (
+      PROTECTED_PRODUCT_FACT_PATTERN.test(value) &&
+      (!customerRelationshipSupport ||
+        NON_RELATIONAL_PRODUCT_FACT_PATTERN.test(value))
+    ) ||
+    (
+      PRODUCT_SUPPORT_FACT_PATTERN.test(value) &&
+      !customerRelationshipSupport
+    )
+  ) {
+    return true;
+  }
+  return PROTECTED_NUMERIC_FACT_PATTERN.test(value) &&
+    !isCustomerInputOpportunityForecast(obligation, value);
+}
 
 function isCustomerInputOpportunityForecast(
   obligation: TaskSpec["deliverables"][number]["obligations"][number],
   value: string,
 ): boolean {
   return obligation.evidencePolicy === "customer_input" &&
-    OPPORTUNITY_FORECAST_PATTERN.test(value);
+    OPPORTUNITY_FORECAST_PATTERN.test(value) &&
+    /\d+(?:\.\d+)?\s*%/u.test(value);
 }
 
 function validateSequentialIds(
