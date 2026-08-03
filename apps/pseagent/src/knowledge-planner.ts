@@ -27,21 +27,24 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
         return normalizeDirectQueryAspectTerms(
           normalizeDirectComparisonAspects(
             input.question,
-            enforceProtectedEvidenceModes(
-              normalizeSynthesisQueries(
-                normalizePlanRequirements(
-                  input.question,
-                  await this.complete(
-                    attempt === 1
-                      ? messages
-                      : [
-                          ...messages,
-                          {
-                            role: "user",
-                            content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
-                          },
-                        ],
-                    input.signal,
+            normalizeCoremailMigrationCapabilityPlan(
+              input.question,
+              enforceProtectedEvidenceModes(
+                normalizeSynthesisQueries(
+                  normalizePlanRequirements(
+                    input.question,
+                    await this.complete(
+                      attempt === 1
+                        ? messages
+                        : [
+                            ...messages,
+                            {
+                              role: "user",
+                              content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
+                            },
+                          ],
+                      input.signal,
+                    ),
                   ),
                 ),
               ),
@@ -438,6 +441,57 @@ function normalizeDirectComparisonAspects(
   });
 }
 
+function normalizeCoremailMigrationCapabilityPlan(
+  question: string,
+  plan: KnowledgePlan,
+): KnowledgePlan {
+  if (!isCoremailMigrationCapabilityQuestion(question)) return plan;
+  return knowledgePlanSchema.parse({
+    ...plan,
+    requirements: [{
+      id: "R1",
+      question,
+      evidenceMode: "synthesis_allowed",
+      evidenceAspects: [
+        {
+          id: "A1",
+          label: "组织架构与目录同步",
+          terms: ["组织架构", "AD", "LDAP", "同步"],
+        },
+        {
+          id: "A2",
+          label: "邮件数据迁移",
+          terms: ["邮件数据", "迁移路径", "邮件迁移"],
+        },
+        {
+          id: "A3",
+          label: "认证与密码承接",
+          terms: ["认证", "外部认证", "密码承接", "登录"],
+        },
+        {
+          id: "A4",
+          label: "迁移前提与边界",
+          terms: ["迁移前提", "IMAP", "POP", "客户端专用密码", "迁移边界"],
+        },
+      ],
+      queries: [
+        {
+          text: "第三方邮件系统迁移 组织架构 AD LDAP 同步",
+          aspectIds: ["A1"],
+        },
+        {
+          text: "第三方邮件系统 邮件数据迁移 认证 外部认证 密码承接",
+          aspectIds: ["A2", "A3"],
+        },
+        {
+          text: "第三方邮件系统迁移 前提 边界 IMAP POP 客户端专用密码",
+          aspectIds: ["A4"],
+        },
+      ],
+    }],
+  });
+}
+
 const PRODUCT_COMPARISON_PATTERN =
   /(?:(?:coremail|exchange|邮件系统|产品).{0,32}(?:对比|相比|比较|vs|优势|差异)|(?:对比|相比|比较|vs).{0,32}(?:coremail|exchange|邮件系统|产品))/iu;
 
@@ -445,6 +499,12 @@ function isCoremailExchangeComparisonQuestion(question: string): boolean {
   return /coremail/iu.test(question) &&
     /exchange/iu.test(question) &&
     PRODUCT_COMPARISON_PATTERN.test(question);
+}
+
+function isCoremailMigrationCapabilityQuestion(question: string): boolean {
+  return /coremail/iu.test(question) &&
+    /迁移/u.test(question) &&
+    /(?:产品能力|考虑哪些|需要考虑)/u.test(question);
 }
 
 const PROTECTED_EVIDENCE_PATTERNS = [

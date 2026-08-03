@@ -295,6 +295,41 @@ describe("ModelKnowledgePlanner", () => {
       .toEqual(new Set(["A1", "A2", "A3", "A4", "A5", "A6"]));
   });
 
+  it("stabilizes broad Coremail migration capability planning", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: "Coremail 邮件迁移",
+      requirements: [{
+        id: "R1",
+        question: "迁移能力",
+        ...plannedEvidence("Coremail 邮件迁移"),
+        evidenceMode: "direct_only",
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({
+      ...plannerInput(),
+      question: "Coremail 邮件迁移项目通常需要考虑哪些产品能力？",
+    });
+
+    expect(result.requirements).toHaveLength(1);
+    expect(result.requirements[0]?.evidenceMode).toBe("synthesis_allowed");
+    expect(result.requirements[0]?.evidenceAspects.map((aspect) => aspect.label))
+      .toEqual([
+        "组织架构与目录同步",
+        "邮件数据迁移",
+        "认证与密码承接",
+        "迁移前提与边界",
+      ]);
+    expect(new Set(result.requirements[0]?.queries.flatMap((query) => query.aspectIds)))
+      .toEqual(new Set(["A1", "A2", "A3", "A4"]));
+  });
+
   it("deterministically caps an otherwise valid model plan at three queries", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],
