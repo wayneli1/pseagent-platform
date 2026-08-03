@@ -1970,6 +1970,37 @@ function expandSeedQueries(
       requirement.evidenceAspects.map((aspect) => aspect.id),
     );
   }
+  if (
+    compatibilityIntent.includes("迁移") &&
+    /(?:产品能力|考虑哪些|迁移范围|迁移方式)/u.test(compatibilityIntent)
+  ) {
+    addExpandedQuery(
+      expanded,
+      "第三方邮件系统迁移方式对比 组织架构 邮件数据 认证",
+      requirement.evidenceAspects.map((aspect) => aspect.id),
+    );
+  }
+  if (
+    /(?:如何|怎样|怎么).*(?:设计|规划).*(?:容灾|高可用)|(?:容灾|高可用).*(?:如何|怎样|怎么).*(?:设计|规划)/u
+      .test(requirement.question) &&
+    /(?:Coremail|邮件系统)/iu.test(compatibilityIntent)
+  ) {
+    addExpandedQuery(
+      expanded,
+      "邮件系统多活与容灾设计 同机房 跨机房 容灾",
+      requirement.evidenceAspects.map((aspect) => aspect.id),
+    );
+  }
+  if (
+    compatibilityIntent.includes("售前") &&
+    /(?:需求访谈|需求调研|厂商无关)/u.test(compatibilityIntent)
+  ) {
+    addExpandedQuery(
+      expanded,
+      "售前诊断式对话框架 事实 假设 未知",
+      requirement.evidenceAspects.map((aspect) => aspect.id),
+    );
+  }
   return [...expanded.values()].map((query) => ({
     text: query.text,
     aspectIds: [...query.aspectIds],

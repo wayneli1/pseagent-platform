@@ -1504,6 +1504,58 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
+  it.each([
+    {
+      label: "migration capability",
+      question: "Coremail 邮件迁移项目通常需要考虑哪些产品能力",
+      expandedQuery: "第三方邮件系统迁移方式对比 组织架构 邮件数据 认证",
+      path: "wiki/comparison/第三方邮件系统迁移方式对比.md",
+    },
+    {
+      label: "disaster recovery",
+      question: "Coremail 如何设计容灾和高可用",
+      expandedQuery: "邮件系统多活与容灾设计 同机房 跨机房 容灾",
+      path: "wiki/concepts/邮件系统多活与容灾设计.md",
+    },
+    {
+      label: "vendor-neutral discovery",
+      question: "如何开展厂商无关的售前需求访谈",
+      expandedQuery: "售前诊断式对话框架 事实 假设 未知",
+      path: "wiki/synthesis/售前诊断式对话框架.md",
+    },
+  ])("adds a stable intent query for $label questions", async ({
+    question,
+    expandedQuery,
+    path,
+  }) => {
+    const plan: KnowledgePlan = {
+      subject: question,
+      requirements: [{
+        id: "R1",
+        question,
+        ...plannedEvidence(question),
+        evidenceMode: "direct_only",
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        [question]: [],
+        [expandedQuery]: [{ path }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", path),
+      final("complete", "已读取目标知识页 [1]。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.search).toHaveBeenCalledWith(expandedQuery, 10, undefined);
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe(path);
+    expect(result.status).toBe("answered");
+  });
+
   it("ranks curated knowledge pages ahead of query indexes and raw source pages", async () => {
     const session = fakeSession({
       hits: {
