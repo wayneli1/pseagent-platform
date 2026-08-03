@@ -961,6 +961,56 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("repairs a complete direct comparison that omits a supported planned dimension", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Coremail 与 Exchange 对比",
+      requirements: [{
+        id: "R1",
+        question: "Coremail 相比 Exchange 有哪些优势",
+        evidenceMode: "direct_only",
+        evidenceAspects: [
+          { id: "A1", label: "个性化定制", terms: ["定制能力"] },
+          { id: "A2", label: "客观对比边界", terms: ["客观边界"] },
+        ],
+        queries: [{
+          text: "Coremail Exchange 定制能力 客观边界",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Coremail Exchange 定制能力 客观边界": [{
+          path: "wiki/comparison/coremail-vs-exchange.md",
+          title: "Coremail vs Exchange 对比",
+        }],
+      },
+    });
+    session.compactPage.mockReturnValue(
+      "正式正文覆盖个性化定制和定制能力，并说明应保留客观对比边界。",
+    );
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/coremail-vs-exchange.md"),
+      final("complete", "个性化定制能力更强 [1]。", [1]),
+      final(
+        "complete",
+        "个性化定制能力更强 [1]。\n客观对比边界应结合场景说明 [1]。",
+        [1],
+      ),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question: plan.requirements[0]!.question,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(model.calls).toBe(3);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "answer_aspect_repair_required",
+    );
+  });
+
   it("recognizes mixed Chinese-English product titles and forces the exact comparison read", async () => {
     const plan: KnowledgePlan = {
       subject: "Coremail 与 Exchange 对比",

@@ -342,6 +342,38 @@ function normalizeDirectComparisonAspects(
   question: string,
   plan: KnowledgePlan,
 ): KnowledgePlan {
+  if (isCoremailExchangeComparisonQuestion(question)) {
+    return knowledgePlanSchema.parse({
+      ...plan,
+      requirements: [{
+        id: "R1",
+        question,
+        evidenceMode: "direct_only",
+        evidenceAspects: [
+          { id: "A1", label: "个性化定制", terms: ["个性化定制", "定制化需求"] },
+          { id: "A2", label: "总拥有成本", terms: ["TCO", "总拥有成本", "邮件去重"] },
+          { id: "A3", label: "原厂现场服务", terms: ["现场服务", "原厂人员"] },
+          { id: "A4", label: "安全能力", terms: ["安全功能", "密级邮件", "私有加密"] },
+          { id: "A5", label: "企业形象定制", terms: ["企业定制", "企业形象"] },
+          { id: "A6", label: "客观对比边界", terms: ["客观化表述", "实际情况", "版本", "许可", "客户场景"] },
+        ],
+        queries: [
+          {
+            text: "Coremail vs Exchange 对比 个性化定制 TCO 原厂现场服务",
+            aspectIds: ["A1", "A2", "A3"],
+          },
+          {
+            text: "Coremail Exchange 功能对比 安全功能 企业形象定制",
+            aspectIds: ["A4", "A5"],
+          },
+          {
+            text: "Coremail Exchange 售前客观对比边界 版本 许可 客户场景",
+            aspectIds: ["A6"],
+          },
+        ],
+      }],
+    });
+  }
   if (PRODUCT_COMPARISON_PATTERN.test(question)) {
     const terms = [...new Set(
       plan.requirements.flatMap((requirement) =>
@@ -408,6 +440,12 @@ function normalizeDirectComparisonAspects(
 
 const PRODUCT_COMPARISON_PATTERN =
   /(?:(?:coremail|exchange|邮件系统|产品).{0,32}(?:对比|相比|比较|vs|优势|差异)|(?:对比|相比|比较|vs).{0,32}(?:coremail|exchange|邮件系统|产品))/iu;
+
+function isCoremailExchangeComparisonQuestion(question: string): boolean {
+  return /coremail/iu.test(question) &&
+    /exchange/iu.test(question) &&
+    PRODUCT_COMPARISON_PATTERN.test(question);
+}
 
 const PROTECTED_EVIDENCE_PATTERNS = [
   /(?:是否|能否|有没有|是否具备|是否兼容|是否适配|支不支持|支持哪些)/u,

@@ -215,6 +215,9 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         }
         continue;
       }
+      if (answerAspectRepairs.length > 0 || directAnswerRepairs.length > 0) {
+        return fallbackUnavailable(input, "invalid_final");
+      }
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
       if (pendingReviews.length > 0 && !deadlineReached(input)) {
         observe(state, {
@@ -326,24 +329,44 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         });
         return fallbackUnavailable(input, "coverage_verifier_invalid");
       }
+      const verifiedAnswerAspectRepairs = pendingAnswerAspectRepairs(
+        auditedAction,
+        state,
+      );
       const verifiedDirectAnswerRepairs = pendingDirectAnswerRepairs(
         auditedAction,
         state,
       );
       if (
-        verifiedDirectAnswerRepairs.length > 0 &&
+        (verifiedAnswerAspectRepairs.length > 0 ||
+          verifiedDirectAnswerRepairs.length > 0) &&
         state.answerAspectRepairAttempts === 0 &&
         turn < maxTurns &&
         !deadlineReached(input)
       ) {
         state.answerAspectRepairAttempts += 1;
         state.forceFinal = true;
-        observe(state, {
-          type: "direct_answer_repair_required",
-          source: "coverage_verifier",
-          requirements: verifiedDirectAnswerRepairs,
-        });
+        if (verifiedAnswerAspectRepairs.length > 0) {
+          observe(state, {
+            type: "answer_aspect_repair_required",
+            source: "coverage_verifier",
+            requirements: verifiedAnswerAspectRepairs,
+          });
+        }
+        if (verifiedDirectAnswerRepairs.length > 0) {
+          observe(state, {
+            type: "direct_answer_repair_required",
+            source: "coverage_verifier",
+            requirements: verifiedDirectAnswerRepairs,
+          });
+        }
         continue;
+      }
+      if (
+        verifiedAnswerAspectRepairs.length > 0 ||
+        verifiedDirectAnswerRepairs.length > 0
+      ) {
+        return fallbackUnavailable(input, "invalid_final");
       }
       recordCoverage(
         input,
@@ -1587,7 +1610,10 @@ function pendingAnswerAspectRepairs(
     if (
       requirementState === undefined ||
       result.coverage === "none" ||
-      requirementState.requirement.evidenceMode !== "synthesis_allowed" ||
+      (
+        requirementState.requirement.evidenceMode !== "synthesis_allowed" &&
+        !isDirectComparisonRequirement(requirementState.requirement)
+      ) ||
       requirementState.requirement.evidenceAspects.length <= 1
     ) {
       return [];
@@ -1623,7 +1649,6 @@ function isDirectComparisonRequirement(
   requirement: KnowledgeRequirement,
 ): boolean {
   return requirement.evidenceMode === "direct_only" &&
-    requirement.evidenceAspects.length === 1 &&
     DIRECT_COMPARISON_QUESTION_PATTERN.test(requirement.question);
 }
 
@@ -1763,6 +1788,19 @@ function answerCoveredAspectIds(
     );
     for (const aspectId of matchingAspectIds(requirement, segment)) {
       if (supportedAspectIds.has(aspectId)) covered.add(aspectId);
+    }
+  }
+  const answerCitations = new Set(
+    [...answer.matchAll(/\[(\d+)\]/gu)]
+      .map((match) => Number(match[1]))
+      .filter(Number.isSafeInteger),
+  );
+  for (const aspectId of matchingAspectIds(requirement, answer)) {
+    if (
+      [...answerCitations].some((citation) =>
+        documents.get(citation)?.aspectIds?.includes(aspectId) === true)
+    ) {
+      covered.add(aspectId);
     }
   }
   return covered;

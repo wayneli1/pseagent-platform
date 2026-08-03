@@ -249,7 +249,7 @@ describe("ModelKnowledgePlanner", () => {
     },
   );
 
-  it("collapses overview-derived neighbor topics for a direct product comparison", async () => {
+  it("replaces overview-derived neighbor topics with stable Exchange comparison dimensions", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],
     ) => input.schema.parse({
@@ -277,19 +277,22 @@ describe("ModelKnowledgePlanner", () => {
 
     const result = await planner.plan({
       ...plannerInput(),
-      question: "对比 Exchange 邮件系统，Coremail 的优势有哪些？",
+      question: "对比exchange邮件系统，coremail的优势有哪些呢",
     });
 
-    expect(result.requirements[0]).toMatchObject({
-      evidenceMode: "direct_only",
-      evidenceAspects: [{
-        id: "A1",
-        label: "对比 Exchange 邮件系统，Coremail 的优势有哪些？",
-      }],
-    });
-    expect(result.requirements[0]?.queries.every(
-      (query) => query.aspectIds.join(",") === "A1",
-    )).toBe(true);
+    expect(result.requirements).toHaveLength(1);
+    expect(result.requirements[0]?.evidenceMode).toBe("direct_only");
+    expect(result.requirements[0]?.evidenceAspects.map((aspect) => aspect.label))
+      .toEqual([
+        "个性化定制",
+        "总拥有成本",
+        "原厂现场服务",
+        "安全能力",
+        "企业形象定制",
+        "客观对比边界",
+      ]);
+    expect(new Set(result.requirements[0]?.queries.flatMap((query) => query.aspectIds)))
+      .toEqual(new Set(["A1", "A2", "A3", "A4", "A5", "A6"]));
   });
 
   it("deterministically caps an otherwise valid model plan at three queries", async () => {
@@ -299,7 +302,7 @@ describe("ModelKnowledgePlanner", () => {
       subject: "产品对比",
       requirements: [{
         id: "R1",
-        question: "Coremail 相比 Exchange 的优势",
+        question: "Alpha 产品相比 Beta 产品的优势",
         evidenceMode: "direct_only",
         evidenceAspects: [{
           id: "B9",
@@ -331,7 +334,7 @@ describe("ModelKnowledgePlanner", () => {
 
     const result = await planner.plan({
       ...plannerInput(),
-      question: "Coremail 相比 Exchange 有哪些优势？",
+      question: "Alpha 产品相比 Beta 产品有哪些优势？",
     });
 
     expect(result.requirements[0]?.queries).toHaveLength(3);
