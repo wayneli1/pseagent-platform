@@ -1751,6 +1751,45 @@ describe("runKnowledgeAgent", () => {
       .toBe("wiki/concepts/mirror-sync.md");
   });
 
+  it("uses an intent verb together with a domain term to identify the primary page", async () => {
+    const question = "Coremail 如何设计容灾和高可用";
+    const plan: KnowledgePlan = {
+      subject: "高可用设计",
+      requirements: [{
+        id: "R1",
+        question,
+        ...plannedEvidence("邮件系统设计容灾高可用"),
+        evidenceMode: "direct_only",
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "邮件系统设计容灾高可用": [
+          {
+            path: "wiki/concepts/mirror.md",
+            title: "私有云镜像容灾",
+          },
+          {
+            path: "wiki/concepts/availability.md",
+            title: "邮件系统多活与容灾设计",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/availability.md"),
+      final("complete", "多活与容灾设计结论 [1]", [1]),
+    ]);
+
+    await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question,
+    });
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe("wiki/concepts/availability.md");
+  });
+
   it("ranks a product entity first for an overall capability requirement", async () => {
     const plan: KnowledgePlan = {
       subject: "Coremail 安全网关",

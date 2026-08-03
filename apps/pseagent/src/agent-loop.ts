@@ -1748,7 +1748,6 @@ const TITLE_TERM_STOPWORDS = new Set([
   "邮件",
   "系统",
   "规划",
-  "设计",
   "方案",
   "场景",
   "实现",
