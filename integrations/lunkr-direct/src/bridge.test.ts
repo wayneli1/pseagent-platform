@@ -761,7 +761,13 @@ describe("LunkrPseBridge", () => {
   });
 
   it("sends a long answer as one native text post", async () => {
-    const answer = vi.fn<Answer>(async () => answered("甲".repeat(200)));
+    const longAnswer = [
+      "## 压测场景设计",
+      "甲".repeat(100),
+      "## 关键性能指标",
+      "乙".repeat(100),
+    ].join("\n");
+    const answer = vi.fn<Answer>(async () => answered(longAnswer));
     const sendText = vi.fn(async () => undefined);
     const sendPost = vi.fn(async () => undefined);
     const bridge = createBridge({
@@ -773,13 +779,47 @@ describe("LunkrPseBridge", () => {
 
     await bridge.handle(message("m1", "#a#U", "问题"));
 
-    expect(sentTexts(sendText)).toEqual(["已收到问题 #1，正在处理。"]);
+    expect(sentTexts(sendText)).toEqual([
+      "已收到问题 #1，正在处理。",
+      [
+        "问题 #1 已处理完成",
+        "本次回答涵盖：压测场景设计、关键性能指标。完整内容见下方 TXT 附件。",
+      ].join("\n"),
+    ]);
     expect(sendPost).toHaveBeenCalledOnce();
     expect(sendPost).toHaveBeenCalledWith(
       "#a#U",
-      "PSEAgent 问题 #1 的完整回答.txt",
-      "甲".repeat(200),
+      "问题#1-完整回答.txt",
+      longAnswer,
     );
+  });
+
+  it("still sends the long-answer attachment when the optional notice fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const answer = vi.fn<Answer>(async () => answered("甲".repeat(200)));
+      const sendText = vi.fn(async () => undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("notice failed"))
+        .mockRejectedValueOnce(new Error("notice failed"))
+        .mockRejectedValueOnce(new Error("notice failed"));
+      const sendPost = vi.fn(async () => undefined);
+      const bridge = createBridge({
+        answer,
+        sendText,
+        sendPost,
+        config: { messageMaxChars: 40 },
+      });
+
+      const handling = bridge.handle(message("m1", "#a#U", "问题"));
+      await vi.runAllTimersAsync();
+      await handling;
+
+      expect(sendText).toHaveBeenCalledTimes(4);
+      expect(sendPost).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stores only the long-answer body after native post delivery", async () => {
@@ -824,7 +864,14 @@ describe("LunkrPseBridge", () => {
 
       expect(answer).toHaveBeenCalledOnce();
       expect(sendPost).toHaveBeenCalledTimes(3);
-      const answerChunks = sentTexts(sendText).slice(1);
+      expect(sentTexts(sendText)[1]).toBe([
+        "问题 #1 已处理完成",
+        "本次回答围绕「问题」展开，完整内容见下方 TXT 附件。",
+      ].join("\n"));
+      expect(sentTexts(sendText)[2]).toBe(
+        "问题 #1 的附件发送失败，下面改为分段发送完整回答。",
+      );
+      const answerChunks = sentTexts(sendText).slice(3);
       expect(answerChunks.length).toBeGreaterThan(1);
       answerChunks.forEach((chunk, index) => {
         expect(chunk.startsWith(

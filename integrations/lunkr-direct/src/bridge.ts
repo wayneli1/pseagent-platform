@@ -1,4 +1,8 @@
-import { normalizeAnswerText, presentAnswer } from "./answer-presenter.js";
+import {
+  normalizeAnswerText,
+  presentAnswer,
+  presentLongAnswerNotice,
+} from "./answer-presenter.js";
 import type { LunkrDirectConfig } from "./config.js";
 import { ConversationStore } from "./conversation-store.js";
 import type { LunkrDirectMessage } from "./contracts.js";
@@ -297,13 +301,23 @@ export class LunkrPseBridge<Result> {
     );
     if (chunks.length > 1) {
       if (!this.isCurrent(start)) return;
+      await this.sendBestEffort(
+        message.peerUid,
+        presentLongAnswerNotice(start.questionId, question, normalizedAnswer),
+      );
+      if (!this.isCurrent(start)) return;
       try {
         await this.sendPostWithRetry(
           message.peerUid,
-          `PSEAgent 问题 #${start.questionId} 的完整回答.txt`,
+          `问题#${start.questionId}-完整回答.txt`,
           normalizedAnswer,
         );
       } catch {
+        if (!this.isCurrent(start)) return;
+        await this.sendBestEffort(
+          message.peerUid,
+          `问题 #${start.questionId} 的附件发送失败，下面改为分段发送完整回答。`,
+        );
         if (!this.isCurrent(start)) return;
         await this.sendAnswerChunks(message.peerUid, start, chunks);
       }
@@ -427,6 +441,14 @@ export class LunkrPseBridge<Result> {
 
   private async sendWithRetry(peerUid: string, text: string): Promise<void> {
     await this.retrySend(() => this.dependencies.sendText(peerUid, text));
+  }
+
+  private async sendBestEffort(peerUid: string, text: string): Promise<void> {
+    try {
+      await this.sendWithRetry(peerUid, text);
+    } catch {
+      // The optional notice must never prevent delivery of the complete answer.
+    }
   }
 
   private async sendPostWithRetry(

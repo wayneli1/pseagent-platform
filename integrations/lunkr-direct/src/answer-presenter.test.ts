@@ -3,6 +3,7 @@ import {
   normalizeAnswerText,
   normalizeCitationOrder,
   presentAnswer,
+  presentLongAnswerNotice,
 } from "./answer-presenter.js";
 
 describe("presentAnswer", () => {
@@ -118,5 +119,55 @@ describe("presentAnswer", () => {
       )).toBe(true);
       expect(chunk.length).toBeLessThanOrEqual(35);
     });
+  });
+});
+
+describe("presentLongAnswerNotice", () => {
+  it("summarizes two to four actual answer headings", () => {
+    const answer = [
+      "# Coremail 压力测试方案",
+      "正文。",
+      "## 压测场景设计",
+      "正文。",
+      "三、关键性能指标",
+      "正文。",
+      "**协议服务分析**",
+      "正文。",
+      "资料来源：",
+      "[1] 资料",
+    ].join("\n");
+
+    expect(presentLongAnswerNotice(7, "如何进行压力测试？", answer)).toBe([
+      "问题 #7 已处理完成",
+      "本次回答涵盖：Coremail 压力测试方案、压测场景设计、关键性能指标、协议服务分析。完整内容见下方 TXT 附件。",
+    ].join("\n"));
+  });
+
+  it("falls back to a normalized question subject when headings are absent", () => {
+    expect(presentLongAnswerNotice(
+      2,
+      "  Coremail 如何设计压测场景并分析结果？  ",
+      "这是一段没有章节标题的完整回答。".repeat(20),
+    )).toBe([
+      "问题 #2 已处理完成",
+      "本次回答围绕「Coremail 如何设计压测场景并分析结果」展开，完整内容见下方 TXT 附件。",
+    ].join("\n"));
+  });
+
+  it("deduplicates headings, excludes source headings, and bounds the notice", () => {
+    const notice = presentLongAnswerNotice(3, "问题", [
+      "## 场景设计",
+      "## 场景设计",
+      "## 这是一个非常非常非常非常非常非常长的性能指标章节标题",
+      "## 监控与分析",
+      "## 调优建议",
+      "## 额外内容",
+      "## 参考资料",
+    ].join("\n"));
+
+    expect(notice.match(/场景设计/gu)).toHaveLength(1);
+    expect(notice).not.toContain("参考资料");
+    expect(notice).not.toContain("额外内容");
+    expect(notice.length).toBeLessThanOrEqual(100);
   });
 });

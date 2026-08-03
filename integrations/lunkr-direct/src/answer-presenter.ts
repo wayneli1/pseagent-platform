@@ -5,6 +5,53 @@ interface AtomicBlock {
 
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+\S/u;
 const SOURCE_HEADING = "资料来源：";
+const LONG_NOTICE_MAX_CHARS = 100;
+const LONG_NOTICE_MAX_TOPICS = 4;
+const LONG_NOTICE_TOPIC_MAX_CHARS = 24;
+const NON_CONTENT_HEADINGS = new Set([
+  "回答",
+  "完整回答",
+  "问题分析",
+  "内容概览",
+  "摘要",
+  "概述",
+  "资料来源",
+  "参考资料",
+  "参考文献",
+]);
+
+export function presentLongAnswerNotice(
+  questionId: number,
+  question: string,
+  answer: string,
+): string {
+  if (!Number.isSafeInteger(questionId) || questionId <= 0) {
+    throw new Error("questionId 必须是正整数");
+  }
+  const topics = extractAnswerTopics(answer);
+  if (topics.length === 0) {
+    const subject = truncateDisplayText(
+      question.replace(/\s+/gu, " ").trim().replace(/[。！？?!]+$/gu, "") ||
+        "本次问题",
+      42,
+    );
+    return [
+      `问题 #${questionId} 已处理完成`,
+      `本次回答围绕「${subject}」展开，完整内容见下方 TXT 附件。`,
+    ].join("\n");
+  }
+
+  const selected: string[] = [];
+  for (const topic of topics) {
+    if (selected.length >= LONG_NOTICE_MAX_TOPICS) break;
+    const candidate = [...selected, topic];
+    if (formatTopicNotice(questionId, candidate).length > LONG_NOTICE_MAX_CHARS) {
+      break;
+    }
+    selected.push(topic);
+  }
+  return formatTopicNotice(questionId, selected);
+}
 
 export function presentAnswer(
   questionId: number,
@@ -66,6 +113,63 @@ export function normalizeCitationOrder(text: string): string {
       .join(""),
   );
   return sortNumberedSourceLines(citations);
+}
+
+function extractAnswerTopics(answer: string): string[] {
+  const topics: string[] = [];
+  const seen = new Set<string>();
+  for (const line of answer.replace(/\r\n?/gu, "\n").split("\n")) {
+    const heading = headingText(line);
+    if (heading === undefined) continue;
+    const cleaned = heading
+      .replace(/\[\d+\]/gu, "")
+      .replace(/[*_`~]/gu, "")
+      .replace(/\s+/gu, " ")
+      .replace(/[：:]$/u, "")
+      .trim();
+    const dedupeKey = cleaned.toLocaleLowerCase();
+    if (
+      cleaned === "" ||
+      /[。！？；;]$/u.test(cleaned) ||
+      NON_CONTENT_HEADINGS.has(cleaned) ||
+      seen.has(dedupeKey)
+    ) {
+      continue;
+    }
+    seen.add(dedupeKey);
+    topics.push(truncateDisplayText(cleaned, LONG_NOTICE_TOPIC_MAX_CHARS));
+  }
+  return topics;
+}
+
+function headingText(line: string): string | undefined {
+  const patterns = [
+    /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/u,
+    /^\s*[一二三四五六七八九十百]+[、.．]\s*(.+?)\s*$/u,
+    /^\s*\d{1,2}[、.．]\s*(.+?)\s*$/u,
+    /^\s*[（(](?:\d{1,2}|[一二三四五六七八九十百]+)[）)]\s*(.+?)\s*$/u,
+    /^\s*(?:\*\*|__)(.+?)(?:\*\*|__)\s*$/u,
+  ];
+  for (const pattern of patterns) {
+    const match = line.match(pattern);
+    if (match?.[1] !== undefined) return match[1];
+  }
+  return undefined;
+}
+
+function formatTopicNotice(
+  questionId: number,
+  topics: readonly string[],
+): string {
+  return [
+    `问题 #${questionId} 已处理完成`,
+    `本次回答涵盖：${topics.join("、")}。完整内容见下方 TXT 附件。`,
+  ].join("\n");
+}
+
+function truncateDisplayText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars - 1).trimEnd()}…`;
 }
 
 function sortNumberedSourceLines(text: string): string {
