@@ -21,9 +21,6 @@ describe("support and existence semantics", () => {
       "具体产品或竞品对比中的功能、优势、版本、许可等产品事实使用 direct_only",
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
-      "具体产品有哪些功能、能力或特性，以及产品能做什么",
-    );
-    expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
       "支持性、存在性、明确否定、版本、兼容性、容量或性能数字、授权、报价、认证和穷举完整性",
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(

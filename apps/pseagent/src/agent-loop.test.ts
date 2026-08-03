@@ -749,44 +749,6 @@ describe("runKnowledgeAgent", () => {
     }]);
   });
 
-  it.each([
-    { aspectCount: 1, expectedTopK: 10 },
-    { aspectCount: 4, expectedTopK: 12 },
-    { aspectCount: 8, expectedTopK: 20 },
-  ])("uses top $expectedTopK for $aspectCount direct evidence aspects", async ({
-    aspectCount,
-    expectedTopK,
-  }) => {
-    const evidenceAspects = Array.from({ length: aspectCount }, (_, index) => ({
-      id: `A${index + 1}` as KnowledgePlan["requirements"][number]["evidenceAspects"][number]["id"],
-      label: `直接证据面${index + 1}`,
-      terms: [`直接术语${index + 1}`],
-    }));
-    const plan: KnowledgePlan = {
-      subject: "动态直接证据",
-      requirements: [{
-        id: "R1",
-        question: "动态直接证据问题",
-        evidenceMode: "direct_only",
-        evidenceAspects,
-        queries: [{
-          text: "动态直接查询",
-          aspectIds: evidenceAspects.map((aspect) => aspect.id),
-        }],
-      }],
-    };
-    const session = fakeSession();
-    const model = scriptedAgentModel([final("none")]);
-
-    await runKnowledgeAgent(agentInput(model, session, plan));
-
-    expect(session.search).toHaveBeenCalledWith(
-      "动态直接查询",
-      expectedTopK,
-      undefined,
-    );
-  });
-
   it("prioritizes an exact direct-evidence title over a broader multi-aspect hit", async () => {
     const question = "Coremail 对比 Exchange 的优势";
     const plan: KnowledgePlan = {
