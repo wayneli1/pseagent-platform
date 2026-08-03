@@ -166,7 +166,42 @@ git diff --check
 
 只暂存本阶段实现与测试并创建阶段 63 提交。
 
-## 阶段 64：双会话复测与验收记录
+## 阶段 64：记录规划收敛回归并冻结回退
+
+**文件：**
+
+- 修改 `docs/superpowers/specs/2026-08-03-dual-session-stability-design.md`
+- 修改 `docs/superpowers/plans/2026-08-03-dual-session-stability.md`
+
+**步骤：**
+
+1. 记录阶段 63 后两套独立会话的真实分布与同题一致率。
+2. 与阶段 60、61 后的双会话结果比较，明确判定为质量回归。
+3. 冻结完整回退阶段 63 六个实现/测试文件、保留阶段 57–61 的边界。
+4. 运行文档占位符扫描和 `git diff --check`。
+
+只暂存两份设计/计划文档并创建阶段 64 提交。
+
+## 阶段 65：回退不稳定的规划收敛实验
+
+**文件：**
+
+- 恢复 `apps/pseagent/src/knowledge-planner.ts`
+- 恢复 `apps/pseagent/src/knowledge-planner.test.ts`
+- 恢复 `apps/pseagent/src/agent-loop.ts`
+- 恢复 `apps/pseagent/src/agent-loop.test.ts`
+- 恢复 `apps/pseagent/src/prompts.ts`
+- 恢复 `apps/pseagent/src/prompts.test.ts`
+
+**步骤：**
+
+1. 使用可审计补丁完整撤销阶段 63 对六个文件的变更，不改写 Git 历史。
+2. 用 `git diff 356e3d7^ -- <六个文件>` 证明文件与阶段 63 父提交一致。
+3. 运行 Planner/Agent/提示词聚焦测试、PSEAgent 全量测试、类型检查、构建和
+   `git diff --check`。
+4. 只暂存六个回退文件并创建阶段 65 提交。
+
+## 阶段 66：双会话复测与验收记录
 
 **文件：**
 
@@ -179,7 +214,7 @@ git diff --check
 3. 对比每题 scope、status、引用数、停止原因和耗时。
 4. 运行全仓 TypeScript 测试、类型检查、工作区构建和 `git diff --check`。
 5. 记录修复前后结果、剩余边界和 Windows UI 验收限制，不记录回答或知识正文。
-6. 只暂存验收记录并创建阶段 64 提交。
+6. 只暂存验收记录并创建阶段 66 提交。
 
-如果真实复测仍存在预期页面召回缺失，阶段 64 不得写“通过”；必须保留失败记录，回到
+如果真实复测仍存在预期页面召回缺失，阶段 66 不得写“通过”；必须保留失败记录，回到
 新的设计阶段继续修复后再验收。
