@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.ts";
+import {
+  countExpectationMismatches,
+  hasStabilityFailure,
+} from "./probe-stability-contract.ts";
 
 type StabilityCase = {
   readonly id: string;
@@ -71,6 +75,7 @@ try {
   await runtime.close();
 }
 
+const expectationMismatches = countExpectationMismatches(records);
 const summary = {
   type: "summary",
   total: records.length,
@@ -78,6 +83,7 @@ const summary = {
   unavailable: records.filter((item) =>
     item.status === "temporarily_unavailable").length,
   failures: records.filter((item) => item.failure !== undefined).length,
+  ...expectationMismatches,
   stopReasons: Object.fromEntries(
     [...new Set(records.map((item) => item.stopReason))]
       .sort()
@@ -96,7 +102,7 @@ const summary = {
   ),
 };
 process.stdout.write(`${JSON.stringify(summary)}\n`);
-if (summary.unavailable > 0 || summary.failures > 0) process.exitCode = 1;
+if (hasStabilityFailure(summary)) process.exitCode = 1;
 
 async function runOne(
   sequence: number,
