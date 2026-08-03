@@ -1087,6 +1087,61 @@ describe("verifyKnowledgeCoverage", () => {
     expect(JSON.stringify(result)).not.toContain("零风险");
   });
 
+  it("repairs a dangling section when its unsupported opening sentence is removed", async () => {
+    const result = await verifyKnowledgeCoverage({
+      question: "对比 Exchange 邮件系统，Coremail 的优势有哪些？",
+      plan: singleRequirementPlan,
+      draft: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "partial",
+          answer:
+            "**1. 国产化与安全能力：** Coremail 支持未经证实的能力 [1]。并支持 SM2/SM3/SM4 国密算法 [2]。\n**2. 金融行业信创替换实践：** 广发银行采用全栈国产化架构 [3]。",
+          citations: [1, 2, 3],
+        }],
+        citations: [1, 2, 3],
+      },
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "未采用的证据",
+        path: "wiki/unsupported.md",
+        content: "该证据不能支持草稿的第一句话。",
+      }, {
+        requirementId: "R1",
+        citation: 2,
+        title: "国密算法",
+        path: "wiki/crypto.md",
+        content: "Coremail 支持 SM2、SM3 和 SM4 国密算法。",
+      }, {
+        requirementId: "R1",
+        citation: 3,
+        title: "金融行业实践",
+        path: "wiki/finance.md",
+        content: "广发银行采用全栈国产化架构。",
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain_partial",
+          retainedTargetSegmentIndexes: [1, 2],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          reason: "partial_support",
+        }],
+      } as unknown as CoverageVerificationAction),
+    });
+
+    expect(result.requirements[0]?.answer).toBe(
+      "**1. 国产化与安全能力：** 支持 SM2/SM3/SM4 国密算法 [2]。\n**2. 金融行业信创替换实践：** 广发银行采用全栈国产化架构 [3]。",
+    );
+    expect(result.requirements[0]?.citations).toEqual([2, 3]);
+    expect(result.requirements[0]?.answer).not.toContain("未经证实");
+    expect(result.requirements[0]?.answer).not.toMatch(/^并/u);
+  });
+
   it("rebuilds an uncovered result from retained draft indexes without model-written text", async () => {
     const result = await verifyKnowledgeCoverage({
       question: "Coremail 是否支持目标协议",

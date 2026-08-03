@@ -392,7 +392,10 @@ function materializeVerification(
         id: draftRequirement.id,
         coverage: "partial" as const,
         answer: addSynthesisDisclosureIfNeeded(
-          retained.map((segment) => segment.text).join("\n"),
+          materializeRetainedTargetSegments(
+            segments,
+            decision.retainedTargetSegmentIndexes,
+          ),
           hasSynthesis,
         ),
         citations: stableUnique(retained.flatMap((segment) => segment.citations)),
@@ -495,7 +498,10 @@ function verificationSummaries(
         (targetSegments[index]?.segments.length ?? 0);
     const coverageText = allCitedSegmentsRetained
       ? draft.requirements[index]?.answer ?? ""
-      : retainedSegments.map((segment) => segment.text).join("\n");
+      : materializeRetainedTargetSegments(
+          targetSegments[index]?.segments ?? [],
+          decision.retainedTargetSegmentIndexes,
+        );
     const semanticallyCoveredAspectIds = new Set([
       ...(decision.coveredAspectIds ?? []),
       ...(plannedRequirement === undefined
@@ -613,6 +619,53 @@ function addSynthesisDisclosure(answer: string): string {
   return answer.startsWith(SYNTHESIS_DISCLOSURE)
     ? answer
     : `${SYNTHESIS_DISCLOSURE}\n${answer}`;
+}
+
+function materializeRetainedTargetSegments(
+  segments: readonly TargetSegment[],
+  retainedSegmentIndexes: readonly number[],
+): string {
+  const retainedIndexes = new Set(retainedSegmentIndexes);
+  return retainedSegmentIndexes
+    .map((segmentIndex) => {
+      const segment = segments[segmentIndex];
+      if (segment === undefined) return "";
+      if (segmentIndex === 0 || retainedIndexes.has(segmentIndex - 1)) {
+        return segment.text;
+      }
+
+      const standaloneText = stripDanglingConnector(segment.text);
+      if (startsWithStructuralMarker(standaloneText)) return standaloneText;
+      const structuralPrefix = extractStructuralPrefix(
+        segments[segmentIndex - 1]?.text ?? "",
+      );
+      return structuralPrefix === undefined
+        ? standaloneText
+        : `${structuralPrefix} ${standaloneText}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function stripDanglingConnector(text: string): string {
+  const stripped = text.replace(
+    /^\s*(?:并且|并|同时|此外|另外|而且|也|还)[，,、]?\s*/u,
+    "",
+  );
+  return stripped.length === 0 ? text : stripped;
+}
+
+function extractStructuralPrefix(text: string): string | undefined {
+  const match = text.match(
+    /^\s*(\*\*)?((?:#{1,6}\s+)?(?:(?:\d{1,2}|[一二三四五六七八九十百]+)[.、．]\s*|[（(](?:\d{1,2}|[一二三四五六七八九十百]+)[）)]\s*)[^：:\n*]{1,40}[：:])(?:\*\*)?/u,
+  );
+  if (match?.[2] === undefined) return undefined;
+  return match[1] === undefined ? match[2] : `**${match[2]}**`;
+}
+
+function startsWithStructuralMarker(text: string): boolean {
+  return /^\s*(?:\*\*)?(?:#{1,6}\s+)?(?:(?:\d{1,2}|[一二三四五六七八九十百]+)[.、．]|[（(](?:\d{1,2}|[一二三四五六七八九十百]+)[）)])/u
+    .test(text);
 }
 
 function splitTargetSegments(answer: string): TargetSegment[] {
