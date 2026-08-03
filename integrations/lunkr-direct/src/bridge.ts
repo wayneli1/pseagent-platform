@@ -1,4 +1,4 @@
-import { presentAnswer } from "./answer-presenter.js";
+import { normalizeAnswerText, presentAnswer } from "./answer-presenter.js";
 import type { LunkrDirectConfig } from "./config.js";
 import { ConversationStore } from "./conversation-store.js";
 import type { LunkrDirectMessage } from "./contracts.js";
@@ -91,6 +91,11 @@ export interface LunkrBridgeDependencies<Result> {
   readonly formatContextAnswer?: ((result: Result) => string) | undefined;
   readonly describeResult: (result: Result) => BridgeAnswerMetadata;
   readonly sendText: (peerUid: string, text: string) => Promise<void>;
+  readonly sendPost: (
+    peerUid: string,
+    title: string,
+    content: string,
+  ) => Promise<void>;
   readonly onEvent?: ((event: BridgeQuestionEvent) => void) | undefined;
 }
 
@@ -285,15 +290,27 @@ export class LunkrPseBridge<Result> {
       return;
     }
 
+    const normalizedAnswer = normalizeAnswerText(answer);
     const chunks = presentAnswer(
       start.questionId,
-      answer,
+      normalizedAnswer,
       this.config.messageMaxChars,
     );
-    for (const chunk of chunks) {
+    if (chunks.length > 1) {
       if (!this.isCurrent(start)) return;
-      await this.sendWithRetry(message.peerUid, chunk);
+      try {
+        await this.sendPostWithRetry(
+          message.peerUid,
+          `PSEAgent 问题 #${start.questionId} 的完整回答.txt`,
+          normalizedAnswer,
+        );
+      } catch {
+        if (!this.isCurrent(start)) return;
+        await this.sendAnswerChunks(message.peerUid, start, chunks);
+      }
       if (!this.isCurrent(start)) return;
+    } else {
+      await this.sendAnswerChunks(message.peerUid, start, chunks);
     }
     const contextAnswer = (
       this.dependencies.formatContextAnswer?.(result) ?? answer
@@ -410,10 +427,35 @@ export class LunkrPseBridge<Result> {
   }
 
   private async sendWithRetry(peerUid: string, text: string): Promise<void> {
+    await this.retrySend(() => this.dependencies.sendText(peerUid, text));
+  }
+
+  private async sendPostWithRetry(
+    peerUid: string,
+    title: string,
+    content: string,
+  ): Promise<void> {
+    await this.retrySend(() =>
+      this.dependencies.sendPost(peerUid, title, content));
+  }
+
+  private async sendAnswerChunks(
+    peerUid: string,
+    start: QuestionStart,
+    chunks: readonly string[],
+  ): Promise<void> {
+    for (const chunk of chunks) {
+      if (!this.isCurrent(start)) return;
+      await this.sendWithRetry(peerUid, chunk);
+      if (!this.isCurrent(start)) return;
+    }
+  }
+
+  private async retrySend(operation: () => Promise<void>): Promise<void> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        await this.dependencies.sendText(peerUid, text);
+        await operation();
         return;
       } catch (error) {
         lastError = error;

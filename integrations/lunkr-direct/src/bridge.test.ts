@@ -86,6 +86,7 @@ describe("LunkrPseBridge", () => {
       "补充说明：已检索 Coremail MCP 历史资料，但检索内容与当前问题不匹配，因此未展示。";
     const answer = vi.fn<Answer>(async () => answered(formalAnswer));
     const sendText = vi.fn(async () => undefined);
+    const sendPost = vi.fn(async () => undefined);
     const bridge = new LunkrPseBridge(config, {
       answer,
       formatAnswer: (result) => `${result.answer}\n\n${historicalNotice}`,
@@ -99,6 +100,7 @@ describe("LunkrPseBridge", () => {
         historicalUsed: false,
       }),
       sendText,
+      sendPost,
     });
 
     await bridge.handle(message("m1", "#a#U", "未知能力"));
@@ -723,31 +725,107 @@ describe("LunkrPseBridge", () => {
     }
   });
 
-  it("sends every long-answer chunk with the same question id", async () => {
+  it("keeps a short answer in the normal text reply", async () => {
+    const answer = vi.fn<Answer>(async () => answered("简短回答"));
+    const sendText = vi.fn(async () => undefined);
+    const sendPost = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText, sendPost });
+
+    await bridge.handle(message("m1", "#a#U", "问题"));
+
+    expect(sentTexts(sendText)).toEqual([
+      "已收到问题 #1，正在处理。",
+      "问题 #1 的回答：\n\n简短回答",
+    ]);
+    expect(sendPost).not.toHaveBeenCalled();
+  });
+
+  it("sends a long answer as one native text post", async () => {
     const answer = vi.fn<Answer>(async () => answered("甲".repeat(200)));
     const sendText = vi.fn(async () => undefined);
+    const sendPost = vi.fn(async () => undefined);
     const bridge = createBridge({
       answer,
       sendText,
+      sendPost,
       config: { messageMaxChars: 40 },
     });
 
     await bridge.handle(message("m1", "#a#U", "问题"));
 
-    const answerChunks = sentTexts(sendText).slice(1);
-    expect(answerChunks.length).toBeGreaterThan(1);
-    answerChunks.forEach((chunk, index) => {
-      expect(chunk.startsWith(
-        `问题 #1（${index + 1}/${answerChunks.length}）\n\n`,
-      )).toBe(true);
-      expect(chunk.length).toBeLessThanOrEqual(40);
+    expect(sentTexts(sendText)).toEqual(["已收到问题 #1，正在处理。"]);
+    expect(sendPost).toHaveBeenCalledOnce();
+    expect(sendPost).toHaveBeenCalledWith(
+      "#a#U",
+      "PSEAgent 问题 #1 的完整回答.txt",
+      "甲".repeat(200),
+    );
+  });
+
+  it("stores only the long-answer body after native post delivery", async () => {
+    const longAnswer = "甲".repeat(200);
+    const answer = vi.fn<Answer>(async (question, context) =>
+      answered(question === "第一问" ? longAnswer : context ?? "无上下文"));
+    const sendText = vi.fn(async () => undefined);
+    const sendPost = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer,
+      sendText,
+      sendPost,
+      config: { messageMaxChars: 40 },
     });
+
+    await bridge.handle(message("m1", "#a#U", "第一问"));
+    await bridge.handle(message("m2", "#a#U", "第二问"));
+
+    expect(answer.mock.calls[1]?.[1]).toContain(longAnswer);
+    expect(answer.mock.calls[1]?.[1]).not.toContain("完整回答.txt");
+    expect(answer.mock.calls[1]?.[1]).not.toContain("问题 #1");
+  });
+
+  it("falls back to numbered chunks when native text post delivery fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const answer = vi.fn<Answer>(async () => answered("甲".repeat(200)));
+      const sendText = vi.fn(async () => undefined);
+      const sendPost = vi.fn(async () => {
+        throw new Error("post failed");
+      });
+      const bridge = createBridge({
+        answer,
+        sendText,
+        sendPost,
+        config: { messageMaxChars: 40 },
+      });
+
+      const handling = bridge.handle(message("m1", "#a#U", "问题"));
+      await vi.runAllTimersAsync();
+      await handling;
+
+      expect(answer).toHaveBeenCalledOnce();
+      expect(sendPost).toHaveBeenCalledTimes(3);
+      const answerChunks = sentTexts(sendText).slice(1);
+      expect(answerChunks.length).toBeGreaterThan(1);
+      answerChunks.forEach((chunk, index) => {
+        expect(chunk.startsWith(
+          `问题 #1（${index + 1}/${answerChunks.length}）\n\n`,
+        )).toBe(true);
+        expect(chunk.length).toBeLessThanOrEqual(40);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
 function createBridge(options: {
   readonly answer: Answer;
   readonly sendText: (peerUid: string, text: string) => Promise<void>;
+  readonly sendPost?: (
+    peerUid: string,
+    title: string,
+    content: string,
+  ) => Promise<void>;
   readonly config?: Partial<LunkrDirectConfig>;
   readonly now?: () => number;
   readonly onEvent?: (event: BridgeQuestionEvent) => void;
@@ -776,6 +854,7 @@ function createBridge(options: {
         historicalGateReason: result.historicalGateReason,
       }),
       sendText: options.sendText,
+      sendPost: options.sendPost ?? (async () => undefined),
       onEvent: options.onEvent,
     },
     options.now,

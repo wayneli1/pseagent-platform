@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  normalizeAnswerText,
   normalizeCitationOrder,
   presentAnswer,
 } from "./answer-presenter.js";
@@ -72,6 +73,12 @@ describe("presentAnswer", () => {
     expect(rendered).toContain("结论 [1][2]。");
     expect(rendered.indexOf("[1] 第一来源"))
       .toBeLessThan(rendered.indexOf("[2] 第二来源"));
+  });
+
+  it("normalizes the body shared by text messages and native posts", () => {
+    expect(normalizeAnswerText("  结论 [2][1]\r\n\r\n正文  ")).toBe(
+      "结论 [1][2]\n\n正文",
+    );
   });
 
   it("preserves non-whitespace body character order across chunks", () => {

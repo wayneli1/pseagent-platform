@@ -17,9 +17,7 @@ export function presentAnswer(
   if (!Number.isSafeInteger(maxChars) || maxChars <= 0) {
     throw new Error("maxChars 必须是正整数");
   }
-  const normalized = normalizeCitationOrder(answer)
-    .replace(/\r\n?/gu, "\n")
-    .trim();
+  const normalized = normalizeAnswerText(answer);
   if (normalized === "") return [];
   const shortPrefix = `问题 #${questionId} 的回答：\n\n`;
   if (shortPrefix.length + normalized.length <= maxChars) {
@@ -49,6 +47,12 @@ export function presentAnswer(
     throw new Error("回答分段超过 Lunkr 字符上限");
   }
   return rendered;
+}
+
+export function normalizeAnswerText(text: string): string {
+  return normalizeCitationOrder(text)
+    .replace(/\r\n?/gu, "\n")
+    .trim();
 }
 
 export function normalizeCitationOrder(text: string): string {

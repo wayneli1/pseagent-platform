@@ -75,6 +75,8 @@ const bridge = new LunkrPseBridge(config, {
     historicalGateReason: execution.historicalGateReason,
   }),
   sendText: (peerUid, text) => api.sendText(peerUid, text),
+  sendPost: (peerUid, title, content) =>
+    api.sendPost(peerUid, title, content),
   onEvent: logQuestionEvent,
 });
 const socket = new LunkrSocketClient(config, session, {
