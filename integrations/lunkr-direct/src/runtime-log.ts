@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import type {
   BridgeCoverage,
+  BridgeDeliveryMode,
   BridgeHistoricalGateReason,
   BridgeHistoricalRejectionReason,
   BridgeQuestionEvent,
@@ -29,6 +30,7 @@ export interface LunkrRuntimeLogRecord {
   readonly retainedSynthesizedSegmentCount?: number | undefined;
   readonly removedSegmentCount?: number | undefined;
   readonly historicalGateReason?: BridgeHistoricalGateReason | undefined;
+  readonly deliveryMode?: BridgeDeliveryMode | undefined;
 }
 
 export function createRuntimeLogger(
@@ -64,6 +66,7 @@ export function createRuntimeLogger(
         event.retainedSynthesizedSegmentCount,
       removedSegmentCount: event.removedSegmentCount,
       historicalGateReason: event.historicalGateReason,
+      deliveryMode: event.deliveryMode,
     };
     write(`${JSON.stringify(record)}\n`);
   };

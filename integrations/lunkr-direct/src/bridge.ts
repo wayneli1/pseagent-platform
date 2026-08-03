@@ -23,6 +23,11 @@ const HELP_TEXT = [
 ].join("\n");
 
 export type BridgeCoverage = "complete" | "partial" | "none";
+export type BridgeDeliveryMode =
+  | "text"
+  | "combined_attachment"
+  | "standalone_post"
+  | "segmented_text";
 
 export type BridgeHistoricalGateReason =
   | "eligible"
@@ -82,6 +87,7 @@ export interface BridgeQuestionEvent {
   readonly retainedSynthesizedSegmentCount?: number | undefined;
   readonly removedSegmentCount?: number | undefined;
   readonly historicalGateReason?: BridgeHistoricalGateReason | undefined;
+  readonly deliveryMode?: BridgeDeliveryMode | undefined;
 }
 
 export interface LunkrBridgeDependencies<Result> {
@@ -300,6 +306,7 @@ export class LunkrPseBridge<Result> {
     }
 
     const normalizedAnswer = normalizeAnswerText(answer);
+    let deliveryMode: BridgeDeliveryMode = "text";
     const chunks = presentAnswer(
       start.questionId,
       normalizedAnswer,
@@ -320,6 +327,7 @@ export class LunkrPseBridge<Result> {
           normalizedAnswer,
           caption,
         );
+        deliveryMode = "combined_attachment";
       } catch {
         if (!this.isCurrent(start)) return;
         try {
@@ -328,6 +336,7 @@ export class LunkrPseBridge<Result> {
             title,
             normalizedAnswer,
           );
+          deliveryMode = "standalone_post";
         } catch {
           if (!this.isCurrent(start)) return;
           await this.sendBestEffort(
@@ -336,6 +345,7 @@ export class LunkrPseBridge<Result> {
           );
           if (!this.isCurrent(start)) return;
           await this.sendAnswerChunks(message.peerUid, start, chunks);
+          deliveryMode = "segmented_text";
         }
       }
       if (!this.isCurrent(start)) return;
@@ -365,6 +375,7 @@ export class LunkrPseBridge<Result> {
       referenceCount: metadata.referenceCount,
       historicalAttempted: metadata.historicalAttempted,
       historicalUsed: metadata.historicalUsed,
+      deliveryMode,
       ...historicalNoticeMetadata(metadata),
       ...layeredEvidenceMetadata(metadata),
     });

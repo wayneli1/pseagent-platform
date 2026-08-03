@@ -85,7 +85,7 @@ export class LunkrApi {
     const uploadUid = this.session.selfUid;
     let cookies = cookieHeader(this.session);
 
-    const prepare = await this.client.lunkr<{ attachmentId?: string }>({
+    const prepare = await this.client.lunkr<{ attachmentId?: unknown }>({
       apiPath: this.config.apiPath,
       func: "cim.file:prepare",
       sid: this.session.sid,
@@ -100,10 +100,10 @@ export class LunkrApi {
     });
     cookies = mergeCookieHeader(cookies, prepare.setCookies);
     assertLunkrSuccess(prepare, "附件准备");
-    const attachmentId = prepare.body.var?.attachmentId;
-    if (attachmentId === undefined || attachmentId.trim() === "") {
-      throw new Error("Lunkr 附件准备未返回 attachmentId");
-    }
+    const attachmentId = requiredIdentifier(
+      prepare.body.var?.attachmentId,
+      "Lunkr 附件准备未返回 attachmentId",
+    );
 
     const directData = await this.client.binaryJson<LunkrApiEnvelope>({
       path: this.config.apiPath,
@@ -121,7 +121,7 @@ export class LunkrApi {
     cookies = mergeCookieHeader(cookies, directData.setCookies);
     assertLunkrSuccess(directData, "附件数据上传");
 
-    const move = await this.client.lunkr<{ fileId?: string; uid?: string }>({
+    const move = await this.client.lunkr<{ fileId?: unknown; uid?: unknown }>({
       apiPath: this.config.apiPath,
       func: "cim.file:moveToNetFolder",
       sid: this.session.sid,
@@ -136,16 +136,19 @@ export class LunkrApi {
     });
     cookies = mergeCookieHeader(cookies, move.setCookies);
     assertLunkrSuccess(move, "附件入库");
-    const fileId = move.body.var?.fileId;
-    if (fileId === undefined || fileId.trim() === "") {
-      throw new Error("Lunkr 附件入库未返回 fileId");
-    }
+    const fileId = requiredIdentifier(
+      move.body.var?.fileId,
+      "Lunkr 附件入库未返回 fileId",
+    );
+    const fileUid = typeof move.body.var?.uid === "string"
+      ? move.body.var.uid
+      : "";
 
     const replyBody = {
       uid: peerUid,
       clientMid,
       content: normalizedCaption,
-      attachments: [{ fileId, uid: move.body.var?.uid ?? "" }],
+      attachments: [{ fileId, uid: fileUid }],
     };
     let lastError: unknown;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -166,6 +169,16 @@ export class LunkrApi {
     }
     throw lastError;
   }
+}
+
+function requiredIdentifier(value: unknown, errorMessage: string): string {
+  if (typeof value === "string" && value.trim() !== "") {
+    return value.trim();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  throw new Error(errorMessage);
 }
 
 function assertLunkrSuccess(

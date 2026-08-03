@@ -82,7 +82,7 @@ describe("LunkrApi", () => {
         case "cim.file:prepare":
           return new Response(JSON.stringify({
             code: "S_OK",
-            var: { attachmentId: "attachment-1" },
+            var: { attachmentId: 1729 },
           }));
         case "cim.file:directData":
           return new Response(JSON.stringify({ code: "S_OK" }), {
@@ -121,7 +121,7 @@ describe("LunkrApi", () => {
 
     const direct = calls.find(([input]) =>
       String(input).includes("func=cim.file%3AdirectData"));
-    expect(String(direct?.[0])).toContain("attachmentId=attachment-1");
+    expect(String(direct?.[0])).toContain("attachmentId=1729");
     expect(String(direct?.[0])).toContain("uid=%23bot%23U");
     expect(new TextDecoder().decode(direct?.[1]?.body as Uint8Array)).toBe(content);
 
@@ -131,7 +131,7 @@ describe("LunkrApi", () => {
       Cookie: expect.stringContaining("Cim=rotated"),
     });
     expect(JSON.parse(String(move?.[1]?.body))).toMatchObject({
-      attachmentId: "attachment-1",
+      attachmentId: "1729",
       fileName: "问题#7-完整回答.txt",
       uid: "#bot#U",
     });

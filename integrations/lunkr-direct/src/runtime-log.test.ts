@@ -34,6 +34,7 @@ describe("createRuntimeLogger", () => {
       retainedDirectSegmentCount: 1,
       retainedSynthesizedSegmentCount: 3,
       removedSegmentCount: 0,
+      deliveryMode: "combined_attachment",
       question: "sentinel-question",
       answer: "sentinel-answer",
       evidenceBody: "sentinel-evidence-body",
@@ -64,6 +65,7 @@ describe("createRuntimeLogger", () => {
     expect(serialized).toContain('"retainedDirectSegmentCount":1');
     expect(serialized).toContain('"retainedSynthesizedSegmentCount":3');
     expect(serialized).toContain('"removedSegmentCount":0');
+    expect(serialized).toContain('"deliveryMode":"combined_attachment"');
     expect(serialized).not.toContain("historicalGateReason");
     expect(serialized).not.toContain("sentinel-question");
     expect(serialized).not.toContain("sentinel-answer");

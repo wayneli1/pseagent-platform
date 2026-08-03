@@ -772,12 +772,14 @@ describe("LunkrPseBridge", () => {
     const sendText = vi.fn(async () => undefined);
     const sendTextFile = vi.fn(async () => undefined);
     const sendPost = vi.fn(async () => undefined);
+    const events: BridgeQuestionEvent[] = [];
     const bridge = createBridge({
       answer,
       sendText,
       sendTextFile,
       sendPost,
       config: { messageMaxChars: 40 },
+      onEvent: (event) => events.push(event),
     });
 
     await bridge.handle(message("m1", "#a#U", "问题"));
@@ -794,6 +796,7 @@ describe("LunkrPseBridge", () => {
       ].join("\n"),
     );
     expect(sendPost).not.toHaveBeenCalled();
+    expect(events.at(-1)?.deliveryMode).toBe("combined_attachment");
   });
 
   it("falls back to a standalone native post when combined delivery fails", async () => {
@@ -804,12 +807,14 @@ describe("LunkrPseBridge", () => {
       throw new Error("combined delivery failed");
     });
     const sendPost = vi.fn(async () => undefined);
+    const events: BridgeQuestionEvent[] = [];
     const bridge = createBridge({
       answer,
       sendText,
       sendTextFile,
       sendPost,
       config: { messageMaxChars: 40 },
+      onEvent: (event) => events.push(event),
     });
 
     await bridge.handle(message("m1", "#a#U", "问题"));
@@ -821,6 +826,7 @@ describe("LunkrPseBridge", () => {
       "问题#1-完整回答.txt",
       longAnswer,
     );
+    expect(events.at(-1)?.deliveryMode).toBe("standalone_post");
   });
 
   it("stores only the long-answer body after combined attachment delivery", async () => {
@@ -855,12 +861,14 @@ describe("LunkrPseBridge", () => {
       const sendPost = vi.fn(async () => {
         throw new Error("post failed");
       });
+      const events: BridgeQuestionEvent[] = [];
       const bridge = createBridge({
         answer,
         sendText,
         sendTextFile,
         sendPost,
         config: { messageMaxChars: 40 },
+        onEvent: (event) => events.push(event),
       });
 
       const handling = bridge.handle(message("m1", "#a#U", "问题"));
@@ -881,6 +889,7 @@ describe("LunkrPseBridge", () => {
         )).toBe(true);
         expect(chunk.length).toBeLessThanOrEqual(40);
       });
+      expect(events.at(-1)?.deliveryMode).toBe("segmented_text");
     } finally {
       vi.useRealTimers();
     }
