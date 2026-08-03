@@ -1,6 +1,10 @@
 export interface ConversationTurn {
   readonly question: string;
-  readonly answer: string;
+}
+
+interface SerializedConversationContext {
+  readonly version: 2;
+  readonly recentUserQuestions: readonly string[];
 }
 
 export class ConversationStore {
@@ -23,15 +27,25 @@ export class ConversationStore {
       return undefined;
     }
     const selected: string[] = [];
-    let characters = 0;
     for (let index = turns.length - 1; index >= 0; index -= 1) {
       const turn = turns[index]!;
-      const formatted = `用户：${turn.question}\n助手：${turn.answer}`;
-      if (selected.length > 0 && characters + formatted.length > this.maxChars) break;
-      selected.unshift(formatted.slice(-this.maxChars));
-      characters += formatted.length;
+      const candidate = [turn.question.trim(), ...selected];
+      if (serializeContext(candidate).length > this.maxChars) break;
+      selected.unshift(turn.question.trim());
     }
-    return selected.join("\n\n");
+    if (selected.length > 0) return serializeContext(selected);
+
+    const latest = turns.at(-1)?.question.trim();
+    if (!latest) return undefined;
+    const characters = [...latest];
+    while (characters.length > 0) {
+      const serialized = serializeContext([characters.join("")]);
+      if (serialized.length <= this.maxChars) return serialized;
+      characters.pop();
+    }
+    return serializeContext([]).length <= this.maxChars
+      ? serializeContext([])
+      : undefined;
   }
 
   append(peerUid: string, turn: ConversationTurn): void {
@@ -45,6 +59,14 @@ export class ConversationStore {
   clear(peerUid: string): void {
     this.conversations.delete(peerUid);
   }
+}
+
+function serializeContext(questions: readonly string[]): string {
+  const payload: SerializedConversationContext = {
+    version: 2,
+    recentUserQuestions: questions,
+  };
+  return JSON.stringify(payload);
 }
 
 function normalizeQuestion(question: string): string {

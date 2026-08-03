@@ -58,7 +58,7 @@ type Answer = (
 ) => Promise<TestResult>;
 
 describe("LunkrPseBridge", () => {
-  it("sends an immediate numbered acknowledgment and stores only answer context", async () => {
+  it("sends an immediate numbered acknowledgment and stores only structured user-question context", async () => {
     const answer = vi.fn<Answer>(async (question, context, signal) => {
       expect(signal).toBeInstanceOf(AbortSignal);
       return answered(`${question}:${context ?? "empty"}`);
@@ -72,6 +72,8 @@ describe("LunkrPseBridge", () => {
     expect(answer).toHaveBeenCalledTimes(2);
     expect(answer.mock.calls[0]?.[1]).toBeUndefined();
     expect(answer.mock.calls[1]?.[1]).toContain("第一问");
+    expect(answer.mock.calls[1]?.[1]).toContain('"version":2');
+    expect(answer.mock.calls[1]?.[1]).not.toContain("第一问:empty");
     expect(answer.mock.calls[1]?.[1]).not.toContain("已收到问题");
     expect(sentTexts(sendText)).toEqual([
       "已收到问题 #1，正在处理。",
@@ -848,7 +850,7 @@ describe("LunkrPseBridge", () => {
     expect(events.at(-1)?.deliveryMode).toBe("standalone_post");
   });
 
-  it("stores only the long-answer body after combined attachment delivery", async () => {
+  it("never stores the long-answer body after combined attachment delivery", async () => {
     const longAnswer = "甲".repeat(200);
     const answer = vi.fn<Answer>(async (question, context) =>
       answered(question === "第一问" ? longAnswer : context ?? "无上下文"));
@@ -864,7 +866,8 @@ describe("LunkrPseBridge", () => {
     await bridge.handle(message("m1", "#a#U", "第一问"));
     await bridge.handle(message("m2", "#a#U", "第二问"));
 
-    expect(answer.mock.calls[1]?.[1]).toContain(longAnswer);
+    expect(answer.mock.calls[1]?.[1]).toContain("第一问");
+    expect(answer.mock.calls[1]?.[1]).not.toContain(longAnswer);
     expect(answer.mock.calls[1]?.[1]).not.toContain("完整回答.txt");
     expect(answer.mock.calls[1]?.[1]).not.toContain("问题 #1");
   });

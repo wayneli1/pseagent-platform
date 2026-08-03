@@ -97,6 +97,7 @@ export interface LunkrBridgeDependencies<Result> {
     signal?: AbortSignal,
   ) => Promise<Result>;
   readonly formatAnswer: (result: Result) => string;
+  /** @deprecated Answer bodies are intentionally excluded from conversation context. */
   readonly formatContextAnswer?: ((result: Result) => string) | undefined;
   readonly describeResult: (result: Result) => BridgeAnswerMetadata;
   readonly sendText: (peerUid: string, text: string) => Promise<void>;
@@ -352,16 +353,11 @@ export class LunkrPseBridge<Result> {
     } else {
       await this.sendAnswerChunks(message.peerUid, start, chunks);
     }
-    const contextAnswer = (
-      this.dependencies.formatContextAnswer?.(result) ?? answer
-    ).trim();
     if (
-      contextAnswer !== "" &&
       (metadata.status === "answered" || metadata.status === "partially_answered")
     ) {
       this.conversations.append(message.peerUid, {
         question,
-        answer: contextAnswer,
       });
     }
     this.emit({
