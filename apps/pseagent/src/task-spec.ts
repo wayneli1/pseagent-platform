@@ -205,6 +205,7 @@ export type TaskSpecIssueCode =
   | "obligation_source_not_found"
   | "explicit_entity_unmapped"
   | "explicit_entity_without_required_obligation"
+  | "distributive_entity_group_unresolved"
   | "explicit_request_unmapped"
   | "protected_fact_not_direct"
   | "domain_policy_conflict";
@@ -238,17 +239,22 @@ export interface ExplicitQuestionSignals {
     readonly sourceText: string;
     readonly items: readonly string[];
   }[];
+  readonly unresolvedDistributiveGroups: readonly string[];
   readonly requestClauses: readonly string[];
 }
 
-export function extractExplicitQuestionSignals(question: string): ExplicitQuestionSignals {
+export function extractExplicitQuestionSignals(
+  question: string,
+  options: { readonly anchoredEntitySourceTexts?: readonly string[] } = {},
+): ExplicitQuestionSignals {
   const entityGroups: Array<{ sourceText: string; items: string[] }> = [];
+  const unresolvedDistributiveGroups: string[] = [];
   const listPattern = /(?:参考(?:看看|一下)?|(?:分别|各自)?(?:对比|比较|说明|介绍|分析))(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)(?=(?:各自)?的|各自|分别|方案|案例|架构|差异|区别|$)/giu;
   for (const match of question.matchAll(listPattern)) {
     const sourceText = match.groups?.list?.trim();
     if (!sourceText) continue;
     const items = parallelEntityItems(sourceText, false);
-    if (items.length >= 2) entityGroups.push({ sourceText, items });
+    if (items.length >= 2) entityGroups.push({ sourceText, items: [...items] });
   }
   const comparisonPattern = /(?<left>[\p{L}\p{N}·（）()._-]{2,64}?)\s*(?:vs\.?|versus|与|和)\s*(?<right>[\p{L}\p{N}·（）()._-]{2,64}?)(?=\s*(?:的)?(?:差异|区别|对比|比较))/giu;
   for (const match of question.matchAll(comparisonPattern)) {
@@ -267,8 +273,13 @@ export function extractExplicitQuestionSignals(question: string): ExplicitQuesti
   for (const match of question.matchAll(distributiveParallelListPattern)) {
     const sourceText = match.groups?.list?.trim();
     if (!sourceText) continue;
-    const items = parallelEntityItems(sourceText, true);
-    if (items.length >= 2) entityGroups.push({ sourceText, items });
+    const distribution = distributiveEntityItems(
+      sourceText,
+      options.anchoredEntitySourceTexts,
+    );
+    const items = distribution.items;
+    if (items.length >= 2) entityGroups.push({ sourceText, items: [...items] });
+    else if (distribution.unresolved) unresolvedDistributiveGroups.push(sourceText);
   }
 
   const requestClauses: string[] = [];
@@ -286,6 +297,7 @@ export function extractExplicitQuestionSignals(question: string): ExplicitQuesti
   }
   return {
     entityGroups,
+    unresolvedDistributiveGroups: stableUniqueText(unresolvedDistributiveGroups),
     requestClauses: stableUniqueText(requestClauses),
   };
 }
@@ -333,6 +345,45 @@ function parallelEntityItems(
     .filter((item) => isPlausibleExplicitEntity(item));
 }
 
+function distributiveEntityItems(
+  sourceText: string,
+  anchoredEntitySourceTexts: readonly string[] | undefined,
+): { readonly items: readonly string[]; readonly unresolved: boolean } {
+  const strongSeparated = sourceText.split(/(?:、|，|,)/u);
+  if (strongSeparated.length > 1) {
+    const items = strongSeparated.map(cleanExplicitEntity).filter(isPlausibleExplicitEntity);
+    return { items, unresolved: items.length < 2 };
+  }
+  if (anchoredEntitySourceTexts === undefined) {
+    return { items: parallelEntityItems(sourceText, true), unresolved: false };
+  }
+
+  const candidates = stableUniqueText(anchoredEntitySourceTexts)
+    .filter((candidate) => isPlausibleExplicitEntity(candidate))
+    .sort((left, right) => right.length - left.length || left.localeCompare(right));
+  const selected: Array<{ text: string; index: number }> = [];
+  const foldedSourceText = sourceText.toLocaleLowerCase("zh-CN");
+  for (const candidate of candidates) {
+    const index = foldedSourceText.indexOf(candidate.toLocaleLowerCase("zh-CN"));
+    if (index < 0) continue;
+    const end = index + candidate.length;
+    if (selected.every((item) => end <= item.index || index >= item.index + item.text.length)) {
+      selected.push({ text: candidate, index });
+    }
+  }
+  selected.sort((left, right) => left.index - right.index);
+  if (selected.length < 2) return { items: [], unresolved: true };
+  for (let index = 1; index < selected.length; index += 1) {
+    const previous = selected[index - 1]!;
+    const next = selected[index]!;
+    const between = sourceText.slice(previous.index + previous.text.length, next.index);
+    if (!/^\s*(?:和|与|及|vs\.?)\s*$/iu.test(between)) {
+      return { items: [], unresolved: true };
+    }
+  }
+  return { items: selected.map((item) => item.text), unresolved: false };
+}
+
 function splitConjoinedEntitySegment(segment: string): string[] {
   const parts = segment.split(/(?:\s*(?:和|与|及)\s*|\s+vs\.?\s*)/iu);
   return parts.length > 1 && parts.every((part) => [...part.trim()].length >= 2)
@@ -378,12 +429,11 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
             obligationId: obligation.id,
           });
         }
-        const obligationText = `${obligation.label} ${obligation.sourceText}`;
         const targetEntities = obligation.targetEntityIds.flatMap((entityId) => {
           const entity = entitiesById.get(entityId);
           return entity === undefined ? [] : [entity];
         });
-        if (requiresDirectEvidence(obligation, obligationText, targetEntities)) {
+        if (requiresDirectEvidence(obligation, obligation.sourceText, targetEntities)) {
           issues.push({
             code: "protected_fact_not_direct",
             severity: "error",
@@ -405,7 +455,15 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
       }
     }
 
-    const signals = extractExplicitQuestionSignals(question);
+    const signals = extractExplicitQuestionSignals(question, {
+      anchoredEntitySourceTexts: spec.entities.map((entity) => entity.sourceText),
+    });
+    for (const sourceText of signals.unresolvedDistributiveGroups) {
+      issues.push({
+        code: "distributive_entity_group_unresolved",
+        severity: "error",
+      });
+    }
     const explicitEntities = stableUniqueText(
       signals.entityGroups.flatMap((group) => group.items),
     );
@@ -460,10 +518,6 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
 const STRONG_PRODUCT_FACT_PATTERN =
   /(?:协议|兼容|适配|版本|补丁|授权|报价|费用|认证|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发)/iu;
 
-const CONTEXTUAL_PRODUCT_FACT_PATTERN = /(?:功能|能力)/u;
-
-const PRODUCT_SUPPORT_FACT_PATTERN = /支持/iu;
-
 const PRODUCT_FACT_CONTEXT_PATTERN =
   /(?:产品|系统|平台|协议|接口|组件|模块|软件|应用|终端|环境|双活)/iu;
 
@@ -473,21 +527,13 @@ const PROTECTED_NUMERIC_FACT_PATTERN =
 const CUSTOMER_RELATIONSHIP_SUPPORT_FRAGMENT_PATTERN =
   /(?:客户(?:侧)?支持(?:者|团队)?|内部支持者|业务支持者)(?:\s*支持)?/gu;
 
-const EXHAUSTIVE_MARKER_PATTERN = /(?:全部|所有|全量|完整(?:列表|清单)?)/u;
-
 const STRONG_ENUMERABLE_FACT_OBJECT_PATTERN =
   /(?:接口|协议|版本|补丁|授权|报价|费用|认证|容量|性能|并发|案例|部署|架构|配置)/iu;
 
 const CONTEXTUAL_ENUMERABLE_FACT_OBJECT_PATTERN = /(?:功能|能力|组件|模块|清单|列表)/u;
 
-const RECOMMENDATION_OR_ORGANIZATIONAL_PATTERN =
-  /(?:如何|怎样|怎么|提升|改进|建议|行动|推进|团队|售前|销售)/u;
-
-const PRODUCT_CONTEXTUAL_CLAUSE_CONNECTOR_PATTERN =
-  /(?:并且|同时|然后|以及|并|且)(?=.{0,32}(?:产品|系统|平台|协议|接口|组件|模块|软件|应用|终端|环境|双活))/u;
-
-const PRODUCT_FACT_ACTION_CLAUSE_CONNECTOR_PATTERN =
-  /(?:并且|同时|然后|以及|并|且)\s*(?:分析|评估|介绍|说明|列出|总结|建议|推荐|给出|制定|设计|判断|排查|确认|核实|检查|了解|提升|改进)/u;
+const PRODUCT_FACT_HINT_PATTERN =
+  /(?:当前|现状|是否|哪些|什么|具备|确认|核实|支持|清单|列表|列出|有无|有没有|存在)/u;
 
 const OPPORTUNITY_FORECAST_PATTERN =
   /(?:赢率|胜率|成交概率|成功概率|机会(?:质量|预测|判断)|销售预测|预测(?:结果|概率))/u;
@@ -499,43 +545,61 @@ function requiresDirectEvidence(
 ): boolean {
   if (obligation.evidencePolicy === "direct") return false;
   const productTarget = targetEntities.some((entity) => entity.role === "product");
-  const productFactClauses = value.replace(
+  const productFactText = value.replace(
     CUSTOMER_RELATIONSHIP_SUPPORT_FRAGMENT_PATTERN,
     " ",
-  )
-    .split(/[，,；;。！？!?]+/u)
-    .flatMap((clause) => clause
-      .split(PRODUCT_CONTEXTUAL_CLAUSE_CONNECTOR_PATTERN)
-      .flatMap((part) => part.split(PRODUCT_FACT_ACTION_CLAUSE_CONNECTOR_PATTERN)));
-  if (productFactClauses.some((clause) =>
-    requiresDirectProductEvidenceInClause(clause, productTarget))) {
+  );
+  if (requiresDirectProductEvidence(productFactText, productTarget)) {
     return true;
   }
   return PROTECTED_NUMERIC_FACT_PATTERN.test(value) &&
     !isCustomerInputOpportunityForecast(obligation, value);
 }
 
-function requiresDirectProductEvidenceInClause(
-  clause: string,
+function requiresDirectProductEvidence(
+  value: string,
   productTarget: boolean,
 ): boolean {
-  const productFactContext =
-    productTarget || PRODUCT_FACT_CONTEXT_PATTERN.test(clause);
-  const contextualProductFact =
-    productFactContext &&
-    CONTEXTUAL_PRODUCT_FACT_PATTERN.test(clause) &&
-    !RECOMMENDATION_OR_ORGANIZATIONAL_PATTERN.test(clause);
-  const exhaustiveFact =
-    EXHAUSTIVE_MARKER_PATTERN.test(clause) &&
-    (
-      STRONG_ENUMERABLE_FACT_OBJECT_PATTERN.test(clause) ||
-      (productFactContext &&
-        CONTEXTUAL_ENUMERABLE_FACT_OBJECT_PATTERN.test(clause))
-    );
-  return STRONG_PRODUCT_FACT_PATTERN.test(clause) ||
-    contextualProductFact ||
-    exhaustiveFact ||
-    (productFactContext && PRODUCT_SUPPORT_FACT_PATTERN.test(clause));
+  if (STRONG_PRODUCT_FACT_PATTERN.test(value)) return true;
+  if (hasLocalContextualProductFact(value, productTarget)) return true;
+  if (hasLocalProductSupportFact(value, productTarget)) return true;
+  return hasLocalExhaustiveFact(value, productTarget);
+}
+
+function hasLocalContextualProductFact(value: string, productTarget: boolean): boolean {
+  return [...value.matchAll(/(?:功能|能力)/gu)].some((match) => {
+    const local = localTextWindow(value, match.index ?? 0, match[0].length);
+    return (productTarget || PRODUCT_FACT_CONTEXT_PATTERN.test(local)) &&
+      PRODUCT_FACT_HINT_PATTERN.test(local);
+  });
+}
+
+function hasLocalProductSupportFact(value: string, productTarget: boolean): boolean {
+  return [...value.matchAll(/支持/gu)].some((match) => {
+    const local = localTextWindow(value, match.index ?? 0, match[0].length);
+    return productTarget || PRODUCT_FACT_CONTEXT_PATTERN.test(local);
+  });
+}
+
+function hasLocalExhaustiveFact(value: string, productTarget: boolean): boolean {
+  const objects = [...value.matchAll(/(?:接口|协议|版本|补丁|授权|报价|费用|认证|容量|性能|并发|案例|部署|架构|配置|功能|能力|组件|模块|清单|列表)/gu)];
+  return [...value.matchAll(/(?:全部|所有|全量|完整(?:列表|清单)?)/gu)].some((marker) =>
+    objects.some((object) => {
+      const markerIndex = marker.index ?? 0;
+      const objectIndex = object.index ?? 0;
+      if (Math.abs(markerIndex - objectIndex) > 12) return false;
+      const local = localTextWindow(value, objectIndex, object[0].length);
+      const isContextualObject = CONTEXTUAL_ENUMERABLE_FACT_OBJECT_PATTERN.test(object[0]);
+      const hasProductContext = productTarget || PRODUCT_FACT_CONTEXT_PATTERN.test(local);
+      if (isContextualObject && !hasProductContext) return false;
+      if (!STRONG_ENUMERABLE_FACT_OBJECT_PATTERN.test(object[0]) && !isContextualObject) return false;
+      const following = value.slice(objectIndex + object[0].length, objectIndex + object[0].length + 8);
+      return !/^\s*(?:方式)?(?:优化|改造|提升|建议|行动|方案)/u.test(following);
+    }));
+}
+
+function localTextWindow(value: string, index: number, length: number): string {
+  return value.slice(Math.max(0, index - 16), index + length + 16);
 }
 
 function isCustomerInputOpportunityForecast(
