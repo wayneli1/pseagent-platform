@@ -44,7 +44,7 @@ export const MAX_GRAPH_ACTIONS_PER_REQUIREMENT = 1;
 export const MAX_AGENT_TURNS_PER_REQUIREMENT = 7;
 const RRF_K = 60;
 const SEED_TOP_K = 10;
-const SYNTHESIS_SEED_TOP_K_LIMIT = 20;
+const SEED_TOP_K_LIMIT = 20;
 
 export function readLimitFor(requirement: KnowledgeRequirement): number {
   return requirement.evidenceMode === "synthesis_allowed"
@@ -2020,12 +2020,10 @@ function matchingAspectIds(
 }
 
 function seedTopKFor(requirement: KnowledgeRequirement): number {
-  return requirement.evidenceMode === "synthesis_allowed"
-    ? Math.min(
-        SYNTHESIS_SEED_TOP_K_LIMIT,
-        Math.max(SEED_TOP_K, requirement.evidenceAspects.length * 3),
-      )
-    : SEED_TOP_K;
+  return Math.min(
+    SEED_TOP_K_LIMIT,
+    Math.max(SEED_TOP_K, requirement.evidenceAspects.length * 3),
+  );
 }
 
 function attributedSearchAspectIds(

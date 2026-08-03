@@ -27,21 +27,24 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
         return normalizeDirectQueryAspectTerms(
           normalizeDirectComparisonAspects(
             input.question,
-            enforceProtectedEvidenceModes(
-              normalizeSynthesisQueries(
-                normalizePlanRequirements(
-                  input.question,
-                  await this.complete(
-                    attempt === 1
-                      ? messages
-                      : [
-                          ...messages,
-                          {
-                            role: "user",
-                            content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
-                          },
-                        ],
-                    input.signal,
+            pruneUnrequestedDirectNeighborAspects(
+              input.question,
+              enforceProtectedEvidenceModes(
+                normalizeSynthesisQueries(
+                  normalizePlanRequirements(
+                    input.question,
+                    await this.complete(
+                      attempt === 1
+                        ? messages
+                        : [
+                            ...messages,
+                            {
+                              role: "user",
+                              content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
+                            },
+                          ],
+                      input.signal,
+                    ),
                   ),
                 ),
               ),
@@ -338,6 +341,149 @@ function enforceProtectedEvidenceModes(plan: KnowledgePlan): KnowledgePlan {
   });
 }
 
+const DIRECT_NEIGHBOR_INTENT_GROUPS = [
+  {
+    aspect: /(?:客户(?!端)|项目|案例|实例)/u,
+    question: /(?:客户(?!端)|项目|案例|实例)/u,
+  },
+  {
+    aspect: /(?:部署|安装|启用|使用方式)/u,
+    question: /(?:部署|安装|启用|使用方式)/u,
+  },
+  {
+    aspect: /(?:安全|反垃圾|防护|合规|审计)/u,
+    question: /(?:安全|反垃圾|防护|合规|审计)/u,
+  },
+  {
+    aspect: /(?:对接|集成|认证|同步)/u,
+    question: /(?:对接|集成|认证|同步)/u,
+  },
+  {
+    aspect: /(?:迁移|升级)/u,
+    question: /(?:迁移|升级)/u,
+  },
+  {
+    aspect: /(?:版本|授权|价格|报价|费用|资质|许可证|认证证书)/u,
+    question: /(?:版本|授权|价格|报价|费用|资质|许可证|认证证书)/u,
+  },
+] as const;
+
+function pruneUnrequestedDirectNeighborAspects(
+  question: string,
+  plan: KnowledgePlan,
+): KnowledgePlan {
+  return knowledgePlanSchema.parse({
+    ...plan,
+    requirements: plan.requirements.map((requirement) => {
+      if (
+        requirement.evidenceMode !== "direct_only" ||
+        requirement.evidenceAspects.length <= 1
+      ) {
+        return requirement;
+      }
+      const retainedAspects = requirement.evidenceAspects.filter((aspect) => {
+        const aspectText = [aspect.label, ...aspect.terms].join(" ");
+        return !DIRECT_NEIGHBOR_INTENT_GROUPS.some((group) =>
+          group.aspect.test(aspectText) && !group.question.test(question)
+        );
+      });
+      if (
+        retainedAspects.length === 0 ||
+        retainedAspects.length === requirement.evidenceAspects.length
+      ) {
+        return requirement;
+      }
+
+      const aspectIdMap = new Map(
+        retainedAspects.map((aspect, index) => [
+          aspect.id,
+          `A${index + 1}` as KnowledgePlan["requirements"][number]["evidenceAspects"][number]["id"],
+        ]),
+      );
+      const retainedTermKeys = new Set(
+        retainedAspects.flatMap((aspect) =>
+          aspect.terms.map((term) => normalizePlannerText(term))
+        ),
+      );
+      const removedTerms = requirement.evidenceAspects
+        .filter((aspect) => !aspectIdMap.has(aspect.id))
+        .flatMap((aspect) => aspect.terms)
+        .filter((term) => !retainedTermKeys.has(normalizePlannerText(term)));
+      const queryMap = new Map<
+        string,
+        { text: string; aspectIds: Set<string> }
+      >();
+      for (const query of requirement.queries) {
+        const mappedIds = query.aspectIds.flatMap((aspectId) => {
+          const mapped = aspectIdMap.get(aspectId);
+          return mapped === undefined ? [] : [mapped];
+        });
+        if (mappedIds.length === 0) continue;
+        const text = removeExactPlannerTerms(query.text, removedTerms) ||
+          requirement.question;
+        const normalized = normalizePlannerText(text);
+        const entry = queryMap.get(normalized) ?? {
+          text,
+          aspectIds: new Set<string>(),
+        };
+        for (const aspectId of mappedIds) entry.aspectIds.add(aspectId);
+        queryMap.set(normalized, entry);
+      }
+      const retainedIds = [...aspectIdMap.values()];
+      const queries = [...queryMap.values()].map((query) => ({
+        text: query.text,
+        aspectIds: [...query.aspectIds],
+      }));
+      if (queries.length === 0) {
+        queries.push({
+          text: requirement.question,
+          aspectIds: retainedIds,
+        });
+      } else {
+        const coveredIds = new Set(
+          queries.flatMap((query) => query.aspectIds),
+        );
+        queries[0] = {
+          ...queries[0]!,
+          aspectIds: [
+            ...queries[0]!.aspectIds,
+            ...retainedIds.filter((aspectId) => !coveredIds.has(aspectId)),
+          ],
+        };
+      }
+      return {
+        ...requirement,
+        evidenceAspects: retainedAspects.map((aspect, index) => ({
+          ...aspect,
+          id: `A${index + 1}`,
+        })),
+        queries,
+      };
+    }),
+  });
+}
+
+function removeExactPlannerTerms(
+  value: string,
+  terms: readonly string[],
+): string {
+  return [...terms]
+    .sort((left, right) => [...right].length - [...left].length)
+    .reduce(
+      (text, term) => text.replace(
+        new RegExp(escapeRegExp(term), "giu"),
+        " ",
+      ),
+      value,
+    )
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 function normalizeDirectComparisonAspects(
   question: string,
   plan: KnowledgePlan,
@@ -412,6 +558,7 @@ const PRODUCT_COMPARISON_PATTERN =
 const PROTECTED_EVIDENCE_PATTERNS = [
   /(?:是否|能否|有没有|是否具备|是否兼容|是否适配|支不支持|支持哪些)/u,
   /(?:协议|功能|能力|产品).{0,8}(?:支持|兼容|适配)|(?:支持|兼容|适配).{0,8}(?:协议|功能|能力|产品)/u,
+  /(?:(?:功能|能力|特性).{0,8}(?:有哪些|有什么|能做什么)|(?:有哪些|有什么).{0,8}(?:功能|能力|特性)|能做什么|(?:功能|能力|特性)(?:列表|清单)|(?:列出|罗列).{0,16}(?:功能|能力|特性))/u,
   /(?:不支持|尚未提供|已经下线|版本|补丁|发布日期|生命周期|兼容|适配)/u,
   /(?:授权|报价|费用|采购|许可证|认证)/u,
   PRODUCT_COMPARISON_PATTERN,
