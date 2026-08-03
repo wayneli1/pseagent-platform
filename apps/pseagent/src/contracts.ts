@@ -340,7 +340,10 @@ export type RouteAction = z.infer<typeof routeActionSchema>;
 export type EvidenceAspect = z.infer<typeof evidenceAspectSchema>;
 export type KnowledgeQuery = z.infer<typeof knowledgeQuerySchema>;
 export type KnowledgeRequirement = z.infer<typeof knowledgeRequirementSchema>;
-export type KnowledgePlan = z.infer<typeof knowledgePlanSchema>;
+export type KnowledgePlan = z.infer<typeof knowledgePlanSchema> & {
+  /** Internal retrieval strategy. It is never accepted from model JSON. */
+  readonly retrievalStrategy?: "coverage_units";
+};
 export type RelatedContextItem = {
   readonly statement: string;
   readonly citations: readonly number[];

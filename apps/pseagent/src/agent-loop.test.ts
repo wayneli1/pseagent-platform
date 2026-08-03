@@ -157,9 +157,12 @@ function fakeSession(options: {
   readonly hits?: Readonly<Record<string, readonly SearchFixture[]>>;
   readonly graphHits?: readonly SearchFixture[];
   readonly failAllSearches?: boolean;
+  readonly failedQueries?: readonly string[];
 } = {}) {
   const searchMock = vi.fn(async (query: string) => {
-    if (options.failAllSearches) throw new Error("search unavailable");
+    if (options.failAllSearches || options.failedQueries?.includes(query)) {
+      throw new Error("search unavailable");
+    }
     const fixtures = options.hits?.[query] ?? [];
     return {
       project: "coremail-professional" as const,
@@ -278,6 +281,299 @@ function payloadAt(model: ReturnType<typeof scriptedAgentModel>, index: number) 
 }
 
 describe("runKnowledgeAgent", () => {
+  it("keeps coverage-unit seed searches isolated from the global raw question", async () => {
+    const plan: KnowledgePlan = {
+      subject: "并列对象",
+      retrievalStrategy: "coverage_units",
+      requirements: [
+        {
+          id: "R1",
+          question: "甲公司的目标方案",
+          ...plannedEvidence("甲公司 目标方案"),
+          evidenceMode: "direct_only",
+        },
+        {
+          id: "R2",
+          question: "乙公司的目标方案",
+          ...plannedEvidence("乙公司 目标方案"),
+          evidenceMode: "direct_only",
+        },
+      ],
+    };
+    const session = fakeSession();
+    const model = scriptedAgentModel([
+      final("none", "", [], [
+        { id: "R1", coverage: "none", citations: [] },
+        { id: "R2", coverage: "none", citations: [] },
+      ]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.search.mock.calls.map(([query]) => query)).toEqual([
+      "甲公司 目标方案",
+      "乙公司 目标方案",
+    ]);
+    expect(session.search).not.toHaveBeenCalledWith(
+      "测试问题",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("preloads at most one page per coverage unit before the first model call", async () => {
+    const plan: KnowledgePlan = {
+      subject: "三个并列对象",
+      retrievalStrategy: "coverage_units",
+      requirements: [
+        { id: "R1", question: "对象一", ...plannedEvidence("seed-r1"), evidenceMode: "direct_only" },
+        { id: "R2", question: "对象二", ...plannedEvidence("seed-r2"), evidenceMode: "direct_only" },
+        { id: "R3", question: "对象三", ...plannedEvidence("seed-r3"), evidenceMode: "direct_only" },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/r1-first.md" },
+          { path: "wiki/r1-second.md" },
+          { path: "wiki/r1-third.md" },
+        ],
+        "seed-r2": [{ path: "wiki/r2.md" }],
+        "seed-r3": [{ path: "wiki/r3.md" }],
+      },
+    });
+    const model = scriptedAgentModel([
+      final("complete", "三个对象均已确认", [1, 2, 3], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [2] },
+        { id: "R3", coverage: "complete", citations: [3] },
+      ]),
+    ]);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "coverage-unit-fair-preload",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      trace,
+    });
+
+    expect(session.readPage.mock.calls.map(([path]) => path)).toEqual([
+      "wiki/r1-first.md",
+      "wiki/r2.md",
+      "wiki/r3.md",
+    ]);
+    expect(payloadAt(model, 0).requirementEvidence?.map((requirement) => ({
+      id: requirement.id,
+      read: requirement.candidates.filter((candidate) => candidate.read).length,
+    }))).toEqual([
+      { id: "R1", read: 1 },
+      { id: "R2", read: 1 },
+      { id: "R3", read: 1 },
+    ]);
+    const verified = events.find((event) =>
+      event.event === "coverage" && event.stage === "verified");
+    const r1Diagnostic = (verified as unknown as {
+      requirements: Array<{
+        id: string;
+        candidateCount: number;
+        readCandidateCount: number;
+        unreadCandidateCount: number;
+        remainingReads: number;
+      }>;
+    }).requirements.find((requirement) => requirement.id === "R1");
+    expect(r1Diagnostic).toMatchObject({
+      candidateCount: 3,
+      readCandidateCount: 1,
+      unreadCandidateCount: 2,
+      remainingReads: 2,
+    });
+    expect(result.status).toBe("answered");
+  });
+
+  it("deduplicates one targeted page across coverage-unit batch reads", async () => {
+    const plan: KnowledgePlan = {
+      subject: "共享正式证据",
+      retrievalStrategy: "coverage_units",
+      requirements: [
+        { id: "R1", question: "对象一", ...plannedEvidence("seed-r1"), evidenceMode: "direct_only" },
+        { id: "R2", question: "对象二", ...plannedEvidence("seed-r2"), evidenceMode: "direct_only" },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{ path: "wiki/shared.md" }],
+        "seed-r2": [{ path: "wiki/shared.md" }],
+      },
+    });
+    const model = scriptedAgentModel([
+      final("complete", "同一正式页面分别支持两个对象", [1], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [1] },
+      ]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.readPage).toHaveBeenCalledOnce();
+    expect(payloadAt(model, 0).requirementEvidence?.map((requirement) => ({
+      id: requirement.id,
+      citations: requirement.citationIndexes,
+      read: requirement.candidates[0]?.read,
+    }))).toEqual([
+      { id: "R1", citations: [1], read: true },
+      { id: "R2", citations: [1], read: true },
+    ]);
+    expect(result.status).toBe("answered");
+  });
+
+  it("keeps independent coverage-unit seed states in coverage diagnostics", async () => {
+    const plan: KnowledgePlan = {
+      subject: "不同检索状态",
+      retrievalStrategy: "coverage_units",
+      requirements: [
+        { id: "R1", question: "有候选", ...plannedEvidence("seed-success"), evidenceMode: "direct_only" },
+        { id: "R2", question: "空结果", ...plannedEvidence("seed-empty"), evidenceMode: "direct_only" },
+        { id: "R3", question: "检索失败", ...plannedEvidence("seed-failed"), evidenceMode: "direct_only" },
+      ],
+    };
+    const session = fakeSession({
+      hits: { "seed-success": [{ path: "wiki/supported.md" }] },
+      failedQueries: ["seed-failed"],
+    });
+    const model = scriptedAgentModel([
+      final("partial", "仅对象一已确认", [1], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "none", citations: [] },
+        { id: "R3", coverage: "none", citations: [] },
+      ]),
+    ]);
+    const events: DiagnosticEvent[] = [];
+    const trace = {
+      requestId: "coverage-unit-seed-states",
+      record(event: DiagnosticEvent) {
+        events.push(event);
+      },
+    } satisfies DiagnosticTrace;
+
+    await runKnowledgeAgent({ ...agentInput(model, session, plan), trace });
+
+    const verified = events.find((event) =>
+      event.event === "coverage" && event.stage === "verified");
+    const requirements = (verified as unknown as {
+      requirements: Array<{
+        id: string;
+        candidateCount: number;
+        readCandidateCount: number;
+        unreadCandidateCount: number;
+        remainingReads: number;
+        seedSearchStatus: string;
+      }>;
+    }).requirements;
+    expect(requirements).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "R1",
+        candidateCount: 1,
+        readCandidateCount: 1,
+        unreadCandidateCount: 0,
+        remainingReads: 2,
+        seedSearchStatus: "success",
+      }),
+      expect.objectContaining({
+        id: "R2",
+        candidateCount: 0,
+        readCandidateCount: 0,
+        unreadCandidateCount: 0,
+        remainingReads: 3,
+        seedSearchStatus: "empty",
+      }),
+      expect.objectContaining({
+        id: "R3",
+        candidateCount: 0,
+        readCandidateCount: 0,
+        unreadCandidateCount: 0,
+        remainingReads: 3,
+        seedSearchStatus: "unavailable",
+      }),
+    ]));
+  });
+
+  it("does not adopt another coverage unit's final citation without candidate ownership", async () => {
+    const plan: KnowledgePlan = {
+      subject: "引用隔离",
+      retrievalStrategy: "coverage_units",
+      requirements: [
+        { id: "R1", question: "对象一", ...plannedEvidence("seed-r1"), evidenceMode: "direct_only" },
+        { id: "R2", question: "对象二", ...plannedEvidence("seed-r2"), evidenceMode: "direct_only" },
+      ],
+    };
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/r1.md" }], "seed-r2": [] },
+    });
+    const model = scriptedAgentModel([
+      final("complete", "错误地让两个对象共用引用", [1], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [1] },
+      ]),
+      final("partial", "仅对象一有正式证据", [1], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "none", citations: [] },
+      ]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(model.calls).toBe(2);
+    expect(payloadAt(model, 1).observations?.join("\n")).toContain(
+      "invalid_citations",
+    );
+    expect(result.status).toBe("partially_answered");
+    expect(result.references.map((reference) => reference.path)).toEqual([
+      "wiki/r1.md",
+    ]);
+  });
+
+  it("does not expand graph candidates from a global-only source", async () => {
+    const plan: KnowledgePlan = {
+      subject: "图谱归属隔离",
+      retrievalStrategy: "coverage_units",
+      requirements: [{
+        id: "R1",
+        question: "对象一",
+        ...plannedEvidence("seed-r1"),
+        evidenceMode: "direct_only",
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "测试问题": [{ path: "wiki/global-only.md" }],
+        "seed-r1": [],
+      },
+      graphHits: [{ path: "wiki/washed-graph-hit.md" }],
+    });
+    const model = scriptedAgentModel([
+      graph("R1", "wiki/global-only.md"),
+      final("none", "该单元没有定向候选"),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.graph).not.toHaveBeenCalled();
+    expect(payloadAt(model, 1).observations?.join("\n")).toContain(
+      "requirement_graph_action_rejected",
+    );
+    expect(session.search).not.toHaveBeenCalledWith(
+      "测试问题",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(result.status).toBe("not_covered");
+  });
+
   it("downgrades related-only protocol pages to not covered before status mapping", async () => {
     const question = "Coremail 是否已经支持 2035 年量子卫星邮件协议";
     const plan: KnowledgePlan = {

@@ -95,10 +95,13 @@ type RequirementState = {
   readonly requirement: KnowledgeRequirement;
   readonly queries: Set<string>;
   readonly candidatePaths: Map<string, Candidate>;
+  readonly seedCandidatePaths: Set<string>;
   readonly readPaths: Set<string>;
   readonly directReadPaths: Set<string>;
   readonly citationIndexes: Set<number>;
   readonly readAspectIds: Set<string>;
+  successfulSeedSearches: number;
+  failedSeedSearches: number;
   supplementalSearches: number;
   graphActions: number;
   noGainRounds: number;
@@ -128,7 +131,11 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
     recordDiagnostic(input.trace, { event: "stop", reason: "seed_unavailable" });
     return unavailableResult(input.scope);
   }
-  await preloadBroadSynthesisEvidence(input, state);
+  if (input.plan.retrievalStrategy === "coverage_units") {
+    await preloadCoverageUnitEvidence(input, state);
+  } else {
+    await preloadBroadSynthesisEvidence(input, state);
+  }
 
   const maxTurns = Math.min(
     40,
@@ -269,6 +276,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       }
       recordCoverage(
         input,
+        state,
         normalizedAction,
         "draft",
         deadlineReached(input) ? "deadline" : "final",
@@ -316,6 +324,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       }
       recordCoverage(
         input,
+        state,
         auditedAction,
         "verified",
         deadlineReached(input) ? "deadline" : "final",
@@ -362,6 +371,18 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
     }
   }
   return fallbackUnavailable(input, "turn_budget_exhausted");
+}
+
+async function preloadCoverageUnitEvidence(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+): Promise<void> {
+  const action = recoveryReadAction(
+    state,
+    input.plan.requirements.map((requirement) => requirement.id),
+  );
+  if (action === undefined) return;
+  await executeToolAction(action, input, state);
 }
 
 async function preloadBroadSynthesisEvidence(
@@ -489,13 +510,18 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
         requirement,
         queries: new Set([
           ...requirement.queries.map((query) => normalizeQuery(query.text)),
-          normalizeQuery(input.question),
+          ...(input.plan.retrievalStrategy === "coverage_units"
+            ? []
+            : [normalizeQuery(input.question)]),
         ]),
         candidatePaths: new Map(),
+        seedCandidatePaths: new Set(),
         readPaths: new Set(),
         directReadPaths: new Set(),
         citationIndexes: new Set(),
         readAspectIds: new Set(),
+        successfulSeedSearches: 0,
+        failedSeedSearches: 0,
         supplementalSearches: 0,
         graphActions: 0,
         noGainRounds: 0,
@@ -518,25 +544,29 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
 
 async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState): Promise<void> {
   const globalQuery = input.question.trim();
-  recordDiagnostic(input.trace, {
-    event: "search",
-    requirementId: "GLOBAL",
-    phase: "seed",
-    queryChars: globalQuery.length,
-    aspectIds: [],
-  });
-  const globalSearch = input.session.search(globalQuery, SEED_TOP_K, toolSignal(input))
-    .then((result) => {
-      state.successfulSeedSearches += 1;
-      return { query: globalQuery, result };
-    })
-    .catch(() => {
-      observe(state, {
-        type: "global_question_search_unavailable",
-        query: globalQuery,
-      });
-      return undefined;
-    });
+  const globalSearch = input.plan.retrievalStrategy === "coverage_units"
+    ? Promise.resolve(undefined)
+    : (() => {
+        recordDiagnostic(input.trace, {
+          event: "search",
+          requirementId: "GLOBAL",
+          phase: "seed",
+          queryChars: globalQuery.length,
+          aspectIds: [],
+        });
+        return input.session.search(globalQuery, SEED_TOP_K, toolSignal(input))
+          .then((result) => {
+            state.successfulSeedSearches += 1;
+            return { query: globalQuery, result };
+          })
+          .catch(() => {
+            observe(state, {
+              type: "global_question_search_unavailable",
+              query: globalQuery,
+            });
+            return undefined;
+          });
+      })();
 
   const requirementSearches = [...state.requirements.values()].map(async (requirementState) => {
     const seedQueries = expandSeedQueries(requirementState.requirement);
@@ -559,8 +589,13 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
           toolSignal(input),
         );
         state.successfulSeedSearches += 1;
+        requirementState.successfulSeedSearches += 1;
+        for (const hit of result.hits) {
+          requirementState.seedCandidatePaths.add(hit.path);
+        }
         return { query: query.text, aspectIds: query.aspectIds, result };
       } catch {
+        requirementState.failedSeedSearches += 1;
         observe(state, {
           type: "seed_search_unavailable",
           requirementId: requirementState.requirement.id,
@@ -880,7 +915,16 @@ async function executeBatchReads(
     reserved.set(page.requirementId, pending + 1);
     accepted.push({ page, requirementState });
   }
-  await Promise.all(accepted.map(async ({ page, requirementState }) => {
+  const distinctReads = new Map<
+    string,
+    { page: { requirementId: string; path: string }; requirementState: RequirementState }
+  >();
+  for (const acceptedRead of accepted) {
+    if (!distinctReads.has(acceptedRead.page.path)) {
+      distinctReads.set(acceptedRead.page.path, acceptedRead);
+    }
+  }
+  await Promise.all([...distinctReads.values()].map(async ({ page, requirementState }) => {
     try {
       await executeRead(
         {
@@ -1118,6 +1162,12 @@ function shareFinalAnswerEvidence(
       );
       const document = source?.[1].get(citation);
       if (source === undefined || document === undefined) continue;
+      if (
+        input.plan.retrievalStrategy === "coverage_units" &&
+        !targetState.candidatePaths.get(document.path)?.requirementSpecificMatch
+      ) {
+        continue;
+      }
       targetState.citationIndexes.add(citation);
       targetState.readPaths.add(document.path);
       for (
@@ -1156,12 +1206,24 @@ async function executeGraph(
   state: AgentState,
   requirementState: RequirementState,
 ): Promise<void> {
+  const sourceCandidate = requirementState.candidatePaths.get(action.input.path);
   if (
     requirementState.graphActions >= MAX_GRAPH_ACTIONS_PER_REQUIREMENT ||
-    !requirementState.candidatePaths.has(action.input.path)
+    sourceCandidate === undefined
   ) {
     observe(state, {
       type: "requirement_graph_action_rejected",
+      requirementId: requirementState.requirement.id,
+      path: action.input.path,
+    });
+    return;
+  }
+  if (
+    input.plan.retrievalStrategy === "coverage_units" &&
+    !sourceCandidate.requirementSpecificMatch
+  ) {
+    observe(state, {
+      type: "graph_source_not_requirement_specific",
       requirementId: requirementState.requirement.id,
       path: action.input.path,
     });
@@ -1369,6 +1431,7 @@ function coverageEvidence(
 
 function recordCoverage(
   input: KnowledgeAgentInput,
+  state: AgentState,
   action: FinalAction,
   stage: "draft" | "verified",
   stopReason: "final" | "deadline",
@@ -1385,11 +1448,15 @@ function recordCoverage(
         (candidate) => candidate.id === requirement.id,
       );
       const summary = summaryById.get(requirement.id);
+      const retrieval = coverageRetrievalDiagnostics(
+        state.requirements.get(requirement.id),
+      );
       return {
         id: requirement.id,
         evidenceMode: planned?.evidenceMode ?? "direct_only",
         coverage: requirement.coverage,
         citations: requirementEvidenceCitations(requirement),
+        ...retrieval,
         ...(summary === undefined
           ? {}
           : {
@@ -1419,6 +1486,44 @@ function recordCoverage(
     citations: action.citations,
     stopReason,
   });
+}
+
+function coverageRetrievalDiagnostics(
+  requirementState: RequirementState | undefined,
+): {
+  readonly candidateCount: number;
+  readonly readCandidateCount: number;
+  readonly unreadCandidateCount: number;
+  readonly remainingReads: number;
+  readonly seedSearchStatus: "success" | "empty" | "unavailable";
+} {
+  if (requirementState === undefined) {
+    return {
+      candidateCount: 0,
+      readCandidateCount: 0,
+      unreadCandidateCount: 0,
+      remainingReads: 0,
+      seedSearchStatus: "unavailable",
+    };
+  }
+  const candidatePaths = [...requirementState.candidatePaths.keys()];
+  const readCandidateCount = candidatePaths.filter((path) =>
+    requirementState.readPaths.has(path)).length;
+  return {
+    candidateCount: candidatePaths.length,
+    readCandidateCount,
+    unreadCandidateCount: candidatePaths.length - readCandidateCount,
+    remainingReads: Math.max(
+      0,
+      readLimitFor(requirementState.requirement) -
+        requirementState.directReadPaths.size,
+    ),
+    seedSearchStatus: requirementState.seedCandidatePaths.size > 0
+      ? "success"
+      : requirementState.successfulSeedSearches > 0
+        ? "empty"
+        : "unavailable",
+  };
 }
 
 function normalizeFinalCitationMetadata(

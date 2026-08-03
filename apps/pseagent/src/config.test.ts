@@ -23,6 +23,7 @@ describe("loadConfig", () => {
     expect(config.PSE_REQUEST_TIMEOUT_MS).toBe(300_000);
     expect(config.PSE_ACTIVE_DEADLINE_MS).toBe(270_000);
     expect(config.taskSpecShadow).toEqual({ enabled: false });
+    expect(config.taskSpecActiveEnabled).toBe(false);
     expect(config).not.toHaveProperty("JUDGE_MODEL_NAME");
   });
 
@@ -50,6 +51,22 @@ describe("loadConfig", () => {
     expect(() => loadConfig({
       ...baseEnv,
       PSE_TASK_SPEC_SHADOW_ENABLED: "yes",
+    })).toThrow();
+  });
+
+  it("requires TaskSpec shadow analysis before active plan replacement", () => {
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+    }).taskSpecActiveEnabled).toBe(true);
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+    })).toThrow("PSE_TASK_SPEC_ACTIVE_ENABLED requires PSE_TASK_SPEC_SHADOW_ENABLED=true");
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "yes",
     })).toThrow();
   });
 

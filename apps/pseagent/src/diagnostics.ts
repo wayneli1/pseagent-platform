@@ -9,6 +9,7 @@ import type {
   Scope,
 } from "./contracts.js";
 import type { TaskSpecIssueCode } from "./task-spec.js";
+import type { TaskPlanAdapterInactiveReason } from "./task-plan-adapter.js";
 
 export type PseStopReason =
   | "seed_unavailable"
@@ -60,6 +61,16 @@ export type DiagnosticEvent =
       readonly event: "task_spec_shadow";
       readonly result: "completed" | "invalid" | "unavailable" | "timeout";
       readonly elapsedMs: number;
+    }
+  | {
+      readonly event: "task_spec_activation";
+      readonly activated: boolean;
+      readonly reason:
+        | "activated"
+        | "disabled"
+        | "analysis_unavailable"
+        | TaskPlanAdapterInactiveReason;
+      readonly requirementCount: number;
     }
   | {
       readonly event: "plan";
@@ -116,6 +127,12 @@ export type DiagnosticEvent =
         readonly evidenceMode: "direct_only" | "synthesis_allowed";
         readonly coverage: Coverage;
         readonly citations: readonly number[];
+        /** Retrieval ledger snapshot; optional for compatibility with external traces. */
+        readonly candidateCount?: number;
+        readonly readCandidateCount?: number;
+        readonly unreadCandidateCount?: number;
+        readonly remainingReads?: number;
+        readonly seedSearchStatus?: "success" | "empty" | "unavailable";
         readonly retainedDirectSegmentCount?: number;
         readonly retainedSynthesizedSegmentCount?: number;
         readonly removedSegmentCount?: number;

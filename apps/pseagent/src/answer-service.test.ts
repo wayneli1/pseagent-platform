@@ -231,12 +231,244 @@ describe("AnswerService", () => {
       "task_spec",
       "task_spec_guard",
       "task_spec_shadow",
+      "task_spec_activation",
       "finish",
     ]);
     expect(JSON.stringify(events)).not.toContain("华为");
   });
 
+  it("activates a guarded TaskSpec plan and uses its standalone question end to end", async () => {
+    const events: DiagnosticEvent[] = [];
+    const rawQuestion = "还有华为呢？";
+    const rawContext = "用户：讨论 Coremail 客户多节点方案";
+    const standaloneQuestion = "Coremail 华为有哪些多节点方案？";
+    const shadow = {
+      analyze: vi.fn(async () => ({
+        resolvedQuestion: {
+          rawQuestion,
+          standaloneQuestion,
+          contextUsed: true,
+          inheritedSubjects: ["Coremail 多节点方案"],
+          corrections: [],
+        },
+        taskSpec: taskSpecSchema.parse({
+          subject: "华为多节点方案",
+          entities: [{ id: "E1", label: "华为", role: "reference", sourceText: "华为" }],
+          deliverables: [{
+            id: "D1",
+            label: "华为多节点方案",
+            kind: "fact",
+            required: true,
+            sourceText: "华为有哪些多节点方案",
+            obligations: [{
+              id: "O1",
+              label: "华为多节点方案",
+              targetEntityIds: ["E1"],
+              evidencePolicy: "direct",
+              domains: ["coremail-professional"],
+              required: true,
+              sourceText: "华为",
+            }],
+          }],
+        }),
+        guard: {
+          ok: true,
+          issues: [],
+          explicitEntityCount: 1,
+          mappedExplicitEntityCount: 1,
+          explicitRequestCount: 1,
+          mappedExplicitRequestCount: 1,
+        },
+        elapsedMs: 10,
+      })),
+    } satisfies TaskAnalysisShadow;
+    const runAgent = vi.fn<AgentRunner>(async (input) => {
+      input.trace.record({
+        event: "coverage",
+        stage: "draft",
+        requirements: [{
+          id: "R1",
+          evidenceMode: "direct_only",
+          coverage: "none",
+          citations: [],
+        }],
+        citations: [],
+        stopReason: "final",
+      });
+      input.trace.record({
+        event: "coverage",
+        stage: "verified",
+        requirements: [{
+          id: "R1",
+          evidenceMode: "direct_only",
+          coverage: "none",
+          citations: [],
+          retainedDirectSegmentCount: 0,
+          retainedSynthesizedSegmentCount: 0,
+          removedSegmentCount: 0,
+        }],
+        citations: [],
+        stopReason: "final",
+      });
+      return {
+        scope: "professional",
+        status: "not_covered",
+        answer: "正式知识未覆盖",
+        references: [],
+      };
+    });
+    const historicalProvider = {
+      answer: vi.fn(async () => displayedHistoricalLookup),
+      close: vi.fn(async () => undefined),
+    } satisfies HistoricalAnswerProvider;
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: createPlanner(),
+      diagnostics: {
+        start: () => ({
+          requestId: "task-active",
+          record(event) { events.push(event); },
+        }),
+      },
+      knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
+      runAgent,
+      historicalProvider,
+      taskAnalysisShadow: shadow,
+      taskSpecActiveEnabled: true,
+    });
+
+    const execution = await service.answerDetailed(rawQuestion, rawContext);
+
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      question: standaloneQuestion,
+      plan: expect.objectContaining({
+        subject: "华为多节点方案",
+        requirements: [expect.objectContaining({
+          id: "R1",
+          question: "华为有哪些多节点方案",
+          evidenceMode: "direct_only",
+        })],
+      }),
+    }));
+    expect(runAgent.mock.calls[0]?.[0]).not.toHaveProperty("conversationContext");
+    expect(historicalProvider.answer).toHaveBeenCalledWith(
+      standaloneQuestion,
+      expect.any(AbortSignal),
+    );
+    expect(execution.historicalGateReason).toBe("eligible");
+    expect(events).toContainEqual({
+      event: "task_spec_activation",
+      activated: true,
+      reason: "activated",
+      requirementCount: 1,
+    });
+    expect(JSON.stringify(events)).not.toContain(standaloneQuestion);
+  });
+
+  it.each([
+    {
+      name: "guard rejection",
+      guardOk: false,
+      evidencePolicy: "direct" as const,
+      domains: ["coremail-professional" as const],
+      expectedReason: "guard_rejected",
+    },
+    {
+      name: "adapter rejection",
+      guardOk: true,
+      evidencePolicy: "customer_input" as const,
+      domains: ["presales-general" as const],
+      expectedReason: "customer_input_unhandled",
+    },
+  ])("fully falls back to the legacy path after $name", async ({
+    guardOk,
+    evidencePolicy,
+    domains,
+    expectedReason,
+  }) => {
+    const events: DiagnosticEvent[] = [];
+    const rawQuestion = "还有这个呢？";
+    const rawContext = "用户：Coremail 旧上下文";
+    const shadow = {
+      analyze: vi.fn(async () => ({
+        resolvedQuestion: {
+          rawQuestion,
+          standaloneQuestion: "Coremail 解析后的独立问题",
+          contextUsed: true,
+          inheritedSubjects: ["Coremail"],
+          corrections: [],
+        },
+        taskSpec: taskSpecSchema.parse({
+          subject: "解析任务",
+          entities: [{ id: "E1", label: "客户", role: "target", sourceText: "客户" }],
+          deliverables: [{
+            id: "D1",
+            label: "解析任务",
+            kind: "diagnosis",
+            required: true,
+            sourceText: "独立问题",
+            obligations: [{
+              id: "O1",
+              label: "解析任务",
+              targetEntityIds: ["E1"],
+              evidencePolicy,
+              domains,
+              required: true,
+              sourceText: "独立问题",
+            }],
+          }],
+        }),
+        guard: {
+          ok: guardOk,
+          issues: [],
+          explicitEntityCount: 0,
+          mappedExplicitEntityCount: 0,
+          explicitRequestCount: 1,
+          mappedExplicitRequestCount: guardOk ? 1 : 0,
+        },
+        elapsedMs: 2,
+      })),
+    } satisfies TaskAnalysisShadow;
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "professional",
+      status: "answered",
+      answer: "旧链路回答",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: createPlanner(),
+      diagnostics: {
+        start: () => ({
+          requestId: "task-fallback",
+          record(event) { events.push(event); },
+        }),
+      },
+      knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
+      runAgent,
+      taskAnalysisShadow: shadow,
+      taskSpecActiveEnabled: true,
+    });
+
+    await service.answer(rawQuestion, rawContext);
+
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      question: rawQuestion,
+      plan: knowledgePlan,
+      conversationContext: rawContext,
+    }));
+    expect(events).toContainEqual({
+      event: "task_spec_activation",
+      activated: false,
+      reason: expectedReason,
+      requirementCount: 0,
+    });
+  });
+
   it("keeps answering when optional TaskSpec shadow analysis fails", async () => {
+    const events: DiagnosticEvent[] = [];
     const shadow = {
       analyze: vi.fn(async () => {
         throw new InvalidModelPayloadError("invalid_task_spec");
@@ -252,16 +484,34 @@ describe("AnswerService", () => {
       model: {} as ModelClient,
       router: { route: vi.fn(async () => "professional" as const) },
       planner: createPlanner(),
+      diagnostics: {
+        start: () => ({
+          requestId: "task-analysis-failure",
+          record(event) { events.push(event); },
+        }),
+      },
       knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
       runAgent,
       taskAnalysisShadow: shadow,
+      taskSpecActiveEnabled: true,
     });
 
-    await expect(service.answer("Coremail 问题")).resolves.toMatchObject({
+    await expect(service.answer("Coremail 问题", "旧上下文")).resolves.toMatchObject({
       status: "answered",
       answer: "主链回答",
     });
     expect(runAgent).toHaveBeenCalledOnce();
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      question: "Coremail 问题",
+      plan: knowledgePlan,
+      conversationContext: "旧上下文",
+    }));
+    expect(events).toContainEqual({
+      event: "task_spec_activation",
+      activated: false,
+      reason: "analysis_unavailable",
+      requirementCount: 0,
+    });
   });
 
   it("answers normal questions without opening either knowledge source", async () => {

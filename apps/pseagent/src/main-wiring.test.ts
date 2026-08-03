@@ -204,6 +204,7 @@ describe("main wiring", () => {
     const enabledRuntime = await createPseAgentRuntime({
       ...configEnv,
       PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
     }, {
       createModel: () => model,
       createRouter: () => ({ route: vi.fn(async () => "normal" as const) }),
@@ -219,6 +220,7 @@ describe("main wiring", () => {
       model,
       expect.objectContaining({
         taskSpecShadow: { enabled: true, timeoutMs: 15_000 },
+        taskSpecActiveEnabled: true,
       }),
     );
     await enabledRuntime.close();

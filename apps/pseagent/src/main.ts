@@ -97,6 +97,7 @@ export async function createPseAgentRuntime(
       runAgent: dependencies.runAgent ?? runKnowledgeAgent,
       requestTimeoutMs: config.PSE_REQUEST_TIMEOUT_MS,
       activeDeadlineMs: config.PSE_ACTIVE_DEADLINE_MS,
+      taskSpecActiveEnabled: config.taskSpecActiveEnabled,
       ...(taskAnalysisShadow === undefined || !config.taskSpecShadow.enabled
         ? {}
         : {

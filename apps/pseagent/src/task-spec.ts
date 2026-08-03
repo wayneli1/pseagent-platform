@@ -243,41 +243,77 @@ export interface ExplicitQuestionSignals {
 
 export function extractExplicitQuestionSignals(question: string): ExplicitQuestionSignals {
   const entityGroups: Array<{ sourceText: string; items: string[] }> = [];
-  const listPattern = /(?:参考(?:看看|一下)?|对比|比较)(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及]{2,160}?)(?=(?:的|方案|案例|架构|$))/gu;
+  const listPattern = /(?:参考(?:看看|一下)?|(?:分别|各自)?(?:对比|比较|说明|介绍|分析))(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)(?=(?:各自)?的|各自|分别|方案|案例|架构|差异|区别|$)/giu;
   for (const match of question.matchAll(listPattern)) {
     const sourceText = match.groups?.list?.trim();
     if (!sourceText) continue;
     const items = sourceText
-      .split(/(?:、|，|,|\s+和\s*|\s+与\s*|\s+及\s*)/u)
-      .map((item) => item.trim())
+      .split(/(?:、|，|,|\s+(?:和|与|及)\s*|\s+vs\.?\s*)/iu)
+      .map(cleanExplicitEntity)
       .filter((item) => isPlausibleExplicitEntity(item));
     if (items.length >= 2) entityGroups.push({ sourceText, items });
+  }
+  const comparisonPattern = /(?<left>[\p{L}\p{N}·（）()._-]{2,64}?)\s*(?:vs\.?|versus|与|和)\s*(?<right>[\p{L}\p{N}·（）()._-]{2,64}?)(?=\s*(?:的)?(?:差异|区别|对比|比较))/giu;
+  for (const match of question.matchAll(comparisonPattern)) {
+    const items = [match.groups?.left ?? "", match.groups?.right ?? ""]
+      .map(cleanExplicitEntity)
+      .filter((item) => isPlausibleExplicitEntity(item));
+    if (items.length === 2) {
+      entityGroups.push({
+        sourceText: match[0],
+        items,
+      });
+    }
   }
 
   const requestClauses: string[] = [];
   for (const rawSegment of question.split(/[，,；;。！？!?]+/u)) {
     const segment = rawSegment.trim();
     if (!segment) continue;
-    const markers = [...segment.matchAll(
-      /(?:如何|怎样|为什么|哪些|多少|是否|能否|有没有|是什么|怎么办|怎么做|怎么提升|如何提升)/gu,
-    )];
-    if (markers.length === 0) continue;
-    if (markers.length === 1) {
-      requestClauses.push(segment);
-      continue;
-    }
-    let start = 0;
-    for (let index = 0; index < markers.length; index += 1) {
-      const next = markers[index + 1]?.index ?? segment.length;
-      const clause = segment.slice(start, next).trim();
+    const boundaries = requestClauseBoundaries(segment);
+    if (boundaries.length === 0) continue;
+    const starts = [0, ...boundaries.slice(1)];
+    for (let index = 0; index < starts.length; index += 1) {
+      const next = starts[index + 1] ?? segment.length;
+      const clause = cleanRequestClause(segment.slice(starts[index], next));
       if (clause) requestClauses.push(clause);
-      start = next;
     }
   }
   return {
     entityGroups,
     requestClauses: stableUniqueText(requestClauses),
   };
+}
+
+const REQUEST_INTERROGATIVE_PATTERN =
+  /(?:如何|怎样|为什么|哪些|多少|是否|能否|有没有|是什么|怎么办|怎么做|怎么提升|如何提升)/gu;
+const REQUEST_ACTION_PATTERN =
+  /(?:^|请|帮我|需要|还要|以及|同时|然后|并且|并|再|且|要)\s*(?:分析|评估|介绍|说明|列出|总结|建议|推荐|给出|制定|设计|判断|排查)/gu;
+
+function requestClauseBoundaries(segment: string): number[] {
+  const positions = [
+    ...[...segment.matchAll(REQUEST_INTERROGATIVE_PATTERN)]
+      .map((match) => match.index),
+    ...[...segment.matchAll(REQUEST_ACTION_PATTERN)]
+      .map((match) => match.index),
+  ].sort((left, right) => left - right);
+  return positions.filter((position, index) =>
+    index === 0 || position !== positions[index - 1]);
+}
+
+function cleanRequestClause(value: string): string {
+  return value
+    .replace(/^\s*(?:并且|并|以及|同时|然后|再|且|还要)\s*/u, "")
+    .replace(/\s*(?:并且|并|以及|同时|然后|再|且|还要)\s*$/u, "")
+    .trim();
+}
+
+function cleanExplicitEntity(value: string): string {
+  return value
+    .trim()
+    .replace(/^(?:请|分别|各自)*(?:分析|评估|介绍|说明|对比|比较)?/u, "")
+    .replace(/(?:各自|分别)$/u, "")
+    .trim();
 }
 
 export class DeterministicTaskSpecGuard implements TaskSpecGuard {
@@ -315,9 +351,11 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
             obligationId: obligation.id,
           });
         }
+        const obligationText = `${obligation.label} ${obligation.sourceText}`;
         if (
-          PROTECTED_FACT_PATTERN.test(`${obligation.label} ${obligation.sourceText}`) &&
-          obligation.evidencePolicy !== "direct"
+          PROTECTED_FACT_PATTERN.test(obligationText) &&
+          obligation.evidencePolicy !== "direct" &&
+          !isCustomerInputOpportunityForecast(obligation, obligationText)
         ) {
           issues.push({
             code: "protected_fact_not_direct",
@@ -353,16 +391,19 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
         issues.push({ code: "explicit_entity_unmapped", severity: "error" });
         continue;
       }
-      mappedExplicitEntityCount += 1;
       const hasRequiredObligation = spec.deliverables.some((deliverable) =>
         deliverable.required && deliverable.obligations.some((obligation) =>
-          obligation.required && obligation.targetEntityIds.includes(entity.id)));
+          obligation.required &&
+          obligation.targetEntityIds.length === 1 &&
+          obligation.targetEntityIds[0] === entity.id));
       if (!hasRequiredObligation) {
         issues.push({
           code: "explicit_entity_without_required_obligation",
           severity: "error",
           entityId: entity.id,
         });
+      } else {
+        mappedExplicitEntityCount += 1;
       }
     }
 
@@ -390,7 +431,18 @@ export class DeterministicTaskSpecGuard implements TaskSpecGuard {
 }
 
 const PROTECTED_FACT_PATTERN =
-  /(?:是否|能否|有没有|支持|兼容|适配|版本|补丁|授权|报价|费用|认证|全部|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发|\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|%))/iu;
+  /(?:(?:是否|能否|有没有|是否具备|支不支持)\s*(?:已经)?\s*(?:支持|兼容|适配)|(?:协议|功能|能力|产品|系统|平台|版本|环境).{0,12}(?:支持|兼容|适配)|(?:支持|兼容|适配).{0,12}(?:协议|功能|能力|产品|系统|平台|版本|环境)|版本|补丁|授权|报价|费用|认证|全部|完整清单|最高|最低|最大|最小|RTO|RPO|吞吐|时延|容量|性能|并发|\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|%))/iu;
+
+const OPPORTUNITY_FORECAST_PATTERN =
+  /(?:赢率|胜率|成交概率|成功概率|机会(?:质量|预测|判断)|销售预测|预测(?:结果|概率))/u;
+
+function isCustomerInputOpportunityForecast(
+  obligation: TaskSpec["deliverables"][number]["obligations"][number],
+  value: string,
+): boolean {
+  return obligation.evidencePolicy === "customer_input" &&
+    OPPORTUNITY_FORECAST_PATTERN.test(value);
+}
 
 function validateSequentialIds(
   ids: readonly string[],
@@ -461,4 +513,3 @@ function stableUniqueText(values: readonly string[]): string[] {
     return true;
   });
 }
-

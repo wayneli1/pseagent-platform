@@ -60,6 +60,12 @@ describe("development diagnostic trace", () => {
       elapsedMs: 12,
     });
     trace.record({
+      event: "task_spec_activation",
+      activated: true,
+      reason: "activated",
+      requirementCount: 3,
+    });
+    trace.record({
       event: "plan",
       requirementCount: 1,
       aspectCount: 1,
@@ -122,6 +128,7 @@ describe("development diagnostic trace", () => {
       "task_spec",
       "task_spec_guard",
       "task_spec_shadow",
+      "task_spec_activation",
       "plan",
       "model_payload",
       "coverage",

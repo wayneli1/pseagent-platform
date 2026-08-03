@@ -37,6 +37,7 @@ export type AppConfig = BaseConfig & {
   readonly taskSpecShadow:
     | { readonly enabled: false }
     | { readonly enabled: true; readonly timeoutMs: number };
+  readonly taskSpecActiveEnabled: boolean;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -63,12 +64,17 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   );
   const diagnostics = loadDiagnosticsConfig(env);
   const taskSpecShadow = loadTaskSpecShadowConfig(env);
+  const taskSpecActiveEnabled = loadTaskSpecActiveEnabled(
+    env,
+    taskSpecShadow.enabled,
+  );
   if (enabled === "false") {
     return {
       ...parsed,
       coremailMcp: { enabled: false },
       diagnostics,
       taskSpecShadow,
+      taskSpecActiveEnabled,
     };
   }
 
@@ -95,7 +101,23 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     },
     diagnostics,
     taskSpecShadow,
+    taskSpecActiveEnabled,
   };
+}
+
+function loadTaskSpecActiveEnabled(
+  env: NodeJS.ProcessEnv,
+  shadowEnabled: boolean,
+): boolean {
+  const enabled = z.enum(["true", "false"]).parse(
+    env.PSE_TASK_SPEC_ACTIVE_ENABLED ?? "false",
+  ) === "true";
+  if (enabled && !shadowEnabled) {
+    throw new Error(
+      "PSE_TASK_SPEC_ACTIVE_ENABLED requires PSE_TASK_SPEC_SHADOW_ENABLED=true.",
+    );
+  }
+  return enabled;
 }
 
 function loadTaskSpecShadowConfig(

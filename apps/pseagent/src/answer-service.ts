@@ -24,7 +24,11 @@ import {
   ModelUnavailableError,
   type ModelClient,
 } from "./model-client.js";
-import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
+import type {
+  TaskAnalysisShadow,
+  TaskAnalysisShadowResult,
+} from "./task-analysis-shadow.js";
+import { adaptTaskSpecToKnowledgePlan } from "./task-plan-adapter.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -73,6 +77,7 @@ export class AnswerService {
     readonly activeDeadlineMs?: number;
     readonly taskAnalysisShadow?: TaskAnalysisShadow;
     readonly taskSpecShadowTimeoutMs?: number;
+    readonly taskSpecActiveEnabled?: boolean;
   }) {}
 
   async answer(
@@ -138,7 +143,7 @@ export class AnswerService {
           (requirement) => requirement.evidenceMode === "synthesis_allowed",
         ).length,
       });
-      await observeTaskAnalysisShadow({
+      const taskAnalysis = await observeTaskAnalysisShadow({
         ...(this.dependencies.taskAnalysisShadow === undefined
           ? {}
           : { analyzer: this.dependencies.taskAnalysisShadow }),
@@ -155,17 +160,64 @@ export class AnswerService {
         signal: requestSignal,
         timeoutMs: this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
       });
+      let effectiveQuestion = question;
+      let effectivePlan = plan;
+      let effectiveConversationContext = conversationContext;
+      if (taskAnalysis !== undefined) {
+        if (this.dependencies.taskSpecActiveEnabled === true) {
+          const adapted = adaptTaskSpecToKnowledgePlan({
+            scope,
+            resolvedQuestion: taskAnalysis.resolvedQuestion,
+            taskSpec: taskAnalysis.taskSpec,
+            guardResult: taskAnalysis.guard,
+          });
+          if (adapted.activated) {
+            effectiveQuestion = taskAnalysis.resolvedQuestion.standaloneQuestion;
+            effectivePlan = adapted.plan;
+            effectiveConversationContext = undefined;
+            recordDiagnostic(trace, {
+              event: "task_spec_activation",
+              activated: true,
+              reason: "activated",
+              requirementCount: adapted.plan.requirements.length,
+            });
+          } else {
+            recordDiagnostic(trace, {
+              event: "task_spec_activation",
+              activated: false,
+              reason: adapted.reason,
+              requirementCount: 0,
+            });
+          }
+        } else {
+          recordDiagnostic(trace, {
+            event: "task_spec_activation",
+            activated: false,
+            reason: "disabled",
+            requirementCount: 0,
+          });
+        }
+      } else if (this.dependencies.taskSpecActiveEnabled === true) {
+        recordDiagnostic(trace, {
+          event: "task_spec_activation",
+          activated: false,
+          reason: "analysis_unavailable",
+          requirementCount: 0,
+        });
+      }
       const input = {
         scope,
-        question,
-        plan,
+        question: effectiveQuestion,
+        plan: effectivePlan,
         model: this.dependencies.model,
         session,
         deadlineAt:
           startedAt +
           (this.dependencies.activeDeadlineMs ?? PSE_ACTIVE_DEADLINE_MS),
         trace,
-        ...(conversationContext === undefined ? {} : { conversationContext }),
+        ...(effectiveConversationContext === undefined
+          ? {}
+          : { conversationContext: effectiveConversationContext }),
         signal: requestSignal,
       };
       const primary = await this.dependencies.runAgent(input);
@@ -175,7 +227,7 @@ export class AnswerService {
       ) {
         return finishExecution(trace, primary, startedAt, false, false);
       }
-      const historicalGate = evaluateHistoricalGate(question, trace);
+      const historicalGate = evaluateHistoricalGate(effectiveQuestion, trace);
       recordDiagnostic(trace, {
         event: "historical_gate",
         eligible: historicalGate === "eligible",
@@ -187,7 +239,10 @@ export class AnswerService {
       try {
         const historicalAttempted = true;
         const historicalLookup =
-          await this.dependencies.historicalProvider.answer(question, requestSignal);
+          await this.dependencies.historicalProvider.answer(
+            effectiveQuestion,
+            requestSignal,
+          );
         if (historicalLookup.outcome === "unavailable") {
           return finishExecution(trace, primary, startedAt, historicalAttempted, false);
         }
@@ -259,8 +314,8 @@ async function observeTaskAnalysisShadow(input: {
   readonly trace: DiagnosticTrace;
   readonly signal: AbortSignal;
   readonly timeoutMs: number;
-}): Promise<void> {
-  if (input.analyzer === undefined) return;
+}): Promise<TaskAnalysisShadowResult | undefined> {
+  if (input.analyzer === undefined) return undefined;
   const startedAt = Date.now();
   const timeoutSignal = AbortSignal.timeout(input.timeoutMs);
   const signal = AbortSignal.any([input.signal, timeoutSignal]);
@@ -312,6 +367,7 @@ async function observeTaskAnalysisShadow(input: {
       result: "completed",
       elapsedMs: result.elapsedMs,
     });
+    return result;
   } catch (error) {
     recordDiagnostic(input.trace, {
       event: "task_spec_shadow",
@@ -322,6 +378,7 @@ async function observeTaskAnalysisShadow(input: {
           : "unavailable",
       elapsedMs: Math.max(0, Date.now() - startedAt),
     });
+    return undefined;
   }
 }
 
