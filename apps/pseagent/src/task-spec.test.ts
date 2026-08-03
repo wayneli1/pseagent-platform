@@ -525,6 +525,10 @@ describe("DeterministicTaskSpecGuard", () => {
   it.each([
     ["如何提升销售能力", "产品版本和全部接口", "product", true],
     ["支持IPv6吗", "普通标签", "unknown", false],
+    ["支持双活吗", "普通标签", "unknown", false],
+    ["支持高可用部署吗", "普通标签", "unknown", false],
+    ["支持项目推进", "普通标签", "unknown", false],
+    ["团队支持项目推进", "普通标签", "unknown", true],
     ["系统有哪些功能", "普通标签", "target", false],
     ["团队有哪些能力需要提升", "普通标签", "target", true],
     ["销售能力现状", "普通标签", "target", false],

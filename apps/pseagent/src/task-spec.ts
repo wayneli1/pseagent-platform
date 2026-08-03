@@ -524,7 +524,7 @@ const PROTECTED_NUMERIC_FACT_PATTERN =
   /\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|%)/iu;
 
 const CUSTOMER_RELATIONSHIP_SUPPORT_FRAGMENT_PATTERN =
-  /(?:客户(?:侧)?支持(?:者|团队)?|内部支持者|业务支持者)(?:\s*支持)?/gu;
+  /(?:客户(?:侧)?支持(?:者|团队)?|内部支持者|业务支持者)(?:\s*支持(?:项目|机会|推进)?)?|(?:(?:客户(?:侧)?|内部)?(?:人员|团队|管理层))\s*支持(?:项目|机会|推进)?/gu;
 
 const STRONG_ENUMERABLE_FACT_OBJECT_PATTERN =
   /(?:接口|协议|版本|补丁|授权|报价|费用|认证|容量|性能|并发|案例|部署|架构|配置)/iu;
@@ -575,11 +575,7 @@ function hasLocalContextualProductFact(value: string): boolean {
 }
 
 function hasLocalProductSupportFact(value: string): boolean {
-  return [...value.matchAll(/支持/gu)].some((match) => {
-    const local = localTextWindow(value, match.index ?? 0, match[0].length);
-    return PRODUCT_FACT_CONTEXT_PATTERN.test(local) ||
-      /(?:IPv\d+|SMTP|IMAP|POP3|LDAP|SAML|OAuth|OIDC|API|SDK|协议)/iu.test(local);
-  });
+  return /支持/u.test(value);
 }
 
 function hasLocalExhaustiveFact(value: string): boolean {
