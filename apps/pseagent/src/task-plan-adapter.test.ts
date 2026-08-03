@@ -197,6 +197,45 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
     });
   });
 
+  it("keeps customer-input fail-closed behavior invariant under obligation order", () => {
+    const customerInput = {
+      id: "O1",
+      label: "判断当前机会赢率",
+      targetEntityIds: ["E1"],
+      evidencePolicy: "customer_input" as const,
+      domains: ["presales-general" as const],
+      required: true,
+      sourceText: "赢率如何",
+    };
+    const synthesis = {
+      id: "O2",
+      label: "提升赢率的行动建议",
+      targetEntityIds: ["E1"],
+      evidencePolicy: "synthesis" as const,
+      domains: ["presales-general" as const],
+      required: true,
+      sourceText: "怎样做才能提升赢率",
+    };
+
+    for (const obligations of [
+      [customerInput, synthesis],
+      [synthesis, customerInput],
+    ]) {
+      const spec = taskSpec();
+      spec.deliverables[0]!.obligations = obligations;
+      expect(adaptTaskSpecToKnowledgePlan({
+        scope: "general",
+        resolvedQuestion,
+        taskSpec: spec,
+        guardResult: passingGuard,
+      })).toEqual({
+        activated: false,
+        reason: "customer_input_unhandled",
+        applicableObligationCount: 2,
+      });
+    }
+  });
+
   it("fails closed instead of partially activating required cross-domain work", () => {
     const spec = taskSpec();
     spec.deliverables[0]!.obligations[1]!.domains = ["presales-general"];

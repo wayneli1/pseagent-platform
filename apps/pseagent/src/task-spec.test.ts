@@ -456,6 +456,57 @@ describe("DeterministicTaskSpecGuard", () => {
     }));
   });
 
+  it.each([
+    "产品报价对应赢率50%",
+    "产品型号影响成交概率50%",
+  ])("does not let a single-atom customer-input forecast bypass a mixed fact: %s", (sourceText) => {
+    const result = guardSingleObligation(sourceText, "customer_input", "unknown");
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      code: "protected_fact_not_direct",
+    }));
+  });
+
+  it.each([
+    "赢率如何",
+    "评估机会质量",
+    "预测成交概率",
+    "赢率可能是50%",
+    "当前商机赢率可能是50%",
+    "当前机会赢率可能是50%",
+    "评估当前商机赢率",
+    "判断当前机会赢率",
+    "评估 当前 商机 赢率",
+    "这个商机的赢率如何",
+    "我们的赢率如何",
+    "该项目的成交概率怎么样",
+  ])("allows a pure opportunity forecast to use customer input: %s", (sourceText) => {
+    const result = guardSingleObligation(sourceText, "customer_input", "unknown");
+    expect(result.issues).not.toContainEqual(expect.objectContaining({
+      code: "protected_fact_not_direct",
+    }));
+    expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    "产品版本对应赢率",
+    "部署架构影响机会质量",
+    "确认接口后预测成交概率",
+    "赢率如何，并说明当前版本",
+    "当前版本影响赢率如何",
+    "赢率如何，同时核实当前版本",
+    "评估当前商机赢率并确认产品版本",
+    "评估 当前 商机 赢率 并确认当前版本",
+    "这个商机的赢率与产品报价",
+    "我们的赢率如何，同时核实报价",
+  ])("rejects customer input when any independent fact is mixed in: %s", (sourceText) => {
+    const result = guardSingleObligation(sourceText, "customer_input", "unknown");
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      code: "protected_fact_not_direct",
+    }));
+    expect(result.ok).toBe(false);
+  });
+
   it("does not let a customer-support relationship suppress a version fact", () => {
     const question = "如何获得客户支持并确认产品版本";
     const result = new DeterministicTaskSpecGuard().validate({
@@ -794,7 +845,7 @@ describe("DeterministicTaskSpecGuard", () => {
     ["如何提升销售能力，并确认系统有哪些功能", "unknown", false],
     ["如何提升销售能力并确认系统有哪些功能", "unknown", false],
     ["系统有哪些功能并给出提升建议", "unknown", false],
-    ["客户支持团队支持项目，并了解邮件系统现状", "product", true],
+    ["客户支持团队支持项目，并了解邮件系统现状", "product", false],
   ] as const)(
     "keeps contextual product evidence scoped to its own clause: %s",
     (question, role, expectedOk) => {
@@ -810,7 +861,7 @@ describe("DeterministicTaskSpecGuard", () => {
     ["系统有哪些功能及提出销售提升方案", "unknown", false],
     ["给出销售能力提升建议和系统功能现状", "unknown", false],
     ["确认系统功能如何提升销售能力", "unknown", false],
-    ["如何优化销售能力和系统功能", "unknown", true],
+    ["如何优化销售能力和系统功能", "unknown", false],
   ] as const)(
     "uses local fact windows without action-name or connector-length boundaries: %s",
     (question, role, expectedOk) => {
