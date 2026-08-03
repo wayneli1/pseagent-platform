@@ -24,23 +24,25 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
     const messages = knowledgePlanMessages(input);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        return normalizeDirectComparisonAspects(
-          input.question,
-          enforceProtectedEvidenceModes(
-            normalizeSynthesisQueries(
-              normalizePlanRequirements(
-                input.question,
-                await this.complete(
-                  attempt === 1
-                    ? messages
-                    : [
-                        ...messages,
-                        {
-                          role: "user",
-                          content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
-                        },
-                      ],
-                  input.signal,
+        return normalizeDirectQueryAspectTerms(
+          normalizeDirectComparisonAspects(
+            input.question,
+            enforceProtectedEvidenceModes(
+              normalizeSynthesisQueries(
+                normalizePlanRequirements(
+                  input.question,
+                  await this.complete(
+                    attempt === 1
+                      ? messages
+                      : [
+                          ...messages,
+                          {
+                            role: "user",
+                            content: "上一次输出不符合知识规划 Schema。只重新输出合法规划 JSON，不要解释。",
+                          },
+                        ],
+                    input.signal,
+                  ),
                 ),
               ),
             ),
@@ -206,6 +208,47 @@ function normalizeSynthesisQueries(plan: KnowledgePlan): KnowledgePlan {
             ),
             aspectIds: bucket.map((aspect) => aspect.id),
           };
+        }),
+      };
+    }),
+  });
+}
+
+function normalizeDirectQueryAspectTerms(plan: KnowledgePlan): KnowledgePlan {
+  return knowledgePlanSchema.parse({
+    ...plan,
+    requirements: plan.requirements.map((requirement) => {
+      if (requirement.evidenceMode !== "direct_only") return requirement;
+      const aspects = new Map(
+        requirement.evidenceAspects.map((aspect) => [aspect.id, aspect]),
+      );
+      return {
+        ...requirement,
+        queries: requirement.queries.map((query) => {
+          if (query.aspectIds.length <= 1) return query;
+          const normalizedQuery = normalizePlannerText(query.text);
+          const seen = new Set<string>();
+          const additions = query.aspectIds.flatMap((aspectId) => {
+            const aspect = aspects.get(aspectId);
+            if (aspect === undefined) return [];
+            return aspect.terms.flatMap((term) => {
+              const normalizedTerm = normalizePlannerText(term);
+              if (
+                normalizedQuery.includes(normalizedTerm) ||
+                seen.has(normalizedTerm)
+              ) {
+                return [];
+              }
+              seen.add(normalizedTerm);
+              return [term];
+            }).slice(0, 2);
+          });
+          let text = query.text;
+          for (const addition of additions) {
+            const candidate = `${text} ${addition}`;
+            if ([...candidate].length <= 1_024) text = candidate;
+          }
+          return { ...query, text };
         }),
       };
     }),

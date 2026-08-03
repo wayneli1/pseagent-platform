@@ -440,6 +440,49 @@ describe("ModelKnowledgePlanner", () => {
     expect(completeJson).toHaveBeenCalledOnce();
   });
 
+  it("adds distinguishing aspect terms to a broad direct-evidence query", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: "Coremail XT6 部署方式",
+      requirements: [{
+        id: "R1",
+        question: "Coremail XT6 常见部署方式有哪些",
+        evidenceMode: "direct_only",
+        evidenceAspects: [
+          {
+            id: "A1",
+            label: "单机部署",
+            terms: ["单机部署", "单节点"],
+          },
+          {
+            id: "A2",
+            label: "多机部署",
+            terms: ["多机部署", "分布式部署"],
+          },
+        ],
+        queries: [{
+          text: "Coremail XT6 常见部署方式",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({
+      ...plannerInput(),
+      question: "Coremail XT6 常见部署方式有哪些",
+    });
+
+    expect(result.requirements[0]?.queries).toEqual([{
+      text: "Coremail XT6 常见部署方式 单机部署 单节点 多机部署 分布式部署",
+      aspectIds: ["A1", "A2"],
+    }]);
+  });
+
   it("repairs an invalid model payload", async () => {
     const completeJson = vi.fn()
       .mockRejectedValueOnce(new InvalidModelPayloadError())
