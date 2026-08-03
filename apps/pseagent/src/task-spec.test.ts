@@ -523,6 +523,42 @@ describe("DeterministicTaskSpecGuard", () => {
   );
 
   it.each([
+    ["确认产品版本并给出升级建议", false],
+    ["给出升级建议并确认产品版本", false],
+    ["核实授权模式同时提出优化方案", false],
+    ["确认认证状态和改进建议", false],
+    ["确认认证状态及改进建议", false],
+    ["确认产品版本并评估团队条件", false],
+    ["团队条件评估并确认产品版本", false],
+    ["确认协议兼容性并给出优化建议", false],
+    ["给出优化建议并核实容量", false],
+    ["确认报价，评估团队条件", false],
+    ["说明当前产品型号并给出建议", false],
+    ["版本升级建议", true],
+    ["所有版本升级建议", true],
+    ["授权优化方案", true],
+    ["团队能力提升建议", true],
+    ["确认版本升级建议有哪些", true],
+  ] as const)(
+    "keeps independent attribute facts local when advice or organization text shares a source: %s",
+    (question, expectedOk) => {
+      const result = guardSingleObligation(
+        question,
+        "synthesis",
+        "unknown",
+        "团队提升建议",
+        question,
+        "产品优化方案",
+        "客户推进",
+      );
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
     ["所有可升级版本", false],
     ["所有支持升级的版本", false],
     ["列出所有可升级版本", false],

@@ -548,13 +548,19 @@ const CHANGE_OBJECTIVE_PATTERN = /(?:提升|优化|改造|升级)/u;
 
 const CHANGE_OBJECTIVE_GLOBAL_PATTERN = /(?:提升|优化|改造|升级)/gu;
 
-const CHANGE_COLLECTION_PATTERN = /(?:建议|方案|行动|规划|筹划)/u;
-
-const DECISION_OR_ORGANIZATIONAL_PATTERN = /(?:应该|继续|推进|条件|团队)/u;
-
 const STRONG_CHANGE_SCOPE_BOUNDARY_PATTERN = /(?:并且|同时|然后|再|继而|随后|并)/gu;
 
 const SYNTHESIS_COLLECTION_HEAD_PATTERN = /(?:建议|方案|行动|规划|筹划)$/u;
+
+const SYNTHESIS_COLLECTION_REQUEST_PATTERN =
+  /(?:建议|方案|行动|规划|筹划)(?:的)?(?:有哪些|是什么|如何|吗|呢|吧)?$/u;
+
+const FROZEN_ATTRIBUTE_FACT_PATTERN =
+  /(?:版本|补丁|协议|兼容(?:性)?|适配|授权|认证|费用|报价|容量|性能|RTO|RPO)/iu;
+
+const EXPLICIT_ATTRIBUTE_REQUEST_PATTERN = /(?:确认|核实|说明|列出)/u;
+
+const ATTRIBUTE_QUESTION_PATTERN = /(?:是否|哪些|什么|有无|有没有)/u;
 
 const OPPORTUNITY_FORECAST_PATTERN =
   /(?:赢率|胜率|成交概率|成功概率|机会(?:质量|预测|判断)|销售预测|预测(?:结果|概率))/u;
@@ -577,7 +583,7 @@ function requiresDirectProductEvidence(
 ): boolean {
   if (hasLocalContextualProductFact(value)) return true;
   if (hasLocalProductSupportFact(value)) return true;
-  if (hasExplicitAttributeQuestion(value)) return true;
+  if (hasLocalAttributeFact(value)) return true;
   return hasQuantifiedOrStateFact(value);
 }
 
@@ -594,13 +600,14 @@ function hasLocalProductSupportFact(value: string): boolean {
   return /支持/u.test(value);
 }
 
-function hasExplicitAttributeQuestion(value: string): boolean {
-  if (DECISION_OR_ORGANIZATIONAL_PATTERN.test(value) || CHANGE_COLLECTION_PATTERN.test(value)) {
-    return false;
-  }
-  if (/(?:兼容|适配).{0,8}(?:如何|怎样)/u.test(value)) return true;
-  return /[\p{L}\p{N}]{2,}(?:是否|哪些|什么|有无|有没有)/u.test(value) ||
-    /(?:确认|核实|列出)\s*[\p{L}\p{N}]{2,}/u.test(value);
+function hasLocalAttributeFact(value: string): boolean {
+  return factRequestFragments(value).some((fragment) => {
+    if (isSynthesisCollectionFragment(fragment)) return false;
+    if (FROZEN_ATTRIBUTE_FACT_PATTERN.test(fragment)) return true;
+    if (/(?:兼容|适配).{0,8}(?:如何|怎样)/u.test(fragment)) return true;
+    if (EXPLICIT_ATTRIBUTE_REQUEST_PATTERN.test(fragment)) return true;
+    return PRODUCT_FACT_CONTEXT_PATTERN.test(fragment) && ATTRIBUTE_QUESTION_PATTERN.test(fragment);
+  });
 }
 
 function hasQuantifiedOrStateFact(value: string): boolean {
@@ -608,7 +615,7 @@ function hasQuantifiedOrStateFact(value: string): boolean {
     const index = modifier.index ?? 0;
     const phrase = value.slice(index, nextFactPhraseBoundary(value, index));
     const afterModifier = phrase.slice(modifier[0].length).trim();
-    return afterModifier.length >= 2 && !SYNTHESIS_COLLECTION_HEAD_PATTERN.test(afterModifier);
+    return afterModifier.length >= 2 && !isSynthesisCollectionFragment(phrase);
   });
 }
 
@@ -642,6 +649,37 @@ function stripOrganizationalSupport(value: string): string {
   return value
     .replace(ORGANIZATIONAL_SUPPORT_RELATION_PATTERN, " ")
     .replace(SUPPORTER_NOUN_PATTERN, " ");
+}
+
+function factRequestFragments(value: string): readonly string[] {
+  return value
+    .split(/(?:[，,；;。！？!?]|并且|同时|然后|再|继而|随后|并)/u)
+    .flatMap(splitWeakRequestFragments)
+    .map((fragment) => fragment.trim())
+    .filter(Boolean);
+}
+
+function splitWeakRequestFragments(value: string): readonly string[] {
+  const fragments: string[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== "和" && value[index] !== "及") continue;
+    const right = value.slice(index + 1);
+    if (!startsNewFactRequestOrSynthesisCollection(right)) continue;
+    fragments.push(value.slice(start, index));
+    start = index + 1;
+  }
+  fragments.push(value.slice(start));
+  return fragments;
+}
+
+function startsNewFactRequestOrSynthesisCollection(value: string): boolean {
+  return /^(?:确认|核实|说明|列出|给出|提出|制定|评估|分析|提升|优化|改造)/u.test(value) ||
+    SYNTHESIS_COLLECTION_REQUEST_PATTERN.test(value);
+}
+
+function isSynthesisCollectionFragment(value: string): boolean {
+  return SYNTHESIS_COLLECTION_REQUEST_PATTERN.test(value.trim());
 }
 
 function nextFactPhraseBoundary(value: string, index: number): number {
