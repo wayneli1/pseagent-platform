@@ -128,7 +128,45 @@ git diff --check
 
 只暂存 Planner 与测试并创建阶段 61 提交。
 
-## 阶段 62：双会话复测与验收记录
+## 阶段 62：冻结直接事实规划收敛设计
+
+**文件：**
+
+- 修改 `docs/superpowers/specs/2026-08-03-dual-session-stability-design.md`
+- 修改 `docs/superpowers/plans/2026-08-03-dual-session-stability.md`
+
+**步骤：**
+
+1. 记录阶段 60、61 后两套独立会话复测的真实分布与同题一致率。
+2. 记录 P03/P08/P09 的规划标签诊断，不记录知识正文。
+3. 冻结能力列表 direct 模式、未请求邻近 aspect 裁剪与确定性重映射规则。
+4. 冻结 direct seed topK 随 aspect 数量扩展且读页预算不变的边界。
+5. 运行文档占位符扫描与 `git diff --check`。
+
+只暂存两份设计/计划文档并创建阶段 62 提交。
+
+## 阶段 63：收敛直接事实规划与候选窗口
+
+**文件：**
+
+- 修改 `apps/pseagent/src/knowledge-planner.ts`
+- 修改 `apps/pseagent/src/knowledge-planner.test.ts`
+- 修改 `apps/pseagent/src/agent-loop.ts`
+- 修改 `apps/pseagent/src/agent-loop.test.ts`
+- 按需修改 `apps/pseagent/src/prompts.ts` 与 `apps/pseagent/src/prompts.test.ts`
+
+**步骤：**
+
+1. 先新增失败测试，覆盖能力列表 direct 模式、未请求邻近主题裁剪、明确主题保留和
+   aspect/query 连续重映射。
+2. 实现通用意图组裁剪，不写业务题号、答案或页面路径。
+3. 新增 direct seed topK 的 10、动态值和 20 上限测试并实现公式。
+4. 运行 Planner/Agent/提示词聚焦测试、PSEAgent 全量测试、类型检查、构建和
+   `git diff --check`。
+
+只暂存本阶段实现与测试并创建阶段 63 提交。
+
+## 阶段 64：双会话复测与验收记录
 
 **文件：**
 
@@ -141,7 +179,7 @@ git diff --check
 3. 对比每题 scope、status、引用数、停止原因和耗时。
 4. 运行全仓 TypeScript 测试、类型检查、工作区构建和 `git diff --check`。
 5. 记录修复前后结果、剩余边界和 Windows UI 验收限制，不记录回答或知识正文。
-6. 只暂存验收记录并创建阶段 62 提交。
+6. 只暂存验收记录并创建阶段 64 提交。
 
-如果真实复测仍存在预期页面召回缺失，阶段 62 不得写“通过”；必须保留失败记录，回到
+如果真实复测仍存在预期页面召回缺失，阶段 64 不得写“通过”；必须保留失败记录，回到
 新的设计阶段继续修复后再验收。
