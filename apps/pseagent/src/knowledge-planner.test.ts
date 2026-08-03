@@ -249,7 +249,7 @@ describe("ModelKnowledgePlanner", () => {
     },
   );
 
-  it("replaces overview-derived neighbor topics with stable Exchange comparison dimensions", async () => {
+  it("does not inject product-specific comparison dimensions", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],
     ) => input.schema.parse({
@@ -282,20 +282,19 @@ describe("ModelKnowledgePlanner", () => {
 
     expect(result.requirements).toHaveLength(1);
     expect(result.requirements[0]?.evidenceMode).toBe("direct_only");
-    expect(result.requirements[0]?.evidenceAspects.map((aspect) => aspect.label))
-      .toEqual([
-        "个性化定制",
-        "总拥有成本",
-        "原厂现场服务",
-        "安全能力",
-        "企业形象定制",
-        "客观对比边界",
-      ]);
-    expect(new Set(result.requirements[0]?.queries.flatMap((query) => query.aspectIds)))
-      .toEqual(new Set(["A1", "A2", "A3", "A4", "A5", "A6"]));
+    expect(result.requirements[0]?.evidenceAspects).toEqual([{
+      id: "A1",
+      label: "对比exchange邮件系统，coremail的优势有哪些呢",
+      terms: ["定制", "TCO", "国产化", "金融案例"],
+    }]);
+    expect(result.requirements[0]?.queries.map((query) => query.text)).toEqual([
+      "Coremail Exchange 对比优势 定制 TCO",
+      "Coremail Exchange 信创适配 定制 TCO",
+      "Coremail Exchange 行业案例 定制 TCO",
+    ]);
   });
 
-  it("stabilizes broad Coremail migration capability planning", async () => {
+  it("preserves model planning for a migration question without product-specific injection", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],
     ) => input.schema.parse({
@@ -318,19 +317,14 @@ describe("ModelKnowledgePlanner", () => {
     });
 
     expect(result.requirements).toHaveLength(1);
-    expect(result.requirements[0]?.evidenceMode).toBe("synthesis_allowed");
-    expect(result.requirements[0]?.evidenceAspects.map((aspect) => aspect.label))
-      .toEqual([
-        "组织架构与目录同步",
-        "邮件数据迁移",
-        "认证与密码承接",
-        "迁移前提与边界",
-      ]);
-    expect(new Set(result.requirements[0]?.queries.flatMap((query) => query.aspectIds)))
-      .toEqual(new Set(["A1", "A2", "A3", "A4"]));
+    expect(result.requirements[0]).toMatchObject({
+      question: "迁移能力",
+      evidenceMode: "direct_only",
+      ...plannedEvidence("Coremail 邮件迁移"),
+    });
   });
 
-  it("stabilizes vendor-neutral presales interview planning", async () => {
+  it("preserves model planning for a presales interview without scenario injection", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],
     ) => input.schema.parse({
@@ -354,17 +348,11 @@ describe("ModelKnowledgePlanner", () => {
     });
 
     expect(result.requirements).toHaveLength(1);
-    expect(result.requirements[0]?.evidenceMode).toBe("synthesis_allowed");
-    expect(result.requirements[0]?.evidenceAspects.map((aspect) => aspect.label))
-      .toEqual([
-        "三栏准备法",
-        "追问原则",
-        "回答分类处理",
-        "核心问题组",
-        "结束检查与复盘",
-      ]);
-    expect(new Set(result.requirements[0]?.queries.flatMap((query) => query.aspectIds)))
-      .toEqual(new Set(["A1", "A2", "A3", "A4", "A5"]));
+    expect(result.requirements[0]).toMatchObject({
+      question: "访谈方法",
+      evidenceMode: "direct_only",
+      ...plannedEvidence("售前访谈"),
+    });
   });
 
   it("deterministically caps an otherwise valid model plan at three queries", async () => {
