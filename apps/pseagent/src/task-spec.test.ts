@@ -523,6 +523,73 @@ describe("DeterministicTaskSpecGuard", () => {
   );
 
   it.each([
+    ["所有可升级版本", false],
+    ["所有支持升级的版本", false],
+    ["列出所有可升级版本", false],
+    ["给出所有版本升级建议", true],
+    ["完整迁移改造方案", true],
+    ["全部接口优化行动", true],
+    ["当前版本升级建议", true],
+    ["当前可升级版本", false],
+    ["给出改造方案并确认当前可升级版本", false],
+    ["说明当前产品型号并给出版本升级建议", false],
+    ["当前产品型号及版本升级建议", false],
+    ["确认现有补丁级别并制定升级方案", false],
+    ["列出所有加密算法并给出升级建议", false],
+  ] as const)(
+    "uses the quantified phrase head rather than any change word: %s",
+    (question, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", "unknown");
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
+    ["客户支持团队支持S/MIME邮件加密吗", false],
+    ["内部支持者支持双活吗", false],
+    ["客户支持团队支持项目推进", true],
+    ["内部支持者支持机会推进", true],
+    ["内部支持者支持双活并支持项目推进", false],
+    ["客户支持团队支持项目推进并支持高可用部署", false],
+    ["技术团队支持项目部署吗", false],
+    ["运维团队支持项目级高可用吗", false],
+    ["技术团队支持机会管理模块吗", false],
+    ["安全团队支持客户身份认证吗", false],
+    ["客户支持团队支持项目化归档吗", false],
+  ] as const)(
+    "does not let a supporter noun consume a following technical support occurrence: %s",
+    (question, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", "unknown");
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
+    ["提升系统功能并梳理系统功能边界", false],
+    ["优化平台功能继而摸清系统功能边界", false],
+    ["改造系统功能随后清点系统功能", false],
+    ["提升系统功能同时调查系统功能边界", false],
+    ["梳理系统功能边界并提升系统功能", false],
+    ["优化系统功能，梳理系统功能边界", false],
+    ["系统功能改造建议", true],
+  ] as const)(
+    "ends a change governor at strong parallel and temporal boundaries: %s",
+    (question, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", "unknown");
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
     ["技术团队支持高可用部署吗", false],
     ["售前团队支持客户推进", true],
     ["团队支持项目推进并确认是否支持量子安全算法", false],
@@ -785,6 +852,20 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(result.ok).toBe(true);
     expect(result.mappedExplicitEntityCount).toBe(2);
   });
+
+  it.each([
+    ["和利时、乙公司各自采用方案", ["利时", "乙公司"]],
+    ["甲公司、乙公司分别采用方案", ["公司", "乙公司"]],
+    ["甲公司、乙公司分别采用方案", ["甲公司", "乙公"]],
+  ] as const)(
+    "fails closed for partial anchors in strongly separated distributive lists: %s",
+    (question, entities) => {
+      const result = guardIndependentParallelObligations(question, entities);
+      expect(result.issues).toContainEqual(expect.objectContaining({
+        code: "distributive_entity_group_unresolved",
+      }));
+    },
+  );
 
   it("fails closed when a strongly separated distributive list cannot form two entities", () => {
     const result = guardIndependentParallelObligations(

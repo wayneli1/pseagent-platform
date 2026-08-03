@@ -352,7 +352,12 @@ function distributiveEntityItems(
   const strongSeparated = sourceText.split(/(?:、|，|,)/u);
   if (strongSeparated.length > 1) {
     const items = strongSeparated.map(cleanExplicitEntity).filter(isPlausibleExplicitEntity);
-    return { items, unresolved: items.length < 2 };
+    if (items.length < 2) return { items, unresolved: true };
+    if (anchoredEntitySourceTexts === undefined) return { items, unresolved: false };
+    const anchors = anchoredEntitySourceTexts.map((anchor) => anchor.trim());
+    const isFullyAnchored = items.every((item) =>
+      anchors.filter((anchor) => sameSemanticText(anchor, item)).length === 1);
+    return { items: isFullyAnchored ? items : [], unresolved: !isFullyAnchored };
   }
   if (anchoredEntitySourceTexts === undefined) {
     return { items: parallelEntityItems(sourceText, true), unresolved: false };
@@ -528,11 +533,14 @@ const PRODUCT_FACT_CONTEXT_PATTERN =
 const PROTECTED_NUMERIC_FACT_PATTERN =
   /\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|%)/iu;
 
-const CUSTOMER_RELATIONSHIP_SUPPORT_FRAGMENT_PATTERN =
-  /(?:客户(?:侧)?支持(?:者|团队)?|内部支持者|业务支持者)(?:\s*支持(?:项目|机会|客户(?:推进)?|推进)?)?|(?:(?:客户(?:侧)?|内部)?(?:人员|团队|管理层))\s*支持(?:项目|机会|客户(?:推进)?|推进)/gu;
+const SUPPORTER_NOUN_PATTERN =
+  /(?:客户(?:侧)?支持(?:者|团队)?|内部支持者|业务支持者)/gu;
+
+const ORGANIZATIONAL_SUPPORT_RELATION_PATTERN =
+  /(?:(?:客户(?:侧)?支持(?:者|团队)?|内部支持者|业务支持者|(?:客户(?:侧)?|内部)?(?:人员|团队|管理层)))\s*支持\s*(?:项目推进|机会推进|客户推进|项目|机会|推进)(?=$|[，,；;。！？!?吗呢吧]|(?:并且|同时|然后|再|继而|随后|并))/gu;
 
 const PRODUCT_FACT_HINT_PATTERN =
-  /(?:当前|现状|是否|哪些|什么|具备|确认|核实|支持|清单|列表|列出|盘点|有无|有没有|存在)/u;
+  /(?:当前|现状|是否|哪些|什么|具备|确认|核实|支持|清单|列表|列出|有无|有没有|存在)/u;
 
 const ORGANIZATIONAL_CAPABILITY_PATTERN = /团队/u;
 
@@ -544,6 +552,10 @@ const CHANGE_COLLECTION_PATTERN = /(?:建议|方案|行动|规划|筹划)/u;
 
 const DECISION_OR_ORGANIZATIONAL_PATTERN = /(?:应该|继续|推进|条件|团队)/u;
 
+const STRONG_CHANGE_SCOPE_BOUNDARY_PATTERN = /(?:并且|同时|然后|再|继而|随后|并)/gu;
+
+const SYNTHESIS_COLLECTION_HEAD_PATTERN = /(?:建议|方案|行动|规划|筹划)$/u;
+
 const OPPORTUNITY_FORECAST_PATTERN =
   /(?:赢率|胜率|成交概率|成功概率|机会(?:质量|预测|判断)|销售预测|预测(?:结果|概率))/u;
 
@@ -552,10 +564,7 @@ function requiresDirectEvidence(
   value: string,
 ): boolean {
   if (obligation.evidencePolicy === "direct") return false;
-  const productFactText = value.replace(
-    CUSTOMER_RELATIONSHIP_SUPPORT_FRAGMENT_PATTERN,
-    " ",
-  );
+  const productFactText = stripOrganizationalSupport(value);
   if (requiresDirectProductEvidence(productFactText)) {
     return true;
   }
@@ -591,45 +600,52 @@ function hasExplicitAttributeQuestion(value: string): boolean {
   }
   if (/(?:兼容|适配).{0,8}(?:如何|怎样)/u.test(value)) return true;
   return /[\p{L}\p{N}]{2,}(?:是否|哪些|什么|有无|有没有)/u.test(value) ||
-    /(?:确认|核实|盘点|列出)\s*[\p{L}\p{N}]{2,}/u.test(value);
+    /(?:确认|核实|列出)\s*[\p{L}\p{N}]{2,}/u.test(value);
 }
 
 function hasQuantifiedOrStateFact(value: string): boolean {
   return [...value.matchAll(/(?:全部|所有|全量|完整|当前|现有|实际)/gu)].some((modifier) => {
     const index = modifier.index ?? 0;
-    const phrase = value.slice(index, nextPhraseBoundary(value, index));
+    const phrase = value.slice(index, nextFactPhraseBoundary(value, index));
     const afterModifier = phrase.slice(modifier[0].length).trim();
-    return afterModifier.length >= 2 && !isChangeCollection(phrase);
+    return afterModifier.length >= 2 && !SYNTHESIS_COLLECTION_HEAD_PATTERN.test(afterModifier);
   });
 }
 
 function isDirectlyChangeGoverned(value: string, index: number, length: number): boolean {
-  const sentenceStart = Math.max(
+  const punctuationStart = Math.max(
     value.lastIndexOf("，", index),
     value.lastIndexOf(",", index),
     value.lastIndexOf("。", index),
     value.lastIndexOf("；", index),
     value.lastIndexOf(";", index),
   ) + 1;
-  const before = value.slice(sentenceStart, index);
-  const after = value.slice(index + length, nextPhraseBoundary(value, index + length));
+  const boundaries = [...value.slice(punctuationStart, index).matchAll(STRONG_CHANGE_SCOPE_BOUNDARY_PATTERN)];
+  let scopeStart = boundaries.length === 0
+    ? punctuationStart
+    : punctuationStart + (boundaries[boundaries.length - 1]!.index ?? 0) + boundaries[boundaries.length - 1]![0].length;
+  const weakBoundary = Math.max(value.lastIndexOf("和", index), value.lastIndexOf("及", index));
+  if (
+    weakBoundary >= scopeStart &&
+    SYNTHESIS_COLLECTION_HEAD_PATTERN.test(value.slice(scopeStart, weakBoundary).trim())
+  ) {
+    scopeStart = weakBoundary + 1;
+  }
+  const before = value.slice(scopeStart, index);
+  const after = value.slice(index + length, nextFactPhraseBoundary(value, index + length));
   const changes = [...before.matchAll(CHANGE_OBJECTIVE_GLOBAL_PATTERN)];
-  const latestChange = changes[changes.length - 1];
-  const laterIndependentFact = latestChange === undefined
-    ? undefined
-    : [...before.matchAll(/(?:当前|现状|确认|核实|列出|盘点|建议|方案|行动|规划|筹划)/gu)]
-      .reverse()
-      .find((match) => (match.index ?? -1) > (latestChange.index ?? -1));
-  return (latestChange !== undefined && laterIndependentFact === undefined) ||
+  return changes.length > 0 ||
     /^\s*(?:如何\s*)?(?:提升|优化|改造|升级|需要提升|改进)/u.test(after);
 }
 
-function isChangeCollection(phrase: string): boolean {
-  return CHANGE_COLLECTION_PATTERN.test(phrase) || CHANGE_OBJECTIVE_PATTERN.test(phrase);
+function stripOrganizationalSupport(value: string): string {
+  return value
+    .replace(ORGANIZATIONAL_SUPPORT_RELATION_PATTERN, " ")
+    .replace(SUPPORTER_NOUN_PATTERN, " ");
 }
 
-function nextPhraseBoundary(value: string, index: number): number {
-  const boundary = value.slice(index).search(/[，,；;。！？!?]/u);
+function nextFactPhraseBoundary(value: string, index: number): number {
+  const boundary = value.slice(index).search(/(?:[，,；;。！？!?]|并且|同时|然后|再|继而|随后|并|及)/u);
   return boundary < 0 ? value.length : index + boundary;
 }
 
