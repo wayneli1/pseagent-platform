@@ -548,7 +548,7 @@ const CHANGE_OBJECTIVE_PATTERN = /(?:提升|优化|改造|升级)/u;
 
 const CHANGE_OBJECTIVE_GLOBAL_PATTERN = /(?:提升|优化|改造|升级)/gu;
 
-const STRONG_CHANGE_SCOPE_BOUNDARY_PATTERN = /(?:并且|同时|然后|再|继而|随后|并)/gu;
+const STRONG_CHANGE_SCOPE_BOUNDARY_PATTERN = /(?:并且|同时|然后|再|继而|随后)/gu;
 
 const SYNTHESIS_COLLECTION_HEAD_PATTERN = /(?:建议|方案|行动|规划|筹划)$/u;
 
@@ -588,12 +588,13 @@ function requiresDirectProductEvidence(
 }
 
 function hasLocalContextualProductFact(value: string): boolean {
-  return [...value.matchAll(/(?:功能|能力)/gu)].some((match) => {
-    const local = localTextWindow(value, match.index ?? 0, match[0].length);
-    return (PRODUCT_FACT_CONTEXT_PATTERN.test(local) || PRODUCT_FACT_HINT_PATTERN.test(local)) &&
-      !(ORGANIZATIONAL_CAPABILITY_PATTERN.test(local) && !/(?:当前|现状)/u.test(local)) &&
-      !isDirectlyChangeGoverned(value, match.index ?? 0, match[0].length);
-  });
+  return factRequestFragments(value).some((fragment) =>
+    [...fragment.matchAll(/(?:功能|能力)/gu)].some((match) => {
+      const local = localTextWindow(fragment, match.index ?? 0, match[0].length);
+      return (PRODUCT_FACT_CONTEXT_PATTERN.test(local) || PRODUCT_FACT_HINT_PATTERN.test(local)) &&
+        !(ORGANIZATIONAL_CAPABILITY_PATTERN.test(local) && !/(?:当前|现状)/u.test(local)) &&
+        !isDirectlyChangeGoverned(fragment, match.index ?? 0, match[0].length);
+    }));
 }
 
 function hasLocalProductSupportFact(value: string): boolean {
@@ -653,10 +654,29 @@ function stripOrganizationalSupport(value: string): string {
 
 function factRequestFragments(value: string): readonly string[] {
   return value
-    .split(/(?:[，,；;。！？!?]|并且|同时|然后|再|继而|随后|并)/u)
+    .split(/(?:[，,；;。！？!?]|并且|同时|然后|再|继而|随后)/u)
+    .flatMap(splitConditionalSingleBing)
     .flatMap(splitWeakRequestFragments)
     .map((fragment) => fragment.trim())
     .filter(Boolean);
+}
+
+function splitConditionalSingleBing(value: string): readonly string[] {
+  const fragments: string[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const right = value.slice(index + 1);
+    if (
+      value[index] !== "并" ||
+      !(startsIndependentAttributeFragment(right) || isSynthesisCollectionFragment(right))
+    ) {
+      continue;
+    }
+    fragments.push(value.slice(start, index));
+    start = index + 1;
+  }
+  fragments.push(value.slice(start));
+  return fragments;
 }
 
 function splitWeakRequestFragments(value: string): readonly string[] {
@@ -674,8 +694,16 @@ function splitWeakRequestFragments(value: string): readonly string[] {
 }
 
 function startsNewFactRequestOrSynthesisCollection(value: string): boolean {
-  return /^(?:确认|核实|说明|列出|给出|提出|制定|评估|分析|提升|优化|改造)/u.test(value) ||
+  return /^(?:确认|核实|说明|列出)/u.test(value) ||
     SYNTHESIS_COLLECTION_REQUEST_PATTERN.test(value);
+}
+
+function startsIndependentAttributeFragment(value: string): boolean {
+  const leading = value.slice(0, 24);
+  return /^(?:确认|核实|说明|列出|给出|提出|制定|评估|分析)/u.test(leading) ||
+    (PRODUCT_FACT_CONTEXT_PATTERN.test(leading) &&
+      /(?:功能|能力)/u.test(leading)) ||
+    /^(?:当前|现有|实际)/u.test(leading);
 }
 
 function isSynthesisCollectionFragment(value: string): boolean {
@@ -683,8 +711,17 @@ function isSynthesisCollectionFragment(value: string): boolean {
 }
 
 function nextFactPhraseBoundary(value: string, index: number): number {
-  const boundary = value.slice(index).search(/(?:[，,；;。！？!?]|并且|同时|然后|再|继而|随后|并|及)/u);
-  return boundary < 0 ? value.length : index + boundary;
+  const hardBoundary = value.slice(index).search(/(?:[，,；;。！？!?]|并且|同时|然后|再|继而|随后|及)/u);
+  const conditionalBing = [...value.slice(index).matchAll(/并/gu)]
+    .find((match) => {
+      const right = value.slice(index + (match.index ?? 0) + 1);
+      return startsIndependentAttributeFragment(right) || isSynthesisCollectionFragment(right);
+    });
+  const hardIndex = hardBoundary < 0 ? value.length : index + hardBoundary;
+  const bingIndex = conditionalBing === undefined
+    ? value.length
+    : index + (conditionalBing.index ?? 0);
+  return Math.min(hardIndex, bingIndex);
 }
 
 function localTextWindow(value: string, index: number, length: number): string {

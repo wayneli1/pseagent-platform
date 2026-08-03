@@ -523,6 +523,42 @@ describe("DeterministicTaskSpecGuard", () => {
   );
 
   it.each([
+    ["评估团队条件并梳理系统功能", false],
+    ["团队能力提升建议同时核查平台能力", false],
+    ["提升团队能力", true],
+    ["团队能力改进建议", true],
+  ] as const)(
+    "scopes organizational capability suppression to its own occurrence: %s",
+    (question, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", "unknown");
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
+    ["所有并发规格", false],
+    ["当前并发上限", false],
+    ["确认系统并发能力", false],
+    ["给出并行部署优化建议", true],
+    ["提升系统功能并梳理系统功能边界", false],
+    ["确认产品版本并改造部署方案", false],
+    ["核实授权并制定优化建议", false],
+    ["版本优化方案并升级建议", true],
+  ] as const)(
+    "treats single 并 as a boundary only when it introduces an independent request: %s",
+    (question, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", "unknown");
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
     ["确认产品版本并给出升级建议", false],
     ["给出升级建议并确认产品版本", false],
     ["核实授权模式同时提出优化方案", false],
