@@ -215,6 +215,16 @@ function normalizeSynthesisQueries(plan: KnowledgePlan): KnowledgePlan {
 }
 
 function normalizeDirectQueryAspectTerms(plan: KnowledgePlan): KnowledgePlan {
+  const genericTerms = new Set([
+    "目标",
+    "证据",
+    "信息",
+    "内容",
+    "相关",
+    "问题",
+    "事实",
+    "结论",
+  ]);
   return knowledgePlanSchema.parse({
     ...plan,
     requirements: plan.requirements.map((requirement) => {
@@ -225,7 +235,6 @@ function normalizeDirectQueryAspectTerms(plan: KnowledgePlan): KnowledgePlan {
       return {
         ...requirement,
         queries: requirement.queries.map((query) => {
-          if (query.aspectIds.length <= 1) return query;
           const normalizedQuery = normalizePlannerText(query.text);
           const seen = new Set<string>();
           const additions = query.aspectIds.flatMap((aspectId) => {
@@ -234,6 +243,7 @@ function normalizeDirectQueryAspectTerms(plan: KnowledgePlan): KnowledgePlan {
             return aspect.terms.flatMap((term) => {
               const normalizedTerm = normalizePlannerText(term);
               if (
+                genericTerms.has(normalizedTerm) ||
                 normalizedQuery.includes(normalizedTerm) ||
                 seen.has(normalizedTerm)
               ) {

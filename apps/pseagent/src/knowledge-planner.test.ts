@@ -483,6 +483,42 @@ describe("ModelKnowledgePlanner", () => {
     }]);
   });
 
+  it("adds dynamic terms when a direct query maps to a single broad aspect", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: "Coremail XT6 部署方式",
+      requirements: [{
+        id: "R1",
+        question: "Coremail XT6 常见部署方式有哪些",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "部署类型",
+          terms: ["单机部署", "多机部署"],
+        }],
+        queries: [{
+          text: "Coremail XT6 常见部署方式",
+          aspectIds: ["A1"],
+        }],
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({
+      ...plannerInput(),
+      question: "Coremail XT6 常见部署方式有哪些",
+    });
+
+    expect(result.requirements[0]?.queries).toEqual([{
+      text: "Coremail XT6 常见部署方式 单机部署 多机部署",
+      aspectIds: ["A1"],
+    }]);
+  });
+
   it("repairs an invalid model payload", async () => {
     const completeJson = vi.fn()
       .mockRejectedValueOnce(new InvalidModelPayloadError())
