@@ -247,7 +247,7 @@ export function extractExplicitQuestionSignals(question: string): ExplicitQuesti
   for (const match of question.matchAll(listPattern)) {
     const sourceText = match.groups?.list?.trim();
     if (!sourceText) continue;
-    const items = parallelEntityItems(sourceText);
+    const items = parallelEntityItems(sourceText, false);
     if (items.length >= 2) entityGroups.push({ sourceText, items });
   }
   const comparisonPattern = /(?<left>[\p{L}\p{N}·（）()._-]{2,64}?)\s*(?:vs\.?|versus|与|和)\s*(?<right>[\p{L}\p{N}·（）()._-]{2,64}?)(?=\s*(?:的)?(?:差异|区别|对比|比较))/giu;
@@ -267,7 +267,7 @@ export function extractExplicitQuestionSignals(question: string): ExplicitQuesti
   for (const match of question.matchAll(distributiveParallelListPattern)) {
     const sourceText = match.groups?.list?.trim();
     if (!sourceText) continue;
-    const items = parallelEntityItems(sourceText);
+    const items = parallelEntityItems(sourceText, true);
     if (items.length >= 2) entityGroups.push({ sourceText, items });
   }
 
@@ -321,10 +321,14 @@ function cleanExplicitEntity(value: string): string {
     .trim();
 }
 
-function parallelEntityItems(sourceText: string): string[] {
-  return sourceText
-    .split(/(?:、|，|,)/u)
-    .flatMap(splitConjoinedEntitySegment)
+function parallelEntityItems(
+  sourceText: string,
+  allowConjoinedEntities: boolean,
+): string[] {
+  const strongSeparated = sourceText.split(/(?:、|，|,)/u);
+  return (strongSeparated.length > 1 || !allowConjoinedEntities
+    ? strongSeparated
+    : strongSeparated.flatMap(splitConjoinedEntitySegment))
     .map(cleanExplicitEntity)
     .filter((item) => isPlausibleExplicitEntity(item));
 }
@@ -461,13 +465,29 @@ const CONTEXTUAL_PRODUCT_FACT_PATTERN = /(?:功能|能力)/u;
 const PRODUCT_SUPPORT_FACT_PATTERN = /支持/iu;
 
 const PRODUCT_FACT_CONTEXT_PATTERN =
-  /(?:产品|系统|平台|协议|接口|服务|组件|模块|软件|应用|终端|环境|双活)/iu;
+  /(?:产品|系统|平台|协议|接口|组件|模块|软件|应用|终端|环境|双活)/iu;
 
 const PROTECTED_NUMERIC_FACT_PATTERN =
   /\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|%)/iu;
 
-const CUSTOMER_RELATIONSHIP_SUPPORT_PATTERN =
-  /(?:客户支持|内部支持者|客户侧支持|业务支持者)/u;
+const CUSTOMER_RELATIONSHIP_SUPPORT_FRAGMENT_PATTERN =
+  /(?:客户(?:侧)?支持(?:者|团队)?|内部支持者|业务支持者)(?:\s*支持)?/gu;
+
+const EXHAUSTIVE_MARKER_PATTERN = /(?:全部|所有|全量|完整(?:列表|清单)?)/u;
+
+const STRONG_ENUMERABLE_FACT_OBJECT_PATTERN =
+  /(?:接口|协议|版本|补丁|授权|报价|费用|认证|容量|性能|并发|案例|部署|架构|配置)/iu;
+
+const CONTEXTUAL_ENUMERABLE_FACT_OBJECT_PATTERN = /(?:功能|能力|组件|模块|清单|列表)/u;
+
+const RECOMMENDATION_OR_ORGANIZATIONAL_PATTERN =
+  /(?:如何|怎样|怎么|提升|改进|建议|行动|推进|团队|售前|销售)/u;
+
+const PRODUCT_CONTEXTUAL_CLAUSE_CONNECTOR_PATTERN =
+  /(?:并且|同时|然后|以及|并|且)(?=.{0,32}(?:产品|系统|平台|协议|接口|组件|模块|软件|应用|终端|环境|双活))/u;
+
+const PRODUCT_FACT_ACTION_CLAUSE_CONNECTOR_PATTERN =
+  /(?:并且|同时|然后|以及|并|且)\s*(?:分析|评估|介绍|说明|列出|总结|建议|推荐|给出|制定|设计|判断|排查|确认|核实|检查|了解|提升|改进)/u;
 
 const OPPORTUNITY_FORECAST_PATTERN =
   /(?:赢率|胜率|成交概率|成功概率|机会(?:质量|预测|判断)|销售预测|预测(?:结果|概率))/u;
@@ -478,24 +498,44 @@ function requiresDirectEvidence(
   targetEntities: readonly TaskSpec["entities"][number][],
 ): boolean {
   if (obligation.evidencePolicy === "direct") return false;
-  const customerRelationshipSupport =
-    CUSTOMER_RELATIONSHIP_SUPPORT_PATTERN.test(value);
-  const productFactContext =
-    targetEntities.some((entity) => entity.role === "product") ||
-    PRODUCT_FACT_CONTEXT_PATTERN.test(value);
-  if (
-    STRONG_PRODUCT_FACT_PATTERN.test(value) ||
-    (productFactContext && CONTEXTUAL_PRODUCT_FACT_PATTERN.test(value)) ||
-    (
-      productFactContext &&
-      PRODUCT_SUPPORT_FACT_PATTERN.test(value) &&
-      !customerRelationshipSupport
-    )
-  ) {
+  const productTarget = targetEntities.some((entity) => entity.role === "product");
+  const productFactClauses = value.replace(
+    CUSTOMER_RELATIONSHIP_SUPPORT_FRAGMENT_PATTERN,
+    " ",
+  )
+    .split(/[，,；;。！？!?]+/u)
+    .flatMap((clause) => clause
+      .split(PRODUCT_CONTEXTUAL_CLAUSE_CONNECTOR_PATTERN)
+      .flatMap((part) => part.split(PRODUCT_FACT_ACTION_CLAUSE_CONNECTOR_PATTERN)));
+  if (productFactClauses.some((clause) =>
+    requiresDirectProductEvidenceInClause(clause, productTarget))) {
     return true;
   }
   return PROTECTED_NUMERIC_FACT_PATTERN.test(value) &&
     !isCustomerInputOpportunityForecast(obligation, value);
+}
+
+function requiresDirectProductEvidenceInClause(
+  clause: string,
+  productTarget: boolean,
+): boolean {
+  const productFactContext =
+    productTarget || PRODUCT_FACT_CONTEXT_PATTERN.test(clause);
+  const contextualProductFact =
+    productFactContext &&
+    CONTEXTUAL_PRODUCT_FACT_PATTERN.test(clause) &&
+    !RECOMMENDATION_OR_ORGANIZATIONAL_PATTERN.test(clause);
+  const exhaustiveFact =
+    EXHAUSTIVE_MARKER_PATTERN.test(clause) &&
+    (
+      STRONG_ENUMERABLE_FACT_OBJECT_PATTERN.test(clause) ||
+      (productFactContext &&
+        CONTEXTUAL_ENUMERABLE_FACT_OBJECT_PATTERN.test(clause))
+    );
+  return STRONG_PRODUCT_FACT_PATTERN.test(clause) ||
+    contextualProductFact ||
+    exhaustiveFact ||
+    (productFactContext && PRODUCT_SUPPORT_FACT_PATTERN.test(clause));
 }
 
 function isCustomerInputOpportunityForecast(

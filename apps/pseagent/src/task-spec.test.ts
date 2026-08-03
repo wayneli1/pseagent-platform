@@ -52,7 +52,8 @@ function parallelEntityTaskSpec(entityLabels = ["工行", "华为", "比亚迪"]
 function guardSingleObligation(
   question: string,
   evidencePolicy: "direct" | "synthesis" | "customer_input",
-  role: "product" | "target" = "product",
+  role: "product" | "target" | "unknown" = "product",
+  obligationLabel = question,
 ) {
   return new DeterministicTaskSpecGuard().validate({
     resolvedQuestion: {
@@ -73,7 +74,7 @@ function guardSingleObligation(
         sourceText: question,
         obligations: [{
           id: "O1",
-          label: question,
+          label: obligationLabel,
           targetEntityIds: ["E1"],
           evidencePolicy,
           domains: [evidencePolicy === "customer_input"
@@ -478,6 +479,91 @@ describe("DeterministicTaskSpecGuard", () => {
     },
   );
 
+  it("does not let a trailing recommendation suppress an earlier product fact", () => {
+    const question = "系统有哪些功能并给出提升建议";
+    const result = guardSingleObligation(
+      question,
+      "synthesis",
+      "unknown",
+      "确认任务",
+    );
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      code: "protected_fact_not_direct",
+    }));
+  });
+
+  it.each([
+    ["如何提升销售能力，并确认系统有哪些功能", "unknown", false],
+    ["如何提升销售能力并确认系统有哪些功能", "unknown", false],
+    ["系统有哪些功能并给出提升建议", "unknown", false],
+    ["客户支持团队支持项目，并了解邮件系统现状", "product", true],
+  ] as const)(
+    "keeps contextual product evidence scoped to its own clause: %s",
+    (question, role, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", role);
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
+    ["识别客户支持者并确认系统是否支持IPv6", "unknown", false],
+    ["识别客户支持者并联系客户支持团队", "target", true],
+    ["客户支持团队支持项目，邮件系统支持IPv6", "unknown", false],
+  ] as const)(
+    "keeps relationship support local while protecting product support: %s",
+    (question, role, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", role);
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
+    ["列出全部接口", "unknown", false],
+    ["列出产品全部接口", "product", false],
+    ["列出所有协议", "unknown", false],
+    ["提供全量版本", "unknown", false],
+    ["给出产品功能完整列表", "product", false],
+    ["列出所有客户案例", "unknown", false],
+    ["列出全部部署方式", "unknown", false],
+    ["提供全量产品清单", "unknown", false],
+    ["给出全部建议", "target", true],
+    ["完成所有行动", "target", true],
+  ] as const)(
+    "protects exhaustive facts without treating actions as facts: %s",
+    (question, role, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", role);
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
+  it.each([
+    ["如何提升售前服务能力", "target", true],
+    ["客户服务团队有哪些能力需要提升", "target", true],
+    ["邮件服务支持哪些协议", "unknown", false],
+    ["客户服务系统具备哪些功能", "unknown", false],
+    ["产品能力如何提升", "product", true],
+    ["如何提升销售能力", "product", true],
+  ] as const)(
+    "distinguishes organizational service recommendations from product facts: %s",
+    (question, role, expectedOk) => {
+      const result = guardSingleObligation(question, "synthesis", role);
+      expect(result.ok).toBe(expectedOk);
+      expect(result.issues.some((issue) =>
+        issue.code === "protected_fact_not_direct",
+      )).toBe(!expectedOk);
+    },
+  );
+
   it("finds separate explicit requests in a diagnosis and action question", () => {
     const signals = extractExplicitQuestionSignals(
       "目前客户在POC阶段，但销售获取不到客户侧的信息，我们的赢率如何，要怎样做才能提升赢率？",
@@ -569,6 +655,21 @@ describe("DeterministicTaskSpecGuard", () => {
     const signals = extractExplicitQuestionSignals("客户和合作伙伴需要共同推进机会");
     expect(signals.entityGroups).toEqual([]);
   });
+
+  it.each([
+    ["请分析交付与售前协同问题", []],
+    ["天地和科技、甲公司分别部署邮件系统", ["天地和科技", "甲公司"]],
+    ["研发与创新中心、甲公司逐个核定预算", ["研发与创新中心", "甲公司"]],
+    ["甲公司与乙公司各自采用什么方案", ["甲公司", "乙公司"]],
+  ] as const)(
+    "uses conjunction splitting only for confirmed distributive structures: %s",
+    (question, expectedEntities) => {
+      const entities = extractExplicitQuestionSignals(question).entityGroups
+        .flatMap((group) => group.items);
+      expect(entities).toEqual(expect.arrayContaining([...expectedEntities]));
+      expect(entities).toHaveLength(expectedEntities.length);
+    },
+  );
 
   it("splits independent action verbs without treating their wording as fixed dimensions", () => {
     const signals = extractExplicitQuestionSignals(
