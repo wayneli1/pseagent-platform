@@ -20,7 +20,35 @@ describe("loadConfig", () => {
     });
     expect(config.PSE_MODEL_NAME).toBe("model");
     expect(config.PSE_MODEL_MAX_TOKENS).toBe(8_192);
+    expect(config.PSE_REQUEST_TIMEOUT_MS).toBe(300_000);
+    expect(config.PSE_ACTIVE_DEADLINE_MS).toBe(270_000);
     expect(config).not.toHaveProperty("JUDGE_MODEL_NAME");
+  });
+
+  it("loads bounded request and active deadline budgets", () => {
+    const config = loadConfig({
+      ...baseEnv,
+      PSE_REQUEST_TIMEOUT_MS: "570000",
+      PSE_ACTIVE_DEADLINE_MS: "540000",
+    });
+    expect(config.PSE_REQUEST_TIMEOUT_MS).toBe(570_000);
+    expect(config.PSE_ACTIVE_DEADLINE_MS).toBe(540_000);
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_REQUEST_TIMEOUT_MS: "29999",
+    })).toThrow();
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_ACTIVE_DEADLINE_MS: "1800001",
+    })).toThrow();
+  });
+
+  it("requires the active deadline to precede the request timeout", () => {
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_REQUEST_TIMEOUT_MS: "540000",
+      PSE_ACTIVE_DEADLINE_MS: "540000",
+    })).toThrow("PSE_ACTIVE_DEADLINE_MS must be less than PSE_REQUEST_TIMEOUT_MS");
   });
 
   it("accepts a bounded model output token budget", () => {

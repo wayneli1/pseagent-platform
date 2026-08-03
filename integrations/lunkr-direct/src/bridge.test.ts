@@ -18,6 +18,7 @@ const config: LunkrDirectConfig = {
   contextMaxTurns: 6,
   contextMaxChars: 12_000,
   messageMaxChars: 1_000,
+  questionBudgetMs: 300_000,
   maxActivePeers: 4,
   maxPendingPerPeer: 5,
   sessionIdleMs: 86_400_000,
@@ -658,6 +659,25 @@ describe("LunkrPseBridge", () => {
     expect(sentTexts(sendText)).toContain(
       "问题 #1 的回答：\n\n恢复后的回答",
     );
+  });
+
+  it("uses the configured question budget for the shared abort signal", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const answer = vi.fn<Answer>(async () => answered("回答"));
+      const bridge = createBridge({
+        answer,
+        sendText: vi.fn(async () => undefined),
+        config: { questionBudgetMs: 600_000 },
+        now: () => 10_000,
+      });
+
+      await bridge.handle(message("m-budget", "#a#U", "问题"));
+
+      expect(timeout).toHaveBeenCalledWith(600_000);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("never performs a third attempt and does not store failed context", async () => {

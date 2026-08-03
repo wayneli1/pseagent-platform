@@ -13,6 +13,7 @@ export interface LunkrDirectConfig {
   readonly contextMaxTurns: number;
   readonly contextMaxChars: number;
   readonly messageMaxChars: number;
+  readonly questionBudgetMs: number;
   readonly maxActivePeers: number;
   readonly maxPendingPerPeer: number;
   readonly sessionIdleMs: number;
@@ -46,10 +47,31 @@ export function loadLunkrConfig(
     contextMaxTurns: positiveInteger(env, "LUNKR_CONTEXT_MAX_TURNS", 6),
     contextMaxChars: positiveInteger(env, "LUNKR_CONTEXT_MAX_CHARS", 12_000),
     messageMaxChars: positiveInteger(env, "LUNKR_MESSAGE_MAX_CHARS", 1_000),
+    questionBudgetMs: boundedInteger(
+      env,
+      "LUNKR_QUESTION_BUDGET_MS",
+      300_000,
+      30_000,
+      1_800_000,
+    ),
     maxActivePeers: positiveInteger(env, "LUNKR_MAX_ACTIVE_PEERS", 4),
     maxPendingPerPeer: positiveInteger(env, "LUNKR_MAX_PENDING_PER_PEER", 5),
     sessionIdleMs: positiveInteger(env, "LUNKR_SESSION_IDLE_MS", 86_400_000),
   };
+}
+
+function boundedInteger(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const value = positiveInteger(env, name, fallback);
+  if (value < minimum || value > maximum) {
+    throw new Error(`${name} 必须介于 ${minimum} 和 ${maximum} 之间`);
+  }
+  return value;
 }
 
 function positiveInteger(

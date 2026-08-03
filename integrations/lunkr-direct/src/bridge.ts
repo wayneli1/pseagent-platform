@@ -9,7 +9,6 @@ import {
   type QuestionStart,
 } from "./peer-scheduler.js";
 
-const QUESTION_BUDGET_MS = 300_000;
 const FAILURE_TEXT = "知识问答服务暂时不可用，请稍后重试。";
 
 const HELP_TEXT = [
@@ -141,7 +140,7 @@ export class LunkrPseBridge<Result> {
   private acceptQuestion(message: LunkrDirectMessage): Promise<void> {
     const receivedAt = this.now();
     this.expireIdleSession(message.peerUid, receivedAt);
-    const deadlineAt = receivedAt + QUESTION_BUDGET_MS;
+    const deadlineAt = receivedAt + this.config.questionBudgetMs;
     let pendingAtAdmission = 0;
     const receipt = this.scheduler.submit(message.peerUid, {
       accept: async (admission) => {

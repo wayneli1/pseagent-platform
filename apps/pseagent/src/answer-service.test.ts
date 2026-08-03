@@ -622,6 +622,45 @@ describe("AnswerService", () => {
     );
   });
 
+  it("uses injected request and active deadline budgets", async () => {
+    const requestTimeoutMs = 570_000;
+    const activeDeadlineMs = 540_000;
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "professional",
+      status: "not_covered",
+      answer: "未覆盖",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: createPlanner(),
+      knowledge: {
+        open: vi.fn(async () => createKnowledgeSessionFixture()),
+      },
+      runAgent,
+      requestTimeoutMs,
+      activeDeadlineMs,
+    });
+
+    try {
+      const before = Date.now();
+      await service.answer("产品问题");
+      const after = Date.now();
+
+      expect(timeout).toHaveBeenCalledWith(requestTimeoutMs);
+      expect(runAgent.mock.calls[0]?.[0].deadlineAt).toBeGreaterThanOrEqual(
+        before + activeDeadlineMs,
+      );
+      expect(runAgent.mock.calls[0]?.[0].deadlineAt).toBeLessThanOrEqual(
+        after + activeDeadlineMs,
+      );
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it("returns temporarily unavailable without running the agent when planning fails", async () => {
     const model = {} as ModelClient;
     const runAgent = vi.fn<AgentRunner>();

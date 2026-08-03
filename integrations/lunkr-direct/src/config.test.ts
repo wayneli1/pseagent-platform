@@ -9,9 +9,20 @@ describe("loadLunkrConfig", () => {
     expect(config.contextMaxTurns).toBe(6);
     expect(config.contextMaxChars).toBe(12_000);
     expect(config.messageMaxChars).toBe(1_000);
+    expect(config.questionBudgetMs).toBe(300_000);
     expect(config.maxActivePeers).toBe(4);
     expect(config.maxPendingPerPeer).toBe(5);
     expect(config.sessionIdleMs).toBe(86_400_000);
+  });
+
+  it("loads a bounded question budget", () => {
+    expect(loadLunkrConfig({
+      LUNKR_QUESTION_BUDGET_MS: "600000",
+    }).questionBudgetMs).toBe(600_000);
+    expect(() => loadLunkrConfig({ LUNKR_QUESTION_BUDGET_MS: "29999" }))
+      .toThrow("LUNKR_QUESTION_BUDGET_MS");
+    expect(() => loadLunkrConfig({ LUNKR_QUESTION_BUDGET_MS: "1800001" }))
+      .toThrow("LUNKR_QUESTION_BUDGET_MS");
   });
 
   it("rejects insecure base URLs and invalid numbers", () => {

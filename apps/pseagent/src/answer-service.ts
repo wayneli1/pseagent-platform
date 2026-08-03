@@ -69,6 +69,8 @@ export class AnswerService {
     readonly knowledge: KnowledgeSessionFactory;
     readonly runAgent: AgentRunner;
     readonly historicalProvider?: HistoricalAnswerProvider;
+    readonly requestTimeoutMs?: number;
+    readonly activeDeadlineMs?: number;
   }) {}
 
   async answer(
@@ -85,7 +87,9 @@ export class AnswerService {
     signal?: AbortSignal,
   ): Promise<PseAnswerExecution> {
     const startedAt = Date.now();
-    const timeoutSignal = AbortSignal.timeout(PSE_REQUEST_TIMEOUT_MS);
+    const timeoutSignal = AbortSignal.timeout(
+      this.dependencies.requestTimeoutMs ?? PSE_REQUEST_TIMEOUT_MS,
+    );
     const requestSignal = signal === undefined
       ? timeoutSignal
       : AbortSignal.any([signal, timeoutSignal]);
@@ -138,7 +142,9 @@ export class AnswerService {
         plan,
         model: this.dependencies.model,
         session,
-        deadlineAt: startedAt + PSE_ACTIVE_DEADLINE_MS,
+        deadlineAt:
+          startedAt +
+          (this.dependencies.activeDeadlineMs ?? PSE_ACTIVE_DEADLINE_MS),
         trace,
         ...(conversationContext === undefined ? {} : { conversationContext }),
         signal: requestSignal,

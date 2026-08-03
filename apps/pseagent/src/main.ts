@@ -76,6 +76,8 @@ export async function createPseAgentRuntime(
       ...(diagnostics === undefined ? {} : { diagnostics }),
       knowledge,
       runAgent: dependencies.runAgent ?? runKnowledgeAgent,
+      requestTimeoutMs: config.PSE_REQUEST_TIMEOUT_MS,
+      activeDeadlineMs: config.PSE_ACTIVE_DEADLINE_MS,
       ...(historicalProvider === undefined ? {} : { historicalProvider }),
     });
     answer = service.answer.bind(service);

@@ -14,6 +14,8 @@ const configEnv = {
   PSE_MODEL_API_KEY: "test-key",
   PSE_MODEL_NAME: "main-model",
   PSE_MODEL_TIMEOUT_MS: "60000",
+  PSE_REQUEST_TIMEOUT_MS: "570000",
+  PSE_ACTIVE_DEADLINE_MS: "540000",
   KNOWLEDGE_MCP_COMMAND: "node",
   KNOWLEDGE_MCP_ENTRY_PATH: process.execPath,
 };
@@ -117,7 +119,9 @@ describe("main wiring", () => {
     });
 
     await expect(runtime.answer("普通问题")).resolves.toMatchObject({ scope: "normal", answer: "普通回答" });
+    const beforeProductAnswer = Date.now();
     const productExecution = await runtime.answerDetailed("产品问题");
+    const afterProductAnswer = Date.now();
     expect(productExecution).toMatchObject({
       result: agentResult,
       draftCoverage: ["none"],
@@ -142,6 +146,12 @@ describe("main wiring", () => {
     expect(planner.plan).toHaveBeenCalledOnce();
     expect(runAgent.mock.calls[0]?.[0].plan).toEqual(plan);
     expect(runAgent.mock.calls[0]?.[0].model).toBe(model);
+    expect(runAgent.mock.calls[0]?.[0].deadlineAt).toBeGreaterThanOrEqual(
+      beforeProductAnswer + 540_000,
+    );
+    expect(runAgent.mock.calls[0]?.[0].deadlineAt).toBeLessThanOrEqual(
+      afterProductAnswer + 540_000,
+    );
     expect(caller.connect).toHaveBeenCalledOnce();
     expect(createHistoricalProvider).not.toHaveBeenCalled();
 

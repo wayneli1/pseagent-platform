@@ -23,6 +23,7 @@ const config: LunkrDirectConfig = {
   contextMaxTurns: 6,
   contextMaxChars: 12_000,
   messageMaxChars: 1_000,
+  questionBudgetMs: 300_000,
   maxActivePeers: 4,
   maxPendingPerPeer: 5,
   sessionIdleMs: 86_400_000,
