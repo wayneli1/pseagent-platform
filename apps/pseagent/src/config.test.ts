@@ -22,7 +22,35 @@ describe("loadConfig", () => {
     expect(config.PSE_MODEL_MAX_TOKENS).toBe(8_192);
     expect(config.PSE_REQUEST_TIMEOUT_MS).toBe(300_000);
     expect(config.PSE_ACTIVE_DEADLINE_MS).toBe(270_000);
+    expect(config.taskSpecShadow).toEqual({ enabled: false });
     expect(config).not.toHaveProperty("JUDGE_MODEL_NAME");
+  });
+
+  it("loads a bounded opt-in TaskSpec shadow configuration", () => {
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+    }).taskSpecShadow).toEqual({
+      enabled: true,
+      timeoutMs: 15_000,
+    });
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_SHADOW_TIMEOUT_MS: "30000",
+    }).taskSpecShadow).toEqual({
+      enabled: true,
+      timeoutMs: 30_000,
+    });
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_SHADOW_TIMEOUT_MS: "999",
+    })).toThrow();
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "yes",
+    })).toThrow();
   });
 
   it("loads bounded request and active deadline budgets", () => {

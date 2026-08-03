@@ -8,6 +8,7 @@ import type { KnowledgeToolCaller } from "./knowledge-tool-caller.js";
 import type { KnowledgePlanner } from "./knowledge-planner.js";
 import type { ModelClient } from "./model-client.js";
 import { createPseAgentRuntime } from "./main.js";
+import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
 
 const configEnv = {
   PSE_MODEL_BASE_URL: "https://model.example.test/v1",
@@ -159,6 +160,68 @@ describe("main wiring", () => {
     await runtime.close();
     expect(caller.close).toHaveBeenCalledOnce();
     expect(closeServer).toHaveBeenCalledOnce();
+  });
+
+  it("constructs the optional TaskSpec shadow only when explicitly enabled", async () => {
+    const model = {
+      completeJson: vi.fn(),
+      completeText: vi.fn(async () => "普通回答"),
+    } as unknown as ModelClient;
+    const caller = {
+      connect: vi.fn(async () => undefined),
+      call: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } satisfies KnowledgeToolCaller;
+    const server = {
+      close: vi.fn(async () => undefined),
+    } as unknown as McpServer;
+    const analyzer = {
+      analyze: vi.fn(),
+    } as unknown as TaskAnalysisShadow;
+    const createTaskAnalysisShadow = vi.fn(() => analyzer);
+
+    const disabledRuntime = await createPseAgentRuntime(configEnv, {
+      createModel: () => model,
+      createRouter: () => ({ route: vi.fn(async () => "normal" as const) }),
+      createKnowledgePlanner: () => ({ plan: vi.fn(async () => plan) }),
+      createKnowledgeCaller: () => caller,
+      createKnowledgeSessionFactory: () => ({ open: vi.fn() }),
+      runAgent: vi.fn(),
+      createServer: () => server,
+      createTaskAnalysisShadow,
+    });
+    expect(createTaskAnalysisShadow).not.toHaveBeenCalled();
+    await disabledRuntime.close();
+
+    const enabledCaller = {
+      connect: vi.fn(async () => undefined),
+      call: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } satisfies KnowledgeToolCaller;
+    const enabledServer = {
+      close: vi.fn(async () => undefined),
+    } as unknown as McpServer;
+    const enabledRuntime = await createPseAgentRuntime({
+      ...configEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+    }, {
+      createModel: () => model,
+      createRouter: () => ({ route: vi.fn(async () => "normal" as const) }),
+      createKnowledgePlanner: () => ({ plan: vi.fn(async () => plan) }),
+      createKnowledgeCaller: () => enabledCaller,
+      createKnowledgeSessionFactory: () => ({ open: vi.fn() }),
+      runAgent: vi.fn(),
+      createServer: () => enabledServer,
+      createTaskAnalysisShadow,
+    });
+    expect(createTaskAnalysisShadow).toHaveBeenCalledOnce();
+    expect(createTaskAnalysisShadow).toHaveBeenCalledWith(
+      model,
+      expect.objectContaining({
+        taskSpecShadow: { enabled: true, timeoutMs: 15_000 },
+      }),
+    );
+    await enabledRuntime.close();
   });
 
   it("lazily wires and idempotently closes the enabled historical provider", async () => {

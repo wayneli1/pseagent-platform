@@ -17,6 +17,8 @@ import {
   type ModelClient,
 } from "./model-client.js";
 import { ScopeRouter } from "./router.js";
+import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
+import { taskSpecSchema } from "./task-spec.js";
 
 const knowledgePlan = {
   subject: "Coremail",
@@ -143,6 +145,125 @@ function createProfessionalService(
 }
 
 describe("AnswerService", () => {
+  it("observes TaskSpec shadow analysis without changing the legacy answer path", async () => {
+    const events: DiagnosticEvent[] = [];
+    const rawQuestion = "还有华为呢？";
+    const rawContext = "用户：比较客户多节点方案";
+    const shadow = {
+      analyze: vi.fn(async () => ({
+        resolvedQuestion: {
+          rawQuestion,
+          standaloneQuestion: "华为有哪些多节点方案？",
+          contextUsed: true,
+          inheritedSubjects: ["多节点方案"],
+          corrections: [],
+        },
+        taskSpec: taskSpecSchema.parse({
+          subject: "华为多节点方案",
+          entities: [{ id: "E1", label: "华为", role: "reference", sourceText: "华为" }],
+          deliverables: [{
+            id: "D1",
+            label: "华为多节点方案",
+            kind: "fact",
+            required: true,
+            sourceText: "华为有哪些多节点方案",
+            obligations: [{
+              id: "O1",
+              label: "华为多节点方案",
+              targetEntityIds: ["E1"],
+              evidencePolicy: "direct",
+              domains: ["coremail-professional"],
+              required: true,
+              sourceText: "华为",
+            }],
+          }],
+        }),
+        guard: {
+          ok: true,
+          issues: [],
+          explicitEntityCount: 1,
+          mappedExplicitEntityCount: 1,
+          explicitRequestCount: 1,
+          mappedExplicitRequestCount: 1,
+        },
+        elapsedMs: 10,
+      })),
+    } satisfies TaskAnalysisShadow;
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "professional",
+      status: "answered",
+      answer: "旧链路回答",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: createPlanner(),
+      diagnostics: {
+        start: () => ({
+          requestId: "task-shadow",
+          record(event) { events.push(event); },
+        }),
+      },
+      knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
+      runAgent,
+      taskAnalysisShadow: shadow,
+      taskSpecShadowTimeoutMs: 5_000,
+    });
+
+    await expect(service.answer(rawQuestion, rawContext)).resolves.toMatchObject({
+      answer: "旧链路回答",
+    });
+    expect(shadow.analyze).toHaveBeenCalledWith(expect.objectContaining({
+      question: rawQuestion,
+      conversationContext: rawContext,
+      legacyPlan: knowledgePlan,
+    }));
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      question: rawQuestion,
+      conversationContext: rawContext,
+      plan: knowledgePlan,
+    }));
+    expect(events.map((event) => event.event)).toEqual([
+      "route",
+      "plan",
+      "question_resolution",
+      "task_spec",
+      "task_spec_guard",
+      "task_spec_shadow",
+      "finish",
+    ]);
+    expect(JSON.stringify(events)).not.toContain("华为");
+  });
+
+  it("keeps answering when optional TaskSpec shadow analysis fails", async () => {
+    const shadow = {
+      analyze: vi.fn(async () => {
+        throw new InvalidModelPayloadError("invalid_task_spec");
+      }),
+    } satisfies TaskAnalysisShadow;
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "professional",
+      status: "answered",
+      answer: "主链回答",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: createPlanner(),
+      knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
+      runAgent,
+      taskAnalysisShadow: shadow,
+    });
+
+    await expect(service.answer("Coremail 问题")).resolves.toMatchObject({
+      status: "answered",
+      answer: "主链回答",
+    });
+    expect(runAgent).toHaveBeenCalledOnce();
+  });
+
   it("answers normal questions without opening either knowledge source", async () => {
     const model = {
       completeText: vi.fn(async () => "普通回答"),

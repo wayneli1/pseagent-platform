@@ -29,6 +29,37 @@ describe("development diagnostic trace", () => {
 
     trace.record({ event: "route", scope: "professional" });
     trace.record({
+      event: "question_resolution",
+      mode: "contextual",
+      contextUsed: true,
+      entityCount: 4,
+      correctionCount: 1,
+    });
+    trace.record({
+      event: "task_spec",
+      domainCount: 1,
+      entityCount: 4,
+      deliverableCount: 2,
+      coverageUnitCount: 4,
+      directUnitCount: 3,
+      synthesisUnitCount: 1,
+      customerInputUnitCount: 0,
+    });
+    trace.record({
+      event: "task_spec_guard",
+      ok: false,
+      issueCodes: ["explicit_entity_unmapped"],
+      explicitEntityCount: 3,
+      mappedExplicitEntityCount: 2,
+      explicitRequestCount: 2,
+      mappedExplicitRequestCount: 2,
+    });
+    trace.record({
+      event: "task_spec_shadow",
+      result: "completed",
+      elapsedMs: 12,
+    });
+    trace.record({
       event: "plan",
       requirementCount: 1,
       aspectCount: 1,
@@ -87,6 +118,10 @@ describe("development diagnostic trace", () => {
     });
     expect(records.map((record) => record.event)).toEqual([
       "route",
+      "question_resolution",
+      "task_spec",
+      "task_spec_guard",
+      "task_spec_shadow",
       "plan",
       "model_payload",
       "coverage",
@@ -94,6 +129,8 @@ describe("development diagnostic trace", () => {
     ]);
     expect(new Set(records.map((record) => record.requestId))).toEqual(new Set([trace.requestId]));
     expect(records.every((record) => record.answer === undefined)).toBe(true);
+    expect(content).not.toContain("standaloneQuestion");
+    expect(content).not.toContain("sourceText");
     const coverage = records.find((record) => record.event === "coverage");
     expect(coverage).toMatchObject({
       requirements: [{

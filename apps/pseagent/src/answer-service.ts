@@ -24,6 +24,7 @@ import {
   ModelUnavailableError,
   type ModelClient,
 } from "./model-client.js";
+import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -70,6 +71,8 @@ export class AnswerService {
     readonly historicalProvider?: HistoricalAnswerProvider;
     readonly requestTimeoutMs?: number;
     readonly activeDeadlineMs?: number;
+    readonly taskAnalysisShadow?: TaskAnalysisShadow;
+    readonly taskSpecShadowTimeoutMs?: number;
   }) {}
 
   async answer(
@@ -134,6 +137,23 @@ export class AnswerService {
         synthesisAllowedCount: plan.requirements.filter(
           (requirement) => requirement.evidenceMode === "synthesis_allowed",
         ).length,
+      });
+      await observeTaskAnalysisShadow({
+        ...(this.dependencies.taskAnalysisShadow === undefined
+          ? {}
+          : { analyzer: this.dependencies.taskAnalysisShadow }),
+        question,
+        ...(conversationContext === undefined ? {} : { conversationContext }),
+        scope,
+        legacyPlan: plan,
+        knowledgeContext: {
+          purpose: session.purpose,
+          schema: session.schema,
+          planningOverview: session.planningOverview,
+        },
+        trace,
+        signal: requestSignal,
+        timeoutMs: this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
       });
       const input = {
         scope,
@@ -223,6 +243,90 @@ export class AnswerService {
       return finishExecution(trace, result, startedAt, false, false);
     }
   }
+}
+
+async function observeTaskAnalysisShadow(input: {
+  readonly analyzer?: TaskAnalysisShadow;
+  readonly question: string;
+  readonly conversationContext?: string;
+  readonly scope: Exclude<Scope, "normal">;
+  readonly legacyPlan: KnowledgePlan;
+  readonly knowledgeContext: {
+    readonly purpose: string;
+    readonly schema: string;
+    readonly planningOverview: string;
+  };
+  readonly trace: DiagnosticTrace;
+  readonly signal: AbortSignal;
+  readonly timeoutMs: number;
+}): Promise<void> {
+  if (input.analyzer === undefined) return;
+  const startedAt = Date.now();
+  const timeoutSignal = AbortSignal.timeout(input.timeoutMs);
+  const signal = AbortSignal.any([input.signal, timeoutSignal]);
+  try {
+    const result = await input.analyzer.analyze({
+      question: input.question,
+      ...(input.conversationContext === undefined
+        ? {}
+        : { conversationContext: input.conversationContext }),
+      scope: input.scope,
+      legacyPlan: input.legacyPlan,
+      knowledgeContext: input.knowledgeContext,
+      signal,
+    });
+    const obligations = result.taskSpec.deliverables.flatMap(
+      (deliverable) => deliverable.obligations,
+    );
+    const domains = new Set(obligations.flatMap((obligation) => obligation.domains));
+    recordDiagnostic(input.trace, {
+      event: "question_resolution",
+      mode: result.resolvedQuestion.contextUsed ? "contextual" : "identity",
+      contextUsed: result.resolvedQuestion.contextUsed,
+      entityCount: result.taskSpec.entities.length,
+      correctionCount: result.resolvedQuestion.corrections.length,
+    });
+    recordDiagnostic(input.trace, {
+      event: "task_spec",
+      domainCount: domains.size,
+      entityCount: result.taskSpec.entities.length,
+      deliverableCount: result.taskSpec.deliverables.length,
+      coverageUnitCount: obligations.length,
+      directUnitCount: obligations.filter((item) => item.evidencePolicy === "direct").length,
+      synthesisUnitCount: obligations.filter((item) => item.evidencePolicy === "synthesis").length,
+      customerInputUnitCount: obligations.filter(
+        (item) => item.evidencePolicy === "customer_input",
+      ).length,
+    });
+    recordDiagnostic(input.trace, {
+      event: "task_spec_guard",
+      ok: result.guard.ok,
+      issueCodes: stableUniqueIssueCodes(result.guard.issues.map((issue) => issue.code)),
+      explicitEntityCount: result.guard.explicitEntityCount,
+      mappedExplicitEntityCount: result.guard.mappedExplicitEntityCount,
+      explicitRequestCount: result.guard.explicitRequestCount,
+      mappedExplicitRequestCount: result.guard.mappedExplicitRequestCount,
+    });
+    recordDiagnostic(input.trace, {
+      event: "task_spec_shadow",
+      result: "completed",
+      elapsedMs: result.elapsedMs,
+    });
+  } catch (error) {
+    recordDiagnostic(input.trace, {
+      event: "task_spec_shadow",
+      result: timeoutSignal.aborted && !input.signal.aborted
+        ? "timeout"
+        : error instanceof InvalidModelPayloadError
+          ? "invalid"
+          : "unavailable",
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+    });
+  }
+}
+
+function stableUniqueIssueCodes<T extends string>(values: readonly T[]): T[] {
+  return [...new Set(values)];
 }
 
 class OutcomeTrace implements DiagnosticTrace {

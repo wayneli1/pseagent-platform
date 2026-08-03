@@ -18,6 +18,15 @@ import { ModelKnowledgePlanner, type KnowledgePlanner } from "./knowledge-planne
 import { createPseMcpServer } from "./mcp-server.js";
 import { OpenAiCompatibleModelClient, type ModelClient } from "./model-client.js";
 import { ScopeRouter } from "./router.js";
+import { ModelQuestionResolver } from "./question-resolver.js";
+import {
+  DefaultTaskAnalysisShadow,
+  type TaskAnalysisShadow,
+} from "./task-analysis-shadow.js";
+import {
+  DeterministicTaskSpecGuard,
+  ModelTaskCompiler,
+} from "./task-spec.js";
 
 export interface PseRuntimeDependencies {
   readonly createModel?: (config: AppConfig) => ModelClient;
@@ -31,6 +40,10 @@ export interface PseRuntimeDependencies {
   readonly createHistoricalProvider?: (
     config: Extract<CoremailMcpConfig, { enabled: true }>,
   ) => HistoricalAnswerProvider;
+  readonly createTaskAnalysisShadow?: (
+    model: ModelClient,
+    config: AppConfig,
+  ) => TaskAnalysisShadow;
 }
 
 export interface PseAgentRuntime {
@@ -68,6 +81,12 @@ export async function createPseAgentRuntime(
       dependencies.createKnowledgePlanner ??
       ((value) => new ModelKnowledgePlanner(value))
     )(model);
+    const taskAnalysisShadow = config.taskSpecShadow.enabled
+      ? (
+          dependencies.createTaskAnalysisShadow ??
+          defaultCreateTaskAnalysisShadow
+        )(model, config)
+      : undefined;
     const knowledge = (dependencies.createKnowledgeSessionFactory ?? defaultKnowledgeSessionFactory)(caller);
     const service = new AnswerService({
       model,
@@ -78,6 +97,12 @@ export async function createPseAgentRuntime(
       runAgent: dependencies.runAgent ?? runKnowledgeAgent,
       requestTimeoutMs: config.PSE_REQUEST_TIMEOUT_MS,
       activeDeadlineMs: config.PSE_ACTIVE_DEADLINE_MS,
+      ...(taskAnalysisShadow === undefined || !config.taskSpecShadow.enabled
+        ? {}
+        : {
+            taskAnalysisShadow,
+            taskSpecShadowTimeoutMs: config.taskSpecShadow.timeoutMs,
+          }),
       ...(historicalProvider === undefined ? {} : { historicalProvider }),
     });
     answer = service.answer.bind(service);
@@ -112,6 +137,17 @@ export async function createPseAgentRuntime(
       return closePromise;
     },
   };
+}
+
+function defaultCreateTaskAnalysisShadow(
+  model: ModelClient,
+  _config: AppConfig,
+): TaskAnalysisShadow {
+  return new DefaultTaskAnalysisShadow(
+    new ModelQuestionResolver(model),
+    new ModelTaskCompiler(model),
+    new DeterministicTaskSpecGuard(),
+  );
 }
 
 export async function runPseAgent(

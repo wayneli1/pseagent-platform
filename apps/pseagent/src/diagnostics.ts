@@ -8,6 +8,7 @@ import type {
   HistoricalRejectionReason,
   Scope,
 } from "./contracts.js";
+import type { TaskSpecIssueCode } from "./task-spec.js";
 
 export type PseStopReason =
   | "seed_unavailable"
@@ -29,6 +30,37 @@ export type HistoricalGateReason =
 
 export type DiagnosticEvent =
   | { readonly event: "route"; readonly scope: Scope }
+  | {
+      readonly event: "question_resolution";
+      readonly mode: "identity" | "contextual";
+      readonly contextUsed: boolean;
+      readonly entityCount: number;
+      readonly correctionCount: number;
+    }
+  | {
+      readonly event: "task_spec";
+      readonly domainCount: number;
+      readonly entityCount: number;
+      readonly deliverableCount: number;
+      readonly coverageUnitCount: number;
+      readonly directUnitCount: number;
+      readonly synthesisUnitCount: number;
+      readonly customerInputUnitCount: number;
+    }
+  | {
+      readonly event: "task_spec_guard";
+      readonly ok: boolean;
+      readonly issueCodes: readonly TaskSpecIssueCode[];
+      readonly explicitEntityCount: number;
+      readonly mappedExplicitEntityCount: number;
+      readonly explicitRequestCount: number;
+      readonly mappedExplicitRequestCount: number;
+    }
+  | {
+      readonly event: "task_spec_shadow";
+      readonly result: "completed" | "invalid" | "unavailable" | "timeout";
+      readonly elapsedMs: number;
+    }
   | {
       readonly event: "plan";
       readonly requirementCount: number;

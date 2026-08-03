@@ -34,6 +34,9 @@ export type AppConfig = BaseConfig & {
   readonly diagnostics:
     | { readonly enabled: false }
     | { readonly enabled: true; readonly directory: string };
+  readonly taskSpecShadow:
+    | { readonly enabled: false }
+    | { readonly enabled: true; readonly timeoutMs: number };
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -59,8 +62,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     env.COREMAIL_MCP_ENABLED ?? "false",
   );
   const diagnostics = loadDiagnosticsConfig(env);
+  const taskSpecShadow = loadTaskSpecShadowConfig(env);
   if (enabled === "false") {
-    return { ...parsed, coremailMcp: { enabled: false }, diagnostics };
+    return {
+      ...parsed,
+      coremailMcp: { enabled: false },
+      diagnostics,
+      taskSpecShadow,
+    };
   }
 
   const coremail = enabledCoremailMcpSchema.parse({
@@ -85,7 +94,20 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       timeoutMs: coremail.timeoutMs,
     },
     diagnostics,
+    taskSpecShadow,
   };
+}
+
+function loadTaskSpecShadowConfig(
+  env: NodeJS.ProcessEnv,
+): AppConfig["taskSpecShadow"] {
+  const enabled = z.enum(["true", "false"]).parse(
+    env.PSE_TASK_SPEC_SHADOW_ENABLED ?? "false",
+  );
+  if (enabled === "false") return { enabled: false };
+  const timeoutMs = z.coerce.number().int().min(1_000).max(60_000).default(15_000)
+    .parse(env.PSE_TASK_SPEC_SHADOW_TIMEOUT_MS);
+  return { enabled: true, timeoutMs };
 }
 
 function loadDiagnosticsConfig(env: NodeJS.ProcessEnv): AppConfig["diagnostics"] {
