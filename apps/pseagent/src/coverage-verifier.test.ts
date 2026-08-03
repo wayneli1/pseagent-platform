@@ -326,6 +326,65 @@ describe("verifyKnowledgeCoverage", () => {
     ]);
   });
 
+  it("keeps a broad answer complete when one secondary planned aspect is omitted", async () => {
+    const evidenceAspects = Array.from({ length: 4 }, (_, index) => ({
+      id: `A${index + 1}` as `A${number}`,
+      label: `主题${index + 1}`,
+      terms: [`术语${index + 1}`],
+    }));
+    const plan: KnowledgePlan = {
+      subject: "宽泛主题",
+      requirements: [{
+        id: "R1",
+        question: "概述这个主题的主要方向",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects,
+        queries: [{
+          text: "宽泛主题主要方向",
+          aspectIds: evidenceAspects.map((aspect) => aspect.id),
+        }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "主题一、主题二和主题三构成主要方向 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+
+    const result = await verifyKnowledgeCoverage({
+      question: plan.requirements[0]!.question,
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "宽泛主题",
+        path: "wiki/synthesis/broad-topic.md",
+        content: "正文说明主题一、主题二、主题三和主题四。",
+        aspectIds: ["A1", "A2", "A3", "A4"],
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [0],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1", "A2", "A3"],
+          reason: "synthesized_support",
+        }],
+      } as CoverageVerificationAction),
+    });
+
+    expect(result.requirements[0]?.coverage).toBe("complete");
+  });
+
   it("restores complete after unsupported extras are removed when every aspect remains covered", async () => {
     const plan: KnowledgePlan = {
       subject: "审计能力",

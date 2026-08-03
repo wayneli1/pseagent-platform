@@ -863,7 +863,7 @@ describe("runKnowledgeAgent", () => {
     ]);
   });
 
-  it("requests one final-only rewrite when read evidence covers an omitted aspect", async () => {
+  it("accepts a supported partial answer without forcing literal aspect wording", async () => {
     const plan: KnowledgePlan = {
       subject: "互补能力",
       requirements: [{
@@ -906,14 +906,11 @@ describe("runKnowledgeAgent", () => {
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
 
-    expect(result.status).toBe("answered");
-    expect(payloadAt(model, 2).finalOnly).toBe(true);
-    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
-      "answer_aspect_repair_required",
-    );
+    expect(result.status).toBe("partially_answered");
+    expect(model.calls).toBe(2);
   });
 
-  it("requests one final-only rewrite for a directly matched comparison page", async () => {
+  it("accepts a supported partial comparison without forcing a fixed outline", async () => {
     const plan: KnowledgePlan = {
       subject: "产品差异化对比",
       requirements: [{
@@ -953,15 +950,12 @@ describe("runKnowledgeAgent", () => {
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
 
-    expect(result.status).toBe("answered");
+    expect(result.status).toBe("partially_answered");
     expect(session.readPage).toHaveBeenCalledTimes(1);
-    expect(payloadAt(model, 2).finalOnly).toBe(true);
-    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
-      "direct_answer_repair_required",
-    );
+    expect(model.calls).toBe(2);
   });
 
-  it("repairs a complete direct comparison that omits a supported planned dimension", async () => {
+  it("accepts a semantically focused complete comparison without literal dimension matching", async () => {
     const plan: KnowledgePlan = {
       subject: "Coremail 与 Exchange 对比",
       requirements: [{
@@ -1005,10 +999,7 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(result.status).toBe("answered");
-    expect(model.calls).toBe(3);
-    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
-      "answer_aspect_repair_required",
-    );
+    expect(model.calls).toBe(2);
   });
 
   it("recognizes mixed Chinese-English product titles and forces the exact comparison read", async () => {
@@ -1256,7 +1247,7 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
-  it("rewrites once when the verifier downgrades a directly matched comparison", async () => {
+  it("accepts a verifier-supported partial comparison without another rewrite", async () => {
     const plan: KnowledgePlan = {
       subject: "产品对比",
       requirements: [{
@@ -1302,12 +1293,9 @@ describe("runKnowledgeAgent", () => {
       verifyCoverage,
     });
 
-    expect(result.status).toBe("answered");
-    expect(verifyCoverage).toHaveBeenCalledTimes(2);
-    expect(payloadAt(model, 2).finalOnly).toBe(true);
-    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
-      '"source":"coverage_verifier"',
-    );
+    expect(result.status).toBe("partially_answered");
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(model.calls).toBe(2);
   });
 
   it("preloads broad synthesis pages by uncovered aspect before asking for a final", async () => {
@@ -1614,7 +1602,7 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
-  it("adds a stable matrix query for Xinchuang compatibility questions", async () => {
+  it("uses the model-planned compatibility query without injecting a scenario query", async () => {
     const plan: KnowledgePlan = {
       subject: "Coremail 信创兼容性",
       requirements: [{
@@ -1627,9 +1615,6 @@ describe("runKnowledgeAgent", () => {
     const session = fakeSession({
       hits: {
         "Coremail 信创环境兼容性 CPU 操作系统 数据库": [{
-          path: "wiki/concepts/单一项目实例.md",
-        }],
-        "信创技术栈适配矩阵": [{
           path: "wiki/comparisons/信创技术栈适配矩阵.md",
         }],
       },
@@ -1642,6 +1627,11 @@ describe("runKnowledgeAgent", () => {
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
 
     expect(session.search).toHaveBeenCalledWith(
+      "Coremail 信创环境兼容性 CPU 操作系统 数据库",
+      10,
+      undefined,
+    );
+    expect(session.search).not.toHaveBeenCalledWith(
       "信创技术栈适配矩阵",
       10,
       undefined,
@@ -1655,24 +1645,20 @@ describe("runKnowledgeAgent", () => {
     {
       label: "migration capability",
       question: "Coremail 邮件迁移项目通常需要考虑哪些产品能力",
-      expandedQuery: "第三方邮件系统迁移方式对比 组织架构 邮件数据 认证",
       path: "wiki/comparison/第三方邮件系统迁移方式对比.md",
     },
     {
       label: "disaster recovery",
       question: "Coremail 如何设计容灾和高可用",
-      expandedQuery: "邮件系统多活与容灾设计 同机房 跨机房 容灾",
       path: "wiki/concepts/邮件系统多活与容灾设计.md",
     },
     {
       label: "vendor-neutral discovery",
       question: "如何开展厂商无关的售前需求访谈",
-      expandedQuery: "售前诊断式对话框架 事实 假设 未知",
       path: "wiki/synthesis/售前诊断式对话框架.md",
     },
-  ])("adds a stable intent query for $label questions", async ({
+  ])("uses the model-planned query for $label questions", async ({
     question,
-    expandedQuery,
     path,
   }) => {
     const plan: KnowledgePlan = {
@@ -1686,8 +1672,7 @@ describe("runKnowledgeAgent", () => {
     };
     const session = fakeSession({
       hits: {
-        [question]: [],
-        [expandedQuery]: [{ path }],
+        [question]: [{ path }],
       },
     });
     const model = scriptedAgentModel([
@@ -1697,7 +1682,7 @@ describe("runKnowledgeAgent", () => {
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
 
-    expect(session.search).toHaveBeenCalledWith(expandedQuery, 10, undefined);
+    expect(session.search).toHaveBeenCalledWith(question, 10, undefined);
     expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
       .toBe(path);
     expect(result.status).toBe("answered");

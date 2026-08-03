@@ -24,6 +24,7 @@ const requiredFactGroups = [
   ["安全功能", "安全能力", "密级邮件", "私有加密"],
   ["客观", "实际情况", "具体场景", "版本", "许可"],
 ] as const;
+const minimumFactGroups = 3;
 const expectedEvidencePages = new Set([
   "wiki/comparison/coremail-vs-exchange对比.md",
   "wiki/concepts/功能对比清单-Exchange-vs-Coremail.md",
@@ -112,7 +113,7 @@ async function runSession(sessionNumber: number): Promise<{
         paths.some((path) => expectedEvidencePages.has(path)) &&
         execution.historicalAttempted === false &&
         contextIsolated &&
-        factGroupsCovered === requiredFactGroups.length;
+        factGroupsCovered >= minimumFactGroups;
       if (!succeeded) failed += 1;
       if (lastAttempts.length > 1) retried += 1;
       process.stdout.write(`${JSON.stringify({
@@ -129,6 +130,7 @@ async function runSession(sessionNumber: number): Promise<{
         evidenceMatched: paths.some((path) => expectedEvidencePages.has(path)),
         evidencePaths: paths,
         factGroupsCovered,
+        minimumFactGroups,
         missingFactGroups,
         historicalAttempted: execution?.historicalAttempted,
         elapsedMs: Math.round(performance.now() - started),

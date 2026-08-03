@@ -39,7 +39,7 @@ describe("support and existence semantics", () => {
       '"queries":[{"text":"完整语义查询","aspectIds":["A1"]}]',
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
-      "evidenceAspects 是最终回答需要逐项覆盖的内容提纲",
+      "evidenceAspects 是检索和语义复核的覆盖提示",
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
       "每个相互独立的主要领域应保留为不同 aspect",
@@ -48,7 +48,7 @@ describe("support and existence semantics", () => {
       "不得因为查询最多三条就把多个独立领域合并成一个笼统 aspect",
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
-      "不得只挑代表性子集",
+      "不得把仅仅相邻或可选的成员机械变成必答项",
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
       "aspect 数量可以多于 query 数量",
@@ -57,10 +57,10 @@ describe("support and existence semantics", () => {
       "不得因其标题不是岗位说明书而排除",
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
-      "每个相关并列项都必须出现在某个 aspect 的 label 或 terms 中",
+      "不要因为 overview 出现了一个列表就假定用户要求穷举整个列表",
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
-      "输出前必须逐项检查映射是否完整",
+      "优先保留能帮助回答当前问题的区分性术语",
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
       "至少包含一个能与其他 aspect 区分的 overview 库内术语",
@@ -69,7 +69,7 @@ describe("support and existence semantics", () => {
       "planningOverview 已给出具体领域时，不得退回为仅复述用户问题的通用 label 和 terms",
     );
     expect(KNOWLEDGE_PLAN_SYSTEM_PROMPT).toContain(
-      "不得用“需求、方案、沟通、协同”等泛化领域占满名额后遗漏有限集合中的任何相关成员",
+      "不要把相同的角色名、问题原文或“职责”“能力”等泛词重复作为多个 aspect 的主要 terms",
     );
   });
 
@@ -167,7 +167,7 @@ describe("support and existence semantics", () => {
       "direct_only 仍只接受实际读取正文的直接结论",
     );
     expect(prompt).toContain(
-      "evidenceAspects 是动态覆盖清单",
+      "evidenceAspects 是动态检索与复核提示",
     );
     expect(prompt).toContain(
       "aspectIds 只是检索导航标记，不是正文支持",
@@ -182,10 +182,10 @@ describe("support and existence semantics", () => {
       "归纳得到的领域名称必须和对应说明、引用写在同一句段",
     );
     expect(prompt).toContain(
-      "不得自行增加用户未询问、plan 未列出的",
+      "不得自行增加邻近主题作为完整性条件",
     );
     expect(prompt).toContain(
-      "所有已规划 aspect 都有正式正文支持并已在答案中明确覆盖时必须使用 complete",
+      "核心问题已被正确回答且主要结论有引用时可以使用 complete",
     );
     expect(prompt).toContain(
       "正式对比页已直接覆盖用户要求的主要差异与边界时使用 complete",
@@ -200,19 +200,13 @@ describe("support and existence semantics", () => {
       "readEvidence 是已经成功读取的正式页面正文",
     );
     expect(prompt).toContain(
-      "每个有正文支持的 aspect 至少写一个用户可直接使用的结论句段",
-    );
-    expect(prompt).toContain(
-      "answer_aspect_repair_required",
-    );
-    expect(prompt).toContain(
-      "下一次 final 必须只基于已读正文补齐这些 aspect",
+      "对于用户明确逐项列出的要求仍应逐项回答",
     );
     expect(prompt).toContain(
       "direct_answer_repair_required",
     );
     expect(prompt).toContain(
-      "删除邻近页面扩展、正文未直接支持的强化措辞和未被用户询问的“尚未覆盖”清单",
+      "删除邻近页面扩展和正文未直接支持的强化措辞",
     );
   });
 
@@ -253,13 +247,13 @@ describe("support and existence semantics", () => {
       "单个相邻场景页面不能独自证明完整的多面归纳",
     );
     expect(prompt).toContain(
-      "不得把用户未询问、plan 未列出的邻近主题当作缺口",
+      "不得把用户未询问的邻近主题当作缺口",
     );
     expect(prompt).toContain(
       "正式对比页已直接覆盖这些目标时应保留 complete",
     );
     expect(prompt).toContain(
-      "资料未覆盖其他潜在子题，也应保留 complete",
+      "核心方向正确、主要结论有证据支持时应保留 complete",
     );
     expect(prompt).toContain("targetDecision=retain");
     expect(prompt).toContain("targetDecision=retain_partial");

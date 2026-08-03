@@ -581,7 +581,9 @@ function enforceAspectCoverage(
     if (
       requirement.coverage !== "complete" ||
       plannedAspectCount <= 1 ||
-      summary.missingAspectCount === 0
+      summary.missingAspectCount === 0 ||
+      (summary.coveredAspectCount ?? 0) >=
+        Math.ceil(plannedAspectCount * 0.75)
     ) {
       return requirement;
     }

@@ -26,10 +26,7 @@ import {
   type ModelClient,
 } from "./model-client.js";
 import { knowledgeAgentMessages } from "./prompts.js";
-import {
-  normalizeTrailingCitationPlacement,
-  ReferenceRegistry,
-} from "./references.js";
+import { ReferenceRegistry } from "./references.js";
 import { formatKnowledgeFinal, unavailableResult } from "./response.js";
 import {
   recordDiagnostic,
@@ -118,7 +115,7 @@ type AgentState = {
   >;
   readonly observations: string[];
   citationRepairAttempts: number;
-  answerAspectRepairAttempts: number;
+  directAnswerRepairAttempts: number;
   invalidPayloadTurnRetries: number;
   forceFinal: boolean;
   successfulSeedSearches: number;
@@ -185,37 +182,25 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         state,
       );
       shareFinalAnswerEvidence(input, state, normalizedAction);
-      const answerAspectRepairs = pendingAnswerAspectRepairs(
-        normalizedAction,
-        state,
-      );
       const directAnswerRepairs = pendingDirectAnswerRepairs(
         normalizedAction,
         state,
       );
       if (
-        (answerAspectRepairs.length > 0 || directAnswerRepairs.length > 0) &&
-        state.answerAspectRepairAttempts === 0 &&
+        directAnswerRepairs.length > 0 &&
+        state.directAnswerRepairAttempts === 0 &&
         turn < maxTurns &&
         !deadlineReached(input)
       ) {
-        state.answerAspectRepairAttempts += 1;
+        state.directAnswerRepairAttempts += 1;
         state.forceFinal = true;
-        if (answerAspectRepairs.length > 0) {
-          observe(state, {
-            type: "answer_aspect_repair_required",
-            requirements: answerAspectRepairs,
-          });
-        }
-        if (directAnswerRepairs.length > 0) {
-          observe(state, {
-            type: "direct_answer_repair_required",
-            requirements: directAnswerRepairs,
-          });
-        }
+        observe(state, {
+          type: "direct_answer_repair_required",
+          requirements: directAnswerRepairs,
+        });
         continue;
       }
-      if (answerAspectRepairs.length > 0 || directAnswerRepairs.length > 0) {
+      if (directAnswerRepairs.length > 0) {
         return fallbackUnavailable(input, "invalid_final");
       }
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
@@ -328,45 +313,6 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           repairAttempt: 1,
         });
         return fallbackUnavailable(input, "coverage_verifier_invalid");
-      }
-      const verifiedAnswerAspectRepairs = pendingAnswerAspectRepairs(
-        auditedAction,
-        state,
-      );
-      const verifiedDirectAnswerRepairs = pendingDirectAnswerRepairs(
-        auditedAction,
-        state,
-      );
-      if (
-        (verifiedAnswerAspectRepairs.length > 0 ||
-          verifiedDirectAnswerRepairs.length > 0) &&
-        state.answerAspectRepairAttempts === 0 &&
-        turn < maxTurns &&
-        !deadlineReached(input)
-      ) {
-        state.answerAspectRepairAttempts += 1;
-        state.forceFinal = true;
-        if (verifiedAnswerAspectRepairs.length > 0) {
-          observe(state, {
-            type: "answer_aspect_repair_required",
-            source: "coverage_verifier",
-            requirements: verifiedAnswerAspectRepairs,
-          });
-        }
-        if (verifiedDirectAnswerRepairs.length > 0) {
-          observe(state, {
-            type: "direct_answer_repair_required",
-            source: "coverage_verifier",
-            requirements: verifiedDirectAnswerRepairs,
-          });
-        }
-        continue;
-      }
-      if (
-        verifiedAnswerAspectRepairs.length > 0 ||
-        verifiedDirectAnswerRepairs.length > 0
-      ) {
-        return fallbackUnavailable(input, "invalid_final");
       }
       recordCoverage(
         input,
@@ -563,7 +509,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     ])),
     observations: [],
     citationRepairAttempts: 0,
-    answerAspectRepairAttempts: 0,
+    directAnswerRepairAttempts: 0,
     invalidPayloadTurnRetries: 0,
     forceFinal: false,
     successfulSeedSearches: 0,
@@ -1572,10 +1518,18 @@ function pendingEvidenceReviews(
       continue;
     }
     const hasUnreadCandidate = [...requirementState.candidatePaths.keys()]
-      .some((path) => !requirementState.readPaths.has(path));
+      .some((path) =>
+        !requirementState.readPaths.has(path) &&
+        !shouldDeferAdjacentComparisonRead(requirementState, path, false)
+      );
     const hasUnreadAspectCandidate = [...requirementState.candidatePaths.values()]
       .some((candidate) =>
         !requirementState.readPaths.has(candidate.path) &&
+        !shouldDeferAdjacentComparisonRead(
+          requirementState,
+          candidate.path,
+          false,
+        ) &&
         [...candidate.aspectIds].some(
           (aspectId) => !requirementState.readAspectIds.has(aspectId),
         ));
@@ -1599,47 +1553,6 @@ function directReadCount(
       (state.requirements.get(requirementId)?.directReadPaths.size ?? 0),
     0,
   );
-}
-
-function pendingAnswerAspectRepairs(
-  action: FinalAction,
-  state: AgentState,
-): Array<{ requirementId: string; missingAspectIds: string[] }> {
-  return action.requirements.flatMap((result) => {
-    const requirementState = state.requirements.get(result.id);
-    if (
-      requirementState === undefined ||
-      result.coverage === "none" ||
-      (
-        requirementState.requirement.evidenceMode !== "synthesis_allowed" &&
-        !isDirectComparisonRequirement(requirementState.requirement)
-      ) ||
-      requirementState.requirement.evidenceAspects.length <= 1
-    ) {
-      return [];
-    }
-    const documents =
-      state.evidenceDocuments.get(result.id) ?? new Map();
-    const availableAspectIds = new Set(
-      [...documents.values()].flatMap(
-        (document) => document.aspectIds ?? [],
-      ),
-    );
-    const coveredAspectIds = answerCoveredAspectIds(
-      result.answer,
-      requirementState.requirement,
-      documents,
-    );
-    const missingAspectIds = requirementState.requirement.evidenceAspects
-      .map((aspect) => aspect.id)
-      .filter((aspectId) =>
-        availableAspectIds.has(aspectId) &&
-        !coveredAspectIds.has(aspectId)
-      );
-    return missingAspectIds.length === 0
-      ? []
-      : [{ requirementId: result.id, missingAspectIds }];
-  });
 }
 
 const DIRECT_COMPARISON_QUESTION_PATTERN =
@@ -1741,7 +1654,7 @@ function pendingDirectAnswerRepairs(
     const requirementState = state.requirements.get(result.id);
     if (
       requirementState === undefined ||
-      result.coverage === "complete" ||
+      result.coverage !== "none" ||
       !isDirectComparisonRequirement(requirementState.requirement)
     ) {
       return [];
@@ -1762,48 +1675,6 @@ function pendingDirectAnswerRepairs(
           citationIndexes: exactCitations,
         }];
   });
-}
-
-function answerCoveredAspectIds(
-  answer: string,
-  requirement: KnowledgeRequirement,
-  documents: ReadonlyMap<
-    number,
-    Omit<CoverageEvidenceDocument, "requirementId" | "citation">
-  >,
-): ReadonlySet<string> {
-  const covered = new Set<string>();
-  for (
-    const segment of normalizeTrailingCitationPlacement(answer)
-      .split(/\n+|(?<=[。！？；])/u)
-  ) {
-    const citations = [...segment.matchAll(/\[(\d+)\]/gu)]
-      .map((match) => Number(match[1]))
-      .filter(Number.isSafeInteger);
-    if (citations.length === 0) continue;
-    const supportedAspectIds = new Set(
-      citations.flatMap(
-        (citation) => documents.get(citation)?.aspectIds ?? [],
-      ),
-    );
-    for (const aspectId of matchingAspectIds(requirement, segment)) {
-      if (supportedAspectIds.has(aspectId)) covered.add(aspectId);
-    }
-  }
-  const answerCitations = new Set(
-    [...answer.matchAll(/\[(\d+)\]/gu)]
-      .map((match) => Number(match[1]))
-      .filter(Number.isSafeInteger),
-  );
-  for (const aspectId of matchingAspectIds(requirement, answer)) {
-    if (
-      [...answerCitations].some((citation) =>
-        documents.get(citation)?.aspectIds?.includes(aspectId) === true)
-    ) {
-      covered.add(aspectId);
-    }
-  }
-  return covered;
 }
 
 function sortedCandidates(requirementState: RequirementState): Candidate[] {
@@ -2062,51 +1933,6 @@ function expandSeedQueries(
         .trim()} 工具`;
       addExpandedQuery(expanded, toolFocus, query.aspectIds);
     }
-  }
-  const compatibilityIntent = [
-    requirement.question,
-    ...requirement.queries.map((query) => query.text),
-  ].join(" ");
-  if (
-    compatibilityIntent.includes("信创") &&
-    /(?:兼容|适配)/u.test(compatibilityIntent)
-  ) {
-    addExpandedQuery(
-      expanded,
-      "信创技术栈适配矩阵",
-      requirement.evidenceAspects.map((aspect) => aspect.id),
-    );
-  }
-  if (
-    compatibilityIntent.includes("迁移") &&
-    /(?:产品能力|考虑哪些|迁移范围|迁移方式)/u.test(compatibilityIntent)
-  ) {
-    addExpandedQuery(
-      expanded,
-      "第三方邮件系统迁移方式对比 组织架构 邮件数据 认证",
-      requirement.evidenceAspects.map((aspect) => aspect.id),
-    );
-  }
-  if (
-    /(?:如何|怎样|怎么).*(?:设计|规划).*(?:容灾|高可用)|(?:容灾|高可用).*(?:如何|怎样|怎么).*(?:设计|规划)/u
-      .test(requirement.question) &&
-    /(?:Coremail|邮件系统)/iu.test(compatibilityIntent)
-  ) {
-    addExpandedQuery(
-      expanded,
-      "邮件系统多活与容灾设计 同机房 跨机房 容灾",
-      requirement.evidenceAspects.map((aspect) => aspect.id),
-    );
-  }
-  if (
-    compatibilityIntent.includes("售前") &&
-    /(?:需求访谈|需求调研|厂商无关)/u.test(compatibilityIntent)
-  ) {
-    addExpandedQuery(
-      expanded,
-      "售前诊断式对话框架 事实 假设 未知",
-      requirement.evidenceAspects.map((aspect) => aspect.id),
-    );
   }
   return [...expanded.values()].map((query) => ({
     text: query.text,
