@@ -89,6 +89,45 @@ export class SecureHttpClient {
       },
     });
   }
+
+  async binaryJson<T = unknown>(options: {
+    readonly path: string;
+    readonly query?: Readonly<Record<string, string | undefined>>;
+    readonly body: Uint8Array<ArrayBuffer>;
+    readonly headers?: Readonly<Record<string, string>>;
+    readonly signal?: AbortSignal;
+  }): Promise<HttpResponse<T>> {
+    const url = new URL(options.path, this.baseUrl);
+    for (const [key, value] of Object.entries(options.query ?? {})) {
+      if (value !== undefined) url.searchParams.set(key, value);
+    }
+    const timeout = AbortSignal.timeout(this.timeoutMs);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, timeout])
+      : timeout;
+    const response = await this.fetchImpl(url, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/octet-stream",
+        ...options.headers,
+      },
+      body: options.body,
+      signal,
+    });
+    const text = await response.text();
+    let body: T;
+    try {
+      body = JSON.parse(text) as T;
+    } catch {
+      throw new Error(`Lunkr HTTP 返回了非 JSON 响应（status=${response.status}）`);
+    }
+    return {
+      status: response.status,
+      body,
+      setCookies: getSetCookies(response.headers),
+    };
+  }
 }
 
 function getSetCookies(headers: Headers): readonly string[] {

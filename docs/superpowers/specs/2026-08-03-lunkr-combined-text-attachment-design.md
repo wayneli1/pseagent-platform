@@ -31,7 +31,7 @@
 - `composeId`：本次上传的唯一组合标识。
 - `fileName`：`问题#N-完整回答.txt`。
 - `size`：UTF-8 编码后的字节数，而不是 JavaScript 字符数。
-- `contentType`：`text/plain; charset=utf-8`。
+- `contentType`：`text/plain`，与 MCP 对 `.txt` 的 MIME 检测结果保持一致；正文编码仍固定为 UTF-8。
 
 响应必须为 `S_OK` 且包含 `attachmentId`。
 

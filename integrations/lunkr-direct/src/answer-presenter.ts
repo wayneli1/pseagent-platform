@@ -37,7 +37,7 @@ export function presentLongAnswerNotice(
     );
     return [
       `问题 #${questionId} 已处理完成`,
-      `本次回答围绕「${subject}」展开，完整内容见下方 TXT 附件。`,
+      `本次回答围绕「${subject}」展开，完整内容见附件。`,
     ].join("\n");
   }
 
@@ -163,7 +163,7 @@ function formatTopicNotice(
 ): string {
   return [
     `问题 #${questionId} 已处理完成`,
-    `本次回答涵盖：${topics.join("、")}。完整内容见下方 TXT 附件。`,
+    `本次回答涵盖：${topics.join("、")}。完整内容见附件。`,
   ].join("\n");
 }
 

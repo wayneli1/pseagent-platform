@@ -139,7 +139,7 @@ describe("presentLongAnswerNotice", () => {
 
     expect(presentLongAnswerNotice(7, "如何进行压力测试？", answer)).toBe([
       "问题 #7 已处理完成",
-      "本次回答涵盖：Coremail 压力测试方案、压测场景设计、关键性能指标、协议服务分析。完整内容见下方 TXT 附件。",
+      "本次回答涵盖：Coremail 压力测试方案、压测场景设计、关键性能指标、协议服务分析。完整内容见附件。",
     ].join("\n"));
   });
 
@@ -150,7 +150,7 @@ describe("presentLongAnswerNotice", () => {
       "这是一段没有章节标题的完整回答。".repeat(20),
     )).toBe([
       "问题 #2 已处理完成",
-      "本次回答围绕「Coremail 如何设计压测场景并分析结果」展开，完整内容见下方 TXT 附件。",
+      "本次回答围绕「Coremail 如何设计压测场景并分析结果」展开，完整内容见附件。",
     ].join("\n"));
   });
 

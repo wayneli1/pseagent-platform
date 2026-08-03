@@ -99,6 +99,12 @@ export interface LunkrBridgeDependencies<Result> {
     title: string,
     content: string,
   ) => Promise<void>;
+  readonly sendTextFile: (
+    peerUid: string,
+    title: string,
+    content: string,
+    caption: string,
+  ) => Promise<void>;
   readonly onEvent?: ((event: BridgeQuestionEvent) => void) | undefined;
 }
 
@@ -301,25 +307,36 @@ export class LunkrPseBridge<Result> {
     );
     if (chunks.length > 1) {
       if (!this.isCurrent(start)) return;
-      await this.sendBestEffort(
-        message.peerUid,
-        presentLongAnswerNotice(start.questionId, question, normalizedAnswer),
+      const title = `问题#${start.questionId}-完整回答.txt`;
+      const caption = presentLongAnswerNotice(
+        start.questionId,
+        question,
+        normalizedAnswer,
       );
-      if (!this.isCurrent(start)) return;
       try {
-        await this.sendPostWithRetry(
+        await this.dependencies.sendTextFile(
           message.peerUid,
-          `问题#${start.questionId}-完整回答.txt`,
+          title,
           normalizedAnswer,
+          caption,
         );
       } catch {
         if (!this.isCurrent(start)) return;
-        await this.sendBestEffort(
-          message.peerUid,
-          `问题 #${start.questionId} 的附件发送失败，下面改为分段发送完整回答。`,
-        );
-        if (!this.isCurrent(start)) return;
-        await this.sendAnswerChunks(message.peerUid, start, chunks);
+        try {
+          await this.sendPostWithRetry(
+            message.peerUid,
+            title,
+            normalizedAnswer,
+          );
+        } catch {
+          if (!this.isCurrent(start)) return;
+          await this.sendBestEffort(
+            message.peerUid,
+            `问题 #${start.questionId} 的附件发送失败，下面改为分段发送完整回答。`,
+          );
+          if (!this.isCurrent(start)) return;
+          await this.sendAnswerChunks(message.peerUid, start, chunks);
+        }
       }
       if (!this.isCurrent(start)) return;
     } else {
