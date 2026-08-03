@@ -518,13 +518,9 @@ function verificationSummaries(
       removedSegmentCount:
         (targetSegments[index]?.segments.length ?? 0) -
         decision.retainedTargetSegmentIndexes.length,
-      ...(plannedAspectIds.length <= 1
-        ? {}
-        : {
-            coveredAspectCount,
-            missingAspectCount:
-              plannedAspectIds.length - coveredAspectCount,
-          }),
+      coveredAspectCount,
+      missingAspectCount:
+        plannedAspectIds.length - coveredAspectCount,
     };
   });
 }
@@ -560,11 +556,26 @@ function enforceAspectCoverage(
     const plannedAspectCount =
       plan.requirements[index]?.evidenceAspects.length ?? 0;
     const summary = summaries[index];
+    if (summary === undefined || plannedAspectCount === 0) {
+      return requirement;
+    }
+    if (
+      requirement.coverage === "partial" &&
+      summary.removedSegmentCount > 0 &&
+      summary.retainedDirectSegmentCount +
+          summary.retainedSynthesizedSegmentCount > 0 &&
+      summary.coveredAspectCount === plannedAspectCount &&
+      summary.missingAspectCount === 0
+    ) {
+      return {
+        ...requirement,
+        coverage: "complete" as const,
+      };
+    }
     if (
       requirement.coverage !== "complete" ||
       plannedAspectCount <= 1 ||
-      summary === undefined ||
-      (summary.missingAspectCount ?? 0) === 0
+      summary.missingAspectCount === 0
     ) {
       return requirement;
     }

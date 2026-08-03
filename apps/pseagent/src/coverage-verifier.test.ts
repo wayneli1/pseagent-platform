@@ -326,6 +326,165 @@ describe("verifyKnowledgeCoverage", () => {
     ]);
   });
 
+  it("restores complete after unsupported extras are removed when every aspect remains covered", async () => {
+    const plan: KnowledgePlan = {
+      subject: "审计能力",
+      requirements: [{
+        id: "R1",
+        question: "Coremail 如何支持邮件审计",
+        evidenceMode: "direct_only",
+        evidenceAspects: [
+          { id: "A1", label: "审计记录", terms: ["审计日志"] },
+          { id: "A2", label: "权限控制", terms: ["三员分立"] },
+        ],
+        queries: [{
+          text: "Coremail 邮件审计",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "partial",
+        answer: [
+          "审计记录会保留审计日志 [1]。",
+          "权限控制采用三员分立 [2]。",
+          "管理员可以任意读取所有邮件 [2]。",
+        ].join("\n"),
+        citations: [1, 2],
+      }],
+      citations: [1, 2],
+    };
+    const onVerified = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "Coremail 如何支持邮件审计",
+      plan,
+      draft,
+      evidence: [
+        {
+          requirementId: "R1",
+          citation: 1,
+          title: "审计管理",
+          path: "wiki/concepts/审计管理.md",
+          content: "正文说明系统保留审计日志。",
+          aspectIds: ["A1"],
+        },
+        {
+          requirementId: "R1",
+          citation: 2,
+          title: "三员分立",
+          path: "wiki/concepts/三员分立.md",
+          content: "正文说明权限控制采用三员分立。",
+          aspectIds: ["A2"],
+        },
+      ],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain_partial",
+          retainedTargetSegmentIndexes: [0, 1],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1", "A2"],
+          reason: "partial_support",
+        }],
+      } as CoverageVerificationAction),
+      onVerified,
+    });
+
+    expect(result.requirements[0]).toEqual({
+      id: "R1",
+      coverage: "complete",
+      answer: [
+        "审计记录会保留审计日志 [1]。",
+        "权限控制采用三员分立 [2]。",
+      ].join("\n"),
+      citations: [1, 2],
+    });
+    expect(JSON.stringify(result)).not.toContain("任意读取");
+    expect(onVerified).toHaveBeenCalledWith([{
+      id: "R1",
+      reason: "partial_support",
+      retainedDirectSegmentCount: 2,
+      retainedSynthesizedSegmentCount: 0,
+      removedSegmentCount: 1,
+      coveredAspectCount: 2,
+      missingAspectCount: 0,
+    }]);
+  });
+
+  it("keeps partial after filtering when a planned aspect is still missing", async () => {
+    const plan: KnowledgePlan = {
+      subject: "两项能力",
+      requirements: [{
+        id: "R1",
+        question: "说明两项能力",
+        evidenceMode: "direct_only",
+        evidenceAspects: [
+          { id: "A1", label: "能力一", terms: ["能力一"] },
+          { id: "A2", label: "能力二", terms: ["能力二"] },
+        ],
+        queries: [{ text: "两项能力", aspectIds: ["A1", "A2"] }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: ["正文确认能力一 [1]。", "草稿声称能力二 [2]。"].join("\n"),
+        citations: [1, 2],
+      }],
+      citations: [1, 2],
+    };
+
+    const result = await verifyKnowledgeCoverage({
+      question: "说明两项能力",
+      plan,
+      draft,
+      evidence: [
+        {
+          requirementId: "R1",
+          citation: 1,
+          title: "能力一",
+          path: "wiki/concepts/能力一.md",
+          content: "正文确认能力一。",
+          aspectIds: ["A1"],
+        },
+        {
+          requirementId: "R1",
+          citation: 2,
+          title: "相邻资料",
+          path: "wiki/concepts/相邻资料.md",
+          content: "正文没有说明能力二。",
+          aspectIds: [],
+        },
+      ],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain_partial",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
+          reason: "partial_support",
+        }],
+      } as CoverageVerificationAction),
+    });
+
+    expect(result.requirements[0]).toMatchObject({
+      coverage: "partial",
+      answer: "正文确认能力一 [1]。",
+      citations: [1],
+    });
+  });
+
   it("accepts semantically equivalent aspect wording confirmed by the verifier", async () => {
     const plan: KnowledgePlan = {
       subject: "职责归纳",
@@ -521,6 +680,8 @@ describe("verifyKnowledgeCoverage", () => {
       retainedDirectSegmentCount: 0,
       retainedSynthesizedSegmentCount: 2,
       removedSegmentCount: 0,
+      coveredAspectCount: 0,
+      missingAspectCount: 1,
     }]);
   });
 
@@ -588,6 +749,8 @@ describe("verifyKnowledgeCoverage", () => {
       retainedDirectSegmentCount: 0,
       retainedSynthesizedSegmentCount: 1,
       removedSegmentCount: 0,
+      coveredAspectCount: 0,
+      missingAspectCount: 1,
     }]);
   });
 
@@ -619,6 +782,8 @@ describe("verifyKnowledgeCoverage", () => {
       retainedDirectSegmentCount: 1,
       retainedSynthesizedSegmentCount: 1,
       removedSegmentCount: 0,
+      coveredAspectCount: 0,
+      missingAspectCount: 1,
     }]);
   });
 
@@ -792,6 +957,8 @@ describe("verifyKnowledgeCoverage", () => {
         retainedDirectSegmentCount: expectedDirectCount,
         retainedSynthesizedSegmentCount: expectedSynthesizedCount,
         removedSegmentCount: expectedRemovedCount,
+        coveredAspectCount: 0,
+        missingAspectCount: 1,
       },
     ]);
   });
