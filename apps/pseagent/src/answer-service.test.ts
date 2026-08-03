@@ -511,11 +511,11 @@ describe("AnswerService", () => {
     expect(historicalProvider.answer).not.toHaveBeenCalled();
   });
 
-  it("does not use Coremail MCP for a structural not-covered fallback", async () => {
+  it("returns structural failures as unavailable without using Coremail MCP", async () => {
     const primary: AnswerResult = {
       scope: "professional",
-      status: "not_covered",
-      answer: "正式知识未覆盖",
+      status: "temporarily_unavailable",
+      answer: "知识问答服务暂时不可用，请稍后重试。",
       references: [],
     };
     const historicalProvider = {
@@ -533,8 +533,9 @@ describe("AnswerService", () => {
         input.trace.record({
           event: "fallback",
           reason: "invalid_model_payload",
-          outcome: "not_covered",
+          outcome: "temporarily_unavailable",
         });
+        input.trace.record({ event: "stop", reason: "invalid_model_payload" });
         return primary;
       }),
       historicalProvider,
@@ -543,11 +544,13 @@ describe("AnswerService", () => {
     const execution = await service.answerDetailed("Coremail 有哪些能力？");
 
     expect(execution).toMatchObject({
-      historicalGateReason: "structural_fallback",
+      retryable: true,
+      stopReason: "invalid_model_payload",
       historicalAttempted: false,
       historicalUsed: false,
-      result: { status: "not_covered" },
+      result: { status: "temporarily_unavailable" },
     });
+    expect(execution).not.toHaveProperty("historicalGateReason");
     expect(historicalProvider.answer).not.toHaveBeenCalled();
   });
 
@@ -716,11 +719,11 @@ describe("AnswerService", () => {
     });
 
     await expect(service.answerDetailed("产品问题")).resolves.toMatchObject({
-      retryable: false,
-      stopReason: "final",
+      retryable: true,
+      stopReason: "invalid_model_payload",
       result: {
         scope: "professional",
-        status: "not_covered",
+        status: "temporarily_unavailable",
         references: [],
       },
     });
@@ -735,7 +738,11 @@ describe("AnswerService", () => {
     expect(events).toContainEqual({
       event: "fallback",
       reason: "invalid_model_payload",
-      outcome: "not_covered",
+      outcome: "temporarily_unavailable",
+    });
+    expect(events).toContainEqual({
+      event: "stop",
+      reason: "invalid_model_payload",
     });
     expect(runAgent).not.toHaveBeenCalled();
   });
@@ -862,7 +869,7 @@ describe("AnswerService", () => {
     });
   });
 
-  it("does not retry a stable invalid model payload", async () => {
+  it("marks an invalid model payload as retryable", async () => {
     const model = {
       completeText: vi.fn(async () => {
         throw new InvalidModelPayloadError("invalid_schema");
@@ -877,7 +884,7 @@ describe("AnswerService", () => {
     });
 
     await expect(service.answerDetailed("普通问题")).resolves.toMatchObject({
-      retryable: false,
+      retryable: true,
       stopReason: "invalid_model_payload",
       result: { status: "temporarily_unavailable" },
     });
@@ -886,11 +893,12 @@ describe("AnswerService", () => {
   it.each([
     ["model_unavailable", true],
     ["seed_unavailable", true],
-    ["invalid_model_payload", false],
-    ["invalid_final", false],
+    ["invalid_model_payload", true],
+    ["invalid_final", true],
     ["turn_budget_exhausted", false],
+    ["evidence_review_unavailable", true],
     ["coverage_verifier_unavailable", true],
-    ["coverage_verifier_invalid", false],
+    ["coverage_verifier_invalid", true],
   ] as const)(
     "maps agent stop %s to retryable=%s",
     async (reason, retryable) => {

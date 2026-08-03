@@ -120,7 +120,7 @@ export type DiagnosticEvent =
         | "invalid_final"
         | "turn_budget_exhausted"
         | "coverage_verifier_invalid";
-      readonly outcome: "not_covered";
+      readonly outcome: "temporarily_unavailable";
     }
   | {
       readonly event: "historical_gate";

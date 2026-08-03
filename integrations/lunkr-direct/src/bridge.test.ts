@@ -81,11 +81,16 @@ describe("LunkrPseBridge", () => {
     ]);
   });
 
-  it("shows a hidden-history notice but stores only the formal answer in later context", async () => {
+  it("shows a hidden-history notice without storing a not-covered answer", async () => {
     const formalAnswer = "当前知识库暂未覆盖该问题，暂时无法给出可靠答案。";
     const historicalNotice =
       "补充说明：已检索 Coremail MCP 历史资料，但检索内容与当前问题不匹配，因此未展示。";
-    const answer = vi.fn<Answer>(async () => answered(formalAnswer));
+    const answer = vi.fn<Answer>(async () => ({
+      answer: formalAnswer,
+      status: "not_covered",
+      retryable: false,
+      stopReason: "final",
+    }));
     const sendText = vi.fn(async () => undefined);
     const sendPost = vi.fn(async () => undefined);
     const bridge = new LunkrPseBridge(config, {
@@ -109,8 +114,22 @@ describe("LunkrPseBridge", () => {
     await bridge.handle(message("m2", "#a#U", "继续说明"));
 
     expect(sentTexts(sendText)[1]).toContain(historicalNotice);
-    expect(answer.mock.calls[1]?.[1]).toContain(formalAnswer);
-    expect(answer.mock.calls[1]?.[1]).not.toContain(historicalNotice);
+    expect(answer.mock.calls[1]?.[1]).toBeUndefined();
+  });
+
+  it("answers an immediate normalized repeat without prior context", async () => {
+    const answer = vi.fn<Answer>(async (question, context) =>
+      answered(`${question}:${context ?? "empty"}`));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    await bridge.handle(message("m1", "#a#U", "Coremail 优势有哪些？"));
+    await bridge.handle(message("m2", "#a#U", " coremail优势有哪些 "));
+    await bridge.handle(message("m3", "#a#U", "继续说明"));
+
+    expect(answer.mock.calls[0]?.[1]).toBeUndefined();
+    expect(answer.mock.calls[1]?.[1]).toBeUndefined();
+    expect(answer.mock.calls[2]?.[1]).toContain("coremail优势有哪些");
   });
 
   it("deduplicates before allocating an id or sending an acknowledgment", async () => {

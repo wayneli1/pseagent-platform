@@ -23,4 +23,15 @@ describe("ConversationStore", () => {
     expect(store.context("#a#U")).toBeUndefined();
     expect(store.context("#b#U")).toContain("B");
   });
+
+  it("isolates an immediate normalized repeat from its previous answer", () => {
+    const store = new ConversationStore(6, 1_000);
+    store.append("#a#U", {
+      question: "Coremail 优势有哪些？",
+      answer: "上一轮回答",
+    });
+
+    expect(store.context("#a#U", " coremail优势有哪些 ")).toBeUndefined();
+    expect(store.context("#a#U", "继续说明")).toContain("上一轮回答");
+  });
 });

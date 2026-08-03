@@ -166,7 +166,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
             });
             continue;
           }
-          return fallbackNotCovered(input, "invalid_model_payload");
+          return fallbackUnavailable(input, "invalid_model_payload");
         }
         action = recoveryAction;
         observe(state, {
@@ -277,7 +277,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           observe(state, { type: "invalid_citations", reason: validation.reason });
           continue;
         }
-        return fallbackNotCovered(input, "invalid_final");
+        return fallbackUnavailable(input, "invalid_final");
       }
       recordCoverage(
         input,
@@ -304,7 +304,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         });
       } catch (error) {
         if (!(error instanceof ModelUnavailableError)) {
-          return fallbackNotCovered(input, "coverage_verifier_invalid");
+          return fallbackUnavailable(input, "coverage_verifier_invalid");
         }
         recordDiagnostic(input.trace, {
           event: "stop",
@@ -324,7 +324,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           reason: auditedValidation.reason,
           repairAttempt: 1,
         });
-        return fallbackNotCovered(input, "coverage_verifier_invalid");
+        return fallbackUnavailable(input, "coverage_verifier_invalid");
       }
       const verifiedDirectAnswerRepairs = pendingDirectAnswerRepairs(
         auditedAction,
@@ -392,7 +392,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
       }
     }
   }
-  return fallbackNotCovered(input, "turn_budget_exhausted");
+  return fallbackUnavailable(input, "turn_budget_exhausted");
 }
 
 async function preloadBroadSynthesisEvidence(
@@ -494,7 +494,7 @@ function recoveryReadAction(
   };
 }
 
-function fallbackNotCovered(
+function fallbackUnavailable(
   input: KnowledgeAgentInput,
   reason:
     | "invalid_model_payload"
@@ -505,18 +505,10 @@ function fallbackNotCovered(
   recordDiagnostic(input.trace, {
     event: "fallback",
     reason,
-    outcome: "not_covered",
+    outcome: "temporarily_unavailable",
   });
-  return formatKnowledgeFinal(input.scope, {
-    action: "final",
-    requirements: input.plan.requirements.map((requirement) => ({
-      id: requirement.id,
-      coverage: "none",
-      answer: notCoveredRequirementAnswer(requirement.question),
-      citations: [],
-    })),
-    citations: [],
-  }, []);
+  recordDiagnostic(input.trace, { event: "stop", reason });
+  return unavailableResult(input.scope);
 }
 
 function createAgentState(input: KnowledgeAgentInput): AgentState {

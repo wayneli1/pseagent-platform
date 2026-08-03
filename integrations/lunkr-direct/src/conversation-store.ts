@@ -11,9 +11,17 @@ export class ConversationStore {
     private readonly maxChars: number,
   ) {}
 
-  context(peerUid: string): string | undefined {
+  context(peerUid: string, currentQuestion?: string): string | undefined {
     const turns = this.conversations.get(peerUid);
     if (turns === undefined || turns.length === 0) return undefined;
+    const latestQuestion = turns.at(-1)?.question;
+    if (
+      currentQuestion !== undefined &&
+      latestQuestion !== undefined &&
+      normalizeQuestion(latestQuestion) === normalizeQuestion(currentQuestion)
+    ) {
+      return undefined;
+    }
     const selected: string[] = [];
     let characters = 0;
     for (let index = turns.length - 1; index >= 0; index -= 1) {
@@ -37,4 +45,10 @@ export class ConversationStore {
   clear(peerUid: string): void {
     this.conversations.delete(peerUid);
   }
+}
+
+function normalizeQuestion(question: string): string {
+  return question
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[^\p{L}\p{N}]+/gu, "");
 }

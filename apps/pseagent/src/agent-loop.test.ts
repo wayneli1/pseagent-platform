@@ -588,7 +588,7 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(verifyCoverage).toHaveBeenCalledOnce();
-    expect(result.status).toBe("not_covered");
+    expect(result.status).toBe("temporarily_unavailable");
     expect(events).toContainEqual(expect.objectContaining({
       event: "validation",
       result: "rejected",
@@ -597,7 +597,7 @@ describe("runKnowledgeAgent", () => {
     expect(events).toContainEqual({
       event: "fallback",
       reason: "coverage_verifier_invalid",
-      outcome: "not_covered",
+      outcome: "temporarily_unavailable",
     });
   });
 
@@ -2693,7 +2693,7 @@ describe("runKnowledgeAgent", () => {
     [
       new InvalidCoverageVerificationError(),
       "coverage_verifier_invalid",
-      "not_covered",
+      "temporarily_unavailable",
       "fallback",
     ],
   ] as const)(
@@ -2769,7 +2769,7 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("not_covered");
   });
 
-  it("falls back to not covered after two explicit action repair attempts remain invalid", async () => {
+  it("returns unavailable after two explicit action repair attempts remain invalid", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([
       new InvalidModelPayloadError(),
@@ -2780,7 +2780,7 @@ describe("runKnowledgeAgent", () => {
     const result = await runKnowledgeAgent(agentInput(model, session));
 
     expect(model.calls).toBe(3);
-    expect(result.status).toBe("not_covered");
+    expect(result.status).toBe("temporarily_unavailable");
   });
 
   it("recovers from exhausted action repairs by reading the best seed candidate", async () => {
@@ -2910,7 +2910,7 @@ describe("runKnowledgeAgent", () => {
 
     expect(model.calls).toBe(2);
     expect(model.lastSchemaName()).toBe("pse_final_action");
-    expect(result.status).toBe("not_covered");
+    expect(result.status).toBe("temporarily_unavailable");
   });
 
   it("normalizes harmless top-level citation ordering before strict validation", async () => {

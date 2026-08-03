@@ -24,7 +24,6 @@ import {
   ModelUnavailableError,
   type ModelClient,
 } from "./model-client.js";
-import { formatAnswerResult } from "./response.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -209,20 +208,8 @@ export class AnswerService {
           recordDiagnostic(trace, {
             event: "fallback",
             reason: "invalid_model_payload",
-            outcome: "not_covered",
+            outcome: "temporarily_unavailable",
           });
-          return finishExecution(
-            trace,
-            formatAnswerResult({
-              scope,
-              status: "not_covered",
-              answer: "",
-              references: [],
-            }),
-            startedAt,
-            false,
-            false,
-          );
         }
       }
       const result = temporaryUnavailableResult(scope);
@@ -390,7 +377,11 @@ function finishExecution(
     retryable:
       stopReason === "model_unavailable" ||
       stopReason === "seed_unavailable" ||
-      stopReason === "coverage_verifier_unavailable",
+      stopReason === "invalid_model_payload" ||
+      stopReason === "invalid_final" ||
+      stopReason === "evidence_review_unavailable" ||
+      stopReason === "coverage_verifier_unavailable" ||
+      stopReason === "coverage_verifier_invalid",
     stopReason,
     historicalAttempted,
     historicalUsed,

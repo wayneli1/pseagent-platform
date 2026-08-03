@@ -239,7 +239,7 @@ export class LunkrPseBridge<Result> {
 
     if (!this.isCurrent(start)) return;
     const question = message.text.trim();
-    const context = this.conversations.context(message.peerUid);
+    const context = this.conversations.context(message.peerUid, question);
     let result: Result | undefined;
     let metadata: BridgeAnswerMetadata | undefined;
 
@@ -355,7 +355,10 @@ export class LunkrPseBridge<Result> {
     const contextAnswer = (
       this.dependencies.formatContextAnswer?.(result) ?? answer
     ).trim();
-    if (contextAnswer !== "") {
+    if (
+      contextAnswer !== "" &&
+      (metadata.status === "answered" || metadata.status === "partially_answered")
+    ) {
       this.conversations.append(message.peerUid, {
         question,
         answer: contextAnswer,
