@@ -22,6 +22,7 @@
     "test": "vitest run src"
   },
   "dependencies": {
+    "@pseagent/knowledge-governance-contracts": "0.0.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "zod": "4.4.3"
   }

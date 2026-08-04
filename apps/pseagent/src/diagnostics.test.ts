@@ -67,6 +67,21 @@ describe("development diagnostic trace", () => {
       requirementCount: 3,
     });
     trace.record({
+      event: "answer_card_match",
+      matchType: "exact",
+      confidence: "deterministic",
+      candidateCount: 1,
+      obligationCount: 2,
+      cardIdHashes: ["a".repeat(64)],
+      catalogHash: "b".repeat(64),
+    });
+    trace.record({
+      event: "answer_card_activation",
+      activated: false,
+      reason: "shadow_only",
+      obligationCount: 2,
+    });
+    trace.record({
       event: "plan",
       requirementCount: 1,
       aspectCount: 1,
@@ -132,6 +147,8 @@ describe("development diagnostic trace", () => {
       "task_spec_guard",
       "task_spec_shadow",
       "task_spec_activation",
+      "answer_card_match",
+      "answer_card_activation",
       "plan",
       "model_call",
       "model_payload",
@@ -142,6 +159,7 @@ describe("development diagnostic trace", () => {
     expect(records.every((record) => record.answer === undefined)).toBe(true);
     expect(content).not.toContain("standaloneQuestion");
     expect(content).not.toContain("sourceText");
+    expect(content).not.toContain("CM-MIGRATION-001");
     const coverage = records.find((record) => record.event === "coverage");
     expect(coverage).toMatchObject({
       requirements: [{

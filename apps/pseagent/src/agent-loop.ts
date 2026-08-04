@@ -54,6 +54,10 @@ import {
 import { analyzeCoverageGaps, type CoverageGap } from "./coverage-gap.js";
 import type { DomainRequirementBinding } from "./domain-plan.js";
 import { observeModelCall } from "./model-observability.js";
+import {
+  answerCardPolicyObservations,
+  violatesAnswerCardForbiddenClaims,
+} from "./answer-card-policy.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const DIRECT_ONLY_READ_LIMIT = 3;
@@ -200,6 +204,14 @@ export async function runKnowledgeAgent(
         ...(detailed.verification === undefined
           ? {}
           : { verification: detailed.verification }),
+        ...(input.requirementBindings === undefined
+          ? {}
+          : {
+              requirementBindings: input.requirementBindings.map((binding) => ({
+                ...binding,
+                globalRequirementId: binding.requirementId,
+              })),
+            }),
       });
 }
 
@@ -472,6 +484,18 @@ async function runKnowledgeAgentCore(
           event: "validation",
           result: "rejected",
           reason: auditedValidation.reason,
+          repairAttempt: 1,
+        });
+        return fallbackUnavailable(input, "coverage_verifier_invalid");
+      }
+      if (violatesAnswerCardForbiddenClaims(
+        auditedAction,
+        input.requirementBindings,
+      )) {
+        recordDiagnostic(input.trace, {
+          event: "validation",
+          result: "rejected",
+          reason: "answer_card_forbidden_claim",
           repairAttempt: 1,
         });
         return fallbackUnavailable(input, "coverage_verifier_invalid");
@@ -753,7 +777,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
       requirement.id,
       new Map(),
     ])),
-    observations: [],
+    observations: [...answerCardPolicyObservations(input.requirementBindings)],
     evidenceConditions: requirementEvidenceConditions(input),
     readProvenanceByCitation: new Map(),
     citationRepairAttempts: 0,

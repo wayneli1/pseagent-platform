@@ -66,12 +66,14 @@ describe("knowledge governance contracts", () => {
       bindings: [
         {
           obligationId: "O1",
+          cardObligationId: "O1",
           label: "迁移能力",
           domain: "coremail-professional",
           cardId: "CM-MIGRATION-001",
         },
         {
           obligationId: "O2",
+          cardObligationId: "O1",
           label: "风险沟通",
           domain: "presales-general",
           cardId: "PS-RISK-001",

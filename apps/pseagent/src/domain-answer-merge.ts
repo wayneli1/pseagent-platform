@@ -391,7 +391,20 @@ function sameBinding(
     left.requirementId === right.requirementId &&
     left.deliverableId === right.deliverableId &&
     left.obligationId === right.obligationId &&
-    left.order === right.order;
+    left.order === right.order &&
+    left.cardId === right.cardId &&
+    left.cardObligationId === right.cardObligationId &&
+    sameOptionalStrings(left.requiredConcepts, right.requiredConcepts) &&
+    sameOptionalStrings(left.forbiddenClaims, right.forbiddenClaims) &&
+    sameOptionalStrings(left.preferredEvidencePaths, right.preferredEvidencePaths);
+}
+
+function sameOptionalStrings(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return sameStrings(left, right);
 }
 
 function localRequirementKey(

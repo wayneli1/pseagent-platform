@@ -25,6 +25,11 @@ describe("loadConfig", () => {
     expect(config.taskSpecShadow).toEqual({ enabled: false });
     expect(config.taskSpecActiveEnabled).toBe(false);
     expect(config.multiDomainActiveEnabled).toBe(false);
+    expect(config.answerCards).toEqual({
+      enabled: false,
+      exactActiveEnabled: false,
+      familyActiveEnabled: false,
+    });
     expect(config).not.toHaveProperty("JUDGE_MODEL_NAME");
   });
 
@@ -130,6 +135,53 @@ describe("loadConfig", () => {
       ...baseEnv,
       PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "yes",
     })).toThrow();
+  });
+
+  it("loads answer-card shadow and gates exact and family activation in order", () => {
+    const catalogPath = "C:\\pseagent\\answer-card-catalog.json";
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_ANSWER_CARD_SHADOW_ENABLED: "true",
+      PSE_ANSWER_CARD_CATALOG_PATH: catalogPath,
+    }).answerCards).toEqual({
+      enabled: true,
+      catalogPath,
+      exactActiveEnabled: false,
+      familyActiveEnabled: false,
+    });
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_SHADOW_ENABLED: "true",
+      PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_CATALOG_PATH: catalogPath,
+    }).answerCards).toMatchObject({ exactActiveEnabled: true });
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_ANSWER_CARD_SHADOW_ENABLED: "true",
+      PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_CATALOG_PATH: catalogPath,
+    })).toThrow("requires answer-card shadow and active TaskSpec");
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_SHADOW_ENABLED: "true",
+      PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_FAMILY_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_CATALOG_PATH: catalogPath,
+    })).toThrow("requires exact activation and active multi-domain execution");
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_SHADOW_ENABLED: "true",
+      PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_FAMILY_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_CATALOG_PATH: catalogPath,
+    }).answerCards).toMatchObject({ familyActiveEnabled: true });
   });
 
   it("loads bounded request and active deadline budgets", () => {

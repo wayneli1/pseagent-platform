@@ -75,6 +75,7 @@ export const answerCardSchema = z.object({
 
 export const questionFamilyBindingSchema = z.object({
   obligationId: z.string().regex(/^O\d+$/u),
+  cardObligationId: z.string().regex(/^O\d+$/u),
   label: z.string().trim().min(1).max(200),
   domain: knowledgeDomainSchema,
   cardId: z.string().regex(/^[A-Z][A-Z0-9-]{2,63}$/u),

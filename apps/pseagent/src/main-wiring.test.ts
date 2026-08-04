@@ -10,6 +10,7 @@ import type { ModelClient, ModelRoleClients } from "./model-client.js";
 import { createPseAgentRuntime } from "./main.js";
 import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
 import { taskSpecSchema } from "./task-spec.js";
+import type { AnswerCardMatcher } from "./answer-card-matcher.js";
 
 const configEnv = {
   PSE_MODEL_BASE_URL: "https://model.example.test/v1",
@@ -281,6 +282,53 @@ describe("main wiring", () => {
       }),
     );
     await enabledRuntime.close();
+  });
+
+  it("constructs the answer-card matcher only for an explicit shadow catalog", async () => {
+    const model = {
+      completeJson: vi.fn(),
+      completeText: vi.fn(async () => "普通回答"),
+    } as unknown as ModelClient;
+    const createAnswerCardMatcher = vi.fn(() => ({
+      match: vi.fn(),
+    }) as unknown as AnswerCardMatcher);
+    const runtimeDependencies = () => {
+      const caller = {
+        connect: vi.fn(async () => undefined),
+        call: vi.fn(),
+        close: vi.fn(async () => undefined),
+      } satisfies KnowledgeToolCaller;
+      return {
+        createModel: () => model,
+        createRouter: () => ({ route: vi.fn(async () => "normal" as const) }),
+        createKnowledgePlanner: () => ({ plan: vi.fn(async () => plan) }),
+        createKnowledgeCaller: () => caller,
+        createKnowledgeSessionFactory: () => ({ open: vi.fn() }),
+        runAgent: vi.fn(),
+        createServer: () => ({
+          close: vi.fn(async () => undefined),
+        }) as unknown as McpServer,
+        createAnswerCardMatcher,
+      };
+    };
+
+    const disabled = await createPseAgentRuntime(configEnv, runtimeDependencies());
+    expect(createAnswerCardMatcher).not.toHaveBeenCalled();
+    await disabled.close();
+
+    const enabled = await createPseAgentRuntime({
+      ...configEnv,
+      PSE_ANSWER_CARD_SHADOW_ENABLED: "true",
+      PSE_ANSWER_CARD_CATALOG_PATH: "C:\\runtime\\answer-card-catalog.json",
+    }, runtimeDependencies());
+    expect(createAnswerCardMatcher).toHaveBeenCalledOnce();
+    expect(createAnswerCardMatcher).toHaveBeenCalledWith(model, {
+      enabled: true,
+      catalogPath: "C:\\runtime\\answer-card-catalog.json",
+      exactActiveEnabled: false,
+      familyActiveEnabled: false,
+    });
+    await enabled.close();
   });
 
   it("wires the multi-domain flag and detailed executor without changing the external result", async () => {

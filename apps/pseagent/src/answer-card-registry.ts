@@ -1,0 +1,265 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import {
+  answerCardSchema,
+  knowledgeDomainSchema,
+  questionFamilySchema,
+  type AnswerCard,
+  type KnowledgeDomain,
+  type QuestionFamily,
+} from "@pseagent/knowledge-governance-contracts";
+import { z } from "zod";
+
+const catalogDomainSnapshotSchema = z.object({
+  domain: knowledgeDomainSchema,
+  revision: z.string().regex(/^[a-f0-9]{40}$/u),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+}).strict();
+
+export const answerCardCatalogSchema = z.object({
+  schemaVersion: z.literal(1),
+  domains: z.array(catalogDomainSnapshotSchema).length(2),
+  cards: z.array(answerCardSchema).max(10_000),
+  families: z.array(questionFamilySchema).max(10_000),
+}).strict();
+
+export type AnswerCardCatalog = z.input<typeof answerCardCatalogSchema>;
+
+export interface ActiveAnswerCardCatalog {
+  readonly schemaVersion: 1;
+  readonly domains: readonly z.infer<typeof catalogDomainSnapshotSchema>[];
+  readonly cards: readonly AnswerCard[];
+  readonly families: readonly QuestionFamily[];
+}
+
+export class AnswerCardRegistryError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "AnswerCardRegistryError";
+  }
+}
+
+export class AnswerCardRegistry {
+  readonly catalogHash: string;
+  readonly catalog: ActiveAnswerCardCatalog;
+  private readonly snapshotByDomain: ReadonlyMap<
+    KnowledgeDomain,
+    z.infer<typeof catalogDomainSnapshotSchema>
+  >;
+  private readonly cardById: ReadonlyMap<string, AnswerCard>;
+  private readonly exactCardByQuestion: ReadonlyMap<string, AnswerCard>;
+  private readonly activeFamilies: readonly QuestionFamily[];
+
+  constructor(source: unknown) {
+    const parsed = answerCardCatalogSchema.safeParse(source);
+    if (!parsed.success) {
+      throw new AnswerCardRegistryError("invalid_answer_card_catalog");
+    }
+    this.catalog = Object.freeze({
+      schemaVersion: 1,
+      domains: Object.freeze(parsed.data.domains),
+      cards: Object.freeze(parsed.data.cards),
+      families: Object.freeze(parsed.data.families),
+    });
+    this.catalogHash = createHash("sha256")
+      .update(stableJson(this.catalog), "utf8")
+      .digest("hex");
+
+    const snapshots = uniqueMap(
+      this.catalog.domains,
+      (snapshot) => snapshot.domain,
+      "duplicate_catalog_domain",
+    );
+    if (
+      snapshots.size !== knowledgeDomainSchema.options.length ||
+      knowledgeDomainSchema.options.some((domain) => !snapshots.has(domain))
+    ) {
+      throw new AnswerCardRegistryError("catalog_domains_incomplete");
+    }
+    this.snapshotByDomain = snapshots;
+
+    const cards = uniqueMap(
+      this.catalog.cards,
+      (card) => card.cardId,
+      "duplicate_answer_card_id",
+    );
+    this.cardById = cards;
+    const exactCards = new Map<string, AnswerCard>();
+    for (const card of this.catalog.cards.filter(isCardActive)) {
+      for (const question of [card.canonicalQuestion, ...card.aliases]) {
+        const key = normalizeQuestion(question);
+        if (key === "") {
+          throw new AnswerCardRegistryError("empty_answer_card_question");
+        }
+        const existing = exactCards.get(key);
+        if (existing !== undefined && existing.cardId !== card.cardId) {
+          throw new AnswerCardRegistryError("duplicate_exact_answer_card_question");
+        }
+        exactCards.set(key, card);
+      }
+    }
+    this.exactCardByQuestion = exactCards;
+
+    const families = uniqueMap(
+      this.catalog.families,
+      (family) => family.familyId,
+      "duplicate_question_family_id",
+    );
+    for (const family of families.values()) {
+      if (!isReviewStatusActive(family.reviewStatus)) continue;
+      const bindingKeys = new Set<string>();
+      for (const binding of family.bindings) {
+        const card = cards.get(binding.cardId);
+        const key = binding.obligationId;
+        if (
+          card === undefined ||
+          card.domain !== binding.domain ||
+          !isCardActive(card) ||
+          !card.obligations.some((obligation) =>
+            obligation.id === binding.cardObligationId &&
+            obligation.domains.includes(binding.domain))
+        ) {
+          throw new AnswerCardRegistryError("question_family_binding_invalid");
+        }
+        if (bindingKeys.has(key)) {
+          throw new AnswerCardRegistryError("duplicate_question_family_binding");
+        }
+        bindingKeys.add(key);
+      }
+    }
+    this.activeFamilies = Object.freeze(
+      [...families.values()].filter((family) => isReviewStatusActive(family.reviewStatus)),
+    );
+  }
+
+  exactCard(question: string): AnswerCard | undefined {
+    return this.exactCardByQuestion.get(normalizeQuestion(question));
+  }
+
+  familyCandidates(
+    question: string,
+    currentDomain: KnowledgeDomain,
+    limit = 5,
+  ): readonly QuestionFamily[] {
+    return this.activeFamilies
+      .filter((family) => family.bindings.some((binding) =>
+        binding.domain === currentDomain))
+      .filter((family) => family.bindings
+        .filter((binding) => binding.required)
+        .every((binding) => this.cardApplicable(binding.cardId, question)))
+      .map((family) => ({ family, score: familySimilarity(question, family) }))
+      .filter((candidate) => candidate.score >= 0.12)
+      .sort((left, right) =>
+        right.score - left.score || left.family.familyId.localeCompare(right.family.familyId))
+      .slice(0, limit)
+      .map((candidate) => candidate.family);
+  }
+
+  card(cardId: string): AnswerCard | undefined {
+    return this.cardById.get(cardId);
+  }
+
+  cardApplicable(cardId: string, question: string): boolean {
+    const card = this.cardById.get(cardId);
+    if (card === undefined) return false;
+    const normalized = normalizeQuestion(question);
+    const matchesAny = (values: readonly string[]) => values.length === 0 ||
+      values.some((value) => normalized.includes(normalizeQuestion(value)));
+    return matchesAny(card.applicability.products) &&
+      (
+        card.applicability.versions.includes("*") ||
+        matchesAny(card.applicability.versions)
+      ) &&
+      matchesAny(card.applicability.scenarios) &&
+      !card.applicability.excludeWhen.some((condition) =>
+        normalized.includes(normalizeQuestion(condition)));
+  }
+
+  expectedRevision(domain: KnowledgeDomain): string {
+    return this.snapshotByDomain.get(domain)!.revision;
+  }
+
+  snapshotCurrent(domain: KnowledgeDomain, revision: string): boolean {
+    return this.expectedRevision(domain) === revision;
+  }
+}
+
+export function loadAnswerCardRegistry(catalogPath: string): AnswerCardRegistry {
+  const normalized = path.normalize(catalogPath);
+  if (!path.isAbsolute(normalized) || path.extname(normalized).toLowerCase() !== ".json") {
+    throw new AnswerCardRegistryError("answer_card_catalog_path_invalid");
+  }
+  let source: unknown;
+  try {
+    source = JSON.parse(readFileSync(normalized, "utf8"));
+  } catch {
+    throw new AnswerCardRegistryError("answer_card_catalog_unreadable");
+  }
+  return new AnswerCardRegistry(source);
+}
+
+export function hashAnswerCardIdentifier(identifier: string): string {
+  return createHash("sha256").update(identifier, "utf8").digest("hex");
+}
+
+export function normalizeQuestion(value: string): string {
+  return value.normalize("NFKC")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function isCardActive(card: AnswerCard): boolean {
+  return isReviewStatusActive(card.reviewStatus);
+}
+
+function isReviewStatusActive(status: string): boolean {
+  return status === "approved" || status === "release_ready" || status === "released";
+}
+
+function familySimilarity(question: string, family: QuestionFamily): number {
+  return Math.max(...[
+    family.canonicalQuestion,
+    family.title,
+    ...family.aliases,
+  ].map((candidate) => ngramSimilarity(question, candidate)));
+}
+
+function ngramSimilarity(left: string, right: string): number {
+  const leftGrams = characterNgrams(normalizeQuestion(left));
+  const rightGrams = characterNgrams(normalizeQuestion(right));
+  if (leftGrams.size === 0 || rightGrams.size === 0) return 0;
+  const intersection = [...leftGrams].filter((gram) => rightGrams.has(gram)).length;
+  return intersection / Math.min(leftGrams.size, rightGrams.size);
+}
+
+function characterNgrams(value: string): Set<string> {
+  if ([...value].length < 2) return new Set(value === "" ? [] : [value]);
+  const characters = [...value];
+  return new Set(characters.slice(0, -1).map((character, index) =>
+    `${character}${characters[index + 1]}`));
+}
+
+function uniqueMap<T, K extends string>(
+  values: readonly T[],
+  key: (value: T) => K,
+  errorCode: string,
+): Map<K, T> {
+  const result = new Map<K, T>();
+  for (const value of values) {
+    const itemKey = key(value);
+    if (result.has(itemKey)) throw new AnswerCardRegistryError(errorCode);
+    result.set(itemKey, value);
+  }
+  return result;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) =>
+      `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}

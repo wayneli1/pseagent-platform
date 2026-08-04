@@ -55,6 +55,15 @@ import type {
 import type { CoverageGap } from "./coverage-gap.js";
 import type { CoverageVerificationReport } from "./coverage-verifier.js";
 import { observeModelCall } from "./model-observability.js";
+import type {
+  AnswerCardMatch,
+  AnswerCardMatcher,
+} from "./answer-card-matcher.js";
+import {
+  adaptAnswerCardToTaskSpec,
+  applyAnswerCardPoliciesToPlan,
+  type AnswerCardObligationPolicy,
+} from "./answer-card-task-spec-adapter.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -126,6 +135,9 @@ export class AnswerService {
     readonly taskSpecShadowTimeoutMs?: number;
     readonly taskSpecActiveEnabled?: boolean;
     readonly multiDomainActiveEnabled?: boolean;
+    readonly answerCardMatcher?: AnswerCardMatcher;
+    readonly answerCardExactActiveEnabled?: boolean;
+    readonly answerCardFamilyActiveEnabled?: boolean;
   }) {}
 
   async answer(
@@ -209,7 +221,7 @@ export class AnswerService {
       const taskSpecActive = this.dependencies.taskSpecActiveEnabled === true &&
         this.dependencies.taskAnalysisShadow !== undefined;
       let legacyPlan = taskSpecActive ? undefined : await loadLegacyPlan();
-      const taskAnalysis = await observeTaskAnalysisShadow({
+      let taskAnalysis = await observeTaskAnalysisShadow({
         ...(this.dependencies.taskAnalysisShadow === undefined
           ? {}
           : { analyzer: this.dependencies.taskAnalysisShadow }),
@@ -226,10 +238,64 @@ export class AnswerService {
         signal: requestSignal,
         timeoutMs: this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
       });
+      const answerCardMatch = await this.matchAnswerCard({
+        question: taskAnalysis?.resolvedQuestion.standaloneQuestion ?? question,
+        currentDomain: session.project,
+        currentRevision: session.revision,
+        requestSignal,
+        trace,
+      });
+      let answerCardPolicies: readonly AnswerCardObligationPolicy[] | undefined;
+      let activeAnswerCardMatch: Exclude<AnswerCardMatch, { matchType: "none" }> | undefined;
+      if (answerCardMatch !== undefined && answerCardMatch.matchType !== "none") {
+        const activationEnabled = answerCardMatch.matchType === "exact"
+          ? this.dependencies.answerCardExactActiveEnabled === true &&
+            this.dependencies.taskSpecActiveEnabled === true
+          : this.dependencies.answerCardFamilyActiveEnabled === true &&
+            this.dependencies.taskSpecActiveEnabled === true &&
+            this.dependencies.multiDomainActiveEnabled === true;
+        if (!activationEnabled) {
+          recordDiagnostic(trace, {
+            event: "answer_card_activation",
+            activated: false,
+            reason: "shadow_only",
+            obligationCount: answerCardMatch.bindings.length,
+          });
+        } else if (taskAnalysis === undefined) {
+          recordDiagnostic(trace, {
+            event: "answer_card_activation",
+            activated: false,
+            reason: "analysis_unavailable",
+            obligationCount: answerCardMatch.bindings.length,
+          });
+        } else {
+          const adapted = adaptAnswerCardToTaskSpec({
+            match: answerCardMatch,
+            resolvedQuestion: taskAnalysis.resolvedQuestion,
+            taskSpec: taskAnalysis.taskSpec,
+          });
+          recordDiagnostic(trace, {
+            event: "answer_card_activation",
+            activated: adapted.activated,
+            reason: adapted.activated ? "activated" : adapted.reason,
+            obligationCount: adapted.activated ? adapted.policies.length : 0,
+          });
+          if (adapted.activated) {
+            taskAnalysis = {
+              ...taskAnalysis,
+              taskSpec: adapted.taskSpec,
+              guard: adapted.guard,
+            };
+            answerCardPolicies = adapted.policies;
+            activeAnswerCardMatch = answerCardMatch;
+          }
+        }
+      }
       let effectiveQuestion = question;
       let effectivePlan = legacyPlan;
       let effectiveConversationContext = conversationContext;
       let effectiveEvidenceConditions: readonly RequirementEvidenceCondition[] | undefined;
+      let effectiveRequirementBindings: readonly DomainRequirementBinding[] | undefined;
       if (taskAnalysis !== undefined) {
         if (this.dependencies.taskSpecActiveEnabled === true) {
           if (this.dependencies.multiDomainActiveEnabled === true) {
@@ -237,6 +303,9 @@ export class AnswerService {
               resolvedQuestion: taskAnalysis.resolvedQuestion,
               taskSpec: taskAnalysis.taskSpec,
               guardResult: taskAnalysis.guard,
+              ...(answerCardPolicies === undefined
+                ? {}
+                : { cardPolicies: answerCardPolicies }),
             });
             if (derived.activated) {
               const requirementCount = derived.plans.reduce(
@@ -257,6 +326,9 @@ export class AnswerService {
                 deadlineAt,
                 trace,
                 startedAt,
+                ...(activeAnswerCardMatch === undefined
+                  ? {}
+                  : { expectedRevisions: activeAnswerCardMatch.expectedRevisions }),
               });
             }
             recordDiagnostic(trace, {
@@ -284,9 +356,20 @@ export class AnswerService {
             });
             if (adapted.activated) {
               effectiveQuestion = taskAnalysis.resolvedQuestion.standaloneQuestion;
-              effectivePlan = adapted.plan;
+              effectivePlan = applyAnswerCardPoliciesToPlan({
+                plan: adapted.plan,
+                obligationIds: adapted.obligationIds,
+                policies: answerCardPolicies ?? [],
+              });
               effectiveConversationContext = undefined;
               effectiveEvidenceConditions = adapted.conditions;
+              effectiveRequirementBindings = singleDomainBindings({
+                domain: session.project,
+                taskSpec: taskAnalysis.taskSpec,
+                plan: effectivePlan,
+                obligationIds: adapted.obligationIds,
+                cardPolicies: answerCardPolicies ?? [],
+              });
               recordDiagnostic(trace, {
                 event: "task_spec_activation",
                 activated: true,
@@ -340,6 +423,9 @@ export class AnswerService {
         ...(effectiveEvidenceConditions === undefined
           ? {}
           : { requirementEvidenceConditions: effectiveEvidenceConditions }),
+        ...(effectiveRequirementBindings === undefined
+          ? {}
+          : { requirementBindings: effectiveRequirementBindings }),
         model: this.dependencies.model,
         ...(this.dependencies.verifierModel === undefined
           ? {}
@@ -392,6 +478,46 @@ export class AnswerService {
     }
   }
 
+  private async matchAnswerCard(input: {
+    readonly question: string;
+    readonly currentDomain: KnowledgeDomain;
+    readonly currentRevision: string;
+    readonly requestSignal: AbortSignal;
+    readonly trace: DiagnosticTrace;
+  }): Promise<AnswerCardMatch | undefined> {
+    const matcher = this.dependencies.answerCardMatcher;
+    if (matcher === undefined) return undefined;
+    let match: AnswerCardMatch;
+    try {
+      match = await matcher.match({
+        question: input.question,
+        currentDomain: input.currentDomain,
+        currentRevision: input.currentRevision,
+        familyEnabled: true,
+        signal: input.requestSignal,
+      });
+    } catch {
+      match = {
+        matchType: "none",
+        confidence: "none",
+        reason: "family_match_unavailable",
+        catalogHash: "0".repeat(64),
+        candidateCount: 0,
+      };
+    }
+    recordDiagnostic(input.trace, {
+      event: "answer_card_match",
+      matchType: match.matchType,
+      confidence: match.confidence,
+      candidateCount: match.candidateCount,
+      obligationCount: match.matchType === "none" ? 0 : match.bindings.length,
+      cardIdHashes: match.matchType === "none" ? [] : match.cardIdHashes,
+      catalogHash: match.catalogHash,
+      ...(match.matchType === "none" ? { reason: match.reason } : {}),
+    });
+    return match;
+  }
+
   private async answerAcrossDomains(input: {
     readonly scope: Exclude<Scope, "normal">;
     readonly question: string;
@@ -400,6 +526,7 @@ export class AnswerService {
     readonly deadlineAt: number;
     readonly trace: OutcomeTrace;
     readonly startedAt: number;
+    readonly expectedRevisions?: Readonly<Partial<Record<KnowledgeDomain, string>>>;
   }): Promise<PseAnswerExecution> {
     const domainsUsed = input.plans.map((plan) => plan.domain);
     const runner = this.dependencies.runAgentDetailed;
@@ -454,7 +581,12 @@ export class AnswerService {
               : "domain_signal_aborted",
           );
         }
-        if (session.project !== domainPlan.domain || !session.revision.trim()) {
+        const expectedRevision = input.expectedRevisions?.[domainPlan.domain];
+        if (
+          session.project !== domainPlan.domain ||
+          !session.revision.trim() ||
+          (expectedRevision !== undefined && session.revision !== expectedRevision)
+        ) {
           throw new DomainExecutionError("session_snapshot_mismatch");
         }
         recordDiagnostic(input.trace, {
@@ -725,6 +857,51 @@ export class AnswerService {
       );
     }
   }
+}
+
+function singleDomainBindings(input: {
+  readonly domain: KnowledgeDomain;
+  readonly taskSpec: TaskAnalysisShadowResult["taskSpec"];
+  readonly plan: KnowledgePlan;
+  readonly obligationIds: readonly string[];
+  readonly cardPolicies: readonly AnswerCardObligationPolicy[];
+}): readonly DomainRequirementBinding[] {
+  const required = input.taskSpec.deliverables.flatMap((deliverable) =>
+    !deliverable.required
+      ? []
+      : deliverable.obligations.flatMap((obligation) =>
+          obligation.required ? [{ deliverable, obligation }] : []));
+  const applicable = required.filter(({ obligation }) =>
+    obligation.domains.includes(input.domain));
+  const policyByObligation = new Map(
+    input.cardPolicies.map((policy) => [policy.obligationId, policy] as const),
+  );
+  if (
+    applicable.length !== input.plan.requirements.length ||
+    applicable.length !== input.obligationIds.length ||
+    applicable.some(({ obligation }, index) => obligation.id !== input.obligationIds[index])
+  ) {
+    throw new Error("single_domain_answer_card_binding_mismatch");
+  }
+  return applicable.map(({ deliverable, obligation }, index) => {
+    const policy = policyByObligation.get(obligation.id);
+    return {
+      domain: input.domain,
+      requirementId: input.plan.requirements[index]!.id,
+      deliverableId: deliverable.id,
+      obligationId: obligation.id,
+      order: required.findIndex((item) => item.obligation.id === obligation.id),
+      ...(policy === undefined
+        ? {}
+        : {
+            cardId: policy.cardId,
+            cardObligationId: policy.cardObligationId,
+            requiredConcepts: policy.requiredConcepts,
+            forbiddenClaims: policy.forbiddenClaims,
+            preferredEvidencePaths: policy.preferredEvidencePaths,
+          }),
+    };
+  });
 }
 
 function deriveMissingForecastPlan(

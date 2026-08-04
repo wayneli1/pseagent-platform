@@ -85,6 +85,37 @@ export type DiagnosticEvent =
       readonly requirementCount: number;
     }
   | {
+      readonly event: "answer_card_match";
+      readonly matchType: "exact" | "family" | "partial" | "none";
+      readonly confidence: "deterministic" | "high" | "none";
+      readonly candidateCount: number;
+      readonly obligationCount: number;
+      readonly cardIdHashes: readonly string[];
+      readonly catalogHash: string;
+      readonly reason?:
+        | "no_exact_match"
+        | "stale_catalog"
+        | "scope_mismatch"
+        | "applicability_mismatch"
+        | "family_disabled"
+        | "no_family_candidate"
+        | "family_rejected"
+        | "family_match_unavailable";
+    }
+  | {
+      readonly event: "answer_card_activation";
+      readonly activated: boolean;
+      readonly reason:
+        | "activated"
+        | "shadow_only"
+        | "analysis_unavailable"
+        | "match_not_active"
+        | "requirement_limit_exceeded"
+        | "task_spec_contract_exceeded"
+        | "guard_rejected";
+      readonly obligationCount: number;
+    }
+  | {
       readonly event: "domain_execution";
       readonly domain?: "coremail-professional" | "presales-general";
       readonly phase: "session" | "agent";
@@ -359,6 +390,25 @@ const TASK_SPEC_ACTIVATION_REASON_VALUES = [
   "knowledge_plan_contract_exceeded",
   "invalid_domain_binding",
 ] as const;
+const ANSWER_CARD_MATCH_REASON_VALUES = [
+  "no_exact_match",
+  "stale_catalog",
+  "scope_mismatch",
+  "applicability_mismatch",
+  "family_disabled",
+  "no_family_candidate",
+  "family_rejected",
+  "family_match_unavailable",
+] as const;
+const ANSWER_CARD_ACTIVATION_REASON_VALUES = [
+  "activated",
+  "shadow_only",
+  "analysis_unavailable",
+  "match_not_active",
+  "requirement_limit_exceeded",
+  "task_spec_contract_exceeded",
+  "guard_rejected",
+] as const;
 const DOMAIN_EXECUTION_REASON_VALUES = [
   "runner_missing",
   "active_deadline_elapsed",
@@ -427,6 +477,7 @@ const COVERAGE_GAP_REASON_VALUES = [
   "unsupported_claim_removed",
 ] as const;
 const VALIDATION_REASON_VALUES = [
+  "answer_card_forbidden_claim",
   "requirement_coverage_mismatch",
   "duplicate_requirement_coverage",
   "related_citation_count",
@@ -549,6 +600,37 @@ function allowlistDiagnosticEvent(
         activated: safeBoolean(event.activated),
         reason: safeEnum(event.reason, TASK_SPEC_ACTIVATION_REASON_VALUES),
         requirementCount: safeCount(event.requirementCount),
+      };
+    case "answer_card_match":
+      return {
+        event: event.event,
+        matchType: safeEnum(
+          event.matchType,
+          ["exact", "family", "partial", "none"] as const,
+        ),
+        confidence: safeEnum(
+          event.confidence,
+          ["deterministic", "high", "none"] as const,
+        ),
+        candidateCount: safeCount(event.candidateCount),
+        obligationCount: safeCount(event.obligationCount),
+        cardIdHashes: safeArray(event.cardIdHashes, safeSha256, 12),
+        catalogHash: safeSha256(event.catalogHash),
+        ...safeOptionalEnumField(
+          "reason",
+          event.reason,
+          ANSWER_CARD_MATCH_REASON_VALUES,
+        ),
+      };
+    case "answer_card_activation":
+      return {
+        event: event.event,
+        activated: safeBoolean(event.activated),
+        reason: safeEnum(
+          event.reason,
+          ANSWER_CARD_ACTIVATION_REASON_VALUES,
+        ),
+        obligationCount: safeCount(event.obligationCount),
       };
     case "domain_execution":
       return {
@@ -912,6 +994,12 @@ function safeRequirementId(value: unknown): string {
 
 function safeAspectId(value: unknown): string {
   return typeof value === "string" && /^A[1-8]$/u.test(value)
+    ? value
+    : UNKNOWN_DIAGNOSTIC_IDENTIFIER;
+}
+
+function safeSha256(value: unknown): string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value)
     ? value
     : UNKNOWN_DIAGNOSTIC_IDENTIFIER;
 }

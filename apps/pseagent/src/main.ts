@@ -36,6 +36,11 @@ import {
   DeterministicTaskSpecGuard,
   ModelTaskCompiler,
 } from "./task-spec.js";
+import {
+  DefaultAnswerCardMatcher,
+  type AnswerCardMatcher,
+} from "./answer-card-matcher.js";
+import { loadAnswerCardRegistry } from "./answer-card-registry.js";
 
 export interface PseRuntimeDependencies {
   readonly createModel?: (config: AppConfig) => ModelClient;
@@ -55,6 +60,10 @@ export interface PseRuntimeDependencies {
     model: ModelClient,
     config: AppConfig,
   ) => TaskAnalysisShadow;
+  readonly createAnswerCardMatcher?: (
+    model: ModelClient,
+    config: Extract<AppConfig["answerCards"], { enabled: true }>,
+  ) => AnswerCardMatcher;
 }
 
 export interface PseAgentRuntime {
@@ -99,6 +108,12 @@ export async function createPseAgentRuntime(
         ? defaultCreateTaskAnalysisShadow(models, config)
         : dependencies.createTaskAnalysisShadow(models.resolver, config)
       : undefined;
+    const answerCardMatcher = config.answerCards.enabled
+      ? (dependencies.createAnswerCardMatcher ?? defaultCreateAnswerCardMatcher)(
+          models.planner,
+          config.answerCards,
+        )
+      : undefined;
     const knowledge = (dependencies.createKnowledgeSessionFactory ?? defaultKnowledgeSessionFactory)(caller);
     const service = new AnswerService({
       model: models.synthesizer,
@@ -113,6 +128,9 @@ export async function createPseAgentRuntime(
       activeDeadlineMs: config.PSE_ACTIVE_DEADLINE_MS,
       taskSpecActiveEnabled: config.taskSpecActiveEnabled,
       multiDomainActiveEnabled: config.multiDomainActiveEnabled,
+      answerCardExactActiveEnabled: config.answerCards.exactActiveEnabled,
+      answerCardFamilyActiveEnabled: config.answerCards.familyActiveEnabled,
+      ...(answerCardMatcher === undefined ? {} : { answerCardMatcher }),
       ...(taskAnalysisShadow === undefined || !config.taskSpecShadow.enabled
         ? {}
         : {
@@ -153,6 +171,16 @@ export async function createPseAgentRuntime(
       return closePromise;
     },
   };
+}
+
+function defaultCreateAnswerCardMatcher(
+  model: ModelClient,
+  config: Extract<AppConfig["answerCards"], { enabled: true }>,
+): AnswerCardMatcher {
+  return new DefaultAnswerCardMatcher(
+    loadAnswerCardRegistry(config.catalogPath),
+    model,
+  );
 }
 
 function defaultCreateTaskAnalysisShadow(

@@ -44,6 +44,18 @@ export type AppConfig = BaseConfig & {
     | { readonly enabled: true; readonly timeoutMs: number };
   readonly taskSpecActiveEnabled: boolean;
   readonly multiDomainActiveEnabled: boolean;
+  readonly answerCards:
+    | {
+        readonly enabled: false;
+        readonly exactActiveEnabled: false;
+        readonly familyActiveEnabled: false;
+      }
+    | {
+        readonly enabled: true;
+        readonly catalogPath: string;
+        readonly exactActiveEnabled: boolean;
+        readonly familyActiveEnabled: boolean;
+      };
   readonly modelRoles: {
     readonly resolver: string;
     readonly planner: string;
@@ -93,6 +105,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     taskSpecShadow.enabled,
     taskSpecActiveEnabled,
   );
+  const answerCards = loadAnswerCardConfig(
+    env,
+    taskSpecShadow.enabled,
+    taskSpecActiveEnabled,
+    multiDomainActiveEnabled,
+  );
   if (enabled === "false") {
     return {
       ...parsed,
@@ -101,6 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       taskSpecShadow,
       taskSpecActiveEnabled,
       multiDomainActiveEnabled,
+      answerCards,
       modelRoles: modelRoles(parsed),
       modelCapabilities: {
         jsonResponseFormat: parsed.PSE_MODEL_JSON_RESPONSE_FORMAT === "true",
@@ -133,10 +152,61 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     taskSpecShadow,
     taskSpecActiveEnabled,
     multiDomainActiveEnabled,
+    answerCards,
     modelRoles: modelRoles(parsed),
     modelCapabilities: {
       jsonResponseFormat: parsed.PSE_MODEL_JSON_RESPONSE_FORMAT === "true",
     },
+  };
+}
+
+function loadAnswerCardConfig(
+  env: NodeJS.ProcessEnv,
+  taskSpecShadowEnabled: boolean,
+  taskSpecActiveEnabled: boolean,
+  multiDomainActiveEnabled: boolean,
+): AppConfig["answerCards"] {
+  const enabled = z.enum(["true", "false"]).parse(
+    env.PSE_ANSWER_CARD_SHADOW_ENABLED ?? "false",
+  ) === "true";
+  const exactActiveEnabled = z.enum(["true", "false"]).parse(
+    env.PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED ?? "false",
+  ) === "true";
+  const familyActiveEnabled = z.enum(["true", "false"]).parse(
+    env.PSE_ANSWER_CARD_FAMILY_ACTIVE_ENABLED ?? "false",
+  ) === "true";
+  if (exactActiveEnabled && (!enabled || !taskSpecShadowEnabled || !taskSpecActiveEnabled)) {
+    throw new Error(
+      "PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED requires answer-card shadow and active TaskSpec.",
+    );
+  }
+  if (familyActiveEnabled && (!exactActiveEnabled || !multiDomainActiveEnabled)) {
+    throw new Error(
+      "PSE_ANSWER_CARD_FAMILY_ACTIVE_ENABLED requires exact activation and active multi-domain execution.",
+    );
+  }
+  if (!enabled) {
+    if (exactActiveEnabled || familyActiveEnabled) {
+      throw new Error("Answer-card activation requires PSE_ANSWER_CARD_SHADOW_ENABLED=true.");
+    }
+    return {
+      enabled: false,
+      exactActiveEnabled: false,
+      familyActiveEnabled: false,
+    };
+  }
+  const catalogPath = path.normalize(env.PSE_ANSWER_CARD_CATALOG_PATH?.trim() ?? "");
+  if (
+    !path.isAbsolute(catalogPath) ||
+    path.extname(catalogPath).toLowerCase() !== ".json"
+  ) {
+    throw new Error("PSE_ANSWER_CARD_CATALOG_PATH must be an absolute JSON path.");
+  }
+  return {
+    enabled: true,
+    catalogPath,
+    exactActiveEnabled,
+    familyActiveEnabled,
   };
 }
 

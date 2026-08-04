@@ -10,6 +10,10 @@ import type {
   TaskSpecGuardResult,
 } from "./task-spec.js";
 import type { RequirementEvidenceCondition } from "./evidence-ledger.js";
+import {
+  applyAnswerCardPoliciesToPlan,
+  type AnswerCardObligationPolicy,
+} from "./answer-card-task-spec-adapter.js";
 
 export const KNOWLEDGE_DOMAIN_ORDER = [
   "coremail-professional",
@@ -28,6 +32,11 @@ export interface DomainRequirementBinding {
   readonly deliverableId: string;
   readonly obligationId: string;
   readonly order: number;
+  readonly cardId?: string;
+  readonly cardObligationId?: string;
+  readonly requiredConcepts?: readonly string[];
+  readonly forbiddenClaims?: readonly string[];
+  readonly preferredEvidencePaths?: readonly string[];
 }
 
 export interface DomainKnowledgePlan {
@@ -57,6 +66,7 @@ export interface DomainPlanInput {
   readonly resolvedQuestion: ResolvedQuestion;
   readonly taskSpec: TaskSpec;
   readonly guardResult: TaskSpecGuardResult;
+  readonly cardPolicies?: readonly AnswerCardObligationPolicy[];
 }
 
 interface RequiredObligation {
@@ -94,6 +104,9 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
     };
   }
 
+  const policyByObligation = new Map(
+    (input.cardPolicies ?? []).map((policy) => [policy.obligationId, policy] as const),
+  );
   const plans: DomainKnowledgePlan[] = [];
   for (const domain of KNOWLEDGE_DOMAIN_ORDER) {
     const applicable = required.filter(({ obligation }) =>
@@ -131,7 +144,11 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
     plans.push({
       domain,
       scope,
-      plan: adapted.plan,
+      plan: applyAnswerCardPoliciesToPlan({
+        plan: adapted.plan,
+        obligationIds: adapted.obligationIds,
+        policies: input.cardPolicies ?? [],
+      }),
       conditions: adapted.conditions,
       bindings: applicable.map((item, index) => ({
         domain,
@@ -139,6 +156,7 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
         deliverableId: item.deliverable.id,
         obligationId: item.obligation.id,
         order: item.order,
+        ...bindingPolicy(policyByObligation.get(item.obligation.id)),
       })),
     });
   }
@@ -151,6 +169,26 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
     };
   }
   return { activated: true, plans };
+}
+
+function bindingPolicy(
+  policy: AnswerCardObligationPolicy | undefined,
+): Pick<
+  DomainRequirementBinding,
+  | "cardId"
+  | "cardObligationId"
+  | "requiredConcepts"
+  | "forbiddenClaims"
+  | "preferredEvidencePaths"
+> {
+  if (policy === undefined) return {};
+  return {
+    cardId: policy.cardId,
+    cardObligationId: policy.cardObligationId,
+    requiredConcepts: policy.requiredConcepts,
+    forbiddenClaims: policy.forbiddenClaims,
+    preferredEvidencePaths: policy.preferredEvidencePaths,
+  };
 }
 
 function requiredObligations(taskSpec: TaskSpec): readonly RequiredObligation[] {
