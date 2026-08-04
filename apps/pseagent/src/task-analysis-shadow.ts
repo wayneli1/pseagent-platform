@@ -9,6 +9,8 @@ import type {
   TaskSpecGuard,
   TaskSpecGuardResult,
 } from "./task-spec.js";
+import type { DiagnosticTrace } from "./diagnostics.js";
+import { observeModelCall } from "./model-observability.js";
 
 export type { QuestionResolver } from "./question-resolver.js";
 export type { TaskCompiler, TaskSpecGuard } from "./task-spec.js";
@@ -24,6 +26,7 @@ export interface TaskAnalysisShadowInput {
     readonly planningOverview: string;
   };
   readonly signal?: AbortSignal;
+  readonly trace?: DiagnosticTrace;
 }
 
 export interface TaskAnalysisShadowResult {
@@ -46,19 +49,31 @@ export class DefaultTaskAnalysisShadow implements TaskAnalysisShadow {
 
   async analyze(input: TaskAnalysisShadowInput): Promise<TaskAnalysisShadowResult> {
     const startedAt = Date.now();
-    const resolvedQuestion = await this.resolver.resolve({
-      question: input.question,
-      ...(input.conversationContext === undefined
-        ? {}
-        : { conversationContext: input.conversationContext }),
+    const resolvedQuestion = await observeModelCall({
+      trace: input.trace,
+      role: "resolver",
+      operation: "resolve",
       ...(input.signal === undefined ? {} : { signal: input.signal }),
+      call: () => this.resolver.resolve({
+        question: input.question,
+        ...(input.conversationContext === undefined
+          ? {}
+          : { conversationContext: input.conversationContext }),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      }),
     });
-    const taskSpec = await this.compiler.compile({
-      resolvedQuestion,
-      scopeHint: input.scope,
-      legacyPlan: input.legacyPlan,
-      knowledgeContext: input.knowledgeContext,
+    const taskSpec = await observeModelCall({
+      trace: input.trace,
+      role: "planner",
+      operation: "compile",
       ...(input.signal === undefined ? {} : { signal: input.signal }),
+      call: () => this.compiler.compile({
+        resolvedQuestion,
+        scopeHint: input.scope,
+        legacyPlan: input.legacyPlan,
+        knowledgeContext: input.knowledgeContext,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      }),
     });
     const guard = this.guard.validate({ resolvedQuestion, taskSpec });
     return {
@@ -69,4 +84,3 @@ export class DefaultTaskAnalysisShadow implements TaskAnalysisShadow {
     };
   }
 }
-

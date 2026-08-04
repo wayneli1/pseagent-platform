@@ -75,6 +75,13 @@ describe("development diagnostic trace", () => {
       synthesisAllowedCount: 0,
     });
     trace.record({
+      event: "model_call",
+      role: "planner",
+      operation: "plan",
+      outcome: "completed",
+      elapsedMs: 21,
+    });
+    trace.record({
       event: "model_payload",
       result: "rejected",
       reason: "invalid_schema:citations:invalid_type(expected=array)",
@@ -126,6 +133,7 @@ describe("development diagnostic trace", () => {
       "task_spec_shadow",
       "task_spec_activation",
       "plan",
+      "model_call",
       "model_payload",
       "coverage",
       "finish",

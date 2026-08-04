@@ -6,6 +6,11 @@ const baseEnvSchema = z.object({
   PSE_MODEL_BASE_URL: z.string().url(),
   PSE_MODEL_API_KEY: z.string().trim().min(1),
   PSE_MODEL_NAME: z.string().trim().min(1),
+  PSE_RESOLVER_MODEL_NAME: z.string().trim().min(1).optional(),
+  PSE_PLANNER_MODEL_NAME: z.string().trim().min(1).optional(),
+  PSE_SYNTHESIZER_MODEL_NAME: z.string().trim().min(1).optional(),
+  PSE_VERIFIER_MODEL_NAME: z.string().trim().min(1).optional(),
+  PSE_MODEL_JSON_RESPONSE_FORMAT: z.enum(["true", "false"]).default("true"),
   PSE_MODEL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(180_000).default(60_000),
   PSE_MODEL_MAX_TOKENS: z.coerce.number().int().min(1_024).max(32_768).default(8_192),
   PSE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(1_800_000).default(300_000),
@@ -39,6 +44,15 @@ export type AppConfig = BaseConfig & {
     | { readonly enabled: true; readonly timeoutMs: number };
   readonly taskSpecActiveEnabled: boolean;
   readonly multiDomainActiveEnabled: boolean;
+  readonly modelRoles: {
+    readonly resolver: string;
+    readonly planner: string;
+    readonly synthesizer: string;
+    readonly verifier: string;
+  };
+  readonly modelCapabilities: {
+    readonly jsonResponseFormat: boolean;
+  };
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -46,6 +60,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     PSE_MODEL_BASE_URL: env.PSE_MODEL_BASE_URL,
     PSE_MODEL_API_KEY: env.PSE_MODEL_API_KEY,
     PSE_MODEL_NAME: env.PSE_MODEL_NAME,
+    PSE_RESOLVER_MODEL_NAME: env.PSE_RESOLVER_MODEL_NAME,
+    PSE_PLANNER_MODEL_NAME: env.PSE_PLANNER_MODEL_NAME,
+    PSE_SYNTHESIZER_MODEL_NAME: env.PSE_SYNTHESIZER_MODEL_NAME,
+    PSE_VERIFIER_MODEL_NAME: env.PSE_VERIFIER_MODEL_NAME,
+    PSE_MODEL_JSON_RESPONSE_FORMAT: env.PSE_MODEL_JSON_RESPONSE_FORMAT,
     PSE_MODEL_TIMEOUT_MS: env.PSE_MODEL_TIMEOUT_MS,
     PSE_MODEL_MAX_TOKENS: env.PSE_MODEL_MAX_TOKENS,
     PSE_REQUEST_TIMEOUT_MS: env.PSE_REQUEST_TIMEOUT_MS,
@@ -82,6 +101,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       taskSpecShadow,
       taskSpecActiveEnabled,
       multiDomainActiveEnabled,
+      modelRoles: modelRoles(parsed),
+      modelCapabilities: {
+        jsonResponseFormat: parsed.PSE_MODEL_JSON_RESPONSE_FORMAT === "true",
+      },
     };
   }
 
@@ -110,6 +133,19 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     taskSpecShadow,
     taskSpecActiveEnabled,
     multiDomainActiveEnabled,
+    modelRoles: modelRoles(parsed),
+    modelCapabilities: {
+      jsonResponseFormat: parsed.PSE_MODEL_JSON_RESPONSE_FORMAT === "true",
+    },
+  };
+}
+
+function modelRoles(config: BaseConfig): AppConfig["modelRoles"] {
+  return {
+    resolver: config.PSE_RESOLVER_MODEL_NAME ?? config.PSE_MODEL_NAME,
+    planner: config.PSE_PLANNER_MODEL_NAME ?? config.PSE_MODEL_NAME,
+    synthesizer: config.PSE_SYNTHESIZER_MODEL_NAME ?? config.PSE_MODEL_NAME,
+    verifier: config.PSE_VERIFIER_MODEL_NAME ?? config.PSE_MODEL_NAME,
   };
 }
 

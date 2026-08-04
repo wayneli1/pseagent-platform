@@ -21,7 +21,11 @@ import { KnowledgeSession } from "./knowledge-session.js";
 import { StdioKnowledgeToolCaller, type KnowledgeToolCaller } from "./knowledge-tool-caller.js";
 import { ModelKnowledgePlanner, type KnowledgePlanner } from "./knowledge-planner.js";
 import { createPseMcpServer } from "./mcp-server.js";
-import { OpenAiCompatibleModelClient, type ModelClient } from "./model-client.js";
+import {
+  OpenAiCompatibleModelClient,
+  type ModelClient,
+  type ModelRoleClients,
+} from "./model-client.js";
 import { ScopeRouter } from "./router.js";
 import { ModelQuestionResolver } from "./question-resolver.js";
 import {
@@ -35,6 +39,7 @@ import {
 
 export interface PseRuntimeDependencies {
   readonly createModel?: (config: AppConfig) => ModelClient;
+  readonly createModelRoles?: (config: AppConfig) => ModelRoleClients;
   readonly createKnowledgeCaller?: (config: AppConfig, env: NodeJS.ProcessEnv) => KnowledgeToolCaller;
   readonly createRouter?: (model: ModelClient) => Pick<ScopeRouter, "route">;
   readonly createKnowledgePlanner?: (model: ModelClient) => KnowledgePlanner;
@@ -64,7 +69,7 @@ export async function createPseAgentRuntime(
   dependencies: PseRuntimeDependencies = {},
 ): Promise<PseAgentRuntime> {
   const config = loadConfig(env);
-  const model = (dependencies.createModel ?? defaultCreateModel)(config);
+  const models = createModelRoles(config, dependencies);
   const caller = (dependencies.createKnowledgeCaller ?? defaultCreateKnowledgeCaller)(config, env);
   const diagnostics = (
     dependencies.createDiagnosticTraceFactory ??
@@ -82,20 +87,22 @@ export async function createPseAgentRuntime(
       )(config.coremailMcp);
     }
     await caller.connect();
-    const router = (dependencies.createRouter ?? ((value) => new ScopeRouter(value)))(model);
+    const router = (dependencies.createRouter ?? ((value) => new ScopeRouter(value)))(
+      models.resolver,
+    );
     const planner = (
       dependencies.createKnowledgePlanner ??
       ((value) => new ModelKnowledgePlanner(value))
-    )(model);
+    )(models.planner);
     const taskAnalysisShadow = config.taskSpecShadow.enabled
-      ? (
-          dependencies.createTaskAnalysisShadow ??
-          defaultCreateTaskAnalysisShadow
-        )(model, config)
+      ? dependencies.createTaskAnalysisShadow === undefined
+        ? defaultCreateTaskAnalysisShadow(models, config)
+        : dependencies.createTaskAnalysisShadow(models.resolver, config)
       : undefined;
     const knowledge = (dependencies.createKnowledgeSessionFactory ?? defaultKnowledgeSessionFactory)(caller);
     const service = new AnswerService({
-      model,
+      model: models.synthesizer,
+      verifierModel: models.verifier,
       router,
       planner,
       ...(diagnostics === undefined ? {} : { diagnostics }),
@@ -149,12 +156,12 @@ export async function createPseAgentRuntime(
 }
 
 function defaultCreateTaskAnalysisShadow(
-  model: ModelClient,
+  models: ModelRoleClients,
   _config: AppConfig,
 ): TaskAnalysisShadow {
   return new DefaultTaskAnalysisShadow(
-    new ModelQuestionResolver(model),
-    new ModelTaskCompiler(model),
+    new ModelQuestionResolver(models.resolver),
+    new ModelTaskCompiler(models.planner),
     new DeterministicTaskSpecGuard(),
   );
 }
@@ -179,14 +186,43 @@ export async function runPseAgent(
   return runtime;
 }
 
-function defaultCreateModel(config: AppConfig): ModelClient {
+function defaultCreateModel(
+  config: AppConfig,
+  model = config.PSE_MODEL_NAME,
+): ModelClient {
   return new OpenAiCompatibleModelClient({
     baseUrl: config.PSE_MODEL_BASE_URL,
     apiKey: config.PSE_MODEL_API_KEY,
-    model: config.PSE_MODEL_NAME,
+    model,
     timeoutMs: config.PSE_MODEL_TIMEOUT_MS,
     maxTokens: config.PSE_MODEL_MAX_TOKENS,
+    jsonResponseFormat: config.modelCapabilities.jsonResponseFormat,
   });
+}
+
+function createModelRoles(
+  config: AppConfig,
+  dependencies: PseRuntimeDependencies,
+): ModelRoleClients {
+  if (dependencies.createModelRoles !== undefined) {
+    return dependencies.createModelRoles(config);
+  }
+  if (dependencies.createModel !== undefined) {
+    const shared = dependencies.createModel(config);
+    return {
+      resolver: shared,
+      planner: shared,
+      synthesizer: shared,
+      verifier: shared,
+    };
+  }
+  const create = (model: string) => defaultCreateModel(config, model);
+  return {
+    resolver: create(config.modelRoles.resolver),
+    planner: create(config.modelRoles.planner),
+    synthesizer: create(config.modelRoles.synthesizer),
+    verifier: create(config.modelRoles.verifier),
+  };
 }
 
 function defaultCreateKnowledgeCaller(config: AppConfig, env: NodeJS.ProcessEnv): KnowledgeToolCaller {

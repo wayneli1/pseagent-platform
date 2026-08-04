@@ -50,6 +50,7 @@ import type {
 } from "./evidence-ledger.js";
 import type { CoverageGap } from "./coverage-gap.js";
 import type { CoverageVerificationReport } from "./coverage-verifier.js";
+import { observeModelCall } from "./model-observability.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -65,6 +66,7 @@ export interface AgentRunnerInput {
   readonly requirementBindings?: readonly DomainRequirementBinding[];
   readonly requirementEvidenceConditions?: readonly RequirementEvidenceCondition[];
   readonly model: ModelClient;
+  readonly verifierModel?: ModelClient;
   readonly session: KnowledgeSession;
   readonly deadlineAt: number;
   readonly trace: DiagnosticTrace;
@@ -106,6 +108,7 @@ interface ExecutionEvidenceMetadata {
 export class AnswerService {
   constructor(private readonly dependencies: {
     readonly model: ModelClient;
+    readonly verifierModel?: ModelClient;
     readonly router: Pick<ScopeRouter, "route">;
     readonly planner: KnowledgePlanner;
     readonly diagnostics?: DiagnosticTraceFactory;
@@ -149,25 +152,51 @@ export class AnswerService {
     );
     let scope: Scope | undefined;
     try {
-      scope = await this.dependencies.router.route(question, conversationContext, requestSignal);
+      scope = await observeModelCall({
+        trace,
+        role: "resolver",
+        operation: "route",
+        signal: requestSignal,
+        call: () => this.dependencies.router.route(
+          question,
+          conversationContext,
+          requestSignal,
+        ),
+      });
       recordDiagnostic(trace, { event: "route", scope });
       if (scope === "normal") {
-        const answer = await this.dependencies.model.completeText({
-          messages: normalAnswerMessages(question, conversationContext),
+        const answer = await observeModelCall({
+          trace,
+          role: "synthesizer",
+          operation: "normal_answer",
           signal: requestSignal,
+          call: () => this.dependencies.model.completeText({
+            messages: normalAnswerMessages(question, conversationContext),
+            signal: requestSignal,
+          }),
         });
         const result: AnswerResult = { scope, status: "answered", answer, references: [] };
         return finishExecution(trace, result, startedAt, false, false);
       }
-      const session = await this.dependencies.knowledge.open(scope, requestSignal);
-      const plan = await this.dependencies.planner.plan({
-        scope,
-        question,
-        purpose: session.purpose,
-        schema: session.schema,
-        planningOverview: session.planningOverview,
-        ...(conversationContext === undefined ? {} : { conversationContext }),
+      if (scope !== "professional" && scope !== "general") {
+        throw new Error("invalid_routed_scope");
+      }
+      const knowledgeScope = scope;
+      const session = await this.dependencies.knowledge.open(knowledgeScope, requestSignal);
+      const plan = await observeModelCall({
+        trace,
+        role: "planner",
+        operation: "plan",
         signal: requestSignal,
+        call: () => this.dependencies.planner.plan({
+          scope: knowledgeScope,
+          question,
+          purpose: session.purpose,
+          schema: session.schema,
+          planningOverview: session.planningOverview,
+          ...(conversationContext === undefined ? {} : { conversationContext }),
+          signal: requestSignal,
+        }),
       });
       recordDiagnostic(trace, {
         event: "plan",
@@ -304,6 +333,9 @@ export class AnswerService {
           ? {}
           : { requirementEvidenceConditions: effectiveEvidenceConditions }),
         model: this.dependencies.model,
+        ...(this.dependencies.verifierModel === undefined
+          ? {}
+          : { verifierModel: this.dependencies.verifierModel }),
         session,
         deadlineAt,
         trace,
@@ -443,6 +475,9 @@ export class AnswerService {
             ? {}
             : { requirementEvidenceConditions: domainPlan.conditions }),
           model: this.dependencies.model,
+          ...(this.dependencies.verifierModel === undefined
+            ? {}
+            : { verifierModel: this.dependencies.verifierModel }),
           session,
           deadlineAt: input.deadlineAt,
           trace: input.trace,
@@ -758,6 +793,7 @@ async function observeTaskAnalysisShadow(input: {
       legacyPlan: input.legacyPlan,
       knowledgeContext: input.knowledgeContext,
       signal,
+      trace: input.trace,
     });
     const obligations = result.taskSpec.deliverables.flatMap(
       (deliverable) => deliverable.obligations,

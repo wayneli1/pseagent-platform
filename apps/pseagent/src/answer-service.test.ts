@@ -231,7 +231,9 @@ describe("AnswerService", () => {
       plan: knowledgePlan,
     }));
     expect(events.map((event) => event.event)).toEqual([
+      "model_call",
       "route",
+      "model_call",
       "plan",
       "question_resolution",
       "task_spec",
@@ -1154,8 +1156,14 @@ describe("AnswerService", () => {
 
     await service.answer("不应直接写入诊断的完整问题");
 
-    expect(events.map((event) => event.event)).toEqual(["route", "plan", "finish"]);
-    expect(events[1]).toMatchObject({
+    expect(events.map((event) => event.event)).toEqual([
+      "model_call",
+      "route",
+      "model_call",
+      "plan",
+      "finish",
+    ]);
+    expect(events.find((event) => event.event === "plan")).toMatchObject({
       event: "plan",
       requirementCount: 1,
       aspectCount: 1,
@@ -1163,7 +1171,7 @@ describe("AnswerService", () => {
       directOnlyCount: 1,
       synthesisAllowedCount: 0,
     });
-    expect(events[2]).toMatchObject({
+    expect(events.find((event) => event.event === "finish")).toMatchObject({
       event: "finish",
       scope: "professional",
       status: "answered",

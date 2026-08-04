@@ -3222,8 +3222,11 @@ describe("runKnowledgeAgent", () => {
       "search",
       "search",
       "candidates",
+      "model_call",
       "read",
+      "model_call",
       "coverage",
+      "model_call",
       "coverage",
       "coverage_gaps",
     ]);
@@ -4384,7 +4387,12 @@ describe("runKnowledgeAgent", () => {
       read("R1", "wiki/r1.md"),
       final("complete", "当前机会赢率为 75%[1]。", [1]),
     ]);
+    const verifierModel = {
+      completeJson: vi.fn(),
+      completeText: vi.fn(),
+    } as unknown as ModelClient;
     const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
+      expect(input.model).toBe(verifierModel);
       expect(input.draft.requirements[0]).toMatchObject({
         coverage: "none",
         citations: [],
@@ -4400,6 +4408,7 @@ describe("runKnowledgeAgent", () => {
         plan,
       ),
       verifyCoverage,
+      verifierModel,
       requirementEvidenceConditions: [{
         requirementId: "R1",
         inputState: "missing",

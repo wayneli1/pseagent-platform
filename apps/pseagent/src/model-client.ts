@@ -4,6 +4,19 @@ export interface ModelMessage {
   readonly role: "system" | "user" | "assistant";
   readonly content: string;
 }
+export const MODEL_ROLES = [
+  "resolver",
+  "planner",
+  "synthesizer",
+  "verifier",
+] as const;
+export type ModelRole = typeof MODEL_ROLES[number];
+export interface ModelRoleClients {
+  readonly resolver: ModelClient;
+  readonly planner: ModelClient;
+  readonly synthesizer: ModelClient;
+  readonly verifier: ModelClient;
+}
 export interface ModelClient {
   completeJson<T>(input: {
     readonly messages: readonly ModelMessage[];
@@ -40,6 +53,7 @@ export class OpenAiCompatibleModelClient implements ModelClient {
     model: string;
     timeoutMs: number;
     maxTokens: number;
+    jsonResponseFormat?: boolean;
   }) {}
 
   async completeJson<T>(input: {
@@ -50,12 +64,31 @@ export class OpenAiCompatibleModelClient implements ModelClient {
   }): Promise<T> {
     const completion = await this.complete(input.messages, true, input.signal);
     const content = completion.content;
+    let structuredContent: string;
+    try {
+      structuredContent = extractStructuredJsonObject(content);
+    } catch (error) {
+      throw new InvalidModelPayloadError(
+        error instanceof StructuredEnvelopeError ? error.code : "invalid_json",
+        content,
+        input.schemaDescription,
+        completion.finishReason,
+      );
+    }
     let decoded: unknown;
     try {
-      decoded = JSON.parse(content);
+      decoded = JSON.parse(structuredContent);
     } catch {
       throw new InvalidModelPayloadError(
         "invalid_json",
+        content,
+        input.schemaDescription,
+        completion.finishReason,
+      );
+    }
+    if (!isJsonObject(decoded)) {
+      throw new InvalidModelPayloadError(
+        "invalid_json_object",
         content,
         input.schemaDescription,
         completion.finishReason,
@@ -89,7 +122,9 @@ export class OpenAiCompatibleModelClient implements ModelClient {
       temperature: 0,
       max_tokens: this.config.maxTokens,
       messages,
-      ...(json ? { response_format: { type: "json_object" } } : {}),
+      ...(json && this.config.jsonResponseFormat !== false
+        ? { response_format: { type: "json_object" } }
+        : {}),
     };
     try {
       const response = await fetch(`${this.config.baseUrl.replace(/\/$/u, "")}/chat/completions`, {
@@ -122,6 +157,108 @@ export class OpenAiCompatibleModelClient implements ModelClient {
       throw new ModelUnavailableError();
     }
   }
+}
+
+class StructuredEnvelopeError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "StructuredEnvelopeError";
+  }
+}
+
+function extractStructuredJsonObject(raw: string): string {
+  let content = raw.trim();
+  for (let count = 0; /^<think>/iu.test(content); count += 1) {
+    if (count >= 4) throw new StructuredEnvelopeError("invalid_reasoning_envelope");
+    const closingIndex = content.search(/<\/think>/iu);
+    if (closingIndex < 0) {
+      throw new StructuredEnvelopeError("invalid_reasoning_envelope");
+    }
+    const closing = content.slice(closingIndex).match(/^<\/think>/iu)?.[0];
+    if (closing === undefined) {
+      throw new StructuredEnvelopeError("invalid_reasoning_envelope");
+    }
+    content = content.slice(closingIndex + closing.length).trim();
+  }
+
+  if (content.startsWith("```")) {
+    const opening = content.match(/^```(?:json)?[ \t]*\r?\n/iu)?.[0];
+    if (opening === undefined || !content.endsWith("```")) {
+      throw new StructuredEnvelopeError("invalid_code_fence_envelope");
+    }
+    const interior = content.slice(opening.length, -3);
+    if (interior.includes("```")) {
+      throw new StructuredEnvelopeError("invalid_code_fence_envelope");
+    }
+    content = interior.trim();
+  }
+
+  try {
+    const direct = JSON.parse(content) as unknown;
+    if (!isJsonObject(direct)) {
+      throw new StructuredEnvelopeError("invalid_json_object");
+    }
+    return content;
+  } catch (error) {
+    if (error instanceof StructuredEnvelopeError) throw error;
+  }
+
+  const candidates = findValidJsonObjects(content);
+  if (candidates.length === 0) throw new StructuredEnvelopeError("invalid_json");
+  if (candidates.length > 1) {
+    throw new StructuredEnvelopeError("ambiguous_json_object");
+  }
+  return candidates[0]!;
+}
+
+function findValidJsonObjects(content: string): string[] {
+  const candidates: string[] = [];
+  for (let start = 0; start < content.length; start += 1) {
+    if (content[start] !== "{") continue;
+    const end = balancedObjectEnd(content, start);
+    if (end === undefined) continue;
+    const candidate = content.slice(start, end + 1);
+    try {
+      if (isJsonObject(JSON.parse(candidate))) candidates.push(candidate);
+    } catch {
+      // Invalid brace-delimited prose is not a structured candidate.
+    }
+    start = end;
+  }
+  return candidates;
+}
+
+function balancedObjectEnd(content: string, start: number): number | undefined {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < content.length; index += 1) {
+    const character = content[index]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+    } else if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+      if (depth < 0) return undefined;
+    }
+  }
+  return undefined;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function summarizeIssueTree(value: unknown): string {

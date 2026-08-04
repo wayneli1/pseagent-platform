@@ -11,6 +11,7 @@ import type {
   Scope,
 } from "./contracts.js";
 import type { TaskSpecIssueCode } from "./task-spec.js";
+import type { ModelRole } from "./model-client.js";
 import type { TaskPlanAdapterInactiveReason } from "./task-plan-adapter.js";
 import type { DomainPlanInactiveReason } from "./domain-plan.js";
 import type {
@@ -117,6 +118,27 @@ export type DiagnosticEvent =
       readonly queryCount: number;
       readonly directOnlyCount: number;
       readonly synthesisAllowedCount: number;
+    }
+  | {
+      readonly event: "model_call";
+      readonly role: ModelRole;
+      readonly operation:
+        | "route"
+        | "normal_answer"
+        | "resolve"
+        | "compile"
+        | "plan"
+        | "synthesize"
+        | "verify";
+      readonly outcome: "completed" | "failed";
+      readonly elapsedMs: number;
+      readonly errorClass?:
+        | "invalid_json"
+        | "invalid_schema"
+        | "invalid_payload"
+        | "unavailable"
+        | "aborted"
+        | "unexpected";
     }
   | {
       readonly event: "search";
@@ -545,6 +567,40 @@ function allowlistDiagnosticEvent(
         queryCount: safeCount(event.queryCount),
         directOnlyCount: safeCount(event.directOnlyCount),
         synthesisAllowedCount: safeCount(event.synthesisAllowedCount),
+      };
+    case "model_call":
+      return {
+        event: event.event,
+        role: safeEnum(
+          event.role,
+          ["resolver", "planner", "synthesizer", "verifier"] as const,
+        ),
+        operation: safeEnum(
+          event.operation,
+          [
+            "route",
+            "normal_answer",
+            "resolve",
+            "compile",
+            "plan",
+            "synthesize",
+            "verify",
+          ] as const,
+        ),
+        outcome: safeEnum(event.outcome, ["completed", "failed"] as const),
+        elapsedMs: safeCount(event.elapsedMs),
+        ...safeOptionalEnumField(
+          "errorClass",
+          event.errorClass,
+          [
+            "invalid_json",
+            "invalid_schema",
+            "invalid_payload",
+            "unavailable",
+            "aborted",
+            "unexpected",
+          ] as const,
+        ),
       };
     case "search":
       return {

@@ -28,6 +28,37 @@ describe("loadConfig", () => {
     expect(config).not.toHaveProperty("JUDGE_MODEL_NAME");
   });
 
+  it("derives independent model-role names and provider JSON capability", () => {
+    const shared = loadConfig(baseEnv);
+    expect(shared.modelRoles).toEqual({
+      resolver: "model",
+      planner: "model",
+      synthesizer: "model",
+      verifier: "model",
+    });
+    expect(shared.modelCapabilities).toEqual({ jsonResponseFormat: true });
+
+    const split = loadConfig({
+      ...baseEnv,
+      PSE_RESOLVER_MODEL_NAME: "resolver-model",
+      PSE_PLANNER_MODEL_NAME: "planner-model",
+      PSE_SYNTHESIZER_MODEL_NAME: "synth-model",
+      PSE_VERIFIER_MODEL_NAME: "verifier-model",
+      PSE_MODEL_JSON_RESPONSE_FORMAT: "false",
+    });
+    expect(split.modelRoles).toEqual({
+      resolver: "resolver-model",
+      planner: "planner-model",
+      synthesizer: "synth-model",
+      verifier: "verifier-model",
+    });
+    expect(split.modelCapabilities).toEqual({ jsonResponseFormat: false });
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_MODEL_JSON_RESPONSE_FORMAT: "auto",
+    })).toThrow();
+  });
+
   it("loads a bounded opt-in TaskSpec shadow configuration", () => {
     expect(loadConfig({
       ...baseEnv,

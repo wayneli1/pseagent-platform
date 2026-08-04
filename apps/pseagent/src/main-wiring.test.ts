@@ -6,7 +6,7 @@ import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { KnowledgeToolCaller } from "./knowledge-tool-caller.js";
 import type { KnowledgePlanner } from "./knowledge-planner.js";
-import type { ModelClient } from "./model-client.js";
+import type { ModelClient, ModelRoleClients } from "./model-client.js";
 import { createPseAgentRuntime } from "./main.js";
 import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
 import { taskSpecSchema } from "./task-spec.js";
@@ -148,6 +148,7 @@ describe("main wiring", () => {
     expect(planner.plan).toHaveBeenCalledOnce();
     expect(runAgent.mock.calls[0]?.[0].plan).toEqual(plan);
     expect(runAgent.mock.calls[0]?.[0].model).toBe(model);
+    expect(runAgent.mock.calls[0]?.[0].verifierModel).toBe(model);
     expect(runAgent.mock.calls[0]?.[0].deadlineAt).toBeGreaterThanOrEqual(
       beforeProductAnswer + 540_000,
     );
@@ -161,6 +162,61 @@ describe("main wiring", () => {
     await runtime.close();
     expect(caller.close).toHaveBeenCalledOnce();
     expect(closeServer).toHaveBeenCalledOnce();
+  });
+
+  it("wires resolver, planner, synthesizer, and verifier as independent roles", async () => {
+    const roleModel = (): ModelClient => ({
+      completeJson: vi.fn(),
+      completeText: vi.fn(async () => "普通回答"),
+    });
+    const models: ModelRoleClients = {
+      resolver: roleModel(),
+      planner: roleModel(),
+      synthesizer: roleModel(),
+      verifier: roleModel(),
+    };
+    const createModelRoles = vi.fn(() => models);
+    const createRouter = vi.fn((received: ModelClient) => {
+      expect(received).toBe(models.resolver);
+      return { route: vi.fn(async () => "professional" as const) };
+    });
+    const planner = { plan: vi.fn(async () => plan) } satisfies KnowledgePlanner;
+    const createKnowledgePlanner = vi.fn((received: ModelClient) => {
+      expect(received).toBe(models.planner);
+      return planner;
+    });
+    const caller = {
+      connect: vi.fn(async () => undefined),
+      call: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } satisfies KnowledgeToolCaller;
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "professional",
+      status: "answered",
+      answer: "角色隔离回答",
+      references: [],
+    }));
+    const server = { close: vi.fn(async () => undefined) } as unknown as McpServer;
+
+    const runtime = await createPseAgentRuntime(configEnv, {
+      createModelRoles,
+      createRouter,
+      createKnowledgePlanner,
+      createKnowledgeCaller: () => caller,
+      createKnowledgeSessionFactory: () => ({
+        open: vi.fn(async () => ({ project: "coremail-professional" } as KnowledgeSession)),
+      }),
+      runAgent,
+      createServer: () => server,
+    });
+    await runtime.answer("产品问题");
+
+    expect(createModelRoles).toHaveBeenCalledOnce();
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      model: models.synthesizer,
+      verifierModel: models.verifier,
+    }));
+    await runtime.close();
   });
 
   it("constructs the optional TaskSpec shadow only when explicitly enabled", async () => {

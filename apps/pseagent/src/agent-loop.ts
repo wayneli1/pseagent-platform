@@ -49,6 +49,7 @@ import {
 } from "./evidence-ledger.js";
 import { analyzeCoverageGaps, type CoverageGap } from "./coverage-gap.js";
 import type { DomainRequirementBinding } from "./domain-plan.js";
+import { observeModelCall } from "./model-observability.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const DIRECT_ONLY_READ_LIMIT = 3;
@@ -88,6 +89,7 @@ export interface KnowledgeAgentInput {
   readonly requirementBindings?: readonly DomainRequirementBinding[];
   readonly requirementEvidenceConditions?: readonly RequirementEvidenceCondition[];
   readonly model: ModelClient;
+  readonly verifierModel?: ModelClient;
   readonly session: KnowledgeAgentSession;
   readonly deadlineAt?: number;
   readonly trace?: DiagnosticTrace;
@@ -386,21 +388,25 @@ async function runKnowledgeAgentCore(
       let verificationReport: CoverageVerificationReport | undefined;
       try {
         const activeSignal = toolSignal(input);
-        auditedAction = await (
-          input.verifyCoverage ?? verifyKnowledgeCoverage
-        )({
-          question: input.question,
-          plan: input.plan,
-          draft: normalizedAction,
-          evidence: coverageEvidence(normalizedAction, state),
-          model: input.model,
+        auditedAction = await observeModelCall({
+          trace: input.trace,
+          role: "verifier",
+          operation: "verify",
           ...(activeSignal === undefined ? {} : { signal: activeSignal }),
-          onVerified(summaries) {
-            verificationSummaries = summaries;
-          },
-          onReport(report) {
-            verificationReport = report;
-          },
+          call: () => (input.verifyCoverage ?? verifyKnowledgeCoverage)({
+            question: input.question,
+            plan: input.plan,
+            draft: normalizedAction,
+            evidence: coverageEvidence(normalizedAction, state),
+            model: input.verifierModel ?? input.model,
+            ...(activeSignal === undefined ? {} : { signal: activeSignal }),
+            onVerified(summaries) {
+              verificationSummaries = summaries;
+            },
+            onReport(report) {
+              verificationReport = report;
+            },
+          }),
         });
       } catch (error) {
         if (!(error instanceof ModelUnavailableError)) {
@@ -875,18 +881,24 @@ async function requestAgentAction(
     });
   const request = (repairReason?: string) => {
     const activeSignal = toolSignal(input);
-    return input.model.completeJson({
-      messages: repairReason !== undefined
-        ? [...messages, {
-            role: "user" as const,
-            content: finalOnly
-              ? `上一次输出不符合 Schema：${repairReason}。只输出合法 final JSON；必须完整列出规划中的每个 requirement 及其 coverage/citations，不要解释。`
-              : `上一次输出不符合 Schema：${repairReason}。只输出一个合法 JSON 动作；单页/搜索/图谱工具输入必须包含 requirementId，批量读页必须使用 pages 数组且每项包含 requirementId/path，final 必须完整列出逐项 requirements，不要解释。`,
-          }]
-        : messages,
-      schema: finalOnly ? finalOnlyActionSchema : agentActionSchema,
-      schemaDescription: finalOnly ? "pse_final_action" : "pse_agent_action",
+    return observeModelCall({
+      trace: input.trace,
+      role: "synthesizer",
+      operation: "synthesize",
       ...(activeSignal === undefined ? {} : { signal: activeSignal }),
+      call: () => input.model.completeJson({
+        messages: repairReason !== undefined
+          ? [...messages, {
+              role: "user" as const,
+              content: finalOnly
+                ? `上一次输出不符合 Schema：${repairReason}。只输出合法 final JSON；必须完整列出规划中的每个 requirement 及其 coverage/citations，不要解释。`
+                : `上一次输出不符合 Schema：${repairReason}。只输出一个合法 JSON 动作；单页/搜索/图谱工具输入必须包含 requirementId，批量读页必须使用 pages 数组且每项包含 requirementId/path，final 必须完整列出逐项 requirements，不要解释。`,
+            }]
+          : messages,
+        schema: finalOnly ? finalOnlyActionSchema : agentActionSchema,
+        schemaDescription: finalOnly ? "pse_final_action" : "pse_agent_action",
+        ...(activeSignal === undefined ? {} : { signal: activeSignal }),
+      }),
     });
   };
   let repairReason: string | undefined;
