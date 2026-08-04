@@ -360,6 +360,43 @@ describe("mergeDetailedDomainResults", () => {
     });
   });
 
+  it("accepts sparse local registry indexes and rewrites them densely", () => {
+    const domainPlan = plan("presales-general", "O1", 0);
+    const merged = mergeDetailedDomainResults({
+      plans: [domainPlan],
+      results: [result(
+        "presales-general",
+        {
+          action: "final",
+          requirements: [{
+            id: "R1",
+            coverage: "complete",
+            answer: "已核验的方法[3]。",
+            citations: [3],
+          }],
+          citations: [3],
+        },
+        [reference(
+          "presales-general",
+          "g-rev",
+          "wiki/sparse.md",
+          HASH_A,
+          3,
+        )],
+      )],
+    });
+
+    expect(merged.action).toMatchObject({
+      requirements: [{ answer: "已核验的方法[1]。", citations: [1] }],
+      citations: [1],
+    });
+    expect(merged.references).toMatchObject([{
+      index: 1,
+      project: "presales-general",
+      path: "wiki/sparse.md",
+    }]);
+  });
+
   it("deduplicates only an exact project revision path and hash identity", () => {
     const domainPlan: DomainKnowledgePlan = {
       ...plan("coremail-professional", "O1", 0),

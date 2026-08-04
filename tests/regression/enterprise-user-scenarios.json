@@ -1,0 +1,541 @@
+[
+  {
+    "id": "ARCH-01",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 1,
+    "question": "平安计划调整邮件系统架构，请分别检索工商银行、华为、比亚迪的多节点或容灾实践，并说明哪些可借鉴、哪些不能直接类比。",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 2,
+      "obligations": [
+        { "id": "subjects", "anyOf": ["平安"] },
+        { "id": "icbc", "anyOf": ["工商银行", "工行"] },
+        { "id": "huawei", "anyOf": ["华为"] },
+        { "id": "byd", "anyOf": ["比亚迪"] },
+        { "id": "boundary", "anyOf": ["不能直接", "不可直接", "需结合", "差异", "边界", "未覆盖", "未找到"] }
+      ]
+    }
+  },
+  {
+    "id": "ARCH-02",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 2,
+    "question": "刚才三个参考里，哪一个与平安现在的同域名并行迁移最接近？为什么？",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered", "not_covered"],
+      "obligations": [
+        { "id": "context", "anyOf": ["平安", "工商银行", "工行", "华为", "比亚迪"] },
+        { "id": "reason", "anyOf": ["因为", "依据", "相似", "接近", "直接对应", "一致", "高度吻合", "无法判断", "不足"] }
+      ]
+    }
+  },
+  {
+    "id": "ARCH-03",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 3,
+    "question": "如果先保留 Exchange，再让 Coremail 分批切换，AD 同步和域名转发应该怎样设计？",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 2,
+      "obligations": [
+        { "id": "parallel", "anyOf": ["并行", "分批", "共存"] },
+        { "id": "ad", "anyOf": ["AD", "目录", "组织架构", "同步"] },
+        { "id": "routing", "anyOf": ["域名", "转发", "路由"] }
+      ]
+    }
+  },
+  {
+    "id": "ARCH-04",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 4,
+    "question": "用户约 6 万、两地三中心，要求 RPO 不超过 5 分钟、RTO 不超过 30 分钟，请给出架构建议并列出仍需确认的容量输入。",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "availability", "anyOf": ["多活", "容灾", "镜像", "两地三中心"] },
+        { "id": "recovery", "anyOf": ["RPO", "RTO"] },
+        { "id": "capacity", "anyOf": ["容量", "并发", "邮件量", "存储", "带宽"] },
+        { "id": "boundary", "anyOf": ["需确认", "需要补充", "不能仅凭", "验证", "压测", "明确确认", "未明确", "尚未确认", "需根据", "需定制"] }
+      ]
+    }
+  },
+  {
+    "id": "ARCH-05",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 5,
+    "question": "Coremial XT6 能否做小版本不停机升机？实施时有哪些前置条件？",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "typo_resolution", "anyOf": ["Coremail", "XT6"] },
+        { "id": "upgrade", "anyOf": ["升级", "不停机"] },
+        { "id": "preconditions", "anyOf": ["前置", "条件", "版本", "节点", "验证"] }
+      ]
+    }
+  },
+  {
+    "id": "ARCH-06",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 6,
+    "question": "比较 Coremail 多活、私有云镜像和传统 HA 的故障切换方式、数据一致性与适用边界。",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "active_active", "anyOf": ["多活"] },
+        { "id": "mirror", "anyOf": ["镜像"] },
+        { "id": "ha", "anyOf": ["HA", "高可用", "Failover", "Failback"] },
+        { "id": "comparison", "anyOf": ["切换", "一致性", "边界", "适用"] }
+      ]
+    }
+  },
+  {
+    "id": "ARCH-07",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 7,
+    "question": "现有知识里关于比亚迪项目，哪些是已记录事实，哪些只是可借鉴的项目经验？",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "subject", "anyOf": ["比亚迪"] },
+        { "id": "facts", "anyOf": ["事实", "已记录", "资料显示", "基本信息", "项目时间线", "合同条款", "关键需求"] },
+        { "id": "experience", "anyOf": ["经验", "借鉴", "不能直接", "边界"] }
+      ]
+    }
+  },
+  {
+    "id": "ARCH-08",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 8,
+    "question": "把前面提到的分批迁移整理成一份上线前检查和失败回退清单。",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "context", "anyOf": ["迁移", "切换", "Exchange", "Coremail"] },
+        { "id": "checklist", "anyOf": ["检查", "清单", "上线前", "触发条件", "预案"] },
+        { "id": "rollback", "anyOf": ["回退", "回滚"] }
+      ]
+    }
+  },
+  {
+    "id": "ARCH-09",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 9,
+    "question": "顺便解释一下 HTTP 404 是什么。",
+    "expected": {
+      "scopes": ["normal"],
+      "statuses": ["answered"],
+      "maximumReferences": 0,
+      "obligations": [
+        { "id": "http", "anyOf": ["HTTP", "404"] },
+        { "id": "meaning", "anyOf": ["未找到", "找不到", "Not Found", "资源不存在"] }
+      ],
+      "forbiddenTerms": ["Coremail 知识库"]
+    }
+  },
+  {
+    "id": "ARCH-10",
+    "userId": "enterprise-architect",
+    "profile": "大型企业邮件系统架构师",
+    "turn": 10,
+    "question": "Coremail 是否已经支持 2035 年量子卫星邮件协议？",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["not_covered", "partially_answered"],
+      "knowledgeCoverages": ["none", "partial"],
+      "gapClasses": ["knowledge", "source", "retrieval"],
+      "obligations": [
+        { "id": "boundary", "anyOf": ["未覆盖", "未找到", "无法确认", "没有资料", "不支持该结论", "未提及", "无法根据"] }
+      ],
+      "forbiddenPatterns": ["(?<!是否)已经支持\\s*2035", "(?:确认支持|明确支持|现已支持)\\s*2035"]
+    }
+  },
+
+  {
+    "id": "POC-01",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 1,
+    "question": "目前客户在 POC 阶段，但销售获取不到客户侧的信息。在这种情况下我们的赢率如何，要怎样做才能提升赢率？",
+    "consistencyKey": "poc-no-information",
+    "expected": {
+      "scopes": ["general"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "caseAssessabilities": ["insufficient"],
+      "gapClasses": ["input"],
+      "gapReasons": ["required_customer_input_missing"],
+      "obligations": [
+        { "id": "no_prediction", "anyOf": ["无法判断", "不能判断", "不足以", "无法量化", "不能可靠", "无法可靠", "无法评估", "难以判断"] },
+        { "id": "inputs", "anyOf": ["决策", "预算", "竞争", "需求", "时间", "信息"] },
+        { "id": "actions", "anyOf": ["下一步", "提升", "补齐", "访谈", "行动"] }
+      ],
+      "forbiddenPatterns": ["(?:赢率|胜率)(?:为|是|约|大约|预计)?\\s*\\d+(?:\\.\\d+)?\\s*%", "\\d+(?:\\.\\d+)?\\s*成(?:左右)?"]
+    }
+  },
+  {
+    "id": "POC-02",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 2,
+    "question": "销售坚持让我先报一个百分比给领导，我应该报多少？",
+    "expected": {
+      "scopes": ["general"],
+      "statuses": ["answered", "partially_answered"],
+      "caseAssessabilities": ["insufficient"],
+      "gapClasses": ["input"],
+      "obligations": [
+        { "id": "refusal", "anyOf": ["不建议", "不能", "无法", "不应"] },
+        { "id": "reason", "anyOf": ["信息", "依据", "样本", "事实", "误导"] },
+        { "id": "alternative", "anyOf": ["区间", "条件", "清单", "分级", "下一步"] }
+      ],
+      "forbiddenPatterns": ["(?:赢率|胜率)(?:为|是|约|大约|预计)?\\s*\\d+(?:\\.\\d+)?\\s*%", "\\d+(?:\\.\\d+)?\\s*成(?:左右)?"]
+    }
+  },
+  {
+    "id": "POC-03",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 3,
+    "question": "先给我一份今天就能让销售去补齐的客户信息清单，按决策、预算、竞争、技术和时间排序。",
+    "expected": {
+      "scopes": ["general"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "decision", "anyOf": ["决策"] },
+        { "id": "budget", "anyOf": ["预算"] },
+        { "id": "competition", "anyOf": ["竞争", "对手", "当前用什么方式解决", "评估框架", "比较标准"] },
+        { "id": "technical", "anyOf": ["技术"] },
+        { "id": "timeline", "anyOf": ["时间", "计划"] },
+        { "id": "actionable", "anyOf": ["负责人", "访谈", "确认", "行动", "清单"] }
+      ]
+    }
+  },
+  {
+    "id": "POC-04",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 4,
+    "question": "客户只说‘先测一测’，怎样判断这是真 POC 还是陪标？",
+    "expected": {
+      "scopes": ["general"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "criteria", "anyOf": ["目标", "标准", "决策", "预算", "时间", "范围"] },
+        { "id": "verification", "anyOf": ["验证", "确认", "访谈", "承诺", "下一步"] },
+        { "id": "boundary", "anyOf": ["不能仅凭", "无法仅凭", "不足以", "信号", "不能作为", "不应", "没有任何"] }
+      ]
+    }
+  },
+  {
+    "id": "POC-05",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 5,
+    "question": "已知客户现网是 Exchange、约 1.5 万用户、计划 Q4 采购、预算未批、竞争对手已进场，请重新评估项目并给出下一步。",
+    "expected": {
+      "scopes": ["general", "professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "known", "anyOf": ["Exchange", "1.5 万", "15000", "Q4"] },
+        { "id": "risk", "anyOf": ["预算未批", "竞争", "风险", "不确定", "需评估", "可行性", "可能"] },
+        { "id": "actions", "anyOf": ["下一步", "决策", "预算", "差异化", "验证"] }
+      ],
+      "forbiddenPatterns": ["(?:赢率|胜率)(?:为|是|约|大约|预计)?\\s*\\d+(?:\\.\\d+)?\\s*%"]
+    }
+  },
+  {
+    "id": "POC-06",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 6,
+    "question": "Coremail 技术 POC 怎样把客户业务目标转成可验收指标，同时避免只做功能表演？",
+    "expected": {
+      "scopes": ["professional", "general"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "business", "anyOf": ["业务目标", "场景", "痛点"] },
+        { "id": "acceptance", "anyOf": ["验收", "指标", "基线", "通过标准"] },
+        { "id": "poc", "anyOf": ["POC", "测试", "共同评估", "评估计划", "技术证明"] },
+        { "id": "not_demo", "anyOf": ["演示", "价值", "结果"] }
+      ]
+    }
+  },
+  {
+    "id": "POC-07",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 7,
+    "question": "客户在 POC 中不断要求免费增加非标项，售前应该怎样控制范围又不伤害关系？",
+    "expected": {
+      "scopes": ["general", "professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "scope", "anyOf": ["范围", "边界", "基线", "变更"] },
+        { "id": "value", "anyOf": ["价值", "优先级", "验收", "客户关注", "客户兴趣", "测试目标", "结论标准", "最小验证", "取舍", "成功标准", "具体问题", "选择", "双向投入"] },
+        { "id": "relationship", "anyOf": ["沟通", "关系", "客户", "共识"] },
+        { "id": "action", "anyOf": ["记录", "评估", "确认", "审批", "明确", "控制", "裁剪", "同步"] }
+      ]
+    }
+  },
+  {
+    "id": "POC-08",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 8,
+    "question": "销售和联系人关系不错，但接触不到决策人，怎样建立决策链并找到内部支持者？",
+    "expected": {
+      "scopes": ["general"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "decision_chain", "anyOf": ["决策链", "决策人", "角色"] },
+        { "id": "supporter", "anyOf": ["支持者", "Coach", "教练"] },
+        { "id": "actions", "anyOf": ["引荐", "访谈", "验证", "地图", "计划"] }
+      ]
+    }
+  },
+  {
+    "id": "POC-09",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 9,
+    "question": "目前客户在 POC 阶段，但销售获取不到客户侧的信息。在这种情况下我们的赢率如何，要怎样做才能提升赢率？",
+    "consistencyKey": "poc-no-information",
+    "expected": {
+      "scopes": ["general"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "caseAssessabilities": ["insufficient"],
+      "gapClasses": ["input"],
+      "obligations": [
+        { "id": "no_prediction", "anyOf": ["无法判断", "不能判断", "不足以", "无法量化", "不能可靠", "无法可靠", "无法评估", "难以判断"] },
+        { "id": "inputs", "anyOf": ["决策", "预算", "竞争", "需求", "时间", "信息"] },
+        { "id": "actions", "anyOf": ["下一步", "提升", "补齐", "访谈", "行动"] }
+      ],
+      "forbiddenPatterns": ["(?:赢率|胜率)(?:为|是|约|大约|预计)?\\s*\\d+(?:\\.\\d+)?\\s*%", "\\d+(?:\\.\\d+)?\\s*成(?:左右)?"]
+    }
+  },
+  {
+    "id": "POC-10",
+    "userId": "poc-sales",
+    "profile": "正在推进 POC 的销售与售前",
+    "turn": 10,
+    "question": "换个话题，写一首四行的夏日短诗。",
+    "expected": {
+      "scopes": ["normal"],
+      "statuses": ["answered"],
+      "maximumReferences": 0,
+      "obligations": [
+        { "id": "summer", "anyOf": ["夏", "蝉", "荷", "风", "阳光"] }
+      ],
+      "forbiddenTerms": ["POC", "赢率", "Coremail"]
+    }
+  },
+
+  {
+    "id": "CIO-01",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 1,
+    "question": "对比 Exchange 与 Coremail，请覆盖部署与迁移、国产化适配、安全、运维和服务、成本边界，并明确哪些结论需要结合客户现状确认。",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 2,
+      "obligations": [
+        { "id": "deployment_migration", "anyOf": ["部署", "迁移"] },
+        { "id": "localization", "anyOf": ["国产化", "信创", "适配"] },
+        { "id": "security", "anyOf": ["安全", "国密", "SM2", "SM3", "SM4"] },
+        { "id": "operations_service", "anyOf": ["运维", "服务"] },
+        { "id": "cost", "anyOf": ["成本", "TCO"] },
+        { "id": "boundary", "anyOf": ["需确认", "结合客户", "不能一概而论", "边界", "取决于"] }
+      ]
+    }
+  },
+  {
+    "id": "CIO-02",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 2,
+    "question": "只看刚才对比中的安全和信创两部分，给出可核验的能力、限制和 POC 验证项。",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 2,
+      "obligations": [
+        { "id": "context", "anyOf": ["安全", "信创", "国产化"] },
+        { "id": "capability", "anyOf": ["能力", "支持", "适配"] },
+        { "id": "limits", "anyOf": ["限制", "边界", "需确认", "版本", "短板", "缺失", "不支持"] },
+        { "id": "validation", "anyOf": ["POC", "验证", "测试"] }
+      ]
+    }
+  },
+  {
+    "id": "CIO-03",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 3,
+    "question": "客户要求证明 Coremail 支持 SM2、SM3、SM4，知识库能给出哪些证据，哪些还要按版本或组件确认？",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "sm2", "anyOf": ["SM2"] },
+        { "id": "sm3", "anyOf": ["SM3"] },
+        { "id": "sm4", "anyOf": ["SM4"] },
+        { "id": "version_boundary", "anyOf": ["版本", "组件", "范围", "确认", "验证"] }
+      ]
+    }
+  },
+  {
+    "id": "CIO-04",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 4,
+    "question": "对客户能不能直接说 Coremail 的 TCO 一定低于 Exchange？请给出可比较的成本口径和客观边界。",
+    "expected": {
+      "scopes": ["professional", "general"],
+      "statuses": ["answered", "partially_answered"],
+      "obligations": [
+        { "id": "no_absolute", "anyOf": ["不能", "不应", "无法", "不一定", "应结合实际", "避免直接", "缺乏量化"] },
+        { "id": "cost_model", "anyOf": ["许可", "硬件", "迁移", "运维", "培训", "集成", "成本"] },
+        { "id": "boundary", "anyOf": ["客户现状", "周期", "范围", "口径", "验证", "客观边界", "实际情况", "量化数据"] }
+      ],
+      "forbiddenTerms": ["TCO 一定低于", "成本一定更低"]
+    }
+  },
+  {
+    "id": "CIO-05",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 5,
+    "question": "做国产化替代时，CPU、操作系统、数据库和中间件分别要核对什么？不要把已适配说成全版本通用。",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "cpu", "anyOf": ["CPU", "处理器", "芯片", "鲲鹏", "飞腾", "龙芯", "海光"] },
+        { "id": "os", "anyOf": ["操作系统", "麒麟", "UOS", "统信"] },
+        { "id": "database", "anyOf": ["数据库", "达梦", "金仓", "GaussDB", "MySQL"] },
+        { "id": "middleware", "anyOf": ["中间件", "东方通", "TongWeb", "宝兰德", "金蝶"] },
+        { "id": "matrix", "anyOf": ["矩阵", "版本", "组合", "适配", "验证"] }
+      ],
+      "forbiddenTerms": ["全部版本都支持", "任意版本均支持"]
+    }
+  },
+  {
+    "id": "CIO-06",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 6,
+    "question": "Coremail 项目里原厂服务与渠道交付应该怎样划分责任，评标时又该怎样验证服务能力？",
+    "expected": {
+      "scopes": ["professional", "general"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "roles", "anyOf": ["原厂", "渠道", "责任", "分工"] },
+        { "id": "delivery", "anyOf": ["交付", "实施", "运维", "升级"] },
+        { "id": "verification", "anyOf": ["验证", "案例", "人员", "SLA", "演练", "评标"] }
+      ]
+    }
+  },
+  {
+    "id": "CIO-07",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 7,
+    "question": "如果两份 Coremail 正式资料对同一版本能否不停机升级给出冲突结论，机器人应该怎样回答？",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered", "not_covered"],
+      "obligations": [
+        { "id": "conflict", "anyOf": ["冲突", "不一致", "口径差异", "结论差异"] },
+        { "id": "no_single_conclusion", "anyOf": ["不能直接", "不应直接", "暂不", "无法确认", "不得", "不能自行", "单一确定", "不足以直接", "人工确认"] },
+        { "id": "resolution", "anyOf": ["版本", "日期", "权威", "核验", "适用范围"] }
+      ]
+    }
+  },
+  {
+    "id": "CIO-08",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 8,
+    "question": "昨天找到的案例写的是 XT5，今天客户环境是 XT6，旧案例能直接套用吗？",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "obligations": [
+        { "id": "versions", "anyOf": ["XT5", "XT6"] },
+        { "id": "boundary", "anyOf": ["不能直接", "不可直接", "需验证", "版本差异", "适用"] },
+        { "id": "actions", "anyOf": ["兼容", "配置", "验证", "测试", "变更"] }
+      ]
+    }
+  },
+  {
+    "id": "CIO-09",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 9,
+    "question": "把前面的内容整理成给 CIO 的一页式摘要：既要讲优势，也要列证据边界、项目风险和下一步决策。",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["answered", "partially_answered"],
+      "minimumReferences": 1,
+      "obligations": [
+        { "id": "advantages", "anyOf": ["优势", "价值", "能力", "可行性", "采用", "满足", "提供", "更适合"] },
+        { "id": "evidence_boundary", "anyOf": ["证据", "边界", "需确认"] },
+        { "id": "risk", "anyOf": ["风险", "谨慎", "过期", "范围蔓延", "不能承诺"] },
+        { "id": "decision", "anyOf": ["下一步", "决策", "行动", "优先级", "补充", "导入", "查询", "确认"] }
+      ]
+    }
+  },
+  {
+    "id": "CIO-10",
+    "userId": "cio-security",
+    "profile": "CIO、安全与采购联合评审人",
+    "turn": 10,
+    "question": "华为和比亚迪相关邮件项目的具体合同金额分别是多少？",
+    "expected": {
+      "scopes": ["professional"],
+      "statuses": ["not_covered", "partially_answered"],
+      "knowledgeCoverages": ["none", "partial"],
+      "gapClasses": ["knowledge", "source", "retrieval"],
+      "obligations": [
+        { "id": "huawei", "anyOf": ["华为"] },
+        { "id": "byd", "anyOf": ["比亚迪"] },
+        { "id": "amount_boundary", "anyOf": ["未覆盖", "未找到", "无法确认", "没有资料", "合同金额"] }
+      ],
+      "forbiddenPatterns": ["(?:人民币|RMB|￥|¥)\\s*\\d", "\\d+(?:\\.\\d+)?\\s*(?:万|亿)元"]
+    }
+  }
+]

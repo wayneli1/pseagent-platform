@@ -19,7 +19,7 @@ export interface TaskAnalysisShadowInput {
   readonly question: string;
   readonly conversationContext?: string;
   readonly scope: Exclude<Scope, "normal">;
-  readonly legacyPlan: KnowledgePlan;
+  readonly legacyPlan?: KnowledgePlan;
   readonly knowledgeContext: {
     readonly purpose: string;
     readonly schema: string;
@@ -70,7 +70,7 @@ export class DefaultTaskAnalysisShadow implements TaskAnalysisShadow {
       call: () => this.compiler.compile({
         resolvedQuestion,
         scopeHint: input.scope,
-        legacyPlan: input.legacyPlan,
+        ...(input.legacyPlan === undefined ? {} : { legacyPlan: input.legacyPlan }),
         knowledgeContext: input.knowledgeContext,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       }),

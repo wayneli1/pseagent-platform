@@ -276,7 +276,7 @@ describe("main wiring", () => {
     expect(createTaskAnalysisShadow).toHaveBeenCalledWith(
       model,
       expect.objectContaining({
-        taskSpecShadow: { enabled: true, timeoutMs: 15_000 },
+        taskSpecShadow: { enabled: true, timeoutMs: 120_000 },
         taskSpecActiveEnabled: true,
       }),
     );

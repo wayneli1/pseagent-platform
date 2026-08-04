@@ -3,6 +3,7 @@ import type { AgentAction, FinalAction, KnowledgePlan } from "./contracts.js";
 import {
   inferCoverageVerificationReport,
   InvalidCoverageVerificationError,
+  notCoveredRequirementAnswer,
   type CoverageVerifierInput,
 } from "./coverage-verifier.js";
 import type { DiagnosticEvent, DiagnosticTrace } from "./diagnostics.js";
@@ -618,6 +619,10 @@ describe("runKnowledgeAgent", () => {
         { id: "R1", coverage: "complete", citations: [1] },
         { id: "R2", coverage: "complete", citations: [1] },
       ]),
+      final("complete", "第二次仍让两个对象共用引用", [1], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [1] },
+      ]),
       final("partial", "仅对象一有正式证据", [1], [
         { id: "R1", coverage: "complete", citations: [1] },
         { id: "R2", coverage: "none", citations: [] },
@@ -626,10 +631,7 @@ describe("runKnowledgeAgent", () => {
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
 
-    expect(model.calls).toBe(2);
-    expect(payloadAt(model, 1).observations?.join("\n")).toContain(
-      "invalid_citations",
-    );
+    expect(model.calls).toBe(1);
     expect(result.status).toBe("partially_answered");
     expect(result.references.map((reference) => reference.path)).toEqual([
       "wiki/r1.md",
@@ -667,11 +669,10 @@ describe("runKnowledgeAgent", () => {
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
 
-    expect(model.calls).toBe(4);
-    expect(payloadAt(model, 3).requirementEvidence?.find(
+    expect(model.calls).toBe(3);
+    expect(payloadAt(model, 2).requirementEvidence?.find(
       (requirement) => requirement.id === "R2",
     )?.candidates.map((candidate) => candidate.path)).not.toContain("wiki/r1-graph.md");
-    expect(payloadAt(model, 3).observations?.join("\n")).toContain("invalid_citations");
     expect(result.status).toBe("partially_answered");
   });
 
@@ -954,9 +955,9 @@ describe("runKnowledgeAgent", () => {
       "正文明确列出 SMTP、POP3、IMAP、HTTP/HTTPS 和 CMSP/CMTP 协议能力 [1]。",
     );
     expect(result.answer).toContain("覆盖结论：");
-    expect(result.answer).toContain(
-      "正式知识库未提及用户询问的目标协议、功能或能力，无法根据正式知识库确认是否支持或兼容。",
-    );
+    expect(result.answer).toContain(notCoveredRequirementAnswer(
+      "Coremail 是否已经支持 2035 年量子卫星邮件协议？",
+    ));
     expect(result.references).toEqual([expect.objectContaining({
       index: 1,
       title: "wiki/protocols.md",
@@ -1064,7 +1065,7 @@ describe("runKnowledgeAgent", () => {
       expect(draft).toMatchObject({
         requirements: [{
           coverage: "none",
-          answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
+          answer: notCoveredRequirementAnswer(singlePlan.requirements[0]!.question),
           citations: [],
           relatedContext: [{ citations: [1] }],
         }],
@@ -2891,6 +2892,40 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
+  it("returns a verified partial answer with a retrieval gap when forced review cannot advance", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/concepts/first.md" },
+          { path: "wiki/concepts/second.md" },
+        ],
+      },
+      failedReadPaths: ["wiki/concepts/second.md"],
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/first.md"),
+      final("partial", "当前已确认部分内容[1]，其余仍需核验。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgentDetailed(agentInput(model, session));
+
+    expect(result).toMatchObject({
+      outcome: "verified",
+      action: {
+        requirements: [{ coverage: "partial", citations: [1] }],
+      },
+      evidenceLedger: {
+        units: [{ retrieval: { readBudgetExhausted: true } }],
+      },
+      coverageGaps: [{
+        gapClass: "retrieval",
+        reason: "tool_unavailable",
+      }],
+    });
+    expect(model.calls).toBe(2);
+    expect(session.readPage).toHaveBeenCalledTimes(2);
+  });
+
   it("continues the synthesis coverage gate after three reads when a fourth candidate remains", async () => {
     const paths = [
       "wiki/duty-diagnosis.md",
@@ -3184,12 +3219,12 @@ describe("runKnowledgeAgent", () => {
         {
           id: "R1",
           coverage: "none",
-          answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
+          answer: notCoveredRequirementAnswer("能力一"),
           citations: [],
         },
         {
           ...invalidFinal.requirements[1],
-          answer: "现有资料未覆盖该要求，无法根据正式知识库确认。",
+          answer: notCoveredRequirementAnswer("能力二"),
         },
       ],
       citations: [2],
@@ -3477,14 +3512,14 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("not_covered");
   });
 
-  it("allows exactly one repair attempt for invalid citations", async () => {
+  it("allows two bounded repair attempts for invalid citations", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const badFinal = final("complete", "未经读取的结论[1]", [1]);
-    const model = scriptedAgentModel([badFinal, badFinal]);
+    const model = scriptedAgentModel([badFinal, badFinal, badFinal]);
 
     const result = await runKnowledgeAgent(agentInput(model, session));
 
-    expect(model.calls).toBe(2);
+    expect(model.calls).toBe(3);
     expect(model.lastSchemaName()).toBe("pse_final_action");
     expect(result.status).toBe("temporarily_unavailable");
   });
@@ -4384,8 +4419,7 @@ describe("runKnowledgeAgent", () => {
       }],
     };
     const model = scriptedAgentModel([
-      read("R1", "wiki/r1.md"),
-      final("complete", "当前机会赢率为 75%[1]。", [1]),
+      final("complete", "当前机会赢率为 75%。"),
     ]);
     const verifierModel = {
       completeJson: vi.fn(),
@@ -4401,10 +4435,11 @@ describe("runKnowledgeAgent", () => {
       return reportAndReturn(input);
     });
 
+    const session = fakeSession({ hits: { "seed-r1": [{ path: "wiki/r1.md" }] } });
     const result = await runKnowledgeAgentDetailed({
       ...agentInput(
         model,
-        fakeSession({ hits: { "seed-r1": [{ path: "wiki/r1.md" }] } }),
+        session,
         plan,
       ),
       verifyCoverage,
@@ -4419,6 +4454,9 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(session.search).not.toHaveBeenCalled();
+    expect(result.outcome === "verified" && result.evidenceLedger?.units[0]?.queries)
+      .toEqual([expect.objectContaining({ status: "not_applicable" })]);
     expect(payloadAt(model, 0).requirementEvidence?.[0]?.evidenceCondition)
       .toMatchObject({ inputState: "missing" });
     expect(result).toMatchObject({

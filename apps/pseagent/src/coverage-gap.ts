@@ -59,10 +59,22 @@ interface GapAttribution {
 
 export function analyzeCoverageGaps(ledger: EvidenceLedger): readonly CoverageGap[] {
   const gaps: CoverageGap[] = [];
+  const missingInputSubjects = new Set(
+    ledger.units
+      .filter((unit) => unit.inputState === "missing")
+      .map((unit) => normalizeGapSubject(unit.subject)),
+  );
   for (const unit of ledger.units) {
     for (const missingAspect of missingAspects(unit)) {
       const attribution = classifyGap(unit, missingAspect.id);
       if (attribution === undefined) continue;
+      if (
+        unit.inputState !== "missing" &&
+        missingInputSubjects.has(normalizeGapSubject(unit.subject)) &&
+        ["knowledge", "retrieval", "source"].includes(attribution.gapClass)
+      ) {
+        continue;
+      }
       const text = gapGuidance(attribution, missingAspect);
       gaps.push(coverageGapSchema.parse({
         id: `G${gaps.length + 1}`,
@@ -81,6 +93,12 @@ export function analyzeCoverageGaps(ledger: EvidenceLedger): readonly CoverageGa
     }
   }
   return Object.freeze(gaps.map((gap) => Object.freeze(gap)));
+}
+
+function normalizeGapSubject(value: string): string {
+  return value.normalize("NFKC")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
 }
 
 function classifyGap(
@@ -286,7 +304,7 @@ function gapGuidance(
   switch (attribution.reason) {
     case "required_customer_input_missing":
       return {
-        confirmedBoundary: `缺少判断“${label}”所必需的当次客户输入。`,
+        confirmedBoundary: `缺少判断“${label}”所必需的当次客户输入，因此当前无法可靠判断。`,
         nextAction: `向客户或项目团队补齐与“${label}”直接相关的事实后再判断。`,
       };
     case "ambiguous_question":

@@ -110,13 +110,15 @@ export function adaptTaskSpecToKnowledgePlan(
         input.resolvedQuestion.standaloneQuestion,
         value,
       ));
-    const otherEntitySourceTexts = input.taskSpec.entities
-      .filter((entity) => !targetEntityIds.has(entity.id))
-      .map((entity) => entity.sourceText)
-      .filter((value) => isTraceableText(
-        input.resolvedQuestion.standaloneQuestion,
-        value,
-      ));
+    const otherEntitySourceTexts = targetEntityIds.size === 0
+      ? []
+      : input.taskSpec.entities
+          .filter((entity) => !targetEntityIds.has(entity.id))
+          .map((entity) => entity.sourceText)
+          .filter((value) => isTraceableText(
+            input.resolvedQuestion.standaloneQuestion,
+            value,
+          ));
     const obligationSourceText = isTraceableText(
         input.resolvedQuestion.standaloneQuestion,
         item.obligation.sourceText,

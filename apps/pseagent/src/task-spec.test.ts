@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KnowledgePlan } from "./contracts.js";
-import type { ModelClient } from "./model-client.js";
+import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import {
   DeterministicTaskSpecGuard,
   extractExplicitQuestionSignals,
@@ -169,6 +169,219 @@ function guardBroadParallelObligation(question: string, entities: readonly strin
 }
 
 describe("taskSpecSchema", () => {
+  it("normalizes bounded provider aliases without accepting unknown structure", () => {
+    const parsed = taskSpecSchema.parse({
+      subject: "当前项目判断与建议",
+      entities: [{
+        id: "E1",
+        name: "当前项目",
+        role: "subject",
+        sourceText: "当前项目",
+      }],
+      deliverables: [{
+        id: "D1",
+        kind: "diagnosis",
+        description: "判断当前项目",
+        entities: ["E1"],
+        obligations: [{
+          id: "O1",
+          description: "判断当前项目",
+          evidencePolicy: "customer_input",
+          domains: ["presales-general"],
+          sourceText: "当前项目",
+        }],
+      }],
+    });
+    expect(parsed).toMatchObject({
+      entities: [{ label: "当前项目" }],
+      deliverables: [{
+        label: "判断当前项目",
+        required: true,
+        sourceText: "当前项目",
+        obligations: [{
+          label: "判断当前项目",
+          targetEntityIds: ["E1"],
+          required: true,
+        }],
+      }],
+    });
+  });
+
+  it("normalizes a provider task contract with name labels and omitted trace fields", () => {
+    const sourceText = "目前客户在 POC 阶段，但销售获取不到客户侧的信息。在这种情况下我们的赢率如何";
+    const parsed = taskSpecSchema.parse({
+      subject: "POC 阶段赢率评估与提升",
+      entities: [
+        { id: "E1", name: "当前 POC 项目", role: "subject" },
+        { id: "E2", name: "销售团队", role: "subject" },
+      ],
+      deliverables: [
+        {
+          id: "D1",
+          kind: "diagnosis",
+          name: "赢率评估",
+          obligations: [{
+            id: "O1",
+            name: "评估当前赢率",
+            evidencePolicy: "customer_input",
+            domains: ["presales-general"],
+            sourceText,
+            evidenceCondition: {
+              inputState: "missing",
+              ambiguous: false,
+              conflictDetected: false,
+              freshness: "current",
+            },
+          }],
+        },
+        {
+          id: "D2",
+          kind: "recommendation",
+          name: "提升赢率的措施",
+          obligations: [{
+            id: "O2",
+            name: "提供提升赢率的方法",
+            evidencePolicy: "synthesis",
+            domains: ["presales-general"],
+            sourceText: "要怎样做才能提升赢率？",
+            evidenceCondition: {
+              inputState: "not_applicable",
+              ambiguous: false,
+              conflictDetected: false,
+              freshness: "current",
+            },
+          }],
+        },
+      ],
+    });
+    expect(parsed.entities).toEqual([
+      expect.objectContaining({ label: "当前 POC 项目", sourceText }),
+      expect.objectContaining({ label: "销售团队", sourceText }),
+    ]);
+    expect(parsed.deliverables).toEqual([
+      expect.objectContaining({
+        label: "赢率评估",
+        required: true,
+        sourceText,
+        obligations: [expect.objectContaining({
+          label: "评估当前赢率",
+          targetEntityIds: [],
+          required: true,
+        })],
+      }),
+      expect.objectContaining({
+        label: "提升赢率的措施",
+        required: true,
+        obligations: [expect.objectContaining({
+          targetEntityIds: [],
+          required: true,
+        })],
+      }),
+    ]);
+  });
+
+  it("normalizes singular entity bindings and source-derived labels", () => {
+    const sourceText = "目前客户在 POC 阶段，销售获取不到客户侧信息时应如何判断并推进";
+    const parsed = taskSpecSchema.parse({
+      subject: "POC",
+      entities: [{ id: "E1", name: "POC", role: "subject" }],
+      deliverables: [{
+        id: "D1",
+        kind: "procedure",
+        title: "POC 推进方法",
+        obligations: [{
+          id: "O1",
+          entity: "E1",
+          evidencePolicy: "synthesis",
+          domains: ["presales-general"],
+          sourceText,
+          evidenceCondition: {
+            inputState: "not_applicable",
+            ambiguous: false,
+            conflictDetected: false,
+            freshness: "not_specified",
+          },
+        }],
+      }],
+    });
+
+    expect(parsed).toMatchObject({
+      entities: [{ label: "POC", sourceText }],
+      deliverables: [{
+        label: "POC 推进方法",
+        sourceText,
+        required: true,
+        obligations: [{
+          label: sourceText,
+          targetEntityIds: ["E1"],
+          required: true,
+          evidenceCondition: { freshness: "not_assessed" },
+        }],
+      }],
+    });
+  });
+
+  it("rejects conflicting aliases and unrelated provider fields", () => {
+    expect(taskSpecSchema.safeParse({
+      subject: "冲突别名",
+      entities: [{
+        id: "E1",
+        label: "甲",
+        name: "乙",
+        role: "subject",
+        sourceText: "甲",
+      }],
+      deliverables: [],
+    }).success).toBe(false);
+  });
+
+  it("binds an empty target only when one entity label matches the obligation", () => {
+    const sourceText = "甲公司和乙公司的项目金额分别是多少？";
+    const parsed = taskSpecSchema.parse({
+      subject: "项目金额",
+      entities: [
+        { id: "E1", label: "甲公司", role: "target", sourceText },
+        { id: "E2", label: "乙公司", role: "target", sourceText },
+      ],
+      deliverables: [
+        {
+          id: "D1",
+          label: "甲公司项目金额",
+          kind: "fact",
+          required: true,
+          sourceText,
+          obligations: [{
+            id: "O1",
+            label: "查明甲公司项目金额",
+            targetEntityIds: [],
+            evidencePolicy: "direct",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText,
+          }],
+        },
+        {
+          id: "D2",
+          label: "乙公司项目金额",
+          kind: "fact",
+          required: true,
+          sourceText,
+          obligations: [{
+            id: "O2",
+            label: "查明乙公司项目金额",
+            targetEntityIds: [],
+            evidencePolicy: "direct",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText,
+          }],
+        },
+      ],
+    });
+
+    expect(parsed.deliverables.map((deliverable) =>
+      deliverable.obligations[0]?.targetEntityIds)).toEqual([["E1"], ["E2"]]);
+  });
   it("accepts sequential entities, deliverables and obligations", () => {
     expect(taskSpecSchema.parse(parallelEntityTaskSpec())).toMatchObject({
       subject: "平安多节点架构参考",
@@ -193,6 +406,50 @@ describe("taskSpecSchema", () => {
 });
 
 describe("DeterministicTaskSpecGuard", () => {
+  it("does not promote entities inherited only for a consolidation request", () => {
+    const rawQuestion = "把前面的内容整理成一页式摘要。";
+    const standaloneQuestion = "基于华为和比亚迪相关内容，整理成一页式摘要。";
+    const taskSpec = taskSpecSchema.parse({
+      subject: "一页式摘要",
+      entities: [
+        { id: "E1", label: "华为", role: "reference", sourceText: "华为" },
+        { id: "E2", label: "比亚迪", role: "reference", sourceText: "比亚迪" },
+      ],
+      deliverables: [{
+        id: "D1",
+        label: "一页式摘要",
+        kind: "recommendation",
+        required: true,
+        sourceText: "整理成一页式摘要",
+        obligations: [{
+          id: "O1",
+          label: "整理摘要",
+          targetEntityIds: [],
+          evidencePolicy: "synthesis",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "整理成一页式摘要",
+        }],
+      }],
+    });
+
+    const result = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion,
+        standaloneQuestion,
+        contextUsed: true,
+        inheritedSubjects: ["华为", "比亚迪"],
+        corrections: [],
+      },
+      taskSpec,
+    });
+
+    expect(result.explicitEntityCount).toBe(0);
+    expect(result.issues).not.toContainEqual(expect.objectContaining({
+      code: "explicit_entity_without_required_obligation",
+    }));
+  });
+
   it.each([
     ["工行", "华为", "比亚迪"],
     ["甲公司", "乙公司", "丙公司"],
@@ -1026,6 +1283,75 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(complete.ok).toBe(true);
   });
 
+  it("accepts a shared noun phrase after fully anchored distributive entities", () => {
+    const result = guardIndependentParallelObligations(
+      "甲公司和乙公司的邮件项目合同金额分别是多少？",
+      ["甲公司", "乙公司"],
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.mappedExplicitEntityCount).toBe(2);
+  });
+
+  it("derives entity anchors when parallel labels repeat a shared descriptor", () => {
+    const question = "甲公司和乙公司相关项目的具体金额分别是多少？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: "项目金额",
+      entities: [
+        { id: "E1", label: "甲公司相关项目", role: "target", sourceText: question },
+        { id: "E2", label: "乙公司相关项目", role: "target", sourceText: question },
+      ],
+      deliverables: [
+        {
+          id: "D1",
+          label: "甲公司项目金额",
+          kind: "fact",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O1",
+            label: "查明甲公司项目金额",
+            targetEntityIds: ["E1"],
+            evidencePolicy: "direct",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: question,
+          }],
+        },
+        {
+          id: "D2",
+          label: "乙公司项目金额",
+          kind: "fact",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O2",
+            label: "查明乙公司项目金额",
+            targetEntityIds: ["E2"],
+            evidencePolicy: "direct",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: question,
+          }],
+        },
+      ],
+    });
+
+    const result = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.mappedExplicitEntityCount).toBe(2);
+  });
+
   it("preserves conjunctions inside strongly separated anchored entity names", () => {
     const result = guardIndependentParallelObligations(
       "研发与创新中心、甲公司分别采用方案",
@@ -1098,6 +1424,59 @@ describe("DeterministicTaskSpecGuard", () => {
       "目前客户在POC阶段，但销售获取不到客户侧的信息，我们的赢率如何，要怎样做才能提升赢率？",
     );
     expect(signals.requestClauses.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps every ordered checklist dimension as an independent obligation", () => {
+    const question = "请给出客户信息清单，按决策、预算、竞争、技术和时间排序。";
+    const signals = extractExplicitQuestionSignals(question);
+    expect(signals.independentRequestClauses).toEqual([
+      "决策",
+      "预算",
+      "竞争",
+      "技术",
+      "时间",
+    ]);
+    const broad = taskSpecSchema.parse({
+      subject: "客户信息清单",
+      entities: [{
+        id: "E1",
+        label: "客户信息清单",
+        role: "subject",
+        sourceText: "客户信息清单",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: "按要求整理清单",
+        kind: "recommendation",
+        required: true,
+        sourceText: "按决策、预算、竞争、技术和时间排序",
+        obligations: [{
+          id: "O1",
+          label: "整理全部维度",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "按决策、预算、竞争、技术和时间排序",
+        }],
+      }],
+    });
+    const result = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec: broad,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.mappedExplicitRequestCount).toBe(1);
+    expect(result.issues.filter((issue) =>
+      issue.code === "explicit_request_unmapped")).toHaveLength(
+        result.explicitRequestCount - result.mappedExplicitRequestCount,
+      );
   });
 
   it.each([
@@ -1185,6 +1564,28 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(signals.entityGroups).toEqual([]);
   });
 
+  it("does not treat named sections of a previous comparison as parallel entities", () => {
+    const signals = extractExplicitQuestionSignals(
+      "只看刚才对比中的安全和信创两部分，给出可核验的能力、限制和 POC 验证项。",
+    );
+    expect(signals.entityGroups).toEqual([]);
+    expect(signals.unresolvedDistributiveGroups).toEqual([]);
+  });
+
+  it("extracts entities after a distributive search verb without treating the prefix as a list", () => {
+    const signals = extractExplicitQuestionSignals(
+      "某客户准备调整架构，请分别检索甲公司、乙公司、丙公司的实践，并说明可借鉴边界。",
+    );
+    expect(signals.entityGroups).toContainEqual({
+      sourceText: "甲公司、乙公司、丙公司",
+      items: ["甲公司", "乙公司", "丙公司"],
+    });
+    expect(signals.unresolvedDistributiveGroups).toEqual([]);
+    expect(signals.requestClauses).toContain(
+      "请分别检索甲公司、乙公司、丙公司的实践",
+    );
+  });
+
   it.each([
     ["请分析交付与售前协同问题", []],
     ["天地和科技、甲公司分别部署邮件系统", ["天地和科技", "甲公司"]],
@@ -1213,6 +1614,229 @@ describe("DeterministicTaskSpecGuard", () => {
 });
 
 describe("ModelTaskCompiler", () => {
+  it("falls back to a bounded deterministic contract after repeated invalid model payloads", async () => {
+    const question = "对比 Exchange 与 Coremail，请覆盖部署与迁移、国产化适配、安全、运维和服务、成本边界，并明确哪些结论需要结合客户现状确认。";
+    const completeJson = vi.fn(async () => {
+      throw new InvalidModelPayloadError("invalid_schema:task_spec");
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "产品、架构与服务资料",
+      },
+    });
+
+    const obligations = result.deliverables.flatMap((item) => item.obligations);
+    expect(obligations).toHaveLength(6);
+    expect(obligations.map((item) => item.sourceText).join(" ")).toMatch(/部署与迁移/u);
+    expect(obligations.map((item) => item.sourceText).join(" ")).toMatch(/国产化适配/u);
+    expect(obligations.map((item) => item.sourceText).join(" ")).toMatch(/安全/u);
+    expect(obligations.map((item) => item.sourceText).join(" ")).toMatch(/运维和服务/u);
+    expect(obligations.map((item) => item.sourceText).join(" ")).toMatch(/成本边界/u);
+    expect(new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec: result,
+    }).ok).toBe(true);
+    expect(completeJson).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps case input and knowledge method separate in a numeric forecast fallback", async () => {
+    const question = "销售坚持让我先报一个百分比给领导，我应该报多少？";
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => {
+        throw new InvalidModelPayloadError("invalid_schema:task_spec");
+      }),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: true,
+        inheritedSubjects: ["当前 POC 商机赢率"],
+        corrections: [],
+      },
+      scopeHint: "general",
+      knowledgeContext: {
+        purpose: "售前知识边界",
+        schema: "知识结构",
+        planningOverview: "机会判断与客户证据",
+      },
+    });
+
+    const obligations = result.deliverables.flatMap((deliverable) =>
+      deliverable.obligations);
+    expect(obligations.map((obligation) => obligation.evidencePolicy)).toEqual(
+      expect.arrayContaining(["direct", "customer_input"]),
+    );
+    expect(new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: true,
+        inheritedSubjects: ["当前 POC 商机赢率"],
+        corrections: [],
+      },
+      taskSpec: result,
+    }).ok).toBe(true);
+  });
+
+  it("routes a product-context commercial assessment fallback to presales knowledge", async () => {
+    const question = "已知客户现网是 Exchange、约 1.5 万用户、计划 Q4 采购、预算未批、竞争对手已进场，请重新评估项目并给出下一步。";
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => {
+        throw new InvalidModelPayloadError("invalid_schema:task_spec");
+      }),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      knowledgeContext: {
+        purpose: "企业售前知识边界",
+        schema: "知识结构",
+        planningOverview: "产品和商机资料",
+      },
+    });
+
+    expect(result.deliverables[0]?.obligations[0]).toMatchObject({
+      evidencePolicy: "synthesis",
+      domains: ["presales-general"],
+      sourceText: "请重新评估项目并给出下一步",
+      targetEntityIds: ["E1"],
+    });
+  });
+
+  it("repairs direct product facts in a contextual follow-up to professional knowledge", async () => {
+    const question = "只看刚才对比 Exchange 与 Coremail 中的安全和信创两部分，给出可核验的能力、限制和 POC 验证项。";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "安全与信创验证",
+      entities: [{
+        id: "E1",
+        label: "安全和信创两部分",
+        role: "subject",
+        sourceText: "安全和信创两部分",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: "可核验能力、限制和 POC 验证项",
+        kind: "comparison",
+        required: true,
+        sourceText: "给出可核验的能力、限制和 POC 验证项",
+        obligations: [{
+          id: "O1",
+          label: "可核验能力、限制和 POC 验证项",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "给出可核验的能力、限制和 POC 验证项",
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: "只看刚才对比中的安全和信创两部分，给出可核验的能力、限制和 POC 验证项。",
+        standaloneQuestion: question,
+        contextUsed: true,
+        inheritedSubjects: ["Exchange 与 Coremail 对比"],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "产品安全和信创资料",
+      },
+    });
+
+    expect(result.deliverables.flatMap((deliverable) =>
+      deliverable.obligations).every((obligation) =>
+        obligation.evidencePolicy !== "direct" ||
+        obligation.domains.includes("coremail-professional"))).toBe(true);
+  });
+
+  it("derives explicit conflict state without client-specific rules", async () => {
+    const question = "两份正式资料结论冲突时，应该怎样设计分批切换？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "正式资料", role: "subject", sourceText: "正式资料" }],
+      deliverables: [{
+        id: "D1",
+        label: "设计分批切换",
+        kind: "procedure",
+        required: true,
+        sourceText: "怎样设计分批切换",
+        obligations: [{
+          id: "O1",
+          label: "设计分批切换",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "怎样设计分批切换",
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "迁移与升级资料",
+      },
+    });
+
+    const obligations = result.deliverables.flatMap((item) => item.obligations);
+    expect(obligations[0]?.evidenceCondition).toMatchObject({ conflictDetected: true });
+    expect(obligations).toHaveLength(1);
+  });
+
   it("uses resolved input and the bounded knowledge context", async () => {
     const taskSpec = taskSpecSchema.parse(parallelEntityTaskSpec());
     const completeJson = vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) => {
@@ -1247,5 +1871,473 @@ describe("ModelTaskCompiler", () => {
         planningOverview: "客户案例与架构资料",
       },
     })).resolves.toEqual(taskSpec);
+  });
+
+  it("repairs a missing current-case forecast without merging the method advice", async () => {
+    const question = "目前客户信息不足。在这种情况下我们的赢率如何，要怎样做才能提升赢率？";
+    const synthesisOnly = taskSpecSchema.parse({
+      subject: "当前项目赢率",
+      entities: [{ id: "E1", label: "当前项目", role: "target", sourceText: "客户" }],
+      deliverables: [{
+        id: "D1",
+        label: "提升赢率建议",
+        kind: "recommendation",
+        required: true,
+        sourceText: "怎样做才能提升赢率",
+        obligations: [{
+          id: "O1",
+          label: "提升赢率方法",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "怎样做才能提升赢率",
+        }],
+      }],
+    });
+    const repaired = taskSpecSchema.parse({
+      subject: "当前项目赢率",
+      entities: [{ id: "E1", label: "当前项目", role: "target", sourceText: "客户" }],
+      deliverables: [
+        {
+          id: "D1",
+          label: "当前赢率判断",
+          kind: "diagnosis",
+          required: true,
+          sourceText: "在这种情况下我们的赢率如何",
+          obligations: [{
+            id: "O1",
+            label: "判断当前赢率",
+            targetEntityIds: ["E1"],
+            evidencePolicy: "customer_input",
+            evidenceCondition: {
+              inputState: "missing",
+              ambiguous: false,
+              conflictDetected: false,
+              freshness: "not_assessed",
+            },
+            domains: ["presales-general"],
+            required: true,
+            sourceText: "在这种情况下我们的赢率如何",
+          }],
+        },
+        {
+          id: "D2",
+          label: "提升赢率建议",
+          kind: "recommendation",
+          required: true,
+          sourceText: "怎样做才能提升赢率",
+          obligations: [{
+            id: "O2",
+            label: "提升赢率方法",
+            targetEntityIds: ["E1"],
+            evidencePolicy: "synthesis",
+            domains: ["presales-general"],
+            required: true,
+            sourceText: "怎样做才能提升赢率",
+          }],
+        },
+      ],
+    });
+    const completeJson = vi
+      .fn<NonNullable<ModelClient["completeJson"]>>()
+      .mockResolvedValueOnce(synthesisOnly)
+      .mockImplementationOnce(async (input) => {
+        expect(input.messages.at(-1)?.content).toContain("当前个案预测义务");
+        expect(input.messages.at(-1)?.content).toContain("不能互相替代");
+        return repaired as never;
+      });
+    const compiler = new ModelTaskCompiler({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    await expect(compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "general",
+      legacyPlan: plan,
+      knowledgeContext: {
+        purpose: "售前知识边界",
+        schema: "知识结构",
+        planningOverview: "机会判断与推进方法",
+      },
+    })).resolves.toEqual(repaired);
+    expect(completeJson).toHaveBeenCalledTimes(2);
+  });
+
+  it("repairs a numeric opportunity forecast follow-up into a missing customer input", async () => {
+    const question = "销售坚持让我先报一个百分比给领导，我应该报多少？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "向领导汇报比例",
+      entities: [{
+        id: "E1",
+        label: "领导汇报",
+        role: "target",
+        sourceText: "给领导",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: "向领导汇报比例",
+        kind: "diagnosis",
+        required: true,
+        sourceText: "我应该报多少",
+        obligations: [{
+          id: "O1",
+          label: "判断应汇报的比例",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "我应该报多少",
+        }],
+      }],
+    });
+    const completeJson = vi.fn(async () => modelTaskSpec as never);
+    const compiler = new ModelTaskCompiler({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: true,
+        inheritedSubjects: ["当前 POC 商机赢率"],
+        corrections: [],
+      },
+      scopeHint: "general",
+      legacyPlan: plan,
+      knowledgeContext: {
+        purpose: "售前知识边界",
+        schema: "知识结构",
+        planningOverview: "机会判断与客户证据",
+      },
+    });
+
+    const obligations = result.deliverables.flatMap((deliverable) =>
+      deliverable.obligations);
+    expect(obligations).toContainEqual(expect.objectContaining({
+      evidencePolicy: "customer_input",
+      evidenceCondition: expect.objectContaining({ inputState: "missing" }),
+    }));
+    expect(obligations.some((obligation) =>
+      obligation.evidencePolicy !== "customer_input")).toBe(true);
+    const guard = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: true,
+        inheritedSubjects: ["当前 POC 商机赢率"],
+        corrections: [],
+      },
+      taskSpec: result,
+    });
+    expect(guard).toMatchObject({ ok: true, issues: [] });
+    expect(completeJson).toHaveBeenCalledTimes(1);
+  });
+
+  it("repairs protected factual obligations to direct evidence without regenerating the task", async () => {
+    const question = "请对比两套方案，并明确哪些结论需要结合客户现状确认。";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "企业方案对比",
+      entities: [{
+        id: "E1",
+        label: "两套方案",
+        role: "subject",
+        sourceText: "两套方案",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: "待客户确认的结论",
+        kind: "comparison",
+        required: true,
+        sourceText: "明确哪些结论需要结合客户现状确认",
+        obligations: [{
+          id: "O1",
+          label: "列出待确认结论",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "customer_input",
+          evidenceCondition: {
+            inputState: "missing",
+            ambiguous: false,
+            conflictDetected: false,
+            freshness: "not_assessed",
+          },
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "明确哪些结论需要结合客户现状确认",
+        }],
+      }],
+    });
+    const completeJson = vi.fn(async () => modelTaskSpec as never);
+    const compiler = new ModelTaskCompiler({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      legacyPlan: plan,
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "企业方案",
+      },
+    });
+
+    expect(result.deliverables[0]?.obligations[0]).toMatchObject({
+      evidencePolicy: "direct",
+      evidenceCondition: { inputState: "not_applicable" },
+    });
+    expect(completeJson).toHaveBeenCalledTimes(1);
+  });
+
+  it("anchors provider-paraphrased source fields to the resolved question", async () => {
+    const question = "请给出可核验的能力、限制和 POC 验证项。";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "能力验证",
+      entities: [{
+        id: "E1",
+        label: "能力验证",
+        role: "subject",
+        sourceText: "针对目标能力开展验证",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: "可核验能力与限制",
+        kind: "fact",
+        required: true,
+        sourceText: "输出可验证的产品能力边界",
+        obligations: [{
+          id: "O1",
+          label: "列出能力限制与验证项",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "梳理产品限制并设计验证步骤",
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      legacyPlan: plan,
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "能力资料",
+      },
+    });
+
+    expect(result.entities[0]?.sourceText).toContain("给出可核验的能力");
+    expect(result.deliverables[0]?.sourceText).toContain("给出可核验的能力");
+    expect(result.deliverables[0]?.obligations[0]?.sourceText)
+      .toContain("给出可核验的能力");
+  });
+
+  it("compacts a routed comparison dimension across both targets", async () => {
+    const question = "对比产品甲与产品乙，请覆盖部署边界。";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "产品部署比较",
+      entities: [
+        { id: "E1", label: "产品甲", role: "product", sourceText: "产品甲" },
+        { id: "E2", label: "产品乙", role: "product", sourceText: "产品乙" },
+      ],
+      deliverables: [{
+        id: "D1",
+        label: "部署边界比较",
+        kind: "comparison",
+        required: true,
+        sourceText: "覆盖部署边界",
+        obligations: [
+          {
+            id: "O1",
+            label: "产品甲部署边界",
+            targetEntityIds: ["E1"],
+            evidencePolicy: "direct",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: "部署边界",
+          },
+          {
+            id: "O2",
+            label: "产品乙部署边界",
+            targetEntityIds: ["E2"],
+            evidencePolicy: "direct",
+            domains: ["presales-general"],
+            required: true,
+            sourceText: "部署边界",
+          },
+        ],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      legacyPlan: plan,
+      knowledgeContext: {
+        purpose: "产品事实",
+        schema: "产品结构",
+        planningOverview: "产品比较资料",
+      },
+    });
+
+    expect(result.deliverables[0]?.obligations).toEqual([
+      expect.objectContaining({
+        id: "O1",
+        label: "部署边界比较",
+        targetEntityIds: ["E1", "E2"],
+        domains: ["coremail-professional"],
+        sourceText: "覆盖部署边界",
+      }),
+    ]);
+  });
+
+  it("repairs an over-expanded consolidation task without fixed summary dimensions", async () => {
+    const question = "把前面的内容整理成一页式摘要：讲优势、边界、风险和下一步。";
+    const expanded = taskSpecSchema.parse({
+      subject: "一页式摘要",
+      entities: [{ id: "E1", label: "摘要", role: "subject", sourceText: question }],
+      deliverables: [{
+        id: "D1",
+        label: "一页式摘要",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: Array.from({ length: 7 }, (_, index) => ({
+          id: `O${index + 1}`,
+          label: `上下文材料${index + 1}`,
+          targetEntityIds: [],
+          evidencePolicy: "synthesis",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question,
+        })),
+      }],
+    });
+    const repaired = taskSpecSchema.parse({
+      subject: "一页式摘要",
+      entities: [{ id: "E1", label: "摘要", role: "subject", sourceText: question }],
+      deliverables: [{
+        id: "D1",
+        label: "一页式摘要",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: ["优势", "边界", "风险", "下一步"].map((sourceText, index) => ({
+          id: `O${index + 1}`,
+          label: sourceText,
+          targetEntityIds: [],
+          evidencePolicy: "synthesis",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText,
+        })),
+      }],
+    });
+    const completeJson = vi.fn()
+      .mockResolvedValueOnce(expanded)
+      .mockImplementationOnce(async (input: Parameters<ModelClient["completeJson"]>[0]) => {
+        expect(input.messages.at(-1)?.content).toContain("过度拆分");
+        expect(input.messages.at(-1)?.content).toContain("不得超过 6");
+        return repaired as never;
+      });
+    const compiler = new ModelTaskCompiler({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    await expect(compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: true,
+        inheritedSubjects: ["前面的内容"],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "历史对话材料",
+      },
+    })).resolves.toEqual(repaired);
+    expect(completeJson).toHaveBeenCalledTimes(2);
+  });
+
+  it("guard rejects a model that silently maps a current-case forecast to advice", () => {
+    const question = "在这种情况下我们的赢率如何，要怎样做才能提升赢率？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: "提升赢率",
+      entities: [{ id: "E1", label: "当前项目", role: "target", sourceText: "我们" }],
+      deliverables: [{
+        id: "D1",
+        label: "提升赢率建议",
+        kind: "recommendation",
+        required: true,
+        sourceText: "怎样做才能提升赢率",
+        obligations: [{
+          id: "O1",
+          label: "提升赢率方法",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "怎样做才能提升赢率",
+        }],
+      }],
+    });
+
+    const result = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      code: "customer_input_request_unmapped",
+    }));
   });
 });

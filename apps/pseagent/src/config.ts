@@ -187,7 +187,9 @@ function loadTaskSpecShadowConfig(
     env.PSE_TASK_SPEC_SHADOW_ENABLED ?? "false",
   );
   if (enabled === "false") return { enabled: false };
-  const timeoutMs = z.coerce.number().int().min(1_000).max(60_000).default(15_000)
+  const activeRequested = env.PSE_TASK_SPEC_ACTIVE_ENABLED === "true";
+  const timeoutMs = z.coerce.number().int().min(1_000).max(180_000)
+    .default(activeRequested ? 120_000 : 15_000)
     .parse(env.PSE_TASK_SPEC_SHADOW_TIMEOUT_MS);
   return { enabled: true, timeoutMs };
 }

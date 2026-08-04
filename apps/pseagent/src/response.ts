@@ -18,6 +18,7 @@ export const GENERAL_UNAVAILABLE_TEXT = "问答服务暂时不可用，请稍后
 export interface KnowledgeResponseContext {
   readonly evidenceLedgers?: readonly EvidenceLedger[];
   readonly coverageGaps?: readonly CoverageGap[];
+  readonly question?: string;
 }
 
 export function deriveStatus(
@@ -42,26 +43,37 @@ export function formatKnowledgeFinal(
     action,
     context.evidenceLedgers,
   );
-  const status = statusForKnowledgeCoverage(knowledgeCoverage);
+  const status = knowledgeCoverage === "none" && caseAssessability === "insufficient"
+    ? "partially_answered"
+    : statusForKnowledgeCoverage(knowledgeCoverage);
   const gapSection = formatGapSection(context.coverageGaps ?? []);
+  const evidenceConditionSection = formatEvidenceConditionSection(
+    context.evidenceLedgers ?? [],
+  );
+  const userContextSection = formatUserProvidedContext(
+    context.question,
+    action.requirements.map((requirement) => requirement.answer).join("\n"),
+  );
   const relatedContext = action.requirements
     .flatMap((requirement) => requirement.relatedContext ?? [])
     .map((item) => item.statement.trim())
     .filter(Boolean);
   if (
-    status === "not_covered" &&
+    knowledgeCoverage === "none" &&
     relatedContext.length > 0 &&
     references.length > 0
   ) {
-    const conclusion = action.requirements
+    const conclusion = uniqueText(action.requirements
       .map((requirement) => requirement.answer.trim())
-      .filter(Boolean)
+      .filter(Boolean))
       .join("\n\n");
     const answer = [
+        userContextSection,
         "正式知识库相关信息：",
         relatedContext.join("\n\n"),
         "覆盖结论：",
         conclusion,
+        evidenceConditionSection,
         gapSection,
         "正式知识库资料来源：",
         formatSources(references),
@@ -80,7 +92,14 @@ export function formatKnowledgeFinal(
     .map((requirement) => requirement.answer.trim())
     .filter(Boolean)
     .join("\n\n");
-  const answer = [supportedAnswer, gapSection].filter(Boolean).join("\n\n");
+  const answer = [
+    userContextSection,
+    supportedAnswer,
+    evidenceConditionSection,
+    gapSection,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   return formatAnswerResult({
     scope,
     status,
@@ -89,6 +108,60 @@ export function formatKnowledgeFinal(
     answer,
     references: status === "not_covered" && answer === "" ? [] : references,
   });
+}
+
+function formatUserProvidedContext(
+  question: string | undefined,
+  answer: string,
+): string {
+  if (question === undefined || question.trim() === "") return "";
+  const premise = question.match(
+    /^(?<premise>(?:已知|目前|当前|现有)[\s\S]{2,400}?)[，,；;。]\s*(?:请|帮|需要|如何|怎样|怎么|给出|重新评估|评估|分析|说明|列出|设计|制定)/u,
+  )?.groups?.premise?.trim();
+  const constraints = question
+    .split(/[，,；;。！？!?]+/u)
+    .map((segment) => segment.trim())
+    .filter((segment) =>
+      /(?:约|大约|不超过|不低于|至少|至多|以上|以下|小于|大于|≤|≥|<=|>=)\s*\d/iu.test(segment) ||
+      /\d+(?:\.\d+)?\s*(?:万|千)?\s*(?:用户|并发|QPS|TPS|GB|TB|PB|毫秒|秒|分钟|小时|天|%)/iu.test(segment) ||
+      /[一二三四五六七八九十]+地[一二三四五六七八九十]+中心/u.test(segment));
+  const items = uniqueText([
+    ...(premise === undefined ? [] : [premise]),
+    ...constraints.filter((constraint) =>
+      premise === undefined || !normalizeDisplayText(premise).includes(
+        normalizeDisplayText(constraint),
+      )),
+  ]).filter((item) => !normalizeDisplayText(answer).includes(normalizeDisplayText(item)));
+  if (items.length === 0 || (premise === undefined && items.length < 2)) return "";
+  return [
+    "用户提供的背景与约束（非知识库结论）：",
+    ...items.map((item) => `- ${item}`),
+  ].join("\n");
+}
+
+function normalizeDisplayText(value: string): string {
+  return value.normalize("NFKC")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function formatEvidenceConditionSection(
+  ledgers: readonly EvidenceLedger[],
+): string {
+  const units = ledgers.flatMap((ledger) => ledger.units);
+  const notices: string[] = [];
+  if (units.some((unit) => unit.conflictDetected)) {
+    notices.push(
+      "当前问题已明确存在正式资料冲突，不能合并为单一确定结论；需核对版本、资料日期、权威级别与适用范围后再确认。",
+    );
+  }
+  if (units.some((unit) => unit.ambiguous)) {
+    notices.push("当前输入存在歧义，相关结论需在澄清对象、口径或范围后确认。");
+  }
+  if (units.some((unit) => unit.freshness === "stale_or_unconfirmed")) {
+    notices.push("相关资料的时效或版本状态尚未确认，不能直接作为当前版本承诺。");
+  }
+  return notices.length === 0 ? "" : ["证据边界：", ...notices].join("\n");
 }
 
 export function deriveAnswerAxes(
@@ -179,7 +252,7 @@ export function formatAnswerResult(input: {
     ...(input.caseAssessability === undefined
       ? {}
       : { caseAssessability: input.caseAssessability }),
-    answer: `${answer}\n\n资料来源：\n${sources}`,
+    answer: sources === "" ? answer : `${answer}\n\n资料来源：\n${sources}`,
     references: [...input.references],
   };
 }

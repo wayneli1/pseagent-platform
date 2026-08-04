@@ -343,6 +343,7 @@ const TASK_SPEC_ISSUE_VALUES = [
   "explicit_entity_without_required_obligation",
   "distributive_entity_group_unresolved",
   "explicit_request_unmapped",
+  "customer_input_request_unmapped",
   "protected_fact_not_direct",
   "domain_policy_conflict",
 ] as const;
@@ -446,6 +447,28 @@ const MODEL_PAYLOAD_REASON_VALUES = [
   "invalid_knowledge_plan_after_repair",
   "invalid_route_after_repair",
   "invalid_task_spec_after_repair",
+] as const;
+const MODEL_PAYLOAD_REASON_PREFIX_VALUES = [
+  "invalid_schema",
+  "requirement_count_mismatch",
+  "requirement_order_mismatch",
+  "none_target_cannot_be_retained",
+  "none_target_cannot_be_partially_retained",
+  "retained_target_requires_all_segments",
+  "partial_target_requires_proper_segment_subset",
+  "uncovered_target_cannot_retain_segments",
+  "synthesized_segments_must_be_retained",
+  "direct_only_cannot_synthesize",
+  "not_covered_cannot_synthesize",
+  "retained_target_cannot_have_related_context",
+  "covered_aspect_not_in_plan",
+  "not_covered_cannot_cover_aspects",
+  "related_context_requires_none_coverage",
+  "target_segment_index_out_of_range",
+  "retained_target_segment_without_citation",
+  "target_segment_citation_not_in_evidence",
+  "related_context_index_out_of_range",
+  "related_citation_not_in_evidence",
 ] as const;
 const FINISH_REASON_VALUES = [
   "stop",
@@ -774,7 +797,7 @@ function allowlistDiagnosticEvent(
         reason: safeReason(
           event.reason,
           MODEL_PAYLOAD_REASON_VALUES,
-          ["invalid_schema"] as const,
+          MODEL_PAYLOAD_REASON_PREFIX_VALUES,
         ),
         repairAttempt: safeCount(event.repairAttempt),
         ...safeOptionalCountField("rawPayloadLength", event.rawPayloadLength),

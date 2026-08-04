@@ -183,16 +183,17 @@ const OPEN_TO_CLOSE = new Map<string, string>([
 const CLOSE_TO_OPEN = new Map([...OPEN_TO_CLOSE].map(([open, close]) => [close, open]));
 
 const SYNTHESIS_NOMINAL_HEAD =
-  /(?:操作指引|实施路径|处置路径|工作计划|路线图|诊断方法|风险评估|差距分析|瓶颈诊断|建议|方案|行动|计划|规划|路径|策略|措施|步骤|流程|方法|做法|思路|原因|根因|评估|分析|诊断|识别|澄清)(?:有哪些|是什么|如何|吗|呢|吧)?$/u;
+  /(?:操作指引|实施路径|处置路径|工作计划|路线图|诊断方法|风险评估|差距分析|瓶颈诊断|建议|方案|行动|计划|规划|路径|策略|措施|步骤|流程|方法|做法|思路|原因|根因|评估|分析|诊断|识别|澄清|借鉴|类比|取舍)(?:有哪些|是什么|如何|吗|呢|吧)?$/u;
 
-const SYNTHESIS_SPEECH_ACT = /^(?:评估|分析|诊断|预测|判断)\S+/u;
+const SYNTHESIS_SPEECH_ACT = /^(?:评估|分析|诊断|预测|判断|比较|对比)\S+/u;
 const SYNTHESIS_OUTPUT_GOVERNOR = /^(?:给出|提出|制定|输出|形成|提供)/u;
 const SYNTHESIS_OUTPUT_OCCURRENCE = /(?:给出|提出|制定|输出|形成|提供)/u;
 const SYNTHESIS_CHANGE_WORD =
   /^(?:提升|优化|改造|升级|扩容|适配|迁移|调整|实施|处置)$/u;
 const SYNTHESIS_CHANGE_GOVERNOR =
   /^(?:(?:如何|怎样|怎么)\s*)?(?:提升|优化|改造|升级|扩容|适配|迁移|调整|实施|处置)\S*|^.+(?:如何|怎样|怎么|需要|应当|应该)(?:提升|优化|改造|升级|扩容|适配|迁移|调整)\S*$/u;
-const SYNTHESIS_PROCEDURE_GOVERNOR = /^(?:如何|怎样|怎么)\s*\S+/u;
+const SYNTHESIS_PROCEDURE_GOVERNOR =
+  /^(?:(?:要|应该|应当)\s*)?(?:如何|怎样|怎么)\s*\S+/u;
 const SYNTHESIS_DIAGNOSIS_PREDICATE = /(?:能力)?是否足够$|^是否(?:应该|应当|可以|能够|具备).*(?:推进|实施|执行|条件)/u;
 const INCOMPLETE_DIAGNOSTIC_GOVERNOR = /^(?:评估|分析|诊断|预测|判断)$/u;
 const INCOMPLETE_PROCEDURE_GOVERNOR = /^(?:如何|怎样|怎么)[\p{Script=Han}]{1,2}$/u;
@@ -872,8 +873,22 @@ function semanticSkeleton(value: string): string {
 }
 
 function isPureOpportunityForecast(value: string): boolean {
-  const text = stripQuestionParticles(value.trim()).replace(/\s+/gu, "");
+  const text = normalizeOpportunityForecastContext(
+    stripQuestionParticles(value.trim()).replace(/\s+/gu, ""),
+  );
   return OPPORTUNITY_FORECAST.test(text);
+}
+
+function normalizeOpportunityForecastContext(value: string): string {
+  return value
+    .replace(
+      /^(?:在(?:这种|上述|当前|该)情况下|基于(?:这些|上述|当前)信息|根据(?:这些|上述|当前)情况)/u,
+      "",
+    )
+    .replace(
+      /^((?:当前)?(?:商机|机会|项目))的(?=(?:赢率|胜率|成交概率|成功概率|机会质量|机会预测|销售预测))/u,
+      "$1",
+    );
 }
 
 function isContextPremise(value: string): boolean {

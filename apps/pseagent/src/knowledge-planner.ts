@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { knowledgePlanSchema, type KnowledgePlan, type Scope } from "./contracts.js";
 import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
+import { analyzeObligationSource } from "./obligation-semantics.js";
 import { knowledgePlanMessages } from "./prompts.js";
+import { extractExplicitQuestionSignals } from "./task-spec.js";
 
 export interface KnowledgePlanInput {
   readonly scope: Exclude<Scope, "normal">;
@@ -49,7 +51,12 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
           ),
         );
       } catch (error) {
-        if (!(error instanceof InvalidModelPayloadError) || attempt === 3) throw error;
+        const repairable = error instanceof InvalidModelPayloadError ||
+          error instanceof z.ZodError;
+        if (!repairable) throw error;
+        if (attempt === 3) {
+          return deterministicKnowledgePlan(input);
+        }
       }
     }
     throw new InvalidModelPayloadError(
@@ -72,23 +79,71 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
   }
 }
 
+function deterministicKnowledgePlan(input: KnowledgePlanInput): KnowledgePlan {
+  const explicitClauses = extractExplicitQuestionSignals(input.question).requestClauses;
+  const clauses = (explicitClauses.length === 0 ? [input.question] : explicitClauses)
+    .map((clause) => takePlannerCharacters(clause.trim(), 1_024))
+    .filter(Boolean)
+    .filter((clause, index, values) =>
+      values.findIndex((candidate) =>
+        normalizePlannerText(candidate) === normalizePlannerText(clause)) === index)
+    .slice(0, 6);
+  const requirements = (clauses.length === 0 ? ["回答当前问题"] : clauses).map(
+    (clause, index) => {
+      const contextualQuery = takePlannerCharacters(
+        [input.conversationContext, clause].filter(Boolean).join("\n"),
+        1_024,
+      );
+      const aspectText = takePlannerCharacters(clause, 128);
+      return {
+        id: `R${index + 1}`,
+        question: clause,
+        evidenceMode: analyzeObligationSource(clause).requiresDirectEvidence
+          ? "direct_only"
+          : "synthesis_allowed",
+        evidenceAspects: [{
+          id: "A1",
+          label: takePlannerCharacters(clause, 256),
+          terms: [aspectText],
+        }],
+        queries: [{ text: contextualQuery || clause, aspectIds: ["A1"] }],
+      };
+    },
+  );
+  return knowledgePlanSchema.parse({
+    subject: takePlannerCharacters(input.question, 1_024) || "当前问题",
+    requirements,
+  });
+}
+
 const knowledgePlanModelResponseSchema = z.preprocess(
   normalizeModelPlanStructure,
   knowledgePlanSchema,
 );
 
 function normalizeModelPlanStructure(value: unknown): unknown {
-  if (!isUnknownRecord(value) || !Array.isArray(value.requirements)) {
-    return value;
-  }
-  return {
-    ...value,
-    requirements: value.requirements.slice(0, 6).map(
+  if (!isUnknownRecord(value)) return value;
+  const rawRequirements = firstArray(
+    value.requirements,
+    value.items,
+    value.requirementList,
+  );
+  if (rawRequirements === undefined) return value;
+  const requirements = rawRequirements.slice(0, 6).map(
       (rawRequirement, requirementIndex) => {
         if (!isUnknownRecord(rawRequirement)) return rawRequirement;
-        const rawAspects = Array.isArray(rawRequirement.evidenceAspects)
-          ? rawRequirement.evidenceAspects.slice(0, 8)
-          : [];
+        const question = firstString(
+          rawRequirement.question,
+          rawRequirement.description,
+          rawRequirement.objective,
+          rawRequirement.label,
+          rawRequirement.name,
+        );
+        const rawAspects = firstArray(
+          rawRequirement.evidenceAspects,
+          rawRequirement.aspects,
+          rawRequirement.evidence_aspects,
+        )?.slice(0, 8) ?? [];
         const aspectIdMap = new Map<string, string>();
         const evidenceAspects = rawAspects.map((rawAspect, aspectIndex) => {
           if (!isUnknownRecord(rawAspect)) return rawAspect;
@@ -96,41 +151,115 @@ function normalizeModelPlanStructure(value: unknown): unknown {
           if (typeof rawAspect.id === "string") {
             aspectIdMap.set(rawAspect.id, normalizedId);
           }
-          const terms = Array.isArray(rawAspect.terms)
-            ? stableUniqueStrings(rawAspect.terms).slice(0, 8)
-            : rawAspect.terms;
-          return { ...rawAspect, id: normalizedId, terms };
+          const label = firstString(
+            rawAspect.label,
+            rawAspect.name,
+            rawAspect.description,
+            rawAspect.title,
+          );
+          const rawTerms = firstArray(
+            rawAspect.terms,
+            rawAspect.keywords,
+            rawAspect.queryTerms,
+          );
+          const terms = stableUniqueStrings(rawTerms ?? [label])
+            .map((term) => takePlannerCharacters(term, 128))
+            .filter(Boolean)
+            .slice(0, 8);
+          return {
+            id: normalizedId,
+            label,
+            terms,
+          };
         });
+        if (evidenceAspects.length === 0 && question !== undefined) {
+          evidenceAspects.push({
+            id: "A1",
+            label: takePlannerCharacters(question, 256),
+            terms: [takePlannerCharacters(question, 128)],
+          });
+        }
         const knownIds = evidenceAspects.flatMap((aspect) =>
           isUnknownRecord(aspect) && typeof aspect.id === "string"
             ? [aspect.id]
             : []
         );
-        const queries = Array.isArray(rawRequirement.queries)
-          ? rawRequirement.queries.slice(0, 3).map((rawQuery) => {
+        const rawQueries = firstArray(
+          rawRequirement.queries,
+          rawRequirement.searchQueries,
+          rawRequirement.search_queries,
+        );
+        const queries = rawQueries !== undefined
+          ? rawQueries.slice(0, 3).map((rawQuery) => {
               if (!isUnknownRecord(rawQuery)) return rawQuery;
-              const mappedIds = Array.isArray(rawQuery.aspectIds)
-                ? stableUniqueStrings(rawQuery.aspectIds)
+              const rawAspectIds = firstArray(
+                rawQuery.aspectIds,
+                rawQuery.aspects,
+                rawQuery.aspect_ids,
+              );
+              const mappedIds = rawAspectIds !== undefined
+                ? stableUniqueStrings(rawAspectIds)
                     .map((id) => aspectIdMap.get(id) ?? id)
                     .filter((id) => knownIds.includes(id))
                 : [];
               return {
-                ...rawQuery,
+                text: firstString(rawQuery.text, rawQuery.query, rawQuery.search),
                 aspectIds: mappedIds.length > 0
                   ? mappedIds
                   : knownIds.slice(0, 1),
               };
             })
-          : rawRequirement.queries;
+          : question === undefined || knownIds.length === 0
+            ? undefined
+            : [{ text: question, aspectIds: knownIds }];
         return {
-          ...rawRequirement,
           id: `R${requirementIndex + 1}`,
+          question,
+          evidenceMode: normalizeEvidenceMode(
+            rawRequirement.evidenceMode ??
+              rawRequirement.mode ??
+              rawRequirement.evidence_policy,
+          ),
           evidenceAspects,
           queries,
         };
       },
-    ),
+    );
+  return {
+    subject: firstString(value.subject, value.topic, value.title, value.name) ??
+      requirements.flatMap((requirement) =>
+        isUnknownRecord(requirement) && typeof requirement.question === "string"
+          ? [requirement.question]
+          : [])[0],
+    requirements,
   };
+}
+
+function firstArray(...values: unknown[]): readonly unknown[] | undefined {
+  return values.find((value): value is readonly unknown[] => Array.isArray(value));
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string =>
+    typeof value === "string" && value.trim().length > 0)?.trim();
+}
+
+function normalizeEvidenceMode(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if (["direct_only", "direct", "fact", "factual", "strict"].includes(normalized)) {
+    return "direct_only";
+  }
+  if ([
+    "synthesis_allowed",
+    "synthesis",
+    "synthesized",
+    "analysis",
+    "recommendation",
+  ].includes(normalized)) {
+    return "synthesis_allowed";
+  }
+  return value;
 }
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {

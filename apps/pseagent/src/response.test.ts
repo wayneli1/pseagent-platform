@@ -43,6 +43,17 @@ const targetNoneWithRelatedContext: FinalAction = {
   citations: [1, 2],
 };
 
+const completeAction: FinalAction = {
+  action: "final",
+  requirements: [{
+    id: "R1",
+    coverage: "complete",
+    answer: "基于正式资料给出建议 [1]。",
+    citations: [1],
+  }],
+  citations: [1],
+};
+
 describe("knowledge response", () => {
   it.each<[Coverage[], number, AnswerStatus]>([
     [["none"], 0, "not_covered"],
@@ -76,6 +87,35 @@ describe("knowledge response", () => {
       ].join("\n"),
     ].join("\n\n"));
     expect(result.answer).not.toContain("不支持");
+  });
+
+  it("keeps audited related guidance visible when case input is missing", () => {
+    const ledger = {
+      project: "presales-general",
+      revision: "a".repeat(40),
+      units: [{
+        inputState: "missing",
+        ambiguous: false,
+        conflictDetected: false,
+        verification: { coverage: "none" },
+      }],
+    } as unknown as EvidenceLedger;
+
+    const result = formatKnowledgeFinal(
+      "general",
+      targetNoneWithRelatedContext,
+      [reference, relatedReference],
+      { evidenceLedgers: [ledger] },
+    );
+
+    expect(result).toMatchObject({
+      status: "partially_answered",
+      knowledgeCoverage: "none",
+      caseAssessability: "insufficient",
+    });
+    expect(result.answer).toContain("正式知识库相关信息：");
+    expect(result.answer).toContain("SMTP、POP3 和 IMAP");
+    expect(result.answer).toContain("覆盖结论：");
   });
 
   it("uses the fixed uncovered fallback when no related context is available", () => {
@@ -137,6 +177,27 @@ describe("knowledge response", () => {
     expect(result.references).toEqual([reference]);
   });
 
+  it.each([
+    {
+      question: "已知客户现网是 Exchange、约 1.5 万用户、计划 Q4 采购、预算未批、竞争对手已进场，请重新评估项目并给出下一步。",
+      expected: ["Exchange", "1.5 万", "Q4", "预算未批"],
+    },
+    {
+      question: "用户约 6 万、两地三中心，要求 RPO 不超过 5 分钟、RTO 不超过 30 分钟，请给出架构建议。",
+      expected: ["6 万", "两地三中心", "RPO", "RTO"],
+    },
+  ])("keeps user-provided background and constraints visible: $question", ({
+    question,
+    expected,
+  }) => {
+    const result = formatKnowledgeFinal("professional", completeAction, [reference], {
+      question,
+    });
+
+    expect(result.answer).toContain("用户提供的背景与约束（非知识库结论）：");
+    for (const value of expected) expect(result.answer).toContain(value);
+  });
+
   it("separates knowledge coverage from current-case assessability", () => {
     const action: FinalAction = {
       action: "final",
@@ -193,6 +254,91 @@ describe("knowledge response", () => {
     expect(result.answer).toContain("当前 POC 机会");
     expect(result.answer).toContain("客户决策链、预算与 POC 评价结果");
     expect(result.answer).not.toContain("知识库尚未覆盖问题的其余部分");
+  });
+
+  it("makes an explicit evidence conflict visible even if model wording omits it", () => {
+    const action: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "需要核对版本与适用范围 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const ledger = {
+      project: "coremail-professional",
+      revision: "a".repeat(40),
+      units: [{
+        inputState: "not_applicable",
+        ambiguous: false,
+        conflictDetected: true,
+        freshness: "not_assessed",
+        verification: { coverage: "complete" },
+      }],
+    } as unknown as EvidenceLedger;
+
+    const result = formatKnowledgeFinal("professional", action, [reference], {
+      evidenceLedgers: [ledger],
+    });
+
+    expect(result.caseAssessability).toBe("conflicting");
+    expect(result.answer).toContain("正式资料冲突");
+    expect(result.answer).toContain("不能合并为单一确定结论");
+    expect(result.answer).toContain("版本、资料日期、权威级别与适用范围");
+  });
+
+  it("reports an input-only gap as a partial answer instead of missing knowledge", () => {
+    const action: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "缺少当次客户事实，不能可靠判断。",
+        citations: [],
+      }],
+      citations: [],
+    };
+    const ledger = {
+      project: "presales-general",
+      revision: "a".repeat(40),
+      units: [{
+        inputState: "missing",
+        ambiguous: false,
+        conflictDetected: false,
+        verification: { coverage: "none" },
+      }],
+    } as unknown as EvidenceLedger;
+    const gap: CoverageGap = {
+      id: "G1",
+      requirementId: "R1",
+      deliverableId: "D1",
+      obligationId: "O1",
+      domain: "presales-general",
+      gapClass: "input",
+      reason: "required_customer_input_missing",
+      subject: "当前机会",
+      missingAspect: "客户决策与预算事实",
+      affectsConclusion: true,
+      confirmedBoundary: "缺少当次客户输入，当前无法可靠判断。",
+      nextAction: "补齐客户事实后再评估。",
+    };
+
+    const result = formatKnowledgeFinal("general", action, [], {
+      evidenceLedgers: [ledger],
+      coverageGaps: [gap],
+    });
+
+    expect(result).toMatchObject({
+      status: "partially_answered",
+      knowledgeCoverage: "none",
+      caseAssessability: "insufficient",
+      references: [],
+    });
+    expect(result.answer).toContain("客户决策与预算事实");
+    expect(result.answer).not.toContain("当前知识库暂未覆盖");
+    expect(result.answer).not.toContain("资料来源：");
   });
 
   it("shows at most three precise gap groups without dropping later gaps", () => {

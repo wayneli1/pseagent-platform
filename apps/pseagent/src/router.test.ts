@@ -3,6 +3,8 @@ import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { normalAnswerMessages, ROUTE_SYSTEM_PROMPT } from "./prompts.js";
 import {
   isUnambiguouslyGeneralPresalesQuestion,
+  isUnambiguouslyNormalQuestion,
+  isUnambiguouslyProfessionalQuestion,
   ScopeRouter,
 } from "./router.js";
 import { PSEAGENT_SELF_CONTEXT } from "./self-context.js";
@@ -47,23 +49,85 @@ describe("ScopeRouter", () => {
     expect(isUnambiguouslyGeneralPresalesQuestion(question)).toBe(false);
   });
 
+  it.each([
+    "Coremail 邮件迁移如何分批实施？",
+    "Exchange 与 Coremail 共存时域名转发怎样设计？",
+    "昨天找到的案例写的是 XT5，今天客户环境是 XT6，旧案例能直接套用吗？",
+    "华为和比亚迪邮件项目的合同金额是多少？",
+    "现有知识里关于某项目，哪些是已记录事实，哪些只是可借鉴的经验？",
+  ])("routes an explicit product boundary without model ambiguity: %s", async (question) => {
+    const completeJson = vi.fn();
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    expect(isUnambiguouslyProfessionalQuestion(question)).toBe(true);
+    await expect(new ScopeRouter(model).route(question)).resolves.toBe("professional");
+    expect(completeJson).not.toHaveBeenCalled();
+  });
+
+  it("keeps a product-neutral opportunity question in the general boundary", () => {
+    expect(isUnambiguouslyProfessionalQuestion(
+      "客户在 POC 阶段，信息不足时如何提升赢率？",
+    )).toBe(false);
+  });
+
+  it.each([
+    "顺便解释一下 HTTP 404 是什么。",
+    "换个话题，写一首四行的夏日短诗。",
+  ])("routes an explicit non-domain request to normal without model JSON: %s", async (question) => {
+    const completeJson = vi.fn();
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    expect(isUnambiguouslyNormalQuestion(question)).toBe(true);
+    await expect(new ScopeRouter(model).route(question, "Coremail 迁移上下文"))
+      .resolves.toBe("normal");
+    expect(completeJson).not.toHaveBeenCalled();
+  });
+
+  it("keeps a capacity and recovery follow-up in the professional context", async () => {
+    const completeJson = vi.fn();
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    await expect(new ScopeRouter(model).route(
+      "用户约 6 万、两地三中心，RPO 5 分钟、RTO 30 分钟，请给出容量输入。",
+      "前面正在讨论 Exchange 与 Coremail 邮件系统。",
+    )).resolves.toBe("professional");
+    expect(completeJson).not.toHaveBeenCalled();
+  });
+
   it("repairs an invalid route and never silently downgrades", async () => {
     const completeJson = vi.fn()
       .mockRejectedValueOnce(new InvalidModelPayloadError())
       .mockResolvedValueOnce({ action: "route", scope: "professional" });
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
-    await expect(new ScopeRouter(model).route("Coremail")).resolves.toBe("professional");
+    await expect(new ScopeRouter(model).route("客户现场出现 HTTP 404，怎样排查？"))
+      .resolves.toBe("professional");
     expect(completeJson).toHaveBeenCalledTimes(2);
   });
 
-  it("makes two repair attempts before rejecting an invalid route", async () => {
+  it("normalizes a scope-only provider response without accepting extra fields", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({ scope: "professional" }));
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    await expect(new ScopeRouter(model).route("客户现场出现 HTTP 404，怎样排查？"))
+      .resolves.toBe("professional");
+    expect(() => completeJson.mock.calls[0]?.[0].schema.parse({
+      scope: "professional",
+      confidence: 0.9,
+    })).toThrow();
+  });
+
+  it("keeps product context after all route repair attempts fail", async () => {
     const completeJson = vi.fn(async () => {
       throw new InvalidModelPayloadError();
     });
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
 
-    await expect(new ScopeRouter(model).route("Coremail"))
-      .rejects.toBeInstanceOf(InvalidModelPayloadError);
+    await expect(new ScopeRouter(model).route(
+      "客户现场出现 HTTP 404，怎样排查？",
+      "前面正在讨论 Coremail XT6 的部署和迁移。",
+    )).resolves.toBe("professional");
     expect(completeJson).toHaveBeenCalledTimes(3);
   });
 
@@ -82,6 +146,22 @@ describe("ScopeRouter", () => {
         "此前一直在讨论 Coremail 邮件系统、网关、迁移和部署。",
       ),
     ).resolves.toBe("normal");
+    expect(completeJson).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "目前客户信息不足，这种情况下我们的赢率如何？",
+    "客户只说先测一测，怎样判断是真机会还是陪标？",
+    "接触不到决策人，怎样建立决策链并找到内部支持者？",
+    "客户在 POC 中不断要求免费增加非标项，售前怎样控制范围？",
+  ])("routes a product-neutral opportunity question to general: %s", async (question) => {
+    const completeJson = vi.fn();
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    await expect(new ScopeRouter(model).route(
+      question,
+      "此前讨论过 Coremail 技术方案。",
+    )).resolves.toBe("general");
     expect(completeJson).not.toHaveBeenCalled();
   });
 

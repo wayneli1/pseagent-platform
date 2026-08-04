@@ -16,6 +16,8 @@ import type { ModelClient, ModelMessage } from "./model-client.js";
 import { NOT_COVERED_TEXT } from "./response.js";
 import {
   isUnambiguouslyGeneralPresalesQuestion,
+  isUnambiguouslyNormalQuestion,
+  isUnambiguouslyProfessionalQuestion,
   ScopeRouter,
 } from "./router.js";
 
@@ -349,7 +351,11 @@ describe("fixed 41-question scripted protocol regression", () => {
     const routed = await new ScopeRouter(routeModel).route(testCase.question);
     expect(routed).toBe(testCase.expectedScope);
     expect(routeModel.completeJson).toHaveBeenCalledTimes(
-      isUnambiguouslyGeneralPresalesQuestion(testCase.question) ? 0 : 1,
+      isUnambiguouslyGeneralPresalesQuestion(testCase.question) ||
+          isUnambiguouslyNormalQuestion(testCase.question) ||
+          isUnambiguouslyProfessionalQuestion(testCase.question)
+        ? 0
+        : 1,
     );
 
     const evidence = testCase.expectedScope !== "normal" && (

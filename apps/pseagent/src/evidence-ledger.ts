@@ -9,7 +9,11 @@ import {
 import type { DomainRequirementBinding } from "./domain-plan.js";
 import type { ProjectKey } from "./knowledge-session.js";
 
-export type EvidenceQueryStatus = "success" | "empty" | "unavailable";
+export type EvidenceQueryStatus =
+  | "success"
+  | "empty"
+  | "unavailable"
+  | "not_applicable";
 export type EvidenceGraphStatus = "success" | "empty" | "unavailable";
 export type EvidenceCandidateSource = "seed" | "supplemental" | "graph";
 export type EvidenceReadStatus = "success" | "access_denied" | "unavailable";
@@ -249,7 +253,8 @@ export function finalizeEvidenceLedger(input: {
       ) ||
       (
         draft.verification.coverage === "partial" &&
-        draft.verification.missingAspectIds.length === 0
+        draft.verification.missingAspectIds.length === 0 &&
+        !draft.claims.some((claim) => claim.status === "removed")
       )
     ) {
       throw new EvidenceLedgerValidationError("verification_aspect_partition_invalid");
@@ -260,7 +265,9 @@ export function finalizeEvidenceLedger(input: {
       if (
         !query.query.trim() ||
         !["seed", "supplemental"].includes(query.phase) ||
-        !["success", "empty", "unavailable"].includes(query.status)
+        !["success", "empty", "unavailable", "not_applicable"].includes(
+          query.status,
+        )
       ) {
         throw new EvidenceLedgerValidationError("empty_query_record");
       }

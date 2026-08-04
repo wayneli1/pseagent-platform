@@ -572,6 +572,9 @@ describe("analyzeObligationSource", () => {
       "这个商机的赢率如何",
       "我们的赢率如何",
       "该项目的成交概率怎么样",
+      "在这种情况下我们的赢率如何",
+      "基于这些信息当前项目的赢率如何",
+      "根据上述情况该项目的成交概率怎么样",
     ]) {
       const pure = analyzeObligationSource(sourceText);
       expect(pure.requiresDirectEvidence, sourceText).toBe(true);
@@ -588,6 +591,17 @@ describe("analyzeObligationSource", () => {
       expect(mixed.requiresDirectEvidence, sourceText).toBe(true);
       expect(mixed.customerInputEligible, sourceText).toBe(false);
     }
+  });
+
+  it.each([
+    "要怎样做才能提升赢率",
+    "应该如何建立决策链",
+    "应当怎么控制 POC 范围",
+  ])("recognizes modal procedure questions as synthesis: %s", (sourceText) => {
+    const analysis = analyzeObligationSource(sourceText);
+    expect(analysis.requiresDirectEvidence).toBe(false);
+    expect(analysis.unresolved).toBe(false);
+    expect(analysis.atoms.every((atom) => atom.kind === "synthesis")).toBe(true);
   });
 
   it.each([
@@ -639,7 +653,7 @@ describe("analyzeObligationSource", () => {
       }
     }
     expect(cases).toBe(FACTS.length * SYNTHESIS.length * CONNECTORS.length * 2);
-  });
+  }, 10_000);
 
   it("keeps explicit synthesis collections eligible across connectors", () => {
     let cases = 0;

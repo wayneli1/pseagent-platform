@@ -598,7 +598,69 @@ describe("ModelKnowledgePlanner", () => {
     expect(completeJson).toHaveBeenCalledTimes(2);
   });
 
-  it("makes two repair attempts before rejecting invalid payloads", async () => {
+  it("normalizes bounded provider aliases into the strict knowledge plan contract", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      topic: "POC 范围控制",
+      ignoredProviderField: "不会进入内部合同",
+      items: [{
+        name: "控制非标准需求范围",
+        mode: "recommendation",
+        aspects: [{
+          name: "范围与客户价值",
+          keywords: ["范围", "价值", "范围"],
+        }],
+        searchQueries: [{
+          query: "POC 非标准需求 范围 价值",
+          aspects: ["A1"],
+        }],
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan(plannerInput());
+
+    expect(result).toEqual({
+      subject: "POC 范围控制",
+      requirements: [{
+        id: "R1",
+        question: "控制非标准需求范围",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [{
+          id: "A1",
+          label: "范围与客户价值",
+          terms: ["范围", "价值"],
+        }],
+        queries: [{
+          text: "POC 非标准需求 范围 价值",
+          aspectIds: ["A1"],
+        }],
+      }],
+    });
+    expect(completeJson).toHaveBeenCalledOnce();
+  });
+
+  it("repairs a payload that fails deterministic post-normalization", async () => {
+    const completeJson = vi.fn()
+      .mockResolvedValueOnce({ subject: "空规划", requirements: [] } as never)
+      .mockImplementationOnce(async (input: Parameters<ModelClient["completeJson"]>[0]) => {
+        expect(input.messages.at(-1)?.content).toContain("只重新输出合法规划 JSON");
+        return input.schema.parse(compositePlan);
+      });
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    await expect(planner.plan(plannerInput())).resolves.toEqual(compositePlan);
+    expect(completeJson).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to a deterministic bounded plan after two repair attempts", async () => {
     const completeJson = vi.fn(async () => {
       throw new InvalidModelPayloadError();
     });
@@ -607,7 +669,15 @@ describe("ModelKnowledgePlanner", () => {
       completeText: vi.fn(),
     } as unknown as ModelClient);
 
-    await expect(planner.plan(plannerInput())).rejects.toBeInstanceOf(InvalidModelPayloadError);
+    await expect(planner.plan(plannerInput())).resolves.toMatchObject({
+      subject: plannerInput().question,
+      requirements: [{
+        id: "R1",
+        question: plannerInput().question,
+        evidenceAspects: [{ id: "A1" }],
+        queries: [{ aspectIds: ["A1"] }],
+      }],
+    });
     expect(completeJson).toHaveBeenCalledTimes(3);
   });
 });

@@ -4,11 +4,11 @@ import type {
   HistoricalRejectionReason,
   Scope,
 } from "./contracts.js";
+import { knowledgePlanSchema, type KnowledgePlan } from "./contracts.js";
 import { normalAnswerMessages } from "./prompts.js";
 import type { ScopeRouter } from "./router.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
-import type { KnowledgePlan } from "./contracts.js";
 import type { KnowledgePlanner } from "./knowledge-planner.js";
 import {
   NOOP_DIAGNOSTIC_TRACE,
@@ -43,7 +43,11 @@ import {
   type MergedDomainAnswer,
 } from "./domain-answer-merge.js";
 import { formatKnowledgeFinal } from "./response.js";
-import type { KnowledgeDomain } from "./task-spec.js";
+import {
+  extractExplicitQuestionSignals,
+  type KnowledgeDomain,
+} from "./task-spec.js";
+import { analyzeObligationSource } from "./obligation-semantics.js";
 import type {
   EvidenceLedger,
   RequirementEvidenceCondition,
@@ -183,39 +187,28 @@ export class AnswerService {
       }
       const knowledgeScope = scope;
       const session = await this.dependencies.knowledge.open(knowledgeScope, requestSignal);
-      const plan = await observeModelCall({
-        trace,
-        role: "planner",
-        operation: "plan",
-        signal: requestSignal,
-        call: () => this.dependencies.planner.plan({
-          scope: knowledgeScope,
-          question,
-          purpose: session.purpose,
-          schema: session.schema,
-          planningOverview: session.planningOverview,
-          ...(conversationContext === undefined ? {} : { conversationContext }),
+      const loadLegacyPlan = async (): Promise<KnowledgePlan> => {
+        const legacyPlan = await observeModelCall({
+          trace,
+          role: "planner",
+          operation: "plan",
           signal: requestSignal,
-        }),
-      });
-      recordDiagnostic(trace, {
-        event: "plan",
-        requirementCount: plan.requirements.length,
-        aspectCount: plan.requirements.reduce(
-          (count, requirement) => count + requirement.evidenceAspects.length,
-          0,
-        ),
-        queryCount: plan.requirements.reduce(
-          (count, requirement) => count + requirement.queries.length,
-          0,
-        ),
-        directOnlyCount: plan.requirements.filter(
-          (requirement) => requirement.evidenceMode === "direct_only",
-        ).length,
-        synthesisAllowedCount: plan.requirements.filter(
-          (requirement) => requirement.evidenceMode === "synthesis_allowed",
-        ).length,
-      });
+          call: () => this.dependencies.planner.plan({
+            scope: knowledgeScope,
+            question,
+            purpose: session.purpose,
+            schema: session.schema,
+            planningOverview: session.planningOverview,
+            ...(conversationContext === undefined ? {} : { conversationContext }),
+            signal: requestSignal,
+          }),
+        });
+        recordPlanDiagnostics(trace, legacyPlan);
+        return legacyPlan;
+      };
+      const taskSpecActive = this.dependencies.taskSpecActiveEnabled === true &&
+        this.dependencies.taskAnalysisShadow !== undefined;
+      let legacyPlan = taskSpecActive ? undefined : await loadLegacyPlan();
       const taskAnalysis = await observeTaskAnalysisShadow({
         ...(this.dependencies.taskAnalysisShadow === undefined
           ? {}
@@ -223,7 +216,7 @@ export class AnswerService {
         question,
         ...(conversationContext === undefined ? {} : { conversationContext }),
         scope,
-        legacyPlan: plan,
+        ...(legacyPlan === undefined ? {} : { legacyPlan }),
         knowledgeContext: {
           purpose: session.purpose,
           schema: session.schema,
@@ -234,7 +227,7 @@ export class AnswerService {
         timeoutMs: this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
       });
       let effectiveQuestion = question;
-      let effectivePlan = plan;
+      let effectivePlan = legacyPlan;
       let effectiveConversationContext = conversationContext;
       let effectiveEvidenceConditions: readonly RequirementEvidenceCondition[] | undefined;
       if (taskAnalysis !== undefined) {
@@ -324,6 +317,21 @@ export class AnswerService {
           reason: "analysis_unavailable",
           requirementCount: 0,
         });
+      }
+      if (effectivePlan === undefined) {
+        legacyPlan = await loadLegacyPlan();
+        effectivePlan = legacyPlan;
+      }
+      if (effectiveEvidenceConditions === undefined) {
+        const fallbackForecast = deriveMissingForecastPlan(
+          effectiveQuestion,
+          effectivePlan,
+          effectiveConversationContext,
+        );
+        if (fallbackForecast !== undefined) {
+          effectivePlan = fallbackForecast.plan;
+          effectiveEvidenceConditions = fallbackForecast.conditions;
+        }
       }
       const input = {
         scope,
@@ -593,6 +601,7 @@ export class AnswerService {
       merged.action,
       merged.references,
       {
+        question: input.question,
         ...(merged.domainEvidenceLedgers === undefined
           ? {}
           : { evidenceLedgers: merged.domainEvidenceLedgers }),
@@ -714,6 +723,103 @@ export class AnswerService {
   }
 }
 
+function deriveMissingForecastPlan(
+  question: string,
+  plan: KnowledgePlan,
+  conversationContext?: string,
+): {
+  readonly plan: KnowledgePlan;
+  readonly conditions: readonly RequirementEvidenceCondition[];
+} | undefined {
+  const contextualQuestion = conversationContext === undefined
+    ? question
+    : `${conversationContext}\n${question}`;
+  const hasExplicitMissingCustomerFacts =
+    /(?:获取不到|无法获取|拿不到|缺少|没有|信息不足|信息不全|不清楚|未知|尚未确认|未确认).{0,20}(?:客户|信息|事实|证据)/u.test(contextualQuestion) ||
+    /(?:客户|信息|事实|证据).{0,20}(?:获取不到|无法获取|拿不到|缺少|没有|不足|不全|不清楚|未知|尚未确认|未确认)/u.test(contextualQuestion);
+  if (!hasExplicitMissingCustomerFacts) return undefined;
+
+  const forecastClauses = extractExplicitQuestionSignals(question)
+    .requestClauses.filter((clause) =>
+      analyzeObligationSource(clause).customerInputEligible ||
+      (
+        /(?:当前|本次|这个|该|我们|我方).{0,8}(?:赢率|胜率|成交概率|成功概率|机会质量|销售预测)/u.test(
+          clause,
+        ) &&
+        !/(?:提升|提高|改善|优化|方法|建议|措施|怎样做|怎么做|如何做)/u.test(clause)
+      ));
+  if (
+    forecastClauses.length === 0 &&
+    /(?:报|给|估|评估|预测|判断).{0,12}(?:百分比|概率|几成|成数)|(?:应该|应当|该|需要).{0,8}报多少/u.test(
+      question,
+    ) &&
+    /(?:销售|商机|机会|项目|赢率|胜率|成交|POC)/iu.test(
+      `${contextualQuestion} ${plan.subject}`,
+    )
+  ) {
+    forecastClauses.push(question);
+  }
+  if (forecastClauses.length === 0) return undefined;
+
+  const forecastRequirements = plan.requirements.filter((requirement) => {
+    if (analyzeObligationSource(requirement.question).customerInputEligible) {
+      return true;
+    }
+    return /(?:赢率|胜率|成交概率|成功概率|机会质量|销售预测)/u.test(
+      requirement.question,
+    ) &&
+      !/(?:提升|提高|改善|优化|方法|建议|措施|清单|行动|下一步|怎样做|怎么做|如何做)/u.test(
+        requirement.question,
+      );
+  });
+  if (forecastRequirements.length > 0) {
+    return {
+      plan,
+      conditions: forecastRequirements.map((requirement) => ({
+        requirementId: requirement.id,
+        inputState: "missing",
+        ambiguous: false,
+        conflictDetected: false,
+        freshness: "not_assessed",
+      })),
+    };
+  }
+  if (plan.requirements.length >= 6) return undefined;
+
+  const forecastClause = forecastClauses[0]!;
+  const augmentedPlan = knowledgePlanSchema.parse({
+    ...plan,
+    subject: plan.subject,
+    requirements: [
+      {
+        id: "R1",
+        question: forecastClause,
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [{
+          id: "A1",
+          label: forecastClause,
+          terms: [forecastClause],
+        }],
+        queries: [{ text: forecastClause, aspectIds: ["A1"] }],
+      },
+      ...plan.requirements.map((requirement, index) => ({
+        ...requirement,
+        id: `R${index + 2}`,
+      })),
+    ],
+  });
+  return {
+    plan: augmentedPlan,
+    conditions: [{
+      requirementId: "R1",
+      inputState: "missing",
+      ambiguous: false,
+      conflictDetected: false,
+      freshness: "not_assessed",
+    }],
+  };
+}
+
 type DomainExecutionFailureCode =
   | "runner_missing"
   | "active_deadline_elapsed"
@@ -769,7 +875,7 @@ async function observeTaskAnalysisShadow(input: {
   readonly question: string;
   readonly conversationContext?: string;
   readonly scope: Exclude<Scope, "normal">;
-  readonly legacyPlan: KnowledgePlan;
+  readonly legacyPlan?: KnowledgePlan;
   readonly knowledgeContext: {
     readonly purpose: string;
     readonly schema: string;
@@ -790,7 +896,7 @@ async function observeTaskAnalysisShadow(input: {
         ? {}
         : { conversationContext: input.conversationContext }),
       scope: input.scope,
-      legacyPlan: input.legacyPlan,
+      ...(input.legacyPlan === undefined ? {} : { legacyPlan: input.legacyPlan }),
       knowledgeContext: input.knowledgeContext,
       signal,
       trace: input.trace,
@@ -845,6 +951,30 @@ async function observeTaskAnalysisShadow(input: {
     });
     return undefined;
   }
+}
+
+function recordPlanDiagnostics(
+  trace: DiagnosticTrace,
+  plan: KnowledgePlan,
+): void {
+  recordDiagnostic(trace, {
+    event: "plan",
+    requirementCount: plan.requirements.length,
+    aspectCount: plan.requirements.reduce(
+      (count, requirement) => count + requirement.evidenceAspects.length,
+      0,
+    ),
+    queryCount: plan.requirements.reduce(
+      (count, requirement) => count + requirement.queries.length,
+      0,
+    ),
+    directOnlyCount: plan.requirements.filter(
+      (requirement) => requirement.evidenceMode === "direct_only",
+    ).length,
+    synthesisAllowedCount: plan.requirements.filter(
+      (requirement) => requirement.evidenceMode === "synthesis_allowed",
+    ).length,
+  });
 }
 
 function stableUniqueIssueCodes<T extends string>(values: readonly T[]): T[] {

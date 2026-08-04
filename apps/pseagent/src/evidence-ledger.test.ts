@@ -401,6 +401,37 @@ describe("finalizeEvidenceLedger", () => {
     });
   });
 
+  it("accepts partial coverage with all aspects covered when an unsupported claim was removed", () => {
+    const ledger = finalizeEvidenceLedger({
+      project: "coremail-professional",
+      revision,
+      units: [unit({
+        claims: [
+          ...unit().claims,
+          {
+            claimIndex: 1,
+            status: "removed",
+            citations: [],
+            coveredAspectIds: [],
+          },
+        ],
+        verification: {
+          coverage: "partial",
+          reason: "partial_support",
+          coveredAspectIds: ["A1"],
+          missingAspectIds: [],
+        },
+      })],
+    });
+
+    expect(ledger.units[0]?.verification).toMatchObject({
+      coverage: "partial",
+      coveredAspectIds: ["A1"],
+      missingAspectIds: [],
+    });
+    expect(ledger.units[0]?.claims).toHaveLength(2);
+  });
+
   it.each([
     {
       name: "a graph source outside candidates",

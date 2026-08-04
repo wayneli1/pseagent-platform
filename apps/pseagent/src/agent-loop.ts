@@ -15,6 +15,7 @@ import type {
   ProjectKey,
 } from "./knowledge-session.js";
 import {
+  InvalidCoverageVerificationError,
   notCoveredRequirementAnswer,
   verifyKnowledgeCoverage,
   type CoverageEvidenceDocument,
@@ -28,7 +29,10 @@ import {
   type ModelClient,
 } from "./model-client.js";
 import { knowledgeAgentMessages } from "./prompts.js";
-import { ReferenceRegistry } from "./references.js";
+import {
+  normalizeTrailingCitationPlacement,
+  ReferenceRegistry,
+} from "./references.js";
 import { formatKnowledgeFinal, unavailableResult } from "./response.js";
 import {
   recordDiagnostic,
@@ -57,6 +61,7 @@ export const SYNTHESIS_ALLOWED_READ_LIMIT = 6;
 export const MAX_BATCH_READS_PER_REQUIREMENT = 2;
 export const MAX_GRAPH_ACTIONS_PER_REQUIREMENT = 1;
 export const MAX_AGENT_TURNS_PER_REQUIREMENT = 7;
+const MAX_CITATION_REPAIR_ATTEMPTS = 2;
 const RRF_K = 60;
 const SEED_TOP_K = 10;
 const SYNTHESIS_SEED_TOP_K_LIMIT = 20;
@@ -148,6 +153,7 @@ type RequirementState = {
   noGainRounds: number;
   searchStopped: boolean;
   searchBudgetExhausted: boolean;
+  evidenceReviewExhausted: boolean;
   toolUnavailableCount: number;
   accessDeniedCount: number;
 };
@@ -184,6 +190,7 @@ export async function runKnowledgeAgent(
   return detailed.outcome === "unavailable"
     ? detailed.result
     : formatKnowledgeFinal(input.scope, detailed.action, detailed.references, {
+        question: input.question,
         ...(detailed.evidenceLedger === undefined
           ? {}
           : { evidenceLedgers: [detailed.evidenceLedger] }),
@@ -207,7 +214,11 @@ async function runKnowledgeAgentCore(
 ): Promise<AnswerResult | Extract<KnowledgeAgentDetailedResult, { outcome: "verified" }>> {
   const state = createAgentState(input);
   await executeSeedSearches(input, state);
-  if (state.successfulSeedSearches === 0) {
+  const hasRetrievalRequirement = [...state.requirements.keys()].some(
+    (requirementId) =>
+      state.evidenceConditions.get(requirementId)?.inputState !== "missing",
+  );
+  if (hasRetrievalRequirement && state.successfulSeedSearches === 0) {
     if (input.plan.retrievalStrategy === "coverage_units") {
       recordDiagnostic(input.trace, {
         event: "coverage_unit_seed_snapshot",
@@ -227,13 +238,15 @@ async function runKnowledgeAgentCore(
     await preloadBroadSynthesisEvidence(input, state);
   }
 
-  const maxTurns = Math.min(
+  const actionTurnBudget = Math.min(
     40,
     2 + input.plan.requirements.length * MAX_AGENT_TURNS_PER_REQUIREMENT,
   );
+  const maxTurns = actionTurnBudget + 2;
   for (let turn = 1; turn <= maxTurns; turn += 1) {
     if (deadlineReached(input)) state.forceFinal = true;
-    const finalOnly = state.forceFinal || turn === maxTurns || !hasAvailableToolAction(state);
+    const finalOnly = state.forceFinal || turn > actionTurnBudget ||
+      !hasAvailableToolAction(state);
     let action;
     try {
       action = await requestAgentAction(input, state, turn, maxTurns, finalOnly);
@@ -274,7 +287,7 @@ async function runKnowledgeAgentCore(
     }
 
     if (action.action === "final") {
-      const normalizedAction = enforceMissingInputConditions(
+      let normalizedAction = enforceMissingInputConditions(
         dropUnsupportedRelatedContext(
           normalizeFinalCitationMetadata(action, input.plan),
           state,
@@ -283,6 +296,11 @@ async function runKnowledgeAgentCore(
         state.evidenceConditions,
       );
       shareFinalAnswerEvidence(input, state, normalizedAction);
+      normalizedAction = dropUnsupportedRequirementCitationSegments(
+        normalizedAction,
+        input.plan,
+        state,
+      );
       const directAnswerRepairs = pendingDirectAnswerRepairs(
         normalizedAction,
         state,
@@ -312,41 +330,39 @@ async function runKnowledgeAgentCore(
         });
         const forcedRead = recoveryReadAction(state, pendingReviews);
         if (forcedRead === undefined) {
-          recordDiagnostic(input.trace, {
-            event: "stop",
-            reason: "evidence_review_unavailable",
-          });
-          return unavailableResult(input.scope);
+          normalizedAction = closeEvidenceReviewAtRetrievalBoundary(
+            normalizedAction,
+            pendingReviews,
+            state,
+          );
+        } else {
+          const readsBefore = directReadCount(state, pendingReviews);
+          try {
+            await executeToolAction(forcedRead, input, state);
+          } catch {
+            // A failed forced review is represented as a retrieval gap below.
+          }
+          const readsAfter = directReadCount(state, pendingReviews);
+          if (readsAfter <= readsBefore) {
+            normalizedAction = closeEvidenceReviewAtRetrievalBoundary(
+              normalizedAction,
+              pendingReviews,
+              state,
+            );
+          } else {
+            state.forceFinal = true;
+            observe(state, {
+              type: "coverage_gate_forced_read",
+              pages: forcedRead.input.pages,
+            });
+            if (turn < maxTurns) continue;
+            recordDiagnostic(input.trace, {
+              event: "stop",
+              reason: "turn_budget_exhausted",
+            });
+            return unavailableResult(input.scope);
+          }
         }
-        const readsBefore = directReadCount(state, pendingReviews);
-        try {
-          await executeToolAction(forcedRead, input, state);
-        } catch {
-          recordDiagnostic(input.trace, {
-            event: "stop",
-            reason: "evidence_review_unavailable",
-          });
-          return unavailableResult(input.scope);
-        }
-        const readsAfter = directReadCount(state, pendingReviews);
-        if (readsAfter <= readsBefore) {
-          recordDiagnostic(input.trace, {
-            event: "stop",
-            reason: "evidence_review_unavailable",
-          });
-          return unavailableResult(input.scope);
-        }
-        state.forceFinal = true;
-        observe(state, {
-          type: "coverage_gate_forced_read",
-          pages: forcedRead.input.pages,
-        });
-        if (turn < maxTurns) continue;
-        recordDiagnostic(input.trace, {
-          event: "stop",
-          reason: "turn_budget_exhausted",
-        });
-        return unavailableResult(input.scope);
       }
       const validation = state.references.validateFinal(
         normalizedAction,
@@ -360,7 +376,10 @@ async function runKnowledgeAgentCore(
           reason: validation.reason,
           repairAttempt: state.citationRepairAttempts + 1,
         });
-        if (state.citationRepairAttempts === 0 && turn < maxTurns) {
+        if (
+          state.citationRepairAttempts < MAX_CITATION_REPAIR_ATTEMPTS &&
+          turn < maxTurns
+        ) {
           state.citationRepairAttempts += 1;
           state.forceFinal = true;
           observe(state, { type: "invalid_citations", reason: validation.reason });
@@ -406,10 +425,32 @@ async function runKnowledgeAgentCore(
             onReport(report) {
               verificationReport = report;
             },
+            onInvalid(invalid) {
+              recordDiagnostic(input.trace, {
+                event: "model_payload",
+                result: "rejected",
+                reason: invalid.reason,
+                repairAttempt: invalid.attempt,
+                ...(invalid.rawPayloadLength === undefined
+                  ? {}
+                  : { rawPayloadLength: invalid.rawPayloadLength }),
+                ...(invalid.finishReason === undefined
+                  ? {}
+                  : { finishReason: invalid.finishReason }),
+              });
+            },
           }),
         });
       } catch (error) {
         if (!(error instanceof ModelUnavailableError)) {
+          if (error instanceof InvalidCoverageVerificationError) {
+            recordDiagnostic(input.trace, {
+              event: "model_payload",
+              result: "rejected",
+              reason: error.code,
+              repairAttempt: 3,
+            });
+          }
           return fallbackUnavailable(input, "coverage_verifier_invalid");
         }
         recordDiagnostic(input.trace, {
@@ -445,8 +486,30 @@ async function runKnowledgeAgentCore(
           verificationReport,
         );
         coverageGaps = analyzeCoverageGaps(evidenceLedger);
-      } catch {
-        return fallbackUnavailable(input, "invalid_final");
+      } catch (error) {
+        recordDiagnostic(input.trace, {
+          event: "validation",
+          result: "rejected",
+          reason: `evidence_metadata_invalid:${
+            error instanceof Error ? error.message : "unexpected_error"
+          }`,
+          repairAttempt: 1,
+        });
+        recordCoverage(
+          input,
+          state,
+          auditedAction,
+          "verified",
+          "final",
+          verificationSummaries ?? verificationReport.summaries,
+        );
+        return {
+          outcome: "verified",
+          project: input.session.project,
+          revision: input.session.revision,
+          action: auditedAction,
+          references: state.references.resolve(auditedAction.citations),
+        };
       }
       recordCoverage(
         input,
@@ -677,6 +740,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
         noGainRounds: 0,
         searchStopped: false,
         searchBudgetExhausted: false,
+        evidenceReviewExhausted: false,
         toolUnavailableCount: 0,
         accessDeniedCount: 0,
       },
@@ -716,6 +780,13 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
   const expandedByRequirement = new Map<string, readonly ExpandedSeedQuery[]>();
   const physicalQueries = new Map<string, PhysicalSeedQuery>();
   for (const requirementState of state.requirements.values()) {
+    if (
+      state.evidenceConditions.get(requirementState.requirement.id)?.inputState ===
+        "missing"
+    ) {
+      expandedByRequirement.set(requirementState.requirement.id, []);
+      continue;
+    }
     const seedQueries = expandSeedQueries(requirementState.requirement);
     expandedByRequirement.set(requirementState.requirement.id, seedQueries);
     const topK = seedTopKFor(requirementState.requirement);
@@ -784,6 +855,24 @@ async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState
   }));
 
   for (const requirementState of state.requirements.values()) {
+    if (
+      state.evidenceConditions.get(requirementState.requirement.id)?.inputState ===
+        "missing"
+    ) {
+      requirementState.searchStopped = true;
+      requirementState.noGainRounds = 1;
+      requirementState.queryRecords.push(
+        ...requirementState.requirement.queries.map((query, plannedQueryIndex) => ({
+          phase: "seed" as const,
+          query: query.text,
+          aspectIds: [...query.aspectIds],
+          status: "not_applicable" as const,
+          plannedQueryIndexes: [plannedQueryIndex],
+        })),
+      );
+      observeCandidates(state, requirementState, "seed_search_result", input.trace);
+      continue;
+    }
     let gained = false;
     const seedQueries = expandedByRequirement.get(
       requirementState.requirement.id,
@@ -1509,6 +1598,7 @@ function shareReadEvidence(
     const targetCandidate = requirementState.candidatePaths.get(path);
     if (
       toRequirementId === fromRequirementId ||
+      state.evidenceConditions.get(toRequirementId)?.inputState === "missing" ||
       !targetCandidate?.requirementSpecificMatch ||
       requirementState.readPaths.has(path)
     ) {
@@ -1587,6 +1677,9 @@ function shareFinalAnswerEvidence(
   action: FinalAction,
 ): void {
   for (const requirement of action.requirements) {
+    if (state.evidenceConditions.get(requirement.id)?.inputState === "missing") {
+      continue;
+    }
     const targetState = state.requirements.get(requirement.id);
     const targetDocuments = state.evidenceDocuments.get(requirement.id);
     if (targetState === undefined || targetDocuments === undefined) continue;
@@ -1606,9 +1699,15 @@ function shareFinalAnswerEvidence(
       ) {
         continue;
       }
+      const targetCandidate = targetState.candidatePaths.get(document.path);
+      const semanticAspectIds = matchingAspectIds(
+        targetState.requirement,
+        `${document.title}\n${document.content}`,
+      );
       if (
         input.plan.retrievalStrategy === "coverage_units" &&
-        !targetState.candidatePaths.get(document.path)?.requirementSpecificMatch
+        !targetCandidate?.requirementSpecificMatch &&
+        semanticAspectIds.length === 0
       ) {
         continue;
       }
@@ -1619,17 +1718,18 @@ function shareFinalAnswerEvidence(
         citation,
         false,
       );
-      for (
-        const aspectId of
-          targetState.candidatePaths.get(document.path)?.aspectIds ?? []
-      ) {
+      const resolvedAspectIds = [
+        ...new Set([
+          ...(targetCandidate?.aspectIds ?? []),
+          ...semanticAspectIds,
+        ]),
+      ];
+      for (const aspectId of resolvedAspectIds) {
         targetState.readAspectIds.add(aspectId);
       }
       targetDocuments.set(citation, {
         ...document,
-        aspectIds: [
-          ...(targetState.candidatePaths.get(document.path)?.aspectIds ?? []),
-        ],
+        aspectIds: resolvedAspectIds,
       });
       observe(state, {
         type: "evidence_shared",
@@ -2080,9 +2180,12 @@ function buildEvidenceLedger(
                 MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT
             ),
           readBudgetExhausted:
-            result.coverage !== "complete" &&
-            hasUnreadReviewCandidate &&
-            !hasRemainingReadCapacity(requirementState),
+            requirementState.evidenceReviewExhausted ||
+            (
+              result.coverage !== "complete" &&
+              hasUnreadReviewCandidate &&
+              !hasRemainingReadCapacity(requirementState)
+            ),
           toolUnavailableCount: requirementState.toolUnavailableCount,
           accessDeniedCount: requirementState.accessDeniedCount,
         },
@@ -2359,6 +2462,93 @@ function dropUnsupportedRelatedContext(
   };
 }
 
+function dropUnsupportedRequirementCitationSegments(
+  action: FinalAction,
+  plan: KnowledgePlan,
+  state: AgentState,
+): FinalAction {
+  const questionById = new Map(
+    plan.requirements.map((requirement) => [requirement.id, requirement.question] as const),
+  );
+  const globallyReadCitations = new Set(
+    [...state.requirements.values()].flatMap((requirementState) =>
+      [...requirementState.citationIndexes]),
+  );
+  const requirements = action.requirements.map((requirement) => {
+    if (requirement.coverage === "none") return requirement;
+    const allowedCitations = state.requirements.get(requirement.id)?.citationIndexes ??
+      new Set<number>();
+    const pieces = normalizeTrailingCitationPlacement(requirement.answer)
+      .split(/\r?\n+/u)
+      .flatMap((line) =>
+        line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [])
+      .map((piece) => piece.trim())
+      .filter(Boolean);
+    const retainedSegments: string[] = [];
+    const pendingHeadings: string[] = [];
+    let removedSegment = false;
+
+    for (const piece of pieces) {
+      if (isPureStructuralAnswerHeading(piece)) {
+        pendingHeadings.push(piece);
+        continue;
+      }
+      const materialized = pendingHeadings.length === 0
+        ? piece
+        : `${pendingHeadings.join("\n")}\n${piece}`;
+      pendingHeadings.length = 0;
+      const citations = stableUniqueNumbers(
+        [...materialized.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+      );
+      const unsupportedCitations = citations.filter(
+        (citation) => !allowedCitations.has(citation),
+      );
+      if (
+        unsupportedCitations.length > 0 &&
+        unsupportedCitations.every((citation) => globallyReadCitations.has(citation))
+      ) {
+        removedSegment = true;
+        continue;
+      }
+      retainedSegments.push(materialized);
+    }
+
+    if (!removedSegment) return requirement;
+    if (retainedSegments.length === 0) {
+      return {
+        ...requirement,
+        coverage: "none" as const,
+        answer: notCoveredRequirementAnswer(
+          questionById.get(requirement.id) ?? "当前问题",
+        ),
+        citations: [],
+      };
+    }
+    const answer = retainedSegments.join("\n");
+    return {
+      ...requirement,
+      coverage: requirement.coverage === "complete" ? "partial" as const : requirement.coverage,
+      answer,
+      citations: stableUniqueNumbers(
+        [...answer.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+      ),
+    };
+  });
+
+  return {
+    ...action,
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap((requirement) => requirementEvidenceCitations(requirement)),
+    ),
+  };
+}
+
+function isPureStructuralAnswerHeading(text: string): boolean {
+  return /^(?:#{1,6}\s+\S[^\n]*|\*\*[^*\n]+\*\*[:：]?)$/u.test(text) &&
+    !/\[\d+\]/u.test(text);
+}
+
 function enforceMissingInputConditions(
   action: FinalAction,
   plan: KnowledgePlan,
@@ -2458,6 +2648,36 @@ function directReadCount(
       (state.requirements.get(requirementId)?.directReadPaths.size ?? 0),
     0,
   );
+}
+
+function closeEvidenceReviewAtRetrievalBoundary(
+  action: FinalAction,
+  requirementIds: readonly string[],
+  state: AgentState,
+): FinalAction {
+  const pending = new Set(requirementIds);
+  const requirements = action.requirements.map((requirement) => {
+    if (!pending.has(requirement.id)) return requirement;
+    const requirementState = state.requirements.get(requirement.id);
+    if (requirementState !== undefined) {
+      requirementState.evidenceReviewExhausted = true;
+    }
+    return requirement.coverage === "complete"
+      ? { ...requirement, coverage: "partial" as const }
+      : requirement;
+  });
+  observe(state, {
+    type: "coverage_gate_closed_at_retrieval_boundary",
+    requirements: [...requirementIds],
+  });
+  return {
+    action: "final",
+    requirements,
+    citations: stableUniqueNumbers(requirements.flatMap((requirement) => [
+      ...requirement.citations,
+      ...(requirement.relatedContext ?? []).flatMap((item) => item.citations),
+    ])),
+  };
 }
 
 const DIRECT_COMPARISON_QUESTION_PATTERN =

@@ -380,6 +380,50 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
     expect(primaryQuery).not.toMatch(/工行|比亚迪/u);
   });
 
+  it("keeps the traceable question when a provider omits target bindings", () => {
+    const question = "Coremail 是否已经支持 2035 年量子卫星邮件协议？";
+    const spec = taskSpec();
+    spec.subject = "Coremail 协议支持";
+    spec.entities = [{
+      id: "E1",
+      label: "Coremail",
+      role: "subject",
+      sourceText: question,
+    }];
+    spec.deliverables = [{
+      id: "D1",
+      label: "确认协议支持",
+      kind: "fact",
+      required: true,
+      sourceText: question,
+      obligations: [{
+        id: "O1",
+        label: "确认协议支持",
+        targetEntityIds: [],
+        evidencePolicy: "direct",
+        domains: ["coremail-professional"],
+        required: true,
+        sourceText: question,
+      }],
+    }];
+
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: {
+        ...resolvedQuestion,
+        rawQuestion: question,
+        standaloneQuestion: question,
+      },
+      taskSpec: spec,
+      guardResult: passingGuard,
+    });
+
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+    expect(result.plan.requirements[0]?.question).toContain("量子卫星邮件协议");
+    expect(result.plan.requirements[0]?.queries[0]?.text).toContain("Coremail");
+  });
+
   it("refuses more than six applicable obligations without truncating", () => {
     const spec = taskSpec();
     spec.deliverables[0]!.obligations = Array.from({ length: 7 }, (_, index) => ({

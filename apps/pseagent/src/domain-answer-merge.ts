@@ -233,9 +233,6 @@ function mergeEvidenceMetadata(input: {
 
 function allOrNoneMetadata<T>(values: readonly (T | undefined)[]): boolean {
   const count = values.filter((value) => value !== undefined).length;
-  if (count !== 0 && count !== values.length) {
-    throw new DomainAnswerMergeError("evidence_metadata_mismatch");
-  }
   return count === values.length && values.length > 0;
 }
 
@@ -437,18 +434,21 @@ function validateLocalDomain(
   }
 
   const referenceByIndex = new Map<number, Reference>();
-  for (const [index, reference] of result.references.entries()) {
+  for (const reference of result.references) {
     if (
       !referenceSchema.safeParse(reference).success ||
-      reference.index !== index + 1 ||
       reference.project !== result.project ||
-      reference.revision !== result.revision
+      reference.revision !== result.revision ||
+      referenceByIndex.has(reference.index)
     ) {
       throw new DomainAnswerMergeError("snapshot_mismatch");
     }
     referenceByIndex.set(reference.index, reference);
   }
   validateLocalCitations(result.action, referenceByIndex);
+  if (!sameNumberSet([...referenceByIndex.keys()], result.action.citations)) {
+    throw new DomainAnswerMergeError("citation_union_mismatch");
+  }
   return { result, referenceByIndex };
 }
 

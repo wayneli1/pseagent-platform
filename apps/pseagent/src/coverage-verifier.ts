@@ -83,6 +83,12 @@ export interface CoverageVerifierInput {
     summaries: readonly CoverageVerificationSummary[],
   ) => void;
   readonly onReport?: (report: CoverageVerificationReport) => void;
+  readonly onInvalid?: (input: {
+    readonly attempt: number;
+    readonly reason: string;
+    readonly rawPayloadLength?: number;
+    readonly finishReason?: string;
+  }) => void;
 }
 
 export class InvalidCoverageVerificationError extends Error {
@@ -96,11 +102,17 @@ export const NOT_COVERED_REQUIREMENT_ANSWER =
   "现有资料未覆盖该要求，无法根据正式知识库确认。";
 
 export function notCoveredRequirementAnswer(question: string): string {
-  return /(?:是否|能否|有没有|是否具备|支不支持|支持|兼容|适配)/u.test(
-    question,
-  )
-    ? "正式知识库未提及用户询问的目标协议、功能或能力，无法根据正式知识库确认是否支持或兼容。"
-    : NOT_COVERED_REQUIREMENT_ANSWER;
+  const target = [...question.trim()].slice(0, 160).join("");
+  if (!target) return NOT_COVERED_REQUIREMENT_ANSWER;
+  if (/(?:是否|能否|有没有|是否具备|支不支持|支持|兼容|适配)/u.test(question)) {
+    const capabilityTarget = question.match(
+      /(?:(?:是否|能否|有没有|支不支持)\s*)?(?:已经|已|能够|可以)?\s*(?:支持|兼容|适配|具备)\s*([^？?。！!]{2,100})/u,
+    )?.[1]?.trim();
+    return capabilityTarget === undefined
+      ? "正式知识库未提及所问的目标协议、功能或能力，无法根据正式知识库确认是否支持或兼容。"
+      : `正式知识库未提及“${capabilityTarget}”，无法根据正式知识库确认是否支持或兼容。`;
+  }
+  return `现有资料未覆盖“${target}”，无法根据正式知识库确认。`;
 }
 
 export async function verifyKnowledgeCoverage(
@@ -122,6 +134,8 @@ export async function verifyKnowledgeCoverage(
   const modelResponseSchema = coverageVerificationModelResponseSchema(input.draft);
   let verified: CoverageVerificationAction | undefined;
   let lastInvalidReason = "invalid_model_payload";
+  let structuralFailureCount = 0;
+  let recoverableDecisionFailureCount = 0;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -139,15 +153,100 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
         schemaDescription: "pse_coverage_verification_decision",
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
-      const invalidReason = validateVerification(input, candidate, targetSegments);
+      const normalizedCandidate = normalizeEvidenceModeDecisions(
+        candidate,
+        input.plan,
+      );
+      const invalidReason = validateVerification(
+        input,
+        normalizedCandidate,
+        targetSegments,
+      );
       if (invalidReason === undefined) {
-        verified = candidate;
+        verified = normalizedCandidate;
         break;
       }
       lastInvalidReason = invalidReason;
+      if (isRecoverableDecisionShapeReason(invalidReason)) {
+        recoverableDecisionFailureCount += 1;
+      }
+      input.onInvalid?.({ attempt: attempt + 1, reason: invalidReason });
     } catch (error) {
       if (!(error instanceof InvalidModelPayloadError)) throw error;
+      structuralFailureCount += 1;
       lastInvalidReason = error.code;
+      input.onInvalid?.({
+        attempt: attempt + 1,
+        reason: error.code,
+        ...(error.rawPayloadLength === undefined
+          ? {}
+          : { rawPayloadLength: error.rawPayloadLength }),
+        ...(error.finishReason === undefined
+          ? {}
+          : { finishReason: error.finishReason }),
+      });
+    }
+  }
+
+  if (
+    verified === undefined &&
+    structuralFailureCount + recoverableDecisionFailureCount === 3
+  ) {
+    const wholeRequirementSchema = wholeRequirementVerificationSchema(input.draft);
+    for (let fallbackAttempt = 1; fallbackAttempt <= 2; fallbackAttempt += 1) {
+      try {
+        const rawWhole = await input.model.completeJson({
+          messages: [
+            ...messages,
+            {
+              role: "user" as const,
+              content: [
+                "逐段校验的 JSON 或决策结构连续失败，现在只做每个义务的整体保守校验。",
+                "只判断每个义务中带正式引用的片段：如果这些带引用片段整体受到已提供正文证据支持，输出 retain_cited；如果没有任何可保留的带引用片段，输出 not_covered。不要把无引用片段纳入判断。",
+                '只输出 {"action":"verify","requirements":[{"id":"R1","decision":"retain_cited|not_covered"}]} 形式的 JSON，不要解释。',
+              ].join(""),
+            },
+          ],
+          schema: wholeRequirementSchema,
+          schemaDescription: "pse_whole_requirement_verification",
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+        });
+        const parsedWhole = wholeRequirementSchema.safeParse(rawWhole);
+        if (!parsedWhole.success) {
+          throw new InvalidModelPayloadError(
+            "invalid_schema:whole_requirement_verification",
+          );
+        }
+        const whole = parsedWhole.data;
+        const fallback = materializeWholeRequirementVerification(
+          whole,
+          input.draft,
+          input.plan,
+        );
+        const invalidReason = validateVerification(input, fallback, targetSegments);
+        if (invalidReason === undefined) {
+          verified = fallback;
+          break;
+        }
+        lastInvalidReason = invalidReason;
+        input.onInvalid?.({
+          attempt: 3 + fallbackAttempt,
+          reason: invalidReason,
+        });
+      } catch (error) {
+        if (!(error instanceof InvalidModelPayloadError)) throw error;
+        lastInvalidReason = error.code;
+        input.onInvalid?.({
+          attempt: 3 + fallbackAttempt,
+          reason: error.code,
+          ...(error.rawPayloadLength === undefined
+            ? {}
+            : { rawPayloadLength: error.rawPayloadLength }),
+          ...(error.finishReason === undefined
+            ? {}
+            : { finishReason: error.finishReason }),
+        });
+      }
     }
   }
 
@@ -192,6 +291,42 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
   input.onVerified?.(summaries.map(stripAspectIds));
   input.onReport?.(coverageVerificationReport(materialized, summaries));
   return materialized;
+}
+
+function normalizeEvidenceModeDecisions(
+  candidate: CoverageVerificationAction,
+  plan: KnowledgePlan,
+): CoverageVerificationAction {
+  return {
+    ...candidate,
+    requirements: candidate.requirements.map((requirement, index) => {
+      if (
+        plan.requirements[index]?.evidenceMode !== "direct_only" ||
+        requirement.synthesizedTargetSegmentIndexes.length === 0 ||
+        requirement.reason === "synthesized_support"
+      ) {
+        return requirement;
+      }
+      return {
+        ...requirement,
+        synthesizedTargetSegmentIndexes: [],
+        reason: requirement.reason,
+      };
+    }),
+  };
+}
+
+function isRecoverableDecisionShapeReason(reason: string): boolean {
+  const safePrefixes = [
+    "retained_target_requires_all_segments",
+    "partial_target_requires_proper_segment_subset",
+    "uncovered_target_cannot_retain_segments",
+    "covered_aspect_not_in_plan",
+    "not_covered_cannot_cover_aspects",
+    "retained_target_segment_without_citation",
+  ];
+  return safePrefixes.some((prefix) =>
+    reason === prefix || reason.startsWith(`${prefix}:`));
 }
 
 export function coverageVerificationReport(
@@ -394,35 +529,220 @@ function coverageVerificationModelResponseSchema(draft: FinalAction) {
   );
 }
 
+const wholeRequirementDecisionSchema = z.object({
+  id: z.string().regex(/^R[1-6]$/u),
+  decision: z.enum(["retain_cited", "not_covered"]),
+}).strict();
+
+function wholeRequirementVerificationSchema(draft: FinalAction) {
+  return z.preprocess((value) => {
+    if (!isRecord(value) || !Array.isArray(value.requirements)) return value;
+    const normalized: Record<string, unknown> = {
+      ...value,
+      action: value.action ?? "verify",
+      requirements: value.requirements.map((requirement, index) => {
+        if (!isRecord(requirement)) return requirement;
+        const result: Record<string, unknown> = { ...requirement };
+        result.id = requirement.id ?? requirement.requirementId ??
+          draft.requirements[index]?.id;
+        result.decision = normalizeWholeRequirementDecision(
+          requirement.decision ?? requirement.targetDecision ?? requirement.coverage,
+        );
+        delete result.requirementId;
+        delete result.targetDecision;
+        delete result.coverage;
+        return result;
+      }),
+    };
+    if (normalized.type === "verify") delete normalized.type;
+    return normalized;
+  }, z.object({
+    action: z.literal("verify"),
+    requirements: z.array(wholeRequirementDecisionSchema)
+      .length(draft.requirements.length),
+  }).strict());
+}
+
+function normalizeWholeRequirementDecision(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if ([
+    "retain_cited",
+    "retain",
+    "supported",
+    "complete",
+    "keep",
+    "retain_all",
+  ].includes(normalized)) {
+    return "retain_cited";
+  }
+  if ([
+    "not_covered",
+    "none",
+    "unsupported",
+    "remove",
+    "omit",
+    "partial",
+    "retain_partial",
+    "partially_supported",
+  ].includes(normalized)) {
+    return "not_covered";
+  }
+  return value;
+}
+
+function materializeWholeRequirementVerification(
+  whole: { readonly requirements: readonly { readonly id: string; readonly decision: "retain_cited" | "not_covered" }[] },
+  draft: FinalAction,
+  plan: KnowledgePlan,
+): CoverageVerificationAction {
+  return {
+    action: "verify",
+    requirements: whole.requirements.map((decision, index) => {
+      const draftRequirement = draft.requirements[index]!;
+      const plannedRequirement = plan.requirements[index]!;
+      const retain = decision.decision === "retain_cited" &&
+        draftRequirement.coverage !== "none";
+      const allSegments = splitTargetSegments(draftRequirement.answer);
+      const segmentIndexes = retain
+        ? allSegments
+            .filter((segment) => segment.citations.length > 0)
+            .map((segment) => segment.index)
+        : [];
+      const targetDecision = !retain || segmentIndexes.length === 0
+        ? "not_covered" as const
+        : segmentIndexes.length === allSegments.length
+          ? "retain" as const
+          : "retain_partial" as const;
+      const synthesized = retain && plannedRequirement.evidenceMode === "synthesis_allowed"
+        ? segmentIndexes
+        : [];
+      return {
+        id: decision.id,
+        targetDecision,
+        retainedTargetSegmentIndexes: segmentIndexes,
+        synthesizedTargetSegmentIndexes: synthesized,
+        retainedRelatedContextIndexes: [],
+        reason: targetDecision !== "not_covered"
+          ? draftRequirement.coverage === "partial"
+            ? "partial_support"
+            : targetDecision === "retain_partial"
+              ? "partial_support"
+            : synthesized.length > 0
+              ? "synthesized_support"
+              : "direct_support"
+          : draftRequirement.coverage === "none"
+            ? "target_omitted"
+            : "unsupported_claim_removed",
+      };
+    }),
+  };
+}
+
 function normalizeModelReasons(value: unknown, draft: FinalAction): unknown {
   if (!isRecord(value) || !Array.isArray(value.requirements)) return value;
-  return {
+  const normalizedRoot: Record<string, unknown> = {
     ...value,
-    requirements: value.requirements.map((requirement) => {
+    action: value.action ?? "verify",
+    requirements: value.requirements.map((requirement, index) => {
       if (!isRecord(requirement)) return requirement;
+      const matchingDraft = draft.requirements[index];
+      const normalized: Record<string, unknown> = { ...requirement };
+      const id = requirement.id ?? requirement.requirementId ?? matchingDraft?.id;
+      const targetDecision = normalizeTargetDecision(
+        requirement.targetDecision ?? requirement.decision ?? requirement.coverage,
+      );
+      const targetSegmentIndexes = targetDecision === "retain"
+        ? splitTargetSegments(matchingDraft?.answer ?? "").map((segment) => segment.index)
+        : [];
+      normalized.id = id;
+      normalized.targetDecision = targetDecision;
+      normalized.retainedTargetSegmentIndexes = normalizeOrderedIndexes(
+        requirement.retainedTargetSegmentIndexes ?? requirement.retainedSegmentIndexes,
+        targetSegmentIndexes,
+      );
+      normalized.synthesizedTargetSegmentIndexes = normalizeOrderedIndexes(
+        requirement.synthesizedTargetSegmentIndexes ?? requirement.synthesizedSegmentIndexes,
+        [],
+      );
+      normalized.retainedRelatedContextIndexes = normalizeOrderedIndexes(
+        requirement.retainedRelatedContextIndexes ?? requirement.relatedContextIndexes,
+        [],
+      );
+      const coveredAspectIds = requirement.coveredAspectIds ?? requirement.aspectIds;
+      if (coveredAspectIds !== undefined) {
+        normalized.coveredAspectIds = normalizeOrderedAspectIds(coveredAspectIds);
+      }
+      for (const alias of [
+        "requirementId",
+        "decision",
+        "coverage",
+        "retainedSegmentIndexes",
+        "synthesizedSegmentIndexes",
+        "relatedContextIndexes",
+        "aspectIds",
+      ]) {
+        delete normalized[alias];
+      }
       if (
-        Array.isArray(requirement.synthesizedTargetSegmentIndexes) &&
-        requirement.synthesizedTargetSegmentIndexes.length > 0
+        Array.isArray(normalized.synthesizedTargetSegmentIndexes) &&
+        normalized.synthesizedTargetSegmentIndexes.length > 0
       ) {
+        if (coverageVerificationReasonSchema.safeParse(requirement.reason).success) {
+          return normalized;
+        }
         return {
-          ...requirement,
-          reason: requirement.targetDecision === "retain_partial"
+          ...normalized,
+          reason: targetDecision === "retain_partial"
             ? "partial_support"
             : "synthesized_support",
         };
       }
       if (coverageVerificationReasonSchema.safeParse(requirement.reason).success) {
-        return requirement;
+        return normalized;
       }
-      const matchingDraft = typeof requirement.id === "string"
-        ? draft.requirements.find((candidate) => candidate.id === requirement.id)
-        : undefined;
       return {
-        ...requirement,
-        reason: deriveModelReason(requirement, matchingDraft),
+        ...normalized,
+        reason: deriveModelReason(normalized, matchingDraft),
       };
     }),
   };
+  if (normalizedRoot.type === "verify") delete normalizedRoot.type;
+  return normalizedRoot;
+}
+
+function normalizeTargetDecision(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if (["retain", "supported", "complete", "keep", "retain_all"].includes(normalized)) {
+    return "retain";
+  }
+  if (["retain_partial", "partial", "partially_supported"].includes(normalized)) {
+    return "retain_partial";
+  }
+  if (["not_covered", "none", "unsupported", "remove", "omit"].includes(normalized)) {
+    return "not_covered";
+  }
+  return value;
+}
+
+function normalizeOrderedIndexes(value: unknown, fallback: readonly number[]): unknown {
+  if (value === undefined) return [...fallback];
+  if (!Array.isArray(value) || value.some((item) =>
+    !Number.isInteger(item) || Number(item) < 0)) {
+    return value;
+  }
+  return [...new Set(value as number[])].sort((left, right) => left - right);
+}
+
+function normalizeOrderedAspectIds(value: unknown): unknown {
+  if (!Array.isArray(value) || value.some((item) =>
+    typeof item !== "string" || !/^A[1-8]$/u.test(item))) {
+    return value;
+  }
+  return [...new Set(value as string[])].sort(
+    (left, right) => Number(left.slice(1)) - Number(right.slice(1)),
+  );
 }
 
 function deriveModelReason(

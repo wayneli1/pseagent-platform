@@ -10,6 +10,7 @@ import {
   coverageVerificationReport,
   inferCoverageVerificationReport,
   InvalidCoverageVerificationError,
+  notCoveredRequirementAnswer,
   type CoverageVerifierInput,
   verifyKnowledgeCoverage,
 } from "./coverage-verifier.js";
@@ -155,6 +156,44 @@ const evidence = [
 ] as const;
 
 describe("verifyKnowledgeCoverage", () => {
+  it("normalizes an accidental synthesized marker for direct-only evidence", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        targetDecision: "retain",
+        retainedTargetSegmentIndexes: [0],
+        synthesizedTargetSegmentIndexes: [0],
+        retainedRelatedContextIndexes: [],
+        coveredAspectIds: ["A1"],
+        reason: "direct_support",
+      }],
+    }));
+    const onVerified = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "是否支持目标协议",
+      plan: singleRequirementPlan,
+      draft: completeDraft,
+      evidence,
+      model: modelFromCompleteJson(completeJson),
+      onVerified,
+    });
+
+    expect(result.requirements[0]).toMatchObject({
+      coverage: "complete",
+      answer: "草稿结论[1]。",
+    });
+    expect(onVerified).toHaveBeenCalledWith([expect.objectContaining({
+      reason: "direct_support",
+      retainedDirectSegmentCount: 1,
+      retainedSynthesizedSegmentCount: 0,
+    })]);
+    expect(completeJson).toHaveBeenCalledOnce();
+  });
+
   it("rejects duplicate or extra summaries when materializing a report", () => {
     const summary = {
       id: "R1",
@@ -406,7 +445,7 @@ describe("verifyKnowledgeCoverage", () => {
       model: modelFromCompleteJson(completeJson),
     })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
 
-    expect(completeJson).toHaveBeenCalledTimes(3);
+    expect(completeJson).toHaveBeenCalledTimes(5);
     expect(completeJson.mock.calls[1]?.[0].messages.at(-1)?.content)
       .toContain("retained_target_segment_without_citation:R1:1");
   });
@@ -1335,12 +1374,6 @@ describe("verifyKnowledgeCoverage", () => {
 
   it.each([
     {
-      label: "direct-only synthesis",
-      plan: singleRequirementPlan,
-      retained: [0],
-      synthesized: [0],
-    },
-    {
       label: "synthesis outside retained target",
       plan: synthesisPlan,
       retained: [0],
@@ -1565,6 +1598,27 @@ describe("verifyKnowledgeCoverage", () => {
     }
   });
 
+  it("normalizes bounded provider aliases and omitted mechanical fields", async () => {
+    const capture = schemaParsingVerifier({
+      requirements: [{
+        decision: "supported",
+        retainedSegmentIndexes: [0, 0],
+        aspectIds: ["A1"],
+      }],
+    });
+
+    const result = await verifyKnowledgeCoverage({
+      question: "问题",
+      plan: singleRequirementPlan,
+      draft: completeDraft,
+      evidence,
+      model: capture.model,
+    });
+
+    expect(result).toEqual(completeDraft);
+    expect(capture.completeJson).toHaveBeenCalledOnce();
+  });
+
   it("retains a supported target by copying the draft exactly", async () => {
     const result = await verifyKnowledgeCoverage({
       question: "问题",
@@ -1714,7 +1768,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         coverage: "none",
-        answer: "正式知识库未提及用户询问的目标协议、功能或能力，无法根据正式知识库确认是否支持或兼容。",
+        answer: notCoveredRequirementAnswer("是否支持目标协议"),
         citations: [],
         relatedContext: [{
           statement: "资料还说明 HTTP/HTTPS 用于 Webmail 访问 [2]。",
@@ -1793,7 +1847,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         coverage: "none",
-        answer: "正式知识库未提及用户询问的目标协议、功能或能力，无法根据正式知识库确认是否支持或兼容。",
+        answer: notCoveredRequirementAnswer("是否支持目标协议"),
         citations: [],
       }],
       citations: [],
@@ -1967,7 +2021,7 @@ describe("verifyKnowledgeCoverage", () => {
       model: modelFromCompleteJson(completeJson),
       onVerified,
     })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
-    expect(completeJson).toHaveBeenCalledTimes(3);
+    expect(completeJson).toHaveBeenCalledTimes(5);
     expect(onVerified).toHaveBeenCalledWith([
       {
         id: "R1",
@@ -1977,6 +2031,113 @@ describe("verifyKnowledgeCoverage", () => {
         removedSegmentCount: 1,
       },
     ]);
+  });
+
+  it("falls back to conservative whole-requirement verification after structural failures", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => {
+      if (completeJson.mock.calls.length <= 3) {
+        throw new InvalidModelPayloadError("invalid_schema:requirements");
+      }
+      return input.schema.parse({
+        requirements: [{ decision: "supported" }],
+      });
+    });
+
+    const result = await verifyKnowledgeCoverage({
+      question: "问题",
+      plan: singleRequirementPlan,
+      draft: completeDraft,
+      evidence,
+      model: modelFromCompleteJson(completeJson),
+    });
+
+    expect(result).toMatchObject({
+      action: "final",
+      requirements: [{ id: "R1", coverage: "partial", citations: [1] }],
+      citations: [1],
+    });
+    expect(completeJson).toHaveBeenCalledTimes(4);
+    expect(completeJson.mock.calls[3]?.[0].schemaDescription)
+      .toBe("pse_whole_requirement_verification");
+  });
+
+  it("falls back conservatively after repeated recoverable decision-shape failures", async () => {
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => {
+      if (completeJson.mock.calls.length <= 3) {
+        return input.schema.parse({
+          action: "verify",
+          requirements: [{
+            id: "R1",
+            targetDecision: "retain_partial",
+            retainedTargetSegmentIndexes: [],
+            synthesizedTargetSegmentIndexes: [],
+            retainedRelatedContextIndexes: [],
+            reason: "partial_support",
+          }],
+        });
+      }
+      return input.schema.parse({
+        requirements: [{ decision: "supported" }],
+      });
+    });
+
+    const result = await verifyKnowledgeCoverage({
+      question: "问题",
+      plan: singleRequirementPlan,
+      draft: completeDraft,
+      evidence,
+      model: modelFromCompleteJson(completeJson),
+    });
+
+    expect(result.requirements[0]?.coverage).not.toBe("none");
+    expect(completeJson).toHaveBeenCalledTimes(4);
+    expect(completeJson.mock.calls[3]?.[0].schemaDescription)
+      .toBe("pse_whole_requirement_verification");
+  });
+
+  it("removes uncited segments during conservative whole-requirement fallback", async () => {
+    const draft: FinalAction = {
+      ...completeDraft,
+      requirements: [{
+        ...completeDraft.requirements[0]!,
+        answer: "有引用的结论[1]。\n没有引用的补充断言。",
+      }],
+    };
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => {
+      if (completeJson.mock.calls.length <= 3) {
+        return input.schema.parse({
+          action: "verify",
+          requirements: [{
+            id: "R1",
+            targetDecision: "retain",
+            retainedTargetSegmentIndexes: [0, 1],
+            synthesizedTargetSegmentIndexes: [],
+            retainedRelatedContextIndexes: [],
+            reason: "direct_support",
+          }],
+        });
+      }
+      return input.schema.parse({ requirements: [{ decision: "supported" }] });
+    });
+
+    const result = await verifyKnowledgeCoverage({
+      question: "问题",
+      plan: singleRequirementPlan,
+      draft,
+      evidence,
+      model: modelFromCompleteJson(completeJson),
+    });
+
+    expect(result.requirements[0]).toMatchObject({ coverage: "partial" });
+    expect(result.requirements[0]?.answer).toContain("有引用的结论");
+    expect(result.requirements[0]?.answer).not.toContain("补充断言");
+    expect(completeJson).toHaveBeenCalledTimes(4);
   });
 
   it("still propagates model unavailability instead of claiming not covered", async () => {

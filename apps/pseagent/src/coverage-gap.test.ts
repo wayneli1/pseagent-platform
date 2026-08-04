@@ -592,4 +592,43 @@ describe("analyzeCoverageGaps", () => {
       ["第二方面", "tool_unavailable"],
     ]);
   });
+
+  it("lets the input root cause dominate a duplicate knowledge-method unit", () => {
+    const subject = "当前机会应汇报多少赢率";
+    const knowledge = missingUnit({
+      subject,
+      retrieval: {
+        ...missingUnit().retrieval,
+        readBudgetExhausted: true,
+      },
+    });
+    const input = missingUnit({
+      binding: {
+        domain: "coremail-professional",
+        requirementId: "R2",
+        deliverableId: "D2",
+        obligationId: "O2",
+        order: 1,
+      },
+      subject,
+      requirement: {
+        ...missingUnit().requirement,
+        id: "R2",
+      },
+      inputState: "missing",
+    });
+
+    const result = analyzeCoverageGaps(finalizeEvidenceLedger({
+      project: "coremail-professional",
+      revision,
+      units: [knowledge, input],
+    }));
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      requirementId: "R2",
+      gapClass: "input",
+      reason: "required_customer_input_missing",
+    });
+  });
 });

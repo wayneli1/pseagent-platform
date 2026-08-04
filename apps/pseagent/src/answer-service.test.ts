@@ -522,6 +522,184 @@ describe("AnswerService", () => {
     });
   });
 
+  it("preserves an explicit missing-input forecast when TaskSpec analysis is unavailable", async () => {
+    const question = "客户在 POC 阶段，但销售获取不到客户侧信息。当前赢率如何，怎样提升赢率？";
+    const forecastPlan = {
+      subject: "当前 POC 机会",
+      requirements: [
+        {
+          id: "R1" as const,
+          question: "评估当前项目赢率",
+          evidenceAspects: [{
+            id: "A1" as const,
+            label: "当前赢率",
+            terms: ["项目", "赢率"],
+          }],
+          queries: [{ text: "项目赢率评估", aspectIds: ["A1" as const] }],
+          evidenceMode: "synthesis_allowed" as const,
+        },
+        {
+          id: "R2" as const,
+          question: "提升项目赢率的方法",
+          evidenceAspects: [{
+            id: "A1" as const,
+            label: "提升方法",
+            terms: ["提升", "方法"],
+          }],
+          queries: [{ text: "提升项目赢率方法", aspectIds: ["A1" as const] }],
+          evidenceMode: "synthesis_allowed" as const,
+        },
+      ],
+    };
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "general",
+      status: "partially_answered",
+      answer: "保守回答",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "general" as const) },
+      planner: { plan: vi.fn(async () => forecastPlan) },
+      diagnostics: { start: () => ({ requestId: "forecast-fallback", record() {} }) },
+      knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
+      runAgent,
+      taskAnalysisShadow: {
+        analyze: vi.fn(async () => {
+          throw new InvalidModelPayloadError("invalid_task_spec");
+        }),
+      },
+      taskSpecActiveEnabled: true,
+    });
+
+    await service.answer(question);
+
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      plan: forecastPlan,
+      requirementEvidenceConditions: [{
+        requirementId: "R1",
+        inputState: "missing",
+        ambiguous: false,
+        conflictDetected: false,
+        freshness: "not_assessed",
+      }],
+    }));
+  });
+
+  it("separates a missing forecast from a collapsed legacy advice requirement", async () => {
+    const question = "客户信息不足，我们的赢率如何，又该怎样提升赢率？";
+    const collapsedPlan = {
+      subject: "当前机会判断与提升",
+      requirements: [{
+        id: "R1" as const,
+        question: "评估当前赢率并给出提升赢率的方法",
+        evidenceAspects: [{
+          id: "A1" as const,
+          label: "赢率判断与提升",
+          terms: ["赢率", "提升"],
+        }],
+        queries: [{ text: "赢率判断与提升", aspectIds: ["A1" as const] }],
+        evidenceMode: "synthesis_allowed" as const,
+      }],
+    };
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "general",
+      status: "partially_answered",
+      answer: "保守回答",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "general" as const) },
+      planner: { plan: vi.fn(async () => collapsedPlan) },
+      knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
+      runAgent,
+      taskAnalysisShadow: {
+        analyze: vi.fn(async () => {
+          throw new InvalidModelPayloadError("invalid_task_spec");
+        }),
+      },
+      taskSpecActiveEnabled: true,
+    });
+
+    await service.answer(question);
+
+    const input = runAgent.mock.calls[0]?.[0];
+    expect(input?.plan.requirements).toHaveLength(2);
+    expect(input?.plan.requirements[0]?.question).toContain("赢率如何");
+    expect(input?.plan.requirements[1]).toMatchObject({
+      id: "R2",
+      question: "评估当前赢率并给出提升赢率的方法",
+    });
+    expect(input?.requirementEvidenceConditions).toEqual([{
+      requirementId: "R1",
+      inputState: "missing",
+      ambiguous: false,
+      conflictDetected: false,
+      freshness: "not_assessed",
+    }]);
+  });
+
+  it("inherits missing customer facts for a numeric forecast follow-up when TaskSpec is unavailable", async () => {
+    const question = "销售坚持让我先报一个百分比给领导，我应该报多少？";
+    const conversationContext =
+      "客户目前在 POC 阶段，但销售获取不到客户侧信息，我们的赢率如何，要怎样做才能提升赢率？";
+    const collapsedPlan = {
+      subject: "当前 POC 商机判断",
+      requirements: [{
+        id: "R1" as const,
+        question: "给出当前商机判断和推进建议",
+        evidenceAspects: [{
+          id: "A1" as const,
+          label: "商机判断与推进",
+          terms: ["商机", "判断", "推进"],
+        }],
+        queries: [{ text: "POC 商机判断与推进", aspectIds: ["A1" as const] }],
+        evidenceMode: "synthesis_allowed" as const,
+      }],
+    };
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "general",
+      status: "partially_answered",
+      answer: "缺少客户事实，不能可靠给出单点百分比。",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router: { route: vi.fn(async () => "general" as const) },
+      planner: { plan: vi.fn(async () => collapsedPlan) },
+      diagnostics: { start: () => ({ requestId: "numeric-follow-up", record() {} }) },
+      knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
+      runAgent,
+      taskAnalysisShadow: {
+        analyze: vi.fn(async () => {
+          throw new InvalidModelPayloadError("invalid_task_spec");
+        }),
+      },
+      taskSpecActiveEnabled: true,
+    });
+
+    await service.answer(question, conversationContext);
+
+    const input = runAgent.mock.calls[0]?.[0];
+    expect(input?.plan.requirements).toHaveLength(2);
+    expect(input?.plan.requirements[0]).toMatchObject({
+      id: "R1",
+      question,
+    });
+    expect(input?.plan.requirements[1]).toMatchObject({
+      id: "R2",
+      question: "给出当前商机判断和推进建议",
+    });
+    expect(input?.requirementEvidenceConditions).toEqual([{
+      requirementId: "R1",
+      inputState: "missing",
+      ambiguous: false,
+      conflictDetected: false,
+      freshness: "not_assessed",
+    }]);
+  });
+
   it("answers normal questions without opening either knowledge source", async () => {
     const model = {
       completeText: vi.fn(async () => "普通回答"),
