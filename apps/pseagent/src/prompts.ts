@@ -142,6 +142,8 @@ coverage 只按用户明确问题和正式正文判断。核心问题已被正�
 最终 requirements 必须按规划顺序完整列出每个 requirement，不能遗漏、重复或增加。
 每项 complete/partial 的 target citations 只能引用为该 requirement 实际读取的页面；none 的 target citations 必须为空，只有符合上述约束的 relatedContext 可以引用该 requirement 实际读取的页面。
 只要任一项是 partial 或 none，回答必须明确指出对应的未覆盖内容。
+requirementEvidence.evidenceCondition.inputState=missing 表示缺少判断当前个案所需的用户输入：不得输出当前个案的百分比、确定性预测或已经成立的个案结论，但仍须基于已读正式知识回答可执行的方法、步骤和信息收集建议。该输入缺口不是知识库缺口，不得因此把其他有正式证据支持的方法项降级。
+evidenceCondition.ambiguous=true、conflictDetected=true 或 freshness=stale_or_unconfirmed 时，必须保守披露对应边界，不得自行消除歧义、冲突或时效不确定性。
 顶层 citations 必须等于逐项 target citations 后接 relatedContext citations、按 requirements 顺序合并去重后的结果。
 不要重复完全相同的工具和参数。`;
 
@@ -170,6 +172,13 @@ export function knowledgeAgentMessages(input: {
   requirementEvidence: readonly {
     id: string;
     question: string;
+    evidenceCondition: {
+      requirementId: string;
+      conflictDetected: boolean;
+      freshness: "not_assessed" | "current" | "stale_or_unconfirmed";
+      inputState: "not_applicable" | "available" | "missing";
+      ambiguous: boolean;
+    };
     candidates: readonly {
       path: string;
       title: string;

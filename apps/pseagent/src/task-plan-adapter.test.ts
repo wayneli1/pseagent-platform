@@ -162,7 +162,7 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
     });
   });
 
-  it("fails closed when a required customer-input obligation is present", () => {
+  it("keeps a required customer-input obligation active with a missing-input condition", () => {
     const spec = taskSpec();
     spec.deliverables[0]!.obligations = [
       {
@@ -185,19 +185,30 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
       },
     ];
 
-    expect(adaptTaskSpecToKnowledgePlan({
+    const result = adaptTaskSpecToKnowledgePlan({
       scope: "general",
       resolvedQuestion,
       taskSpec: spec,
       guardResult: passingGuard,
-    })).toEqual({
-      activated: false,
-      reason: "customer_input_unhandled",
-      applicableObligationCount: 2,
+    });
+
+    expect(result).toMatchObject({
+      activated: true,
+      obligationIds: ["O1", "O2"],
+      conditions: [
+        { requirementId: "R1", inputState: "missing" },
+        { requirementId: "R2", inputState: "not_applicable" },
+      ],
+      plan: {
+        requirements: [
+          { id: "R1", evidenceMode: "synthesis_allowed" },
+          { id: "R2", evidenceMode: "synthesis_allowed" },
+        ],
+      },
     });
   });
 
-  it("keeps customer-input fail-closed behavior invariant under obligation order", () => {
+  it("keeps customer-input condition binding invariant under obligation order", () => {
     const customerInput = {
       id: "O1",
       label: "判断当前机会赢率",
@@ -223,15 +234,20 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
     ]) {
       const spec = taskSpec();
       spec.deliverables[0]!.obligations = obligations;
-      expect(adaptTaskSpecToKnowledgePlan({
+      const result = adaptTaskSpecToKnowledgePlan({
         scope: "general",
         resolvedQuestion,
         taskSpec: spec,
         guardResult: passingGuard,
-      })).toEqual({
-        activated: false,
-        reason: "customer_input_unhandled",
-        applicableObligationCount: 2,
+      });
+      expect(result).toMatchObject({
+        activated: true,
+        conditions: obligations.map((obligation, index) => ({
+          requirementId: `R${index + 1}`,
+          inputState: obligation.evidencePolicy === "customer_input"
+            ? "missing"
+            : "not_applicable",
+        })),
       });
     }
   });

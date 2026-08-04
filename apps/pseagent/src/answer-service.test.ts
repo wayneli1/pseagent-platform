@@ -381,11 +381,11 @@ describe("AnswerService", () => {
       expectedReason: "guard_rejected",
     },
     {
-      name: "adapter rejection",
+      name: "scope-domain mismatch",
       guardOk: true,
       evidencePolicy: "customer_input" as const,
       domains: ["presales-general" as const],
-      expectedReason: "customer_input_unhandled",
+      expectedReason: "multi_domain_required",
     },
   ])("fully falls back to the legacy path after $name", async ({
     guardOk,
@@ -1959,18 +1959,28 @@ describe("AnswerService", () => {
       expect(JSON.stringify(mergeEvent)).not.toContain("正文故意缺失引用标记");
     });
 
-    it("keeps customer-input obligations fail-closed before opening execution sessions", async () => {
+    it("executes customer-input obligations with conservative evidence conditions", async () => {
       const { service, knowledge, runAgent, runAgentDetailed } = createMixedService({
         shadow: mixedShadow("customer_input"),
       });
       await expect(service.answerDetailed(mixedQuestion)).resolves.toMatchObject({
         retryable: false,
-        stopReason: "domain_plan_invalid",
-        result: { status: "temporarily_unavailable" },
+        stopReason: "final",
+        result: { status: "answered" },
       });
-      expect(knowledge.open).toHaveBeenCalledTimes(1);
+      expect(knowledge.open).toHaveBeenCalledTimes(3);
       expect(runAgent).not.toHaveBeenCalled();
-      expect(runAgentDetailed).not.toHaveBeenCalled();
+      expect(runAgentDetailed).toHaveBeenCalledTimes(2);
+      const generalInput = runAgentDetailed.mock.calls.find(
+        ([input]) => input.session.project === "presales-general",
+      )?.[0];
+      expect(generalInput?.requirementEvidenceConditions).toEqual([{
+        requirementId: "R1",
+        inputState: "missing",
+        ambiguous: false,
+        conflictDetected: false,
+        freshness: "not_assessed",
+      }]);
     });
 
     it("does not invoke the detailed executor while the multi-domain flag is off", async () => {

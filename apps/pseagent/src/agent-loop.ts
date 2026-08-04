@@ -39,14 +39,13 @@ import {
   type EvidenceCandidateDraft,
   type EvidenceCandidateSource,
   type EvidenceClaimRecord,
-  type EvidenceFreshness,
   type EvidenceGraphDraft,
-  type EvidenceInputState,
   type EvidenceLedger,
   type EvidenceLedgerDraftUnit,
   type EvidenceQueryDraft,
   type EvidenceReadDraft,
   type EvidenceSourceBoundary,
+  type RequirementEvidenceCondition,
 } from "./evidence-ledger.js";
 import { analyzeCoverageGaps, type CoverageGap } from "./coverage-gap.js";
 import type { DomainRequirementBinding } from "./domain-plan.js";
@@ -96,14 +95,6 @@ export interface KnowledgeAgentInput {
   readonly verifyCoverage?: (
     input: CoverageVerifierInput,
   ) => Promise<FinalAction>;
-}
-
-export interface RequirementEvidenceCondition {
-  readonly requirementId: string;
-  readonly conflictDetected: boolean;
-  readonly freshness: EvidenceFreshness;
-  readonly inputState: EvidenceInputState;
-  readonly ambiguous: boolean;
 }
 
 export type KnowledgeAgentDetailedResult =
@@ -190,7 +181,14 @@ export async function runKnowledgeAgent(
   const detailed = await runKnowledgeAgentDetailed(input);
   return detailed.outcome === "unavailable"
     ? detailed.result
-    : formatKnowledgeFinal(input.scope, detailed.action, detailed.references);
+    : formatKnowledgeFinal(input.scope, detailed.action, detailed.references, {
+        ...(detailed.evidenceLedger === undefined
+          ? {}
+          : { evidenceLedgers: [detailed.evidenceLedger] }),
+        ...(detailed.coverageGaps === undefined
+          ? {}
+          : { coverageGaps: detailed.coverageGaps }),
+      });
 }
 
 export async function runKnowledgeAgentDetailed(
@@ -274,9 +272,13 @@ async function runKnowledgeAgentCore(
     }
 
     if (action.action === "final") {
-      const normalizedAction = dropUnsupportedRelatedContext(
-        normalizeFinalCitationMetadata(action, input.plan),
-        state,
+      const normalizedAction = enforceMissingInputConditions(
+        dropUnsupportedRelatedContext(
+          normalizeFinalCitationMetadata(action, input.plan),
+          state,
+        ),
+        input.plan,
+        state.evidenceConditions,
       );
       shareFinalAnswerEvidence(input, state, normalizedAction);
       const directAnswerRepairs = pendingDirectAnswerRepairs(
@@ -1819,6 +1821,13 @@ function requirementEvidence(state: AgentState) {
   return [...state.requirements.values()].map((requirementState) => ({
     id: requirementState.requirement.id,
     question: requirementState.requirement.question,
+    evidenceCondition: state.evidenceConditions.get(requirementState.requirement.id) ?? {
+      requirementId: requirementState.requirement.id,
+      conflictDetected: false,
+      freshness: "not_assessed" as const,
+      inputState: "not_applicable" as const,
+      ambiguous: false,
+    },
     aspects: aspectStatuses(requirementState),
     candidates: sortedCandidates(requirementState).slice(0, 10).map((candidate) => {
       const read = requirementState.readPaths.has(candidate.path);
@@ -2335,6 +2344,36 @@ function dropUnsupportedRelatedContext(
       requirements.flatMap((requirement) =>
         requirementEvidenceCitations(requirement)),
     ),
+  };
+}
+
+function enforceMissingInputConditions(
+  action: FinalAction,
+  plan: KnowledgePlan,
+  conditions: ReadonlyMap<string, RequirementEvidenceCondition>,
+): FinalAction {
+  const questionById = new Map(
+    plan.requirements.map((requirement) => [requirement.id, requirement.question] as const),
+  );
+  const requirements = action.requirements.map((requirement) => {
+    if (conditions.get(requirement.id)?.inputState !== "missing") {
+      return requirement;
+    }
+    const question = questionById.get(requirement.id) ?? "当前个案结论";
+    return {
+      id: requirement.id,
+      coverage: "none" as const,
+      answer: `缺少判断“${question}”所需的当次客户输入，暂不形成当前个案结论。`,
+      citations: [],
+    };
+  });
+  return {
+    action: "final",
+    requirements,
+    citations: stableUniqueNumbers(requirements.flatMap((requirement) => [
+      ...requirement.citations,
+      ...(requirement.relatedContext ?? []).flatMap((item) => item.citations),
+    ])),
   };
 }
 

@@ -297,6 +297,13 @@ function payloadAt(model: ReturnType<typeof scriptedAgentModel>, index: number) 
     finalOnly?: boolean;
     requirementEvidence?: Array<{
       id: string;
+      evidenceCondition: {
+        requirementId: string;
+        inputState: "not_applicable" | "available" | "missing";
+        ambiguous: boolean;
+        conflictDetected: boolean;
+        freshness: "not_assessed" | "current" | "stale_or_unconfirmed";
+      };
       candidates: Array<{
         path: string;
         rrfScore: number;
@@ -771,12 +778,15 @@ describe("runKnowledgeAgent", () => {
       trace,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       scope: "professional",
       status: "not_covered",
-      answer: NOT_COVERED_TEXT,
+      knowledgeCoverage: "none",
+      caseAssessability: "not_applicable",
       references: [],
     });
+    expect(result.answer).toContain("尚未确认的部分：");
+    expect(result.answer).toContain("测试证据面");
     expect(verifyCoverage).toHaveBeenCalledOnce();
     expect(events.find(
       (event) => event.event === "coverage" && event.stage === "verified",
@@ -4357,6 +4367,56 @@ describe("runKnowledgeAgent", () => {
         result.coverageGaps?.[0]?.reason,
       ]).toEqual(expected);
     }
+  });
+
+  it("removes current-case conclusions when required customer input is missing", async () => {
+    const plan: KnowledgePlan = {
+      subject: "当前机会判断",
+      retrievalStrategy: "coverage_units",
+      requirements: [{
+        id: "R1",
+        question: "判断当前机会赢率",
+        evidenceMode: "synthesis_allowed",
+        ...plannedEvidence("seed-r1"),
+      }],
+    };
+    const model = scriptedAgentModel([
+      read("R1", "wiki/r1.md"),
+      final("complete", "当前机会赢率为 75%[1]。", [1]),
+    ]);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
+      expect(input.draft.requirements[0]).toMatchObject({
+        coverage: "none",
+        citations: [],
+      });
+      expect(input.draft.requirements[0]?.answer).not.toContain("75%");
+      return reportAndReturn(input);
+    });
+
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(
+        model,
+        fakeSession({ hits: { "seed-r1": [{ path: "wiki/r1.md" }] } }),
+        plan,
+      ),
+      verifyCoverage,
+      requirementEvidenceConditions: [{
+        requirementId: "R1",
+        inputState: "missing",
+        ambiguous: false,
+        conflictDetected: false,
+        freshness: "not_assessed",
+      }],
+    });
+
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.evidenceCondition)
+      .toMatchObject({ inputState: "missing" });
+    expect(result).toMatchObject({
+      outcome: "verified",
+      action: { requirements: [{ coverage: "none", citations: [] }] },
+      coverageGaps: [{ gapClass: "input", reason: "required_customer_input_missing" }],
+    });
   });
 
   it("materializes retained and removed verifier segments as distinct ledger claims", async () => {

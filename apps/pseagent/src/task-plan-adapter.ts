@@ -9,6 +9,8 @@ import type {
   TaskSpec,
   TaskSpecGuardResult,
 } from "./task-spec.js";
+import { taskEvidenceConditionFor } from "./task-spec.js";
+import type { RequirementEvidenceCondition } from "./evidence-ledger.js";
 
 export type TaskPlanAdapterInactiveReason =
   | "guard_rejected"
@@ -23,6 +25,7 @@ export type TaskPlanAdapterResult =
       readonly activated: true;
       readonly plan: KnowledgePlan;
       readonly obligationIds: readonly string[];
+      readonly conditions: readonly RequirementEvidenceCondition[];
     }
   | {
       readonly activated: false;
@@ -67,14 +70,6 @@ export function adaptTaskSpecToKnowledgePlan(
       : deliverable.obligations.flatMap((obligation) =>
           obligation.required ? [{ deliverable, obligation }] : [])
   );
-  if (required.some(({ obligation }) =>
-    obligation.evidencePolicy === "customer_input")) {
-    return {
-      activated: false,
-      reason: "customer_input_unhandled",
-      applicableObligationCount: required.length,
-    };
-  }
   if (required.some(({ obligation }) =>
     obligation.domains.some((candidate) => candidate !== domain))) {
     return {
@@ -215,6 +210,10 @@ export function adaptTaskSpecToKnowledgePlan(
       retrievalStrategy: "coverage_units",
     },
     obligationIds: applicable.map(({ obligation }) => obligation.id),
+    conditions: applicable.map(({ obligation }, index) => ({
+      requirementId: `R${index + 1}`,
+      ...taskEvidenceConditionFor(obligation),
+    })),
   };
 }
 

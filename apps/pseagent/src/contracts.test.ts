@@ -366,6 +366,20 @@ describe("PSEAgent contracts", () => {
       .toEqualTypeOf<readonly number[]>();
   });
 
+  it("accepts independent knowledge-coverage and case-assessability axes", () => {
+    expect(answerResultSchema.parse({
+      scope: "general",
+      status: "answered",
+      answer: "方法知识完整，但当前个案仍需补充输入。",
+      references: [],
+      knowledgeCoverage: "complete",
+      caseAssessability: "insufficient",
+    })).toMatchObject({
+      knowledgeCoverage: "complete",
+      caseAssessability: "insufficient",
+    });
+  });
+
   it("keeps historical answers separate and requires verifiable Jira/Wiki sources", () => {
     const parsed = answerResultSchema.parse({
       scope: "professional",

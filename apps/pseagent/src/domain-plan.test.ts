@@ -152,17 +152,27 @@ describe("deriveDomainKnowledgePlans", () => {
     if (result.activated) expect(result.plans).toHaveLength(1);
   });
 
-  it("fails closed before domain execution when customer input is required", () => {
+  it("passes customer-input conditions into the affected domain plan", () => {
     const taskSpec = mixedTaskSpec();
     taskSpec.deliverables[1]!.obligations[0]!.evidencePolicy = "customer_input";
-    expect(deriveDomainKnowledgePlans({
+    const result = deriveDomainKnowledgePlans({
       resolvedQuestion,
       taskSpec,
       guardResult: passingGuard,
-    })).toEqual({
-      activated: false,
-      reason: "customer_input_unhandled",
-      applicableObligationCount: 3,
+    });
+
+    expect(result).toMatchObject({
+      activated: true,
+      plans: [
+        { domain: "coremail-professional" },
+        {
+          domain: "presales-general",
+          conditions: [
+            { requirementId: "R1", inputState: "missing" },
+            { requirementId: "R2", inputState: "not_applicable" },
+          ],
+        },
+      ],
     });
   });
 

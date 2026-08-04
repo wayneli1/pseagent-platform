@@ -9,6 +9,7 @@ import type {
   TaskSpec,
   TaskSpecGuardResult,
 } from "./task-spec.js";
+import type { RequirementEvidenceCondition } from "./evidence-ledger.js";
 
 export const KNOWLEDGE_DOMAIN_ORDER = [
   "coremail-professional",
@@ -34,6 +35,7 @@ export interface DomainKnowledgePlan {
   readonly scope: Exclude<Scope, "normal">;
   readonly plan: KnowledgePlan;
   readonly bindings: readonly DomainRequirementBinding[];
+  readonly conditions?: readonly RequirementEvidenceCondition[];
 }
 
 export type DomainPlanInactiveReason =
@@ -73,13 +75,6 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
   }
 
   const required = requiredObligations(input.taskSpec);
-  if (required.some(({ obligation }) => obligation.evidencePolicy === "customer_input")) {
-    return {
-      activated: false,
-      reason: "customer_input_unhandled",
-      applicableObligationCount: required.length,
-    };
-  }
   const mergedClaimCount = required.reduce(
     (count, { obligation }) => count + obligation.domains.length,
     0,
@@ -137,6 +132,7 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
       domain,
       scope,
       plan: adapted.plan,
+      conditions: adapted.conditions,
       bindings: applicable.map((item, index) => ({
         domain,
         requirementId: adapted.plan.requirements[index]!.id,

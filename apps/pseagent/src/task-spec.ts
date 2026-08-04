@@ -21,6 +21,12 @@ export const taskEvidencePolicySchema = z.enum([
   "synthesis",
   "customer_input",
 ]);
+export const taskEvidenceConditionSchema = z.object({
+  inputState: z.enum(["not_applicable", "available", "missing"]),
+  ambiguous: z.boolean(),
+  conflictDetected: z.boolean(),
+  freshness: z.enum(["not_assessed", "current", "stale_or_unconfirmed"]),
+}).strict();
 export const taskEntityRoleSchema = z.enum([
   "subject",
   "target",
@@ -37,15 +43,55 @@ const taskEntitySchema = z.object({
   sourceText: z.string().trim().min(1).max(256),
 }).strict();
 
-const answerObligationSchema = z.object({
+const answerObligationSchema = z.preprocess((value) => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return value;
+  }
+  const obligation = value as Record<string, unknown>;
+  if (obligation.evidenceCondition !== undefined) return value;
+  return {
+    ...obligation,
+    evidenceCondition: defaultTaskEvidenceCondition(
+      obligation.evidencePolicy === "customer_input",
+    ),
+  };
+}, z.object({
   id: z.string().regex(/^O[1-9]\d*$/u),
   label: z.string().trim().min(1).max(256),
   targetEntityIds: z.array(z.string().regex(/^E[1-9]\d*$/u)).max(16),
   evidencePolicy: taskEvidencePolicySchema,
+  evidenceCondition: taskEvidenceConditionSchema.optional(),
   domains: z.array(knowledgeDomainSchema).min(1).max(2),
   required: z.boolean(),
   sourceText: z.string().trim().min(1).max(512),
-}).strict();
+}).strict().superRefine((obligation, context) => {
+  const condition = obligation.evidenceCondition;
+  if (condition === undefined) return;
+  if (
+    obligation.evidencePolicy === "customer_input" &&
+    condition.inputState === "not_applicable"
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["evidenceCondition", "inputState"],
+      message: "customer_input_requires_input_state",
+    });
+  }
+  if (
+    obligation.evidencePolicy !== "customer_input" &&
+    condition.inputState !== "not_applicable"
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["evidenceCondition", "inputState"],
+      message: "non_customer_input_requires_not_applicable",
+    });
+  }
+}));
 
 const taskDeliverableSchema = z.object({
   id: z.string().regex(/^D[1-9]\d*$/u),
@@ -122,7 +168,31 @@ export const taskSpecSchema = z.object({
 });
 
 export type KnowledgeDomain = z.infer<typeof knowledgeDomainSchema>;
+export type TaskEvidenceCondition = z.infer<typeof taskEvidenceConditionSchema>;
 export type TaskSpec = z.infer<typeof taskSpecSchema>;
+
+export function taskEvidenceConditionFor(obligation: {
+  readonly evidencePolicy: z.infer<typeof taskEvidencePolicySchema>;
+  readonly evidenceCondition?: TaskEvidenceCondition | undefined;
+}): TaskEvidenceCondition {
+  return obligation.evidenceCondition ?? defaultTaskEvidenceCondition(
+    obligation.evidencePolicy === "customer_input",
+  );
+}
+
+function defaultTaskEvidenceCondition(customerInput: boolean): TaskEvidenceCondition {
+  return {
+    inputState: customerInput ? "missing" : "not_applicable",
+    ambiguous: false,
+    conflictDetected: false,
+    freshness: "not_assessed",
+  };
+}
+
+const TASK_EVIDENCE_CONDITION_PROMPT = `每个 obligation 必须输出 evidenceCondition：
+依赖本次客户事实的 customer_input，只有用户已经明确提供足够的当次事实时 inputState 才能是 available，否则必须是 missing；其他 evidencePolicy 的 inputState 必须是 not_applicable。
+customer_input 只表示要形成当前个案的判断或预测；“需要收集哪些信息”“如何评估”“如何推进”等可由正式知识回答的方法、清单和建议必须使用 synthesis。一个问题同时要求个案结论与方法建议时，必须拆成互不替代的 customer_input 与 synthesis obligations。
+ambiguous、conflictDetected 和 freshness 只按当前用户输入中明确出现的信息判断，不得猜测。不得因缺少客户输入而省略知识库可回答的方法、步骤或建议。`;
 
 export interface TaskCompilerInput {
   readonly resolvedQuestion: ResolvedQuestion;
@@ -159,7 +229,10 @@ export class ModelTaskCompiler implements TaskCompiler {
 
   async compile(input: TaskCompilerInput): Promise<TaskSpec> {
     const messages = [
-      { role: "system" as const, content: TASK_SPEC_SYSTEM_PROMPT },
+      {
+        role: "system" as const,
+        content: `${TASK_SPEC_SYSTEM_PROMPT}\n${TASK_EVIDENCE_CONDITION_PROMPT}`,
+      },
       {
         role: "user" as const,
         content: JSON.stringify({

@@ -419,7 +419,10 @@ describe("fixed 41-question scripted protocol regression", () => {
     expect(result.status).toBe(testCase.expectedStatus);
     for (const fact of testCase.requiredFacts) expect(result.answer).toContain(fact);
     for (const fact of testCase.relatedFacts) expect(result.answer).toContain(fact);
-    for (const fact of testCase.forbiddenFacts) expect(result.answer).not.toContain(fact);
+    const supportedAnswer = result.answer.split("尚未确认的部分：", 1)[0] ?? "";
+    for (const fact of testCase.forbiddenFacts) {
+      expect(supportedAnswer).not.toContain(fact);
+    }
 
     if (testCase.expectedScope === "normal") {
       expect(knowledge.open).not.toHaveBeenCalled();
@@ -436,7 +439,10 @@ describe("fixed 41-question scripted protocol regression", () => {
     expect(new Set(projectsCalled)).toEqual(new Set(testCase.allowedProjects));
     if (testCase.expectedStatus === "not_covered") {
       if (testCase.relatedFacts.length === 0) {
-        expect(result.answer).toBe(NOT_COVERED_TEXT);
+        expect(
+          result.answer === NOT_COVERED_TEXT ||
+          result.answer.startsWith("尚未确认的部分："),
+        ).toBe(true);
         expect(result.references).toEqual([]);
         expect(pagesRead).toEqual([]);
       } else {

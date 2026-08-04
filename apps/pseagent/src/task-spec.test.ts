@@ -378,6 +378,65 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("normalizes customer-input evidence conditions conservatively", () => {
+    const parsed = taskSpecSchema.parse({
+      subject: "当前机会判断",
+      entities: [{ id: "E1", label: "当前机会", role: "target", sourceText: "当前机会" }],
+      deliverables: [{
+        id: "D1",
+        label: "判断赢率",
+        kind: "diagnosis",
+        required: true,
+        sourceText: "当前机会赢率如何",
+        obligations: [{
+          id: "O1",
+          label: "判断当前机会赢率",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "customer_input",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "当前机会赢率",
+        }],
+      }],
+    });
+
+    expect(parsed.deliverables[0]?.obligations[0]?.evidenceCondition).toEqual({
+      inputState: "missing",
+      ambiguous: false,
+      conflictDetected: false,
+      freshness: "not_assessed",
+    });
+  });
+
+  it("rejects a non-customer-input obligation marked as missing customer input", () => {
+    expect(() => taskSpecSchema.parse({
+      subject: "产品能力",
+      entities: [{ id: "E1", label: "产品", role: "product", sourceText: "产品" }],
+      deliverables: [{
+        id: "D1",
+        label: "确认能力",
+        kind: "fact",
+        required: true,
+        sourceText: "确认产品能力",
+        obligations: [{
+          id: "O1",
+          label: "确认产品能力",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          evidenceCondition: {
+            inputState: "missing",
+            ambiguous: false,
+            conflictDetected: false,
+            freshness: "not_assessed",
+          },
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "产品能力",
+        }],
+      }],
+    })).toThrow();
+  });
+
   it.each([
     ["支持 IPv6 吗", "IPv6"],
     ["有没有双活能力", "双活能力"],
@@ -1158,7 +1217,9 @@ describe("ModelTaskCompiler", () => {
     const taskSpec = taskSpecSchema.parse(parallelEntityTaskSpec());
     const completeJson = vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) => {
       expect(input.schemaDescription).toBe("pse_task_spec");
-      expect(input.messages[0]?.content).toBe(TASK_SPEC_SYSTEM_PROMPT);
+      expect(input.messages[0]?.content).toContain(TASK_SPEC_SYSTEM_PROMPT);
+      expect(input.messages[0]?.content).toContain("每个 obligation 必须输出 evidenceCondition");
+      expect(input.messages[0]?.content).toContain("必须拆成互不替代的 customer_input 与 synthesis obligations");
       expect(input.messages[0]?.content).toContain("不得套用历史测试问题的固定维度");
       expect(input.messages[1]?.content).toContain('"standaloneQuestion"');
       expect(input.messages[1]?.content).toContain('"legacyPlan"');

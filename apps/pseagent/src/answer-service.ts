@@ -44,7 +44,10 @@ import {
 } from "./domain-answer-merge.js";
 import { formatKnowledgeFinal } from "./response.js";
 import type { KnowledgeDomain } from "./task-spec.js";
-import type { EvidenceLedger } from "./evidence-ledger.js";
+import type {
+  EvidenceLedger,
+  RequirementEvidenceCondition,
+} from "./evidence-ledger.js";
 import type { CoverageGap } from "./coverage-gap.js";
 import type { CoverageVerificationReport } from "./coverage-verifier.js";
 
@@ -60,6 +63,7 @@ export interface AgentRunnerInput {
   readonly conversationContext?: string;
   readonly plan: KnowledgePlan;
   readonly requirementBindings?: readonly DomainRequirementBinding[];
+  readonly requirementEvidenceConditions?: readonly RequirementEvidenceCondition[];
   readonly model: ModelClient;
   readonly session: KnowledgeSession;
   readonly deadlineAt: number;
@@ -203,6 +207,7 @@ export class AnswerService {
       let effectiveQuestion = question;
       let effectivePlan = plan;
       let effectiveConversationContext = conversationContext;
+      let effectiveEvidenceConditions: readonly RequirementEvidenceCondition[] | undefined;
       if (taskAnalysis !== undefined) {
         if (this.dependencies.taskSpecActiveEnabled === true) {
           if (this.dependencies.multiDomainActiveEnabled === true) {
@@ -259,6 +264,7 @@ export class AnswerService {
               effectiveQuestion = taskAnalysis.resolvedQuestion.standaloneQuestion;
               effectivePlan = adapted.plan;
               effectiveConversationContext = undefined;
+              effectiveEvidenceConditions = adapted.conditions;
               recordDiagnostic(trace, {
                 event: "task_spec_activation",
                 activated: true,
@@ -294,6 +300,9 @@ export class AnswerService {
         scope,
         question: effectiveQuestion,
         plan: effectivePlan,
+        ...(effectiveEvidenceConditions === undefined
+          ? {}
+          : { requirementEvidenceConditions: effectiveEvidenceConditions }),
         model: this.dependencies.model,
         session,
         deadlineAt,
@@ -430,6 +439,9 @@ export class AnswerService {
           question: input.question,
           plan: domainPlan.plan,
           requirementBindings: domainPlan.bindings,
+          ...(domainPlan.conditions === undefined
+            ? {}
+            : { requirementEvidenceConditions: domainPlan.conditions }),
           model: this.dependencies.model,
           session,
           deadlineAt: input.deadlineAt,
@@ -545,6 +557,14 @@ export class AnswerService {
       input.scope,
       merged.action,
       merged.references,
+      {
+        ...(merged.domainEvidenceLedgers === undefined
+          ? {}
+          : { evidenceLedgers: merged.domainEvidenceLedgers }),
+        ...(merged.coverageGaps === undefined
+          ? {}
+          : { coverageGaps: merged.coverageGaps }),
+      },
     );
     return await this.finishPrimary({
       primary,
@@ -910,6 +930,12 @@ function recordFinished(
     elapsedMs: Math.max(0, Date.now() - startedAt),
     historicalAttempted,
     historicalUsed,
+    ...(result.knowledgeCoverage === undefined
+      ? {}
+      : { knowledgeCoverage: result.knowledgeCoverage }),
+    ...(result.caseAssessability === undefined
+      ? {}
+      : { caseAssessability: result.caseAssessability }),
     ...(result.historicalNotice === undefined
       ? {}
       : {

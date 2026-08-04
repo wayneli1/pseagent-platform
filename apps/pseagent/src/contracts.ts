@@ -3,6 +3,13 @@ import { z } from "zod";
 export const scopeSchema = z.enum(["professional", "general", "normal"]);
 export const answerStatusSchema = z.enum(["answered", "partially_answered", "not_covered", "temporarily_unavailable"]);
 export const coverageSchema = z.enum(["complete", "partial", "none"]);
+export const knowledgeCoverageSchema = coverageSchema;
+export const caseAssessabilitySchema = z.enum([
+  "sufficient",
+  "insufficient",
+  "conflicting",
+  "not_applicable",
+]);
 export const evidenceModeSchema = z.enum(["direct_only", "synthesis_allowed"]);
 export const routeActionSchema = z.object({ action: z.literal("route"), scope: scopeSchema }).strict();
 export const knowledgeRequirementIdSchema = z.string().regex(/^R[1-6]$/u);
@@ -323,6 +330,8 @@ export const answerResultSchema = z.object({
   status: answerStatusSchema,
   answer: z.string(),
   references: z.array(referenceSchema),
+  knowledgeCoverage: knowledgeCoverageSchema.optional(),
+  caseAssessability: caseAssessabilitySchema.optional(),
   historicalAnswer: historicalAnswerSchema.optional(),
   historicalNotice: historicalNoticeSchema.optional(),
 }).strict().superRefine((value, context) => {
@@ -374,6 +383,8 @@ export type HistoricalRejectionReason = z.infer<
 >;
 export type HistoricalNotice = z.infer<typeof historicalNoticeSchema>;
 export type Coverage = z.infer<typeof coverageSchema>;
+export type KnowledgeCoverage = z.infer<typeof knowledgeCoverageSchema>;
+export type CaseAssessability = z.infer<typeof caseAssessabilitySchema>;
 export type AnswerStatus = z.infer<typeof answerStatusSchema>;
 
 function sanitizeModelAction(value: unknown): unknown {

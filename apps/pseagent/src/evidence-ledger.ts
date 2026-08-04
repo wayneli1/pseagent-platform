@@ -21,6 +21,14 @@ export type EvidenceSourceBoundary = "formal" | "summary_only" | "external_only"
 export type EvidenceFreshness = "not_assessed" | "current" | "stale_or_unconfirmed";
 export type EvidenceInputState = "not_applicable" | "available" | "missing";
 
+export interface RequirementEvidenceCondition {
+  readonly requirementId: string;
+  readonly conflictDetected: boolean;
+  readonly freshness: EvidenceFreshness;
+  readonly inputState: EvidenceInputState;
+  readonly ambiguous: boolean;
+}
+
 export interface EvidenceQueryDraft {
   readonly phase: "seed" | "supplemental";
   readonly query: string;

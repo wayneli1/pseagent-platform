@@ -106,6 +106,8 @@ describe("development diagnostic trace", () => {
       elapsedMs: 123,
       historicalAttempted: false,
       historicalUsed: false,
+      knowledgeCoverage: "complete",
+      caseAssessability: "insufficient",
     });
 
     const files = readdirSync(directory);
@@ -154,6 +156,10 @@ describe("development diagnostic trace", () => {
       "stopReason",
       "timestamp",
     ]);
+    expect(records.find((record) => record.event === "finish")).toMatchObject({
+      knowledgeCoverage: "complete",
+      caseAssessability: "insufficient",
+    });
     expect(content.length).toBeLessThan(10_000);
   });
 

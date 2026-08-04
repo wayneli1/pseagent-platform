@@ -3,9 +3,11 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AnswerStatus,
+  CaseAssessability,
   Coverage,
   CoverageVerificationReason,
   HistoricalRejectionReason,
+  KnowledgeCoverage,
   Scope,
 } from "./contracts.js";
 import type { TaskSpecIssueCode } from "./task-spec.js";
@@ -239,6 +241,8 @@ export type DiagnosticEvent =
       readonly elapsedMs: number;
       readonly historicalAttempted: boolean;
       readonly historicalUsed: boolean;
+      readonly knowledgeCoverage?: KnowledgeCoverage;
+      readonly caseAssessability?: CaseAssessability;
       readonly historicalNoticeShown?: boolean;
       readonly historicalRejectedReason?: HistoricalRejectionReason;
     };
@@ -775,6 +779,16 @@ function allowlistDiagnosticEvent(
         elapsedMs: safeCount(event.elapsedMs),
         historicalAttempted: safeBoolean(event.historicalAttempted),
         historicalUsed: safeBoolean(event.historicalUsed),
+        ...safeOptionalEnumField(
+          "knowledgeCoverage",
+          event.knowledgeCoverage,
+          ["complete", "partial", "none"] as const,
+        ),
+        ...safeOptionalEnumField(
+          "caseAssessability",
+          event.caseAssessability,
+          ["sufficient", "insufficient", "conflicting", "not_applicable"] as const,
+        ),
         ...safeOptionalBooleanField(
           "historicalNoticeShown",
           event.historicalNoticeShown,
