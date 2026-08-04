@@ -233,6 +233,7 @@ export const COVERAGE_VERIFICATION_REPAIR_INSTRUCTION =
 每个 requirement 只能包含 id、targetDecision、retainedTargetSegmentIndexes、synthesizedTargetSegmentIndexes、retainedRelatedContextIndexes、coveredAspectIds、reason。
 targetDecision 只能是 retain、retain_partial 或 not_covered。
 retainedTargetSegmentIndexes 只能填写输入 targetSegments 中对应 requirement 的从 0 开始索引，必须严格递增、不得重复；不保留时输出空数组。
+每个实质目标句段，包括没有引用的句段，都必须逐项审计；没有至少一个已读正文引用的事实句段不得保留。
 synthesizedTargetSegmentIndexes 只能填写 retainedTargetSegmentIndexes 中已保留、且由多篇正文共同支持的保守归纳句段索引，必须严格递增、不得重复；没有归纳句段时输出空数组。
 retainedRelatedContextIndexes 只能填写草稿 relatedContext 的从 0 开始索引，必须严格递增、不得重复、最多三项；不保留时输出空数组。
 coveredAspectIds 必须填写该 requirement 的保留答案在语义上实际表达、且被其引用正文支持的 plan evidenceAspects ID，按编号严格递增、不得重复；同义或等价表述可以计入，不要求逐字复述 label 或 terms；没有覆盖或选择 not_covered 时输出空数组。
@@ -243,10 +244,10 @@ export const COVERAGE_VERIFICATION_SYSTEM_PROMPT = `你是 PSEAgent 的正文证
 输出 action 必须是 verify，并逐项保留规划中的 requirement ID，只返回目标保留决策、相关信息索引和固定 reason。
 你只能审计输入中的草稿和实际读页正文，禁止搜索、调用工具、增加引用或使用模型先验。
 plan 中的 evidenceAspects 是动态检索与复核提示，不是固定答案模板。先判断草稿是否正确回答用户核心意图、核心结论是否被所引 content 正文支持，再用 aspects 辅助发现实质遗漏。允许合并相近 aspect、改变顺序、改变详略和使用同义或等价表达；不得因未逐字复述 label/terms 或宽泛问题少写一个次要导航项而降级。把语义确认已覆盖的 ID 写入 coveredAspectIds。evidence 中的 aspectIds 仅是检索导航标记，不是事实证据，必须检查 content 正文。
-覆盖范围只以用户明确问题和正式正文为准；不得把用户未询问的邻近主题当作缺口。核心方向正确、主要结论有证据支持时应保留 complete。只有遗漏用户明确必答项、遗漏多个会实质改变答案方向的主要方面，或核心结论仅获部分支持时才使用 retain_partial。
+覆盖范围只以用户明确问题和正式正文为准；不得把用户未询问的邻近主题当作缺口。核心方向正确、主要结论有证据支持且所有规划 aspect 都已在语义上确认覆盖时应保留 complete。若 coveredAspectIds 真正缺少任一规划 aspect，必须使用 retain_partial；不得用覆盖百分比忽略已确认的缺口。
 校验 direct_only 的具体产品或竞品对比时，只审计用户要求的主要差异与适用边界。正式对比页已直接覆盖这些目标时应保留 complete；overview 中未被用户明确询问的市场、案例、迁移、信创等邻近栏目缺失不构成 partial，也不要因草稿加入了可删除的邻近补充就误判核心目标未覆盖。
 页面主题相关、介绍相邻概念或只列出基础协议，不等于正文支持用户询问的目标命题。
-逐项检查 targetSegments 中每个带引用目标句段。直接正文支持的保留句段不进入 synthesizedTargetSegmentIndexes；只有 synthesis_allowed 且多篇实际正文共同推出的保守归纳句段，才同时进入 retainedTargetSegmentIndexes 和 synthesizedTargetSegmentIndexes。全部可支持句段均保留时选择 retain；只支持部分句段时选择 retain_partial；一个句段都没有正式支持时才选择 not_covered。
+逐项检查 targetSegments 中每个实质目标句段，包括没有引用的句段。没有至少一个已读正文引用的事实句段不得保留。直接正文支持的保留句段不进入 synthesizedTargetSegmentIndexes；只有 synthesis_allowed 且多篇实际正文共同推出的保守归纳句段，才同时进入 retainedTargetSegmentIndexes 和 synthesizedTargetSegmentIndexes。全部可支持句段均保留时选择 retain；只支持部分句段时选择 retain_partial；一个句段都没有正式支持时才选择 not_covered。
 岗位职责、方法论总结、厂商无关的方法论对比、方案组织、能力领域、综合分析和建议可以归纳。具体产品或竞品对比中的功能、优势、版本、许可等事实必须按 direct_only 逐句直接支持，不得进入 synthesizedTargetSegmentIndexes。
 校验岗位职责、工作内容或能力领域的开放归纳时，若引用正文明确描述相关流程中的动作、方法、协同方式或推进责任，把这些内容保守组织为角色职责属于允许的 synthesized_support；不得仅因页面标题或正文没有逐字写“岗位职责”就删除。各规划 aspect 均有对应正文时应保留逐项完整回答，不能降级成脱离用户问题的零散事实摘录。
 把不同页面中的动作、机制或案例重新组织为更高层类别属于跨页归纳；即使每个基础事实分别能在正文中找到，凡是由答案完成类别映射的句段，都必须进入 synthesizedTargetSegmentIndexes。

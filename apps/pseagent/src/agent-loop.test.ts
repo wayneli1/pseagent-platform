@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentAction, KnowledgePlan } from "./contracts.js";
+import type { AgentAction, FinalAction, KnowledgePlan } from "./contracts.js";
 import {
+  inferCoverageVerificationReport,
   InvalidCoverageVerificationError,
   type CoverageVerifierInput,
 } from "./coverage-verifier.js";
@@ -163,9 +164,26 @@ function fakeSession(options: {
   readonly graphHits?: readonly SearchFixture[];
   readonly failAllSearches?: boolean;
   readonly failedQueries?: readonly string[];
+  readonly failedQueryAttempts?: Readonly<Record<string, number>>;
+  readonly failGraph?: boolean;
+  readonly failedReadPaths?: readonly string[];
+  readonly failedReadAttempts?: number;
+  readonly pageType?: string;
+  readonly pageSources?: readonly string[];
 } = {}) {
+  const remainingFailedQueryAttempts = new Map(
+    Object.entries(options.failedQueryAttempts ?? {}),
+  );
   const searchMock = vi.fn(async (query: string) => {
-    if (options.failAllSearches || options.failedQueries?.includes(query)) {
+    const remainingFailures = remainingFailedQueryAttempts.get(query) ?? 0;
+    if (remainingFailures > 0) {
+      remainingFailedQueryAttempts.set(query, remainingFailures - 1);
+    }
+    if (
+      options.failAllSearches ||
+      options.failedQueries?.includes(query) ||
+      remainingFailures > 0
+    ) {
       throw new Error("search unavailable");
     }
     const fixtures = options.hits?.[query] ?? [];
@@ -181,26 +199,39 @@ function fakeSession(options: {
       })),
     };
   });
-  const graphMock = vi.fn(async () => ({
-    project: "coremail-professional" as const,
-    revision,
-    hits: (options.graphHits ?? []).map((fixture) => ({
-      path: fixture.path,
-      title: fixture.title ?? fixture.path,
-      relation: "related",
-    })),
-  }));
-  const readPageMock = vi.fn(async (path: string) => ({
-    project: "coremail-professional" as const,
-    path,
-    title: path,
-    type: "guide",
-    tags: [],
-    related: [],
-    sources: [],
-    body: `body:${path}`,
-    contentHash: hash,
-  }));
+  const graphMock = vi.fn(async () => {
+    if (options.failGraph) throw new Error("graph unavailable");
+    return {
+      project: "coremail-professional" as const,
+      revision,
+      hits: (options.graphHits ?? []).map((fixture) => ({
+        path: fixture.path,
+        title: fixture.title ?? fixture.path,
+        relation: "related",
+      })),
+    };
+  });
+  let remainingFailedReadAttempts = options.failedReadAttempts ?? 0;
+  const readPageMock = vi.fn(async (path: string) => {
+    if (
+      options.failedReadPaths?.includes(path) ||
+      remainingFailedReadAttempts > 0
+    ) {
+      remainingFailedReadAttempts = Math.max(0, remainingFailedReadAttempts - 1);
+      throw new Error("read unavailable");
+    }
+    return {
+      project: "coremail-professional" as const,
+      path,
+      title: path,
+      type: options.pageType ?? "guide",
+      tags: [],
+      related: [],
+      sources: [...(options.pageSources ?? [])],
+      body: `body:${path}`,
+      contentHash: hash,
+    };
+  });
   return {
     project: "coremail-professional" as const,
     revision,
@@ -247,9 +278,18 @@ function agentInput(
     plan,
     model,
     session,
-    verifyCoverage: async ({ draft }: CoverageVerifierInput) => draft,
+    verifyCoverage: async (input: CoverageVerifierInput) =>
+      reportAndReturn(input),
     ...(deadlineAt === undefined ? {} : { deadlineAt }),
   };
+}
+
+function reportAndReturn(
+  input: CoverageVerifierInput,
+  action: FinalAction = input.draft,
+): FinalAction {
+  input.onReport?.(inferCoverageVerificationReport(action, input.plan));
+  return action;
 }
 
 function payloadAt(model: ReturnType<typeof scriptedAgentModel>, index: number) {
@@ -712,7 +752,7 @@ describe("runKnowledgeAgent", () => {
         retainedSynthesizedSegmentCount: 0,
         removedSegmentCount: 0,
       }]);
-      return {
+      return reportAndReturn(input, {
         action: "final" as const,
         requirements: [{
           id: "R1" as const,
@@ -721,7 +761,7 @@ describe("runKnowledgeAgent", () => {
           citations: [],
         }],
         citations: [],
-      };
+      });
     });
 
     const result = await runKnowledgeAgent({
@@ -820,7 +860,7 @@ describe("runKnowledgeAgent", () => {
         requirementId: "R1",
         citation: 1,
       })]);
-      return input.draft;
+      return reportAndReturn(input);
     });
 
     await runKnowledgeAgent({
@@ -887,7 +927,7 @@ describe("runKnowledgeAgent", () => {
         path: "wiki/protocols.md",
         content: "支持 SMTP、POP3、IMAP、HTTP/HTTPS 与 CMSP/CMTP。",
       })]);
-      return input.draft;
+      return reportAndReturn(input);
     });
 
     const result = await runKnowledgeAgent({
@@ -1009,7 +1049,8 @@ describe("runKnowledgeAgent", () => {
         citations: [1],
       },
     ]);
-    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => {
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
+      const { draft } = input;
       expect(draft).toMatchObject({
         requirements: [{
           coverage: "none",
@@ -1019,7 +1060,7 @@ describe("runKnowledgeAgent", () => {
         }],
         citations: [1],
       });
-      return draft;
+      return reportAndReturn(input, draft);
     });
 
     const result = await runKnowledgeAgent({
@@ -1060,7 +1101,8 @@ describe("runKnowledgeAgent", () => {
         events.push(event);
       },
     } satisfies DiagnosticTrace;
-    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input));
 
     const result = await runKnowledgeAgent({
       ...agentInput(model, session),
@@ -1666,14 +1708,16 @@ describe("runKnowledgeAgent", () => {
       final("complete", "保守差异结论与边界 [1]", [1]),
     ]);
     const verifyCoverage = vi.fn()
-      .mockImplementationOnce(async ({ draft }: CoverageVerifierInput) => ({
-        ...draft,
-        requirements: draft.requirements.map((requirement) => ({
-          ...requirement,
-          coverage: "partial" as const,
-        })),
-      }))
-      .mockImplementationOnce(async ({ draft }: CoverageVerifierInput) => draft);
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input, {
+          ...input.draft,
+          requirements: input.draft.requirements.map((requirement) => ({
+            ...requirement,
+            coverage: "partial" as const,
+          })),
+        }))
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input));
 
     const result = await runKnowledgeAgent({
       ...agentInput(model, session, plan),
@@ -2640,6 +2684,44 @@ describe("runKnowledgeAgent", () => {
     expect(payloadAt(model, 1).observations?.join("\n")).toContain("duplicate_query");
   });
 
+  it("does not execute the completed global seed query again as a supplemental query", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [], "测试问题": [] } });
+    const model = scriptedAgentModel([
+      search("R1", "  测试问题  "),
+      final("none", "当前资料未覆盖该问题"),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session));
+
+    expect(session.search).toHaveBeenCalledTimes(2);
+    expect(payloadAt(model, 1).observations?.join("\n")).toContain("duplicate_query");
+  });
+
+  it("allows the same supplemental query to recover after a transient search failure", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [], "测试问题": [], "瞬时查询": [] },
+      failedQueryAttempts: { "瞬时查询": 1 },
+    });
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([
+        search("R1", "瞬时查询"),
+        search("R1", "瞬时查询"),
+        final("none", "当前资料未覆盖该问题"),
+      ]),
+      session,
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    expect(session.search).toHaveBeenCalledTimes(4);
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.queries.filter((query) =>
+        query.query === "瞬时查询").map((query) => query.status)).toEqual([
+        "unavailable",
+        "empty",
+      ]);
+    }
+  });
+
   it("rejects supplemental searches bound to an unknown dynamic aspect", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([
@@ -2859,7 +2941,8 @@ describe("runKnowledgeAgent", () => {
       read("R1", "wiki/concepts/second.md"),
       ...Array.from({ length: 7 }, () => repeatedFinal),
     ]);
-    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input));
     const events: DiagnosticEvent[] = [];
     const trace = {
       requestId: "repeated-final-after-evidence-nudge",
@@ -2976,7 +3059,8 @@ describe("runKnowledgeAgent", () => {
       finalAfterR1Read,
       finalAfterR1Read,
     ]);
-    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input));
 
     const result = await runKnowledgeAgent({
       ...agentInput(model, session, plan),
@@ -3062,7 +3146,8 @@ describe("runKnowledgeAgent", () => {
       invalidFinal,
       invalidFinal,
     ]);
-    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input));
     const events: DiagnosticEvent[] = [];
     const trace = {
       requestId: "invalid-final-after-evidence-nudge",
@@ -3130,17 +3215,34 @@ describe("runKnowledgeAgent", () => {
       "read",
       "coverage",
       "coverage",
+      "coverage_gaps",
     ]);
-    expect(events.find((event) => event.event === "read")).toMatchObject({
+    expect(events.find((event) => event.event === "candidates")).toEqual({
+      event: "candidates",
       requirementId: "R1",
-      path: "wiki/r1.md",
+      source: "seed_search_result",
+      candidateCount: 1,
+      aspects: [{ id: "A1", candidateCount: 1, readCandidateCount: 0 }],
+    });
+    expect(events.find((event) => event.event === "read")).toEqual({
+      event: "read",
+      requirementId: "R1",
       citation: 1,
+      sectionHeadingCount: 0,
+      aspectIds: ["A1"],
     });
     expect(events.filter((event) => event.event === "coverage")).toEqual([
       expect.objectContaining({ stage: "draft" }),
       expect.objectContaining({ stage: "verified" }),
     ]);
+    expect(events.find((event) => event.event === "coverage_gaps")).toEqual({
+      event: "coverage_gaps",
+      domainCount: 1,
+      gapCount: 0,
+      gaps: [],
+    });
     expect(JSON.stringify(events)).not.toContain("body:wiki/r1.md");
+    expect(JSON.stringify(events)).not.toContain("wiki/r1.md");
     expect(JSON.stringify(events)).not.toContain("读取后确认");
   });
 
@@ -3432,9 +3534,16 @@ describe("runKnowledgeAgent", () => {
       return { session, model };
     };
     const detailedFixture = createFixture();
-    const detailed = await runKnowledgeAgentDetailed(
-      agentInput(detailedFixture.model, detailedFixture.session),
-    );
+    const detailed = await runKnowledgeAgentDetailed({
+      ...agentInput(detailedFixture.model, detailedFixture.session),
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D7",
+        obligationId: "O9",
+        order: 4,
+      }],
+    });
     expect(detailed).toMatchObject({
       outcome: "verified",
       project: "coremail-professional",
@@ -3444,6 +3553,25 @@ describe("runKnowledgeAgent", () => {
         requirements: [{ coverage: "complete", citations: [1] }],
       },
       references: [{ index: 1, path: "wiki/r1.md" }],
+      verification: {
+        coveredRequirementIds: ["R1"],
+        missingRequirementIds: [],
+      },
+      evidenceLedger: {
+        project: "coremail-professional",
+        revision,
+        units: [{
+          binding: { deliverableId: "D7", obligationId: "O9" },
+          queries: [
+            { id: "Q1", status: "success" },
+            { id: "Q2", status: "empty", plannedQueryIndexes: [] },
+          ],
+          candidates: [{ id: "C1", path: "wiki/r1.md" }],
+          reads: [{ candidateId: "C1", status: "success", citation: 1 }],
+          verification: { covered: true, missing: false },
+        }],
+      },
+      coverageGaps: [],
     });
     expect(detailed).not.toHaveProperty("answer");
     expect(detailed).not.toHaveProperty("status");
@@ -3464,6 +3592,864 @@ describe("runKnowledgeAgent", () => {
     }
   });
 
+  it("attributes a verified zero-candidate miss to a specific knowledge gap", async () => {
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([final("none", "当前资料未覆盖")]),
+      fakeSession({ hits: { "seed-r1": [] } }),
+    ));
+
+    expect(result).toMatchObject({
+      outcome: "verified",
+      verification: {
+        coveredRequirementIds: [],
+        missingRequirementIds: ["R1"],
+      },
+      evidenceLedger: {
+        units: [{
+          queries: [
+            { status: "empty", plannedQueryIndexes: [0] },
+            { status: "empty", plannedQueryIndexes: [] },
+          ],
+          candidates: [],
+          reads: [],
+        }],
+      },
+      coverageGaps: [{
+        id: "G1",
+        requirementId: "R1",
+        gapClass: "knowledge",
+        reason: "no_matching_page",
+        missingAspect: "测试证据面",
+      }],
+    });
+  });
+
+  it("keeps a partially failed required search classified as retrieval, not knowledge", async () => {
+    const plan: KnowledgePlan = {
+      subject: "检索失败归因",
+      retrievalStrategy: "coverage_units",
+      requirements: [{
+        id: "R1",
+        question: "确认测试证据",
+        ...plannedEvidence("seed-unavailable", "seed-empty"),
+        evidenceMode: "direct_only",
+      }],
+    };
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([final("none", "当前正式资料未覆盖")]),
+      fakeSession({
+        hits: { "seed-empty": [] },
+        failedQueries: ["seed-unavailable"],
+      }),
+      plan,
+    ));
+
+    expect(result).toMatchObject({
+      outcome: "verified",
+      coverageGaps: [{
+        gapClass: "retrieval",
+        reason: "tool_unavailable",
+      }],
+    });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.queries.map((query) => query.status))
+        .toEqual(expect.arrayContaining(["unavailable", "empty"]));
+      expect(result.coverageGaps?.[0]).not.toMatchObject({ gapClass: "knowledge" });
+    }
+  });
+
+  it("keeps seed ledger order stable when concurrent searches finish out of order", async () => {
+    const plan: KnowledgePlan = {
+      subject: "并发检索顺序",
+      retrievalStrategy: "coverage_units",
+      requirements: [{
+        id: "R1",
+        question: "确认测试证据",
+        ...plannedEvidence("slow-seed", "fast-seed"),
+        evidenceMode: "direct_only",
+      }],
+    };
+    const session = fakeSession();
+    session.search.mockImplementation(async (query: string) => {
+      await new Promise((resolve) => setTimeout(resolve, query === "slow-seed" ? 15 : 0));
+      return {
+        project: "coremail-professional",
+        revision,
+        hits: [],
+      };
+    });
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([final("none", "当前正式资料未覆盖")]),
+      session,
+      plan,
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.queries.map((query) => query.query))
+        .toEqual(["slow-seed", "fast-seed"]);
+    }
+  });
+
+  it("orders shared-only ledger candidates independently of final citation order", async () => {
+    const plan: KnowledgePlan = {
+      subject: "跨义务共享证据排序",
+      requirements: [
+        {
+          id: "R1",
+          question: "确认甲乙证据",
+          evidenceMode: "direct_only",
+          evidenceAspects: [{ id: "A1", label: "甲乙证据", terms: ["甲", "乙"] }],
+          queries: [{ text: "甲乙证据", aspectIds: ["A1"] }],
+        },
+        {
+          id: "R2",
+          question: "复用已核验资料",
+          evidenceMode: "direct_only",
+          evidenceAspects: [{ id: "A1", label: "复用资料", terms: ["复用"] }],
+          queries: [{ text: "无候选资料", aspectIds: ["A1"] }],
+        },
+      ],
+    };
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([
+        readPages(
+          { requirementId: "R1", path: "wiki/shared-a.md" },
+          { requirementId: "R1", path: "wiki/shared-b.md" },
+        ),
+        final("complete", "", [1, 2], [
+          { id: "R1", coverage: "complete", citations: [1, 2] },
+          { id: "R2", coverage: "complete", citations: [2, 1] },
+        ]),
+      ]),
+      fakeSession({
+        hits: {
+          "甲乙证据": [
+            { path: "wiki/shared-a.md", title: "甲证据" },
+            { path: "wiki/shared-b.md", title: "乙证据" },
+          ],
+          "无候选资料": [],
+        },
+      }),
+      plan,
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[1]?.candidates.map(({ path }) => path))
+        .toEqual(["wiki/shared-a.md", "wiki/shared-b.md"]);
+    }
+  });
+
+  it("records seed, supplemental, and graph candidate provenance from executed tools", async () => {
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([
+        graph("R1", "wiki/r1.md"),
+        search("R1", "extra-query"),
+        final("complete", "已核验事实[1]", [1]),
+      ]),
+      fakeSession({
+        hits: {
+          "seed-r1": [{ path: "wiki/r1.md" }],
+          "extra-query": [{ path: "wiki/extra.md" }],
+        },
+        graphHits: [{ path: "wiki/graph.md" }],
+      }),
+      { ...singlePlan, retrievalStrategy: "coverage_units" },
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.candidates.map((candidate) => ({
+        path: candidate.path,
+        sources: candidate.sources,
+      }))).toEqual(expect.arrayContaining([
+        { path: "wiki/r1.md", sources: ["seed"] },
+        { path: "wiki/extra.md", sources: ["supplemental"] },
+        { path: "wiki/graph.md", sources: ["graph"] },
+      ]));
+    }
+  });
+
+  it("records a failed broad global search on every affected requirement", async () => {
+    const plan: KnowledgePlan = {
+      subject: "全局检索归属",
+      requirements: [
+        {
+          id: "R1",
+          question: "确认甲项证据",
+          ...plannedEvidence("seed-r1"),
+          evidenceMode: "direct_only",
+        },
+        {
+          id: "R2",
+          question: "确认乙项证据",
+          ...plannedEvidence("seed-r2"),
+          evidenceMode: "direct_only",
+        },
+      ],
+    };
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([final("none", "当前正式资料未覆盖", [], [
+        { id: "R1", coverage: "none", citations: [] },
+        { id: "R2", coverage: "none", citations: [] },
+      ])]),
+      fakeSession({
+        hits: { "seed-r1": [], "seed-r2": [] },
+        failedQueries: ["测试问题"],
+      }),
+      plan,
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      for (const unit of result.evidenceLedger?.units ?? []) {
+        expect(unit.queries).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            phase: "seed",
+            query: "测试问题",
+            status: "unavailable",
+            plannedQueryIndexes: [],
+          }),
+        ]));
+      }
+      expect(result.coverageGaps?.map((gap) => [
+        gap.requirementId,
+        gap.gapClass,
+        gap.reason,
+      ])).toEqual([
+        ["R1", "retrieval", "tool_unavailable"],
+        ["R2", "retrieval", "tool_unavailable"],
+      ]);
+    }
+  });
+
+  it("executes one physical seed search when the global and planned queries normalize equally", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(
+        scriptedAgentModel([final("none", "当前正式资料未覆盖")]),
+        session,
+      ),
+      question: "  SEED-R1  ",
+    });
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    expect(session.search).toHaveBeenCalledTimes(1);
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.queries).toHaveLength(1);
+      expect(result.evidenceLedger?.units[0]?.queries[0]).toMatchObject({
+        plannedQueryIndexes: [0],
+        status: "empty",
+      });
+    }
+  });
+
+  it("limits shared physical seed hits to each consumer's own search window", async () => {
+    const plan: KnowledgePlan = {
+      subject: "共享查询窗口",
+      requirements: [
+        {
+          id: "R1",
+          question: "直接核验共同证据",
+          evidenceMode: "direct_only",
+          evidenceAspects: [{ id: "A1", label: "共同证据", terms: ["共同证据"] }],
+          queries: [{ text: "共同证据 第二方面 第三方面 第四方面", aspectIds: ["A1"] }],
+        },
+        {
+          id: "R2",
+          question: "综合核验共同证据",
+          evidenceMode: "synthesis_allowed",
+          evidenceAspects: [
+            { id: "A1", label: "共同证据", terms: ["共同证据"] },
+            { id: "A2", label: "第二方面", terms: ["第二方面"] },
+            { id: "A3", label: "第三方面", terms: ["第三方面"] },
+            { id: "A4", label: "第四方面", terms: ["第四方面"] },
+          ],
+          queries: [{
+            text: "共同证据 第二方面 第三方面 第四方面",
+            aspectIds: ["A1", "A2", "A3", "A4"],
+          }],
+        },
+      ],
+    };
+    const hits = Array.from({ length: 12 }, (_, index) => ({
+      path: `wiki/shared-${String(index + 1).padStart(2, "0")}.md`,
+      title: `共同证据 ${index + 1}`,
+      matchedTerms: ["共同证据"],
+      snippet: "共同证据",
+    }));
+    const model = scriptedAgentModel([final("none", "当前正式资料未覆盖", [], [
+      { id: "R1", coverage: "none", citations: [] },
+      { id: "R2", coverage: "none", citations: [] },
+    ])]);
+
+    await runKnowledgeAgentDetailed(agentInput(
+      model,
+      fakeSession({ hits: { "共同证据 第二方面 第三方面 第四方面": hits } }),
+      plan,
+    ));
+
+    expect(payloadAt(model, 0).requirementEvidence?.map((item) =>
+      item.aspects[0]?.candidateCount)).toEqual([10, 12]);
+  });
+
+  it("fans a global-only batch read success into every explicit consumer as a direct read", async () => {
+    const plan: KnowledgePlan = {
+      subject: "全局候选显式读取",
+      requirements: [
+        {
+          id: "R1",
+          question: "确认甲项测试证据",
+          ...plannedEvidence("seed-r1"),
+          evidenceMode: "direct_only",
+        },
+        {
+          id: "R2",
+          question: "确认乙项测试证据",
+          ...plannedEvidence("seed-r2"),
+          evidenceMode: "direct_only",
+        },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "测试证据": [{
+          path: "wiki/global-shared.md",
+          title: "测试证据",
+          matchedTerms: ["测试证据"],
+        }],
+        "seed-r1": [],
+        "seed-r2": [],
+      },
+    });
+    const model = scriptedAgentModel([
+      readPages(
+        { requirementId: "R2", path: "wiki/global-shared.md" },
+        { requirementId: "R1", path: "wiki/global-shared.md" },
+      ),
+      final("complete", "已核验共享事实[1]", [1], [
+        { id: "R1", coverage: "complete", citations: [1] },
+        { id: "R2", coverage: "complete", citations: [1] },
+      ]),
+    ]);
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(model, session, plan),
+      question: "测试证据",
+    });
+
+    expect(result).toMatchObject({ outcome: "verified", coverageGaps: [] });
+    expect(session.readPage).toHaveBeenCalledTimes(1);
+    expect(payloadAt(model, 1).requirementEvidence?.map((item) =>
+      item.remainingReads)).toEqual([2, 2]);
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units.map((unit) =>
+        unit.reads.map((item) => item.status))).toEqual([
+        ["success"],
+        ["success"],
+      ]);
+    }
+  });
+
+  it("keeps an unread aspect-matched global candidate as a retrieval gap after read budget exhaustion", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/one.md" },
+          { path: "wiki/two.md" },
+          { path: "wiki/three.md" },
+        ],
+        "测试证据": [{
+          path: "wiki/global-relevant.md",
+          title: "测试证据",
+          matchedTerms: ["测试证据"],
+        }],
+      },
+    });
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(
+        scriptedAgentModel([
+          readPages(
+            { requirementId: "R1", path: "wiki/one.md" },
+            { requirementId: "R1", path: "wiki/two.md" },
+          ),
+          read("R1", "wiki/three.md"),
+          final("none", "当前正式资料未覆盖"),
+        ]),
+        session,
+      ),
+      question: "测试证据",
+    });
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.candidates.find((candidate) =>
+        candidate.path === "wiki/global-relevant.md")?.reviewRequired).toBe(true);
+      expect(result.coverageGaps?.[0]).toMatchObject({
+        gapClass: "retrieval",
+        reason: "retrieval_budget_exhausted",
+      });
+    }
+  });
+
+  it("keeps an unread unclassified global candidate out of knowledge-gap attribution", async () => {
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [
+          { path: "wiki/one.md" },
+          { path: "wiki/two.md" },
+          { path: "wiki/three.md" },
+        ],
+        "全局未知页面": [{
+          path: "wiki/global-unclassified.md",
+          title: "索引条目",
+          matchedTerms: ["索引条目"],
+          snippet: "索引条目",
+        }],
+      },
+    });
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(
+        scriptedAgentModel([
+          readPages(
+            { requirementId: "R1", path: "wiki/one.md" },
+            { requirementId: "R1", path: "wiki/two.md" },
+          ),
+          read("R1", "wiki/three.md"),
+          final("none", "当前正式资料未覆盖"),
+        ]),
+        session,
+      ),
+      question: "全局未知页面",
+    });
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.candidates.find((candidate) =>
+        candidate.path === "wiki/global-unclassified.md")?.reviewRequired).toBe(true);
+      expect(result.coverageGaps?.[0]).toMatchObject({
+        gapClass: "retrieval",
+        reason: "retrieval_budget_exhausted",
+      });
+    }
+  });
+
+  it("continues broad synthesis after one preload read fails and returns a retrieval gap", async () => {
+    const plan: KnowledgePlan = {
+      subject: "综合预读容错",
+      requirements: [{
+        id: "R1",
+        question: "综合四类证据",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "甲类", terms: ["甲类"] },
+          { id: "A2", label: "乙类", terms: ["乙类"] },
+          { id: "A3", label: "丙类", terms: ["丙类"] },
+          { id: "A4", label: "丁类", terms: ["丁类"] },
+        ],
+        queries: [{
+          text: "甲类 乙类 丙类 丁类",
+          aspectIds: ["A1", "A2", "A3", "A4"],
+        }],
+      }],
+    };
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([final("partial", "已核验部分事实[1]", [1])]),
+      fakeSession({
+        hits: {
+          "甲类 乙类 丙类 丁类": [
+            { path: "wiki/a-fail.md", title: "甲类", matchedTerms: ["甲类"], snippet: "甲类" },
+            { path: "wiki/b.md", title: "乙类", matchedTerms: ["乙类"], snippet: "乙类" },
+            { path: "wiki/c.md", title: "丙类", matchedTerms: ["丙类"], snippet: "丙类" },
+            { path: "wiki/d.md", title: "丁类", matchedTerms: ["丁类"], snippet: "丁类" },
+          ],
+        },
+        failedReadPaths: ["wiki/a-fail.md"],
+      }),
+      plan,
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.reads).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: "wiki/a-fail.md", status: "unavailable" }),
+        expect.objectContaining({ status: "success" }),
+      ]));
+      expect(result.coverageGaps?.[0]).toMatchObject({
+        gapClass: "retrieval",
+        reason: "tool_unavailable",
+      });
+    }
+  });
+
+  it.each([
+    ["R1 first", [{ requirementId: "R1", path: "wiki/shared.md" }, { requirementId: "R2", path: "wiki/shared.md" }]],
+    ["R2 first", [{ requirementId: "R2", path: "wiki/shared.md" }, { requirementId: "R1", path: "wiki/shared.md" }]],
+  ] as const)(
+    "fans a shared physical read failure out to every accepted requirement: %s",
+    async (_name, pages) => {
+      const plan: KnowledgePlan = {
+        subject: "共享读取失败",
+        requirements: [
+          {
+            id: "R1",
+            question: "确认甲项证据",
+            ...plannedEvidence("seed-r1"),
+            evidenceMode: "direct_only",
+          },
+          {
+            id: "R2",
+            question: "确认乙项证据",
+            ...plannedEvidence("seed-r2"),
+            evidenceMode: "direct_only",
+          },
+        ],
+      };
+      const session = fakeSession({
+        hits: {
+          "seed-r1": [{ path: "wiki/shared.md" }],
+          "seed-r2": [{ path: "wiki/shared.md" }],
+        },
+        failedReadPaths: ["wiki/shared.md"],
+      });
+      const model = scriptedAgentModel([
+        readPages(...pages),
+        final("none", "当前正式资料未覆盖", [], [
+          { id: "R1", coverage: "none", citations: [] },
+          { id: "R2", coverage: "none", citations: [] },
+        ]),
+      ]);
+
+      await runKnowledgeAgent(agentInput(model, session, plan));
+
+      const observations = payloadAt(model, 1).observations?.join("\n") ?? "";
+      expect(observations).toContain('"requirementId":"R1"');
+      expect(observations).toContain('"requirementId":"R2"');
+      expect(observations).toContain('"tool":"kb.read_page"');
+    },
+  );
+
+  it("clears shared read failures for every requirement after one physical retry succeeds", async () => {
+    const plan: KnowledgePlan = {
+      subject: "共享读取恢复",
+      requirements: [
+        {
+          id: "R1",
+          question: "确认甲项证据",
+          ...plannedEvidence("seed-r1"),
+          evidenceMode: "direct_only",
+        },
+        {
+          id: "R2",
+          question: "确认乙项证据",
+          ...plannedEvidence("seed-r2"),
+          evidenceMode: "direct_only",
+        },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{ path: "wiki/shared.md" }],
+        "seed-r2": [{ path: "wiki/shared.md" }],
+      },
+      failedReadAttempts: 1,
+    });
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([
+        readPages(
+          { requirementId: "R2", path: "wiki/shared.md" },
+          { requirementId: "R1", path: "wiki/shared.md" },
+        ),
+        read("R1", "wiki/shared.md"),
+        final("complete", "共享正式事实[1]", [1], [
+          { id: "R1", coverage: "complete", citations: [1] },
+          { id: "R2", coverage: "complete", citations: [1] },
+        ]),
+      ]),
+      session,
+      plan,
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified", coverageGaps: [] });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units).toHaveLength(2);
+      for (const unit of result.evidenceLedger?.units ?? []) {
+        expect(unit.retrieval.toolUnavailableCount).toBe(0);
+        expect(unit.reads.map((item) => item.status)).toEqual([
+          "unavailable",
+          "success",
+        ]);
+      }
+      expect(session.readPage).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it("allows an explicitly repeated read action to recover from a transient failure", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/transient.md" }] },
+      failedReadAttempts: 1,
+    });
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([
+        read("R1", "wiki/transient.md"),
+        read("R1", "wiki/transient.md"),
+        final("complete", "瞬时失败后已核验事实[1]", [1]),
+      ]),
+      session,
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    expect(session.readPage).toHaveBeenCalledTimes(2);
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.reads).toEqual([
+        expect.objectContaining({ path: "wiki/transient.md", status: "unavailable" }),
+        expect.objectContaining({ path: "wiki/transient.md", status: "success" }),
+      ]);
+    }
+  });
+
+  it.each([
+    ["summary", "summary", [] as const, "summary_only", "summary_only"],
+    [
+      "external",
+      "external",
+      ["https://example.test/formal-source"] as const,
+      "external_only",
+      "external_source_only",
+    ],
+  ] as const)("preserves %s source provenance when one read is shared across requirements", async (
+    _name,
+    pageType,
+    pageSources,
+    expectedBoundary,
+    expectedReason,
+  ) => {
+    const plan: KnowledgePlan = {
+      subject: "共享来源边界",
+      requirements: [
+        {
+          id: "R1",
+          question: "确认甲项证据",
+          ...plannedEvidence("seed-r1"),
+          evidenceMode: "direct_only",
+        },
+        {
+          id: "R2",
+          question: "确认乙项证据",
+          ...plannedEvidence("seed-r2"),
+          evidenceMode: "direct_only",
+        },
+      ],
+    };
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([
+        readPages(
+          { requirementId: "R1", path: "wiki/shared.md" },
+          { requirementId: "R2", path: "wiki/shared.md" },
+        ),
+        final("partial", "摘要只能确认部分事实[1]", [1], [
+          { id: "R1", coverage: "partial", citations: [1] },
+          { id: "R2", coverage: "partial", citations: [1] },
+        ]),
+      ]),
+      fakeSession({
+        hits: {
+          "seed-r1": [{ path: "wiki/shared.md" }],
+          "seed-r2": [{ path: "wiki/shared.md" }],
+        },
+        pageType,
+        pageSources,
+      }),
+      plan,
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units.map((unit) => unit.sourceBoundary))
+        .toEqual([expectedBoundary, expectedBoundary]);
+      expect(result.coverageGaps?.map((gap) => [gap.requirementId, gap.gapClass, gap.reason]))
+        .toEqual([
+          ["R1", "source", expectedReason],
+          ["R2", "source", expectedReason],
+        ]);
+    }
+  });
+
+  it.each([
+    ["empty", false, "empty"],
+    ["unavailable", true, "unavailable"],
+  ] as const)("records graph %s as an obligation-bound ledger action", async (
+    _name,
+    failGraph,
+    expectedStatus,
+  ) => {
+    const result = await runKnowledgeAgentDetailed(agentInput(
+      scriptedAgentModel([
+        graph("R1", "wiki/r1.md"),
+        read("R1", "wiki/r1.md"),
+        final("none", "当前正式资料未覆盖"),
+      ]),
+      fakeSession({
+        hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
+        failGraph,
+      }),
+    ));
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.graphs).toEqual([
+        expect.objectContaining({
+          id: "G1",
+          sourcePath: "wiki/r1.md",
+          status: expectedStatus,
+          hitCount: 0,
+        }),
+      ]);
+      expect(result.coverageGaps?.[0]).toMatchObject(
+        failGraph
+          ? { gapClass: "retrieval", reason: "tool_unavailable" }
+          : { gapClass: "knowledge", reason: "read_pages_do_not_support" },
+      );
+    }
+  });
+
+  it.each([
+    [
+      "required input",
+      { inputState: "missing", ambiguous: false, conflictDetected: false, freshness: "not_assessed" },
+      ["input", "required_customer_input_missing"],
+    ],
+    [
+      "ambiguity",
+      { inputState: "not_applicable", ambiguous: true, conflictDetected: false, freshness: "not_assessed" },
+      ["ambiguity", "ambiguous_question"],
+    ],
+    [
+      "conflict",
+      { inputState: "not_applicable", ambiguous: false, conflictDetected: true, freshness: "not_assessed" },
+      ["conflict", "conflicting_sources"],
+    ],
+    [
+      "freshness",
+      { inputState: "not_applicable", ambiguous: false, conflictDetected: false, freshness: "stale_or_unconfirmed" },
+      ["freshness", "stale_or_unconfirmed"],
+    ],
+  ] as const)("threads structured %s evidence conditions into the real gap producer", async (
+    _name,
+    condition,
+    expected,
+  ) => {
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(
+        scriptedAgentModel([final("none", "当前正式资料未覆盖")]),
+        fakeSession({ hits: { "seed-r1": [] } }),
+      ),
+      requirementEvidenceConditions: [{
+        requirementId: "R1",
+        ...condition,
+      }],
+    });
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect([
+        result.coverageGaps?.[0]?.gapClass,
+        result.coverageGaps?.[0]?.reason,
+      ]).toEqual(expected);
+    }
+  });
+
+  it("materializes retained and removed verifier segments as distinct ledger claims", async () => {
+    const plan: KnowledgePlan = {
+      subject: "逐段证据决策",
+      retrievalStrategy: "coverage_units",
+      requirements: [{
+        id: "R1",
+        question: "分别核验已支持事实与待确认事实",
+        evidenceMode: "direct_only",
+        evidenceAspects: [
+          { id: "A1", label: "已支持事实", terms: ["已支持"] },
+          { id: "A2", label: "待确认事实", terms: ["待确认"] },
+        ],
+        queries: [{ text: "逐段核验证据", aspectIds: ["A1", "A2"] }],
+      }],
+    };
+    const model = scriptedAgentModel([
+      final("partial", "已支持事实[1]。待确认事实[1]。", [1]),
+    ]);
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(
+        model,
+        fakeSession({
+          hits: { "逐段核验证据": [{ path: "wiki/claims.md" }] },
+        }),
+        plan,
+      ),
+      verifyCoverage: async (input) => {
+        input.onReport?.({
+          summaries: [{
+            id: "R1",
+            reason: "partial_support",
+            retainedDirectSegmentCount: 1,
+            retainedSynthesizedSegmentCount: 0,
+            removedSegmentCount: 1,
+            coveredAspectCount: 1,
+            missingAspectCount: 1,
+            coveredAspectIds: ["A1"],
+            missingAspectIds: ["A2"],
+            claimDecisions: [
+              {
+                claimIndex: 0,
+                status: "retained_direct",
+                citations: [1],
+                coveredAspectIds: ["A1"],
+              },
+              {
+                claimIndex: 1,
+                status: "removed",
+                citations: [1],
+                coveredAspectIds: [],
+              },
+            ],
+          }],
+          coveredRequirementIds: ["R1"],
+          missingRequirementIds: ["R1"],
+        });
+        return input.draft;
+      },
+    });
+
+    expect(result).toMatchObject({ outcome: "verified" });
+    if (result.outcome === "verified") {
+      expect(result.evidenceLedger?.units[0]?.claims).toEqual([
+        {
+          claimIndex: 0,
+          status: "retained_direct",
+          citations: [1],
+          coveredAspectIds: ["A1"],
+        },
+        {
+          claimIndex: 1,
+          status: "removed",
+          citations: [1],
+          coveredAspectIds: [],
+        },
+      ]);
+    }
+  });
+
+  it("fails closed when a verifier returns without a structured verification report", async () => {
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(
+        scriptedAgentModel([final("none", "当前资料未覆盖该问题")]),
+        fakeSession({ hits: { "seed-r1": [] } }),
+      ),
+      verifyCoverage: async (input) => input.draft,
+    });
+
+    expect(result).toMatchObject({ outcome: "unavailable" });
+  });
+
   it("uses one absolute-deadline signal for tools, action model, and verifier", async () => {
     const session = fakeSession({
       hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
@@ -3480,7 +4466,7 @@ describe("runKnowledgeAgent", () => {
       deadlineAt: Date.now() + 60_000,
       verifyCoverage: async (input) => {
         verifierSignal = input.signal;
-        return input.draft;
+        return reportAndReturn(input);
       },
     });
     expect(result.outcome).toBe("verified");

@@ -36,6 +36,16 @@ interface TargetSegment {
 export const SYNTHESIS_DISCLOSURE =
   "根据正式知识库中多篇资料综合归纳：";
 
+export interface CoverageVerificationClaimDecision {
+  readonly claimIndex: number;
+  readonly status:
+    | "retained_direct"
+    | "retained_synthesized"
+    | "removed";
+  readonly citations: readonly number[];
+  readonly coveredAspectIds: readonly string[];
+}
+
 export interface CoverageVerificationSummary {
   readonly id: string;
   readonly reason: CoverageVerificationReason;
@@ -44,6 +54,22 @@ export interface CoverageVerificationSummary {
   readonly removedSegmentCount: number;
   readonly coveredAspectCount?: number;
   readonly missingAspectCount?: number;
+}
+
+export interface CoverageVerificationDetail extends CoverageVerificationSummary {
+  readonly coveredAspectIds: readonly string[];
+  readonly missingAspectIds: readonly string[];
+  readonly claimDecisions: readonly CoverageVerificationClaimDecision[];
+}
+
+export interface CoverageVerificationReport {
+  readonly summaries: readonly CoverageVerificationDetail[];
+  /** Partial obligations appear here because a supported portion was retained. */
+  readonly coveredRequirementIds: readonly string[];
+  /** Partial obligations also appear here because a required portion is still missing. */
+  readonly missingRequirementIds: readonly string[];
+  /** True only for the conservative compatibility report without verifier decisions. */
+  readonly inferred?: boolean;
 }
 
 export interface CoverageVerifierInput {
@@ -56,6 +82,7 @@ export interface CoverageVerifierInput {
   readonly onVerified?: (
     summaries: readonly CoverageVerificationSummary[],
   ) => void;
+  readonly onReport?: (report: CoverageVerificationReport) => void;
 }
 
 export class InvalidCoverageVerificationError extends Error {
@@ -81,7 +108,9 @@ export async function verifyKnowledgeCoverage(
 ): Promise<FinalAction> {
   const targetSegments = input.draft.requirements.map((requirement) => ({
     id: requirement.id,
-    segments: splitTargetSegments(requirement.answer),
+    segments: requirement.coverage === "none"
+      ? []
+      : splitTargetSegments(requirement.answer),
   }));
   const messages = coverageVerificationMessages({
     question: input.question,
@@ -160,8 +189,202 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
     input.plan,
     summaries,
   );
-  input.onVerified?.(summaries);
+  input.onVerified?.(summaries.map(stripAspectIds));
+  input.onReport?.(coverageVerificationReport(materialized, summaries));
   return materialized;
+}
+
+export function coverageVerificationReport(
+  action: FinalAction,
+  summaries: readonly CoverageVerificationDetail[],
+): CoverageVerificationReport {
+  if (
+    summaries.length !== action.requirements.length ||
+    new Set(summaries.map((summary) => summary.id)).size !== summaries.length
+  ) {
+    throw new InvalidCoverageVerificationError("verification_summary_mismatch");
+  }
+  const summaryById = new Map(summaries.map((summary) => [summary.id, summary] as const));
+  const orderedSummaries = action.requirements.map((requirement) => {
+    const summary = summaryById.get(requirement.id);
+    if (summary === undefined) {
+      throw new InvalidCoverageVerificationError("verification_summary_missing");
+    }
+    validateClaimDecisions(requirement, summary);
+    return summary;
+  });
+  return {
+    summaries: orderedSummaries,
+    coveredRequirementIds: action.requirements.flatMap((requirement) =>
+      requirement.coverage === "none" ? [] : [requirement.id]),
+    missingRequirementIds: action.requirements.flatMap((requirement) =>
+      requirement.coverage === "complete" ? [] : [requirement.id]),
+  };
+}
+
+function validateClaimDecisions(
+  requirement: FinalAction["requirements"][number],
+  summary: CoverageVerificationDetail,
+): void {
+  const decisions = summary.claimDecisions;
+  if (decisions === undefined) {
+    throw new InvalidCoverageVerificationError(
+      "verification_claim_index_invalid",
+    );
+  }
+  if (decisions.some((decision, index) =>
+    !Number.isInteger(decision.claimIndex) || decision.claimIndex !== index)) {
+    throw new InvalidCoverageVerificationError(
+      "verification_claim_index_invalid",
+    );
+  }
+
+  const retainedCitations = new Set(requirement.citations);
+  const coveredAspectIds = new Set(summary.coveredAspectIds);
+  for (const decision of decisions) {
+    if (![
+      "retained_direct",
+      "retained_synthesized",
+      "removed",
+    ].includes(decision.status)) {
+      throw new InvalidCoverageVerificationError(
+        "verification_claim_status_invalid",
+      );
+    }
+    if (
+      new Set(decision.citations).size !== decision.citations.length ||
+      decision.citations.some((citation) =>
+        !Number.isInteger(citation) || citation <= 0) ||
+      (
+        decision.status !== "removed" &&
+        (
+          decision.citations.length === 0 ||
+          decision.citations.some((citation) => !retainedCitations.has(citation))
+        )
+      )
+    ) {
+      throw new InvalidCoverageVerificationError(
+        "verification_claim_citation_invalid",
+      );
+    }
+    if (
+      new Set(decision.coveredAspectIds).size !==
+        decision.coveredAspectIds.length ||
+      decision.coveredAspectIds.some((aspectId) =>
+        !coveredAspectIds.has(aspectId)) ||
+      (
+        decision.status === "removed" &&
+        decision.coveredAspectIds.length > 0
+      )
+    ) {
+      throw new InvalidCoverageVerificationError(
+        "verification_claim_aspect_invalid",
+      );
+    }
+  }
+
+  const directCount = decisions.filter((decision) =>
+    decision.status === "retained_direct").length;
+  const synthesizedCount = decisions.filter((decision) =>
+    decision.status === "retained_synthesized").length;
+  const removedCount = decisions.filter((decision) =>
+    decision.status === "removed").length;
+  if (
+    directCount !== summary.retainedDirectSegmentCount ||
+    synthesizedCount !== summary.retainedSynthesizedSegmentCount ||
+    removedCount !== summary.removedSegmentCount ||
+    (
+      requirement.coverage === "none" &&
+      directCount + synthesizedCount > 0
+    )
+  ) {
+    throw new InvalidCoverageVerificationError(
+      "verification_claim_count_invalid",
+    );
+  }
+
+  const claimCoveredAspectIds = new Set(
+    decisions.flatMap((decision) => decision.coveredAspectIds),
+  );
+  if (
+    claimCoveredAspectIds.size !== coveredAspectIds.size ||
+    [...coveredAspectIds].some((aspectId) =>
+      !claimCoveredAspectIds.has(aspectId))
+  ) {
+    throw new InvalidCoverageVerificationError(
+      "verification_claim_aspect_invalid",
+    );
+  }
+}
+
+/**
+ * Explicit compatibility helper for tests and adapters that need to construct a
+ * conservative report. The agent loop never synthesizes this report implicitly:
+ * production verification must emit its own claim-level decisions.
+ */
+export function inferCoverageVerificationReport(
+  action: FinalAction,
+  plan: KnowledgePlan,
+): CoverageVerificationReport {
+  const summaries: CoverageVerificationDetail[] = action.requirements.map(
+    (requirement, index) => {
+      const planned = plan.requirements[index];
+      if (planned === undefined || planned.id !== requirement.id) {
+        throw new InvalidCoverageVerificationError("verification_plan_mismatch");
+      }
+      const aspectIds = planned.evidenceAspects.map((aspect) => aspect.id);
+      const coveredAspectIds = requirement.coverage === "complete"
+        ? aspectIds
+        : [];
+      const missingAspectIds = requirement.coverage === "complete"
+        ? []
+        : aspectIds;
+      const reason: CoverageVerificationReason =
+        requirement.coverage === "complete"
+          ? planned.evidenceMode === "direct_only"
+            ? "direct_support"
+            : "synthesized_support"
+          : requirement.coverage === "partial"
+            ? "partial_support"
+            : "target_omitted";
+      const aggregateStatus: CoverageVerificationClaimDecision["status"] =
+        planned.evidenceMode === "synthesis_allowed"
+          ? "retained_synthesized"
+          : "retained_direct";
+      const claimDecisions: CoverageVerificationClaimDecision[] =
+        requirement.coverage === "none"
+          ? []
+          : [{
+              claimIndex: 0,
+              status: aggregateStatus,
+              citations: [...requirement.citations],
+              coveredAspectIds: [...coveredAspectIds],
+            }];
+      return {
+        id: requirement.id,
+        reason,
+        retainedDirectSegmentCount:
+          aggregateStatus === "retained_direct" && claimDecisions.length > 0
+            ? 1
+            : 0,
+        retainedSynthesizedSegmentCount:
+          aggregateStatus === "retained_synthesized" &&
+            claimDecisions.length > 0
+            ? 1
+            : 0,
+        removedSegmentCount: 0,
+        coveredAspectCount: coveredAspectIds.length,
+        missingAspectCount: missingAspectIds.length,
+        coveredAspectIds,
+        missingAspectIds,
+        claimDecisions,
+      };
+    },
+  );
+  return {
+    ...coverageVerificationReport(action, summaries),
+    inferred: true,
+  };
 }
 
 function coverageVerificationModelResponseSchema(draft: FinalAction) {
@@ -337,6 +560,9 @@ function validateVerification(
       if (segment === undefined) {
         return `target_segment_index_out_of_range:${decision.id}:${targetIndex}`;
       }
+      if (segment.citations.length === 0) {
+        return `retained_target_segment_without_citation:${decision.id}:${targetIndex}`;
+      }
       const unsupportedCitation = segment.citations.find(
         (citation) => !evidenceCitations.has(citation),
       );
@@ -465,15 +691,8 @@ function verificationSummaries(
   plan: KnowledgePlan,
   evidence: readonly CoverageEvidenceDocument[],
   draft: FinalAction,
-): CoverageVerificationSummary[] {
+): CoverageVerificationDetail[] {
   return verified.requirements.map((decision, index) => {
-    const synthesized = new Set(
-      decision.synthesizedTargetSegmentIndexes,
-    );
-    const retainedDirectSegmentCount =
-      decision.retainedTargetSegmentIndexes.filter(
-        (segmentIndex) => !synthesized.has(segmentIndex),
-      ).length;
     const plannedRequirement = plan.requirements[index];
     const plannedAspectIds =
       plannedRequirement?.evidenceAspects.map((aspect) => aspect.id) ?? [];
@@ -502,33 +721,115 @@ function verificationSummaries(
           targetSegments[index]?.segments ?? [],
           decision.retainedTargetSegmentIndexes,
         );
-    const semanticallyCoveredAspectIds = new Set([
-      ...(decision.coveredAspectIds ?? []),
-      ...(plannedRequirement === undefined
-        ? []
-        : matchingPlannedAspectIds(plannedRequirement, coverageText)),
-    ]);
-    const coveredAspectIds = new Set(
-      [...semanticallyCoveredAspectIds].filter(
+    const lexicallyCoveredAspectIds = plannedRequirement === undefined
+      ? []
+      : matchingPlannedAspectIds(plannedRequirement, coverageText).filter(
         (aspectId) => supportedAspectIds.has(aspectId),
-      ),
+      );
+    const coveredAspectIdSet = new Set(
+      decision.coveredAspectIds === undefined
+        ? lexicallyCoveredAspectIds
+        : decision.coveredAspectIds,
     );
-    const coveredAspectCount = plannedAspectIds.filter(
-      (aspectId) => coveredAspectIds.has(aspectId),
-    ).length;
+    const coveredAspectIds = plannedAspectIds.filter((aspectId) =>
+      coveredAspectIdSet.has(aspectId));
+    const missingAspectIds = plannedAspectIds.filter((aspectId) =>
+      !coveredAspectIdSet.has(aspectId));
+    const claimDecisions = verificationClaimDecisions({
+      decision,
+      segments: targetSegments[index]?.segments ?? [],
+      coveredAspectIds,
+      plannedRequirement,
+      evidence,
+    });
+    const retainedDirectSegmentCount = claimDecisions.filter((claim) =>
+      claim.status === "retained_direct").length;
+    const retainedSynthesizedSegmentCount = claimDecisions.filter((claim) =>
+      claim.status === "retained_synthesized").length;
+    const removedSegmentCount = claimDecisions.filter((claim) =>
+      claim.status === "removed").length;
     return {
       id: decision.id,
       reason: decision.reason,
       retainedDirectSegmentCount,
-      retainedSynthesizedSegmentCount: synthesized.size,
-      removedSegmentCount:
-        (targetSegments[index]?.segments.length ?? 0) -
-        decision.retainedTargetSegmentIndexes.length,
-      coveredAspectCount,
-      missingAspectCount:
-        plannedAspectIds.length - coveredAspectCount,
+      retainedSynthesizedSegmentCount,
+      removedSegmentCount,
+      coveredAspectCount: coveredAspectIds.length,
+      missingAspectCount: missingAspectIds.length,
+      coveredAspectIds,
+      missingAspectIds,
+      claimDecisions,
     };
   });
+}
+
+function verificationClaimDecisions(input: {
+  readonly decision: CoverageVerificationAction["requirements"][number];
+  readonly segments: readonly TargetSegment[];
+  readonly coveredAspectIds: readonly string[];
+  readonly plannedRequirement:
+    | KnowledgePlan["requirements"][number]
+    | undefined;
+  readonly evidence: readonly CoverageEvidenceDocument[];
+}): CoverageVerificationClaimDecision[] {
+  const retainedIndexes = new Set(
+    input.decision.retainedTargetSegmentIndexes,
+  );
+  const synthesizedIndexes = new Set(
+    input.decision.synthesizedTargetSegmentIndexes,
+  );
+  const retainedSegments = input.segments.filter((segment) =>
+    retainedIndexes.has(segment.index));
+  const aspectIdsByClaimIndex = new Map<number, string[]>();
+
+  for (const aspectId of input.coveredAspectIds) {
+    const matchingSegment = retainedSegments.find((segment) =>
+      input.evidence.some((document) =>
+        document.requirementId === input.decision.id &&
+        segment.citations.includes(document.citation) &&
+        document.aspectIds?.includes(aspectId))) ??
+      (
+        input.plannedRequirement === undefined
+          ? undefined
+          : retainedSegments.find((segment) =>
+              matchingPlannedAspectIds(
+                input.plannedRequirement!,
+                segment.text,
+              ).includes(aspectId))
+      ) ?? retainedSegments[0];
+    if (matchingSegment === undefined) continue;
+    const assigned = aspectIdsByClaimIndex.get(matchingSegment.index) ?? [];
+    assigned.push(aspectId);
+    aspectIdsByClaimIndex.set(matchingSegment.index, assigned);
+  }
+
+  return input.segments.map((segment) => {
+    const retained = retainedIndexes.has(segment.index);
+    return {
+      claimIndex: segment.index,
+      status: !retained
+        ? "removed" as const
+        : synthesizedIndexes.has(segment.index)
+          ? "retained_synthesized" as const
+          : "retained_direct" as const,
+      citations: [...segment.citations],
+      coveredAspectIds: retained
+        ? [...(aspectIdsByClaimIndex.get(segment.index) ?? [])]
+        : [],
+    };
+  });
+}
+
+function stripAspectIds(
+  detail: CoverageVerificationDetail,
+): CoverageVerificationSummary {
+  const {
+    coveredAspectIds: _coveredAspectIds,
+    missingAspectIds: _missingAspectIds,
+    claimDecisions: _claimDecisions,
+    ...summary
+  } = detail;
+  return summary;
 }
 
 function matchingPlannedAspectIds(
@@ -580,10 +881,7 @@ function enforceAspectCoverage(
     }
     if (
       requirement.coverage !== "complete" ||
-      plannedAspectCount <= 1 ||
-      summary.missingAspectCount === 0 ||
-      (summary.coveredAspectCount ?? 0) >=
-        Math.ceil(plannedAspectCount * 0.75)
+      summary.missingAspectCount === 0
     ) {
       return requirement;
     }
@@ -677,18 +975,32 @@ function splitTargetSegments(answer: string): TargetSegment[] {
     .map((piece) => piece.trim())
     .filter(Boolean);
   const segments: TargetSegment[] = [];
+  const pendingStructuralHeadings: string[] = [];
   for (const text of pieces) {
+    if (isPureStructuralHeading(text)) {
+      pendingStructuralHeadings.push(text);
+      continue;
+    }
+    const materializedText = pendingStructuralHeadings.length === 0
+      ? text
+      : `${pendingStructuralHeadings.join("\n")}\n${text}`;
+    pendingStructuralHeadings.length = 0;
     const citations = stableUnique(
-      [...text.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+      [...materializedText.matchAll(/\[(\d+)\]/gu)].map((match) =>
+        Number(match[1])),
     );
-    if (citations.length === 0) continue;
     segments.push({
       index: segments.length,
-      text,
+      text: materializedText,
       citations,
     });
   }
   return segments;
+}
+
+function isPureStructuralHeading(text: string): boolean {
+  return /^(?:#{1,6}\s+\S[^\n]*|\*\*[^*\n]+\*\*[:：]?)$/u.test(text) &&
+    !/\[\d+\]/u.test(text);
 }
 
 function sameNumbers(left: readonly number[], right: readonly number[]): boolean {

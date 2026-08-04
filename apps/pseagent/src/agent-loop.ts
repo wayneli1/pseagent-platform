@@ -18,6 +18,7 @@ import {
   notCoveredRequirementAnswer,
   verifyKnowledgeCoverage,
   type CoverageEvidenceDocument,
+  type CoverageVerificationReport,
   type CoverageVerificationSummary,
   type CoverageVerifierInput,
 } from "./coverage-verifier.js";
@@ -33,6 +34,22 @@ import {
   recordDiagnostic,
   type DiagnosticTrace,
 } from "./diagnostics.js";
+import {
+  finalizeEvidenceLedger,
+  type EvidenceCandidateDraft,
+  type EvidenceCandidateSource,
+  type EvidenceClaimRecord,
+  type EvidenceFreshness,
+  type EvidenceGraphDraft,
+  type EvidenceInputState,
+  type EvidenceLedger,
+  type EvidenceLedgerDraftUnit,
+  type EvidenceQueryDraft,
+  type EvidenceReadDraft,
+  type EvidenceSourceBoundary,
+} from "./evidence-ledger.js";
+import { analyzeCoverageGaps, type CoverageGap } from "./coverage-gap.js";
+import type { DomainRequirementBinding } from "./domain-plan.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const DIRECT_ONLY_READ_LIMIT = 3;
@@ -69,6 +86,8 @@ export interface KnowledgeAgentInput {
   readonly question: string;
   readonly conversationContext?: string;
   readonly plan: KnowledgePlan;
+  readonly requirementBindings?: readonly DomainRequirementBinding[];
+  readonly requirementEvidenceConditions?: readonly RequirementEvidenceCondition[];
   readonly model: ModelClient;
   readonly session: KnowledgeAgentSession;
   readonly deadlineAt?: number;
@@ -79,6 +98,14 @@ export interface KnowledgeAgentInput {
   ) => Promise<FinalAction>;
 }
 
+export interface RequirementEvidenceCondition {
+  readonly requirementId: string;
+  readonly conflictDetected: boolean;
+  readonly freshness: EvidenceFreshness;
+  readonly inputState: EvidenceInputState;
+  readonly ambiguous: boolean;
+}
+
 export type KnowledgeAgentDetailedResult =
   | {
       readonly outcome: "verified";
@@ -86,6 +113,9 @@ export type KnowledgeAgentDetailedResult =
       readonly revision: string;
       readonly action: FinalAction;
       readonly references: readonly Reference[];
+      readonly verification?: CoverageVerificationReport;
+      readonly evidenceLedger?: EvidenceLedger;
+      readonly coverageGaps?: readonly CoverageGap[];
     }
   | {
       readonly outcome: "unavailable";
@@ -102,6 +132,7 @@ type Candidate = {
   readonly snippets: Set<string>;
   readonly graphRelations: Set<string>;
   readonly aspectIds: Set<string>;
+  readonly ledgerSources: Set<EvidenceCandidateSource>;
   requirementSpecificMatch: boolean;
 };
 
@@ -114,12 +145,18 @@ type RequirementState = {
   readonly directReadPaths: Set<string>;
   readonly citationIndexes: Set<number>;
   readonly readAspectIds: Set<string>;
+  readonly queryRecords: EvidenceQueryDraft[];
+  readonly readRecords: EvidenceReadDraft[];
+  readonly graphRecords: EvidenceGraphDraft[];
   successfulSeedSearches: number;
   failedSeedSearches: number;
   supplementalSearches: number;
   graphActions: number;
   noGainRounds: number;
   searchStopped: boolean;
+  searchBudgetExhausted: boolean;
+  toolUnavailableCount: number;
+  accessDeniedCount: number;
 };
 
 type AgentState = {
@@ -131,6 +168,15 @@ type AgentState = {
     Map<number, Omit<CoverageEvidenceDocument, "requirementId" | "citation">>
   >;
   readonly observations: string[];
+  readonly evidenceConditions: ReadonlyMap<string, RequirementEvidenceCondition>;
+  readonly readProvenanceByCitation: Map<
+    number,
+    {
+      readonly path: string;
+      readonly pageType: string;
+      readonly sources: readonly string[];
+    }
+  >;
   citationRepairAttempts: number;
   directAnswerRepairAttempts: number;
   invalidPayloadTurnRetries: number;
@@ -335,6 +381,7 @@ async function runKnowledgeAgentCore(
       let auditedAction: FinalAction;
       let verificationSummaries:
         readonly CoverageVerificationSummary[] | undefined;
+      let verificationReport: CoverageVerificationReport | undefined;
       try {
         const activeSignal = toolSignal(input);
         auditedAction = await (
@@ -348,6 +395,9 @@ async function runKnowledgeAgentCore(
           ...(activeSignal === undefined ? {} : { signal: activeSignal }),
           onVerified(summaries) {
             verificationSummaries = summaries;
+          },
+          onReport(report) {
+            verificationReport = report;
           },
         });
       } catch (error) {
@@ -374,20 +424,40 @@ async function runKnowledgeAgentCore(
         });
         return fallbackUnavailable(input, "coverage_verifier_invalid");
       }
+      if (verificationReport === undefined) {
+        return fallbackUnavailable(input, "coverage_verifier_invalid");
+      }
+      let evidenceLedger: EvidenceLedger;
+      let coverageGaps: readonly CoverageGap[];
+      try {
+        evidenceLedger = buildEvidenceLedger(
+          input,
+          state,
+          auditedAction,
+          verificationReport,
+        );
+        coverageGaps = analyzeCoverageGaps(evidenceLedger);
+      } catch {
+        return fallbackUnavailable(input, "invalid_final");
+      }
       recordCoverage(
         input,
         state,
         auditedAction,
         "verified",
         deadlineReached(input) ? "deadline" : "final",
-        verificationSummaries,
+        verificationSummaries ?? verificationReport.summaries,
       );
+      recordCoverageGapDiagnostics(input, evidenceLedger, coverageGaps);
       return {
         outcome: "verified",
         project: input.session.project,
         revision: input.session.revision,
         action: auditedAction,
         references: state.references.resolve(auditedAction.citations),
+        verification: verificationReport,
+        evidenceLedger,
+        coverageGaps,
       };
     }
     if (finalOnly) {
@@ -413,14 +483,17 @@ async function runKnowledgeAgentCore(
     try {
       await executeToolAction(action, input, state);
     } catch {
+      state.actionFingerprints.delete(fingerprint);
       const requirementIds = actionRequirementIds(action);
       observe(state, {
         type: "tool_unavailable",
         requirementIds,
         tool: action.tool,
       });
-      for (const requirementId of requirementIds) {
-        stopSearchAfterNoGain(state.requirements.get(requirementId));
+      if (action.tool !== "kb.search") {
+        for (const requirementId of requirementIds) {
+          stopSearchAfterNoGain(state.requirements.get(requirementId));
+        }
       }
     }
   }
@@ -459,6 +532,7 @@ async function preloadBroadSynthesisEvidence(
       for (const candidate of sortedCandidates(requirementState)) {
         if (
           requirementState.readPaths.has(candidate.path) ||
+          hasUnresolvedReadFailure(requirementState, candidate.path) ||
           selected.length >= MAX_BATCH_READS_PER_REQUIREMENT
         ) {
           continue;
@@ -472,7 +546,7 @@ async function preloadBroadSynthesisEvidence(
       }
       if (selected.length === 0) break;
       const before = requirementState.readAspectIds.size;
-      await Promise.all(selected.map((candidate) =>
+      const outcomes = await Promise.allSettled(selected.map((candidate) =>
         executeRead(
           {
             action: "tool",
@@ -487,6 +561,15 @@ async function preloadBroadSynthesisEvidence(
           requirementState,
         )
       ));
+      outcomes.forEach((outcome, index) => {
+        if (outcome.status !== "rejected") return;
+        observe(state, {
+          type: "tool_unavailable",
+          requirementId: requirementState.requirement.id,
+          tool: "kb.read_page",
+          candidateIndex: index,
+        });
+      });
       if (requirementState.readAspectIds.size === before) break;
       if (
         requirementState.requirement.evidenceAspects.every(
@@ -522,7 +605,9 @@ function recoveryReadAction(
       requirementState,
     );
     const path = preferredPath ?? sortedCandidates(requirementState)
-      .find((item) => !requirementState.readPaths.has(item.path))?.path;
+      .find((item) =>
+        !requirementState.readPaths.has(item.path) &&
+        !hasUnresolvedReadFailure(requirementState, item.path))?.path;
     return path === undefined
       ? []
       : [{
@@ -574,12 +659,18 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
         directReadPaths: new Set(),
         citationIndexes: new Set(),
         readAspectIds: new Set(),
+        queryRecords: [],
+        readRecords: [],
+        graphRecords: [],
         successfulSeedSearches: 0,
         failedSeedSearches: 0,
         supplementalSearches: 0,
         graphActions: 0,
         noGainRounds: 0,
         searchStopped: false,
+        searchBudgetExhausted: false,
+        toolUnavailableCount: 0,
+        accessDeniedCount: 0,
       },
     ])),
     references: new ReferenceRegistry(input.session.project, input.session.revision),
@@ -588,6 +679,8 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
       new Map(),
     ])),
     observations: [],
+    evidenceConditions: requirementEvidenceConditions(input),
+    readProvenanceByCitation: new Map(),
     citationRepairAttempts: 0,
     directAnswerRepairAttempts: 0,
     invalidPayloadTurnRetries: 0,
@@ -598,86 +691,159 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
 
 async function executeSeedSearches(input: KnowledgeAgentInput, state: AgentState): Promise<void> {
   const globalQuery = input.question.trim();
-  const globalSearch = input.plan.retrievalStrategy === "coverage_units"
-    ? Promise.resolve(undefined)
-    : (() => {
-        recordDiagnostic(input.trace, {
-          event: "search",
-          requirementId: "GLOBAL",
-          phase: "seed",
-          queryChars: globalQuery.length,
-          aspectIds: [],
-        });
-        return input.session.search(globalQuery, SEED_TOP_K, toolSignal(input))
-          .then((result) => {
-            state.successfulSeedSearches += 1;
-            return { query: globalQuery, result };
-          })
-          .catch(() => {
-            observe(state, {
-              type: "global_question_search_unavailable",
-              query: globalQuery,
-            });
-            return undefined;
-          });
-      })();
+  type ExpandedSeedQuery = ReturnType<typeof expandSeedQueries>[number];
+  type PhysicalSeedQuery = {
+    readonly text: string;
+    readonly consumers: Map<string, ExpandedSeedQuery>;
+    readonly aspectIds: Set<string>;
+    topK: number;
+    global: boolean;
+  };
+  type PhysicalSeedResult = {
+    readonly query: string;
+    readonly status: "success" | "empty" | "unavailable";
+    readonly result?: KnowledgeSearchResult;
+  };
 
-  const requirementSearches = [...state.requirements.values()].map(async (requirementState) => {
+  const expandedByRequirement = new Map<string, readonly ExpandedSeedQuery[]>();
+  const physicalQueries = new Map<string, PhysicalSeedQuery>();
+  for (const requirementState of state.requirements.values()) {
     const seedQueries = expandSeedQueries(requirementState.requirement);
+    expandedByRequirement.set(requirementState.requirement.id, seedQueries);
     const topK = seedTopKFor(requirementState.requirement);
     for (const query of seedQueries) {
       requirementState.queries.add(normalizeQuery(query.text));
+      const normalized = normalizeQuery(query.text);
+      const physical = physicalQueries.get(normalized) ?? {
+        text: query.text,
+        consumers: new Map<string, ExpandedSeedQuery>(),
+        aspectIds: new Set<string>(),
+        topK,
+        global: false,
+      };
+      physical.consumers.set(requirementState.requirement.id, query);
+      physical.topK = Math.max(physical.topK, topK);
+      for (const aspectId of query.aspectIds) physical.aspectIds.add(aspectId);
+      physicalQueries.set(normalized, physical);
     }
-    const results = await Promise.all(seedQueries.map(async (query) => {
-      recordDiagnostic(input.trace, {
-        event: "search",
-        requirementId: requirementState.requirement.id,
-        phase: "seed",
-        queryChars: query.text.length,
-        aspectIds: query.aspectIds,
+  }
+  const globalEnabled = input.plan.retrievalStrategy !== "coverage_units";
+  const normalizedGlobalQuery = normalizeQuery(globalQuery);
+  if (globalEnabled) {
+    const physical = physicalQueries.get(normalizedGlobalQuery) ?? {
+      text: globalQuery,
+      consumers: new Map<string, ExpandedSeedQuery>(),
+      aspectIds: new Set<string>(),
+      topK: SEED_TOP_K,
+      global: false,
+    };
+    physical.global = true;
+    physical.topK = Math.max(physical.topK, SEED_TOP_K);
+    physicalQueries.set(normalizedGlobalQuery, physical);
+  }
+
+  const physicalResults = new Map<string, PhysicalSeedResult>();
+  await Promise.all([...physicalQueries.entries()].map(async ([normalized, physical]) => {
+    const consumerIds = [...physical.consumers.keys()];
+    const diagnosticRequirementId = physical.global || consumerIds.length !== 1
+      ? "GLOBAL"
+      : consumerIds[0]!;
+    recordDiagnostic(input.trace, {
+      event: "search",
+      requirementId: diagnosticRequirementId,
+      phase: "seed",
+      queryChars: physical.text.length,
+      aspectIds: [...physical.aspectIds],
+    });
+    try {
+      const result = await input.session.search(
+        physical.text,
+        physical.topK,
+        toolSignal(input),
+      );
+      state.successfulSeedSearches += 1;
+      physicalResults.set(normalized, {
+        query: physical.text,
+        status: result.hits.length > 0 ? "success" : "empty",
+        result,
       });
-      try {
-        const result = await input.session.search(
-          query.text,
-          topK,
-          toolSignal(input),
-        );
-        state.successfulSeedSearches += 1;
-        requirementState.successfulSeedSearches += 1;
-        for (const hit of result.hits) {
-          requirementState.seedCandidatePaths.add(hit.path);
-        }
-        return { query: query.text, aspectIds: query.aspectIds, result };
-      } catch {
+    } catch {
+      physicalResults.set(normalized, {
+        query: physical.text,
+        status: "unavailable",
+      });
+    }
+  }));
+
+  for (const requirementState of state.requirements.values()) {
+    let gained = false;
+    const seedQueries = expandedByRequirement.get(
+      requirementState.requirement.id,
+    ) ?? [];
+    const handledPhysicalQueries = new Set<string>();
+    for (const query of seedQueries) {
+      const normalized = normalizeQuery(query.text);
+      const execution = physicalResults.get(normalized);
+      if (execution === undefined) throw new Error("seed_execution_missing");
+      handledPhysicalQueries.add(normalized);
+      requirementState.queryRecords.push({
+        phase: "seed",
+        query: execution.query,
+        aspectIds: [...query.aspectIds],
+        status: execution.status,
+        plannedQueryIndexes: [...query.plannedQueryIndexes],
+      });
+      if (execution.status === "unavailable" || execution.result === undefined) {
         requirementState.failedSeedSearches += 1;
+        requirementState.toolUnavailableCount += 1;
         observe(state, {
           type: "seed_search_unavailable",
           requirementId: requirementState.requirement.id,
-          query: query.text,
+          query: execution.query,
         });
-        return undefined;
+        continue;
       }
-    }));
-    return {
-      requirementState,
-      successful: results.filter((item) => item !== undefined),
-    };
-  });
-
-  const [globalResult, requirementResults] = await Promise.all([
-    globalSearch,
-    Promise.all(requirementSearches),
-  ]);
-  for (const { requirementState, successful } of requirementResults) {
-    let gained = mergeSearchResults(requirementState, successful);
-    if (globalResult) {
+      requirementState.successfulSeedSearches += 1;
+      for (const hit of execution.result.hits) {
+        requirementState.seedCandidatePaths.add(hit.path);
+      }
       gained = mergeSearchResults(requirementState, [{
-        ...globalResult,
-        aspectIds: matchingAspectIds(
-          requirementState.requirement,
-          globalResult.query,
+        query: execution.query,
+        aspectIds: query.aspectIds,
+        result: limitSearchResult(
+          execution.result,
+          seedTopKFor(requirementState.requirement),
         ),
-      }], false) || gained;
+      }]) || gained;
+    }
+
+    if (globalEnabled && !handledPhysicalQueries.has(normalizedGlobalQuery)) {
+      const execution = physicalResults.get(normalizedGlobalQuery);
+      if (execution === undefined) throw new Error("global_seed_execution_missing");
+      const aspectIds = matchingAspectIds(
+        requirementState.requirement,
+        globalQuery,
+      );
+      requirementState.queryRecords.push({
+        phase: "seed",
+        query: execution.query,
+        aspectIds,
+        status: execution.status,
+        plannedQueryIndexes: [],
+      });
+      if (execution.status === "unavailable" || execution.result === undefined) {
+        requirementState.toolUnavailableCount += 1;
+        observe(state, {
+          type: "global_question_search_unavailable",
+          requirementId: requirementState.requirement.id,
+        });
+      } else {
+        gained = mergeSearchResults(requirementState, [{
+          query: execution.query,
+          aspectIds,
+          result: limitSearchResult(execution.result, SEED_TOP_K),
+        }], false) || gained;
+      }
     }
     if (!gained) requirementState.noGainRounds = 1;
     observeCandidates(state, requirementState, "seed_search_result", input.trace);
@@ -745,12 +911,6 @@ function recordRejectedModelPayload(
     result: "rejected",
     reason: error.code,
     repairAttempt: attempt,
-    ...(error.schemaDescription === undefined
-      ? {}
-      : { schemaDescription: error.schemaDescription }),
-    ...(error.rawPayload === undefined
-      ? {}
-      : { rawPayload: error.rawPayload }),
     ...(error.rawPayloadLength === undefined
       ? {}
       : { rawPayloadLength: error.rawPayloadLength }),
@@ -974,16 +1134,33 @@ async function executeBatchReads(
   }
   const distinctReads = new Map<
     string,
-    { page: { requirementId: string; path: string }; requirementState: RequirementState }
+    {
+      page: { requirementId: string; path: string };
+      requirementState: RequirementState;
+      consumers: Array<{
+        page: { requirementId: string; path: string };
+        requirementState: RequirementState;
+      }>;
+    }
   >();
   for (const acceptedRead of accepted) {
-    if (!distinctReads.has(acceptedRead.page.path)) {
-      distinctReads.set(acceptedRead.page.path, acceptedRead);
+    const existing = distinctReads.get(acceptedRead.page.path);
+    if (existing === undefined) {
+      distinctReads.set(acceptedRead.page.path, {
+        ...acceptedRead,
+        consumers: [acceptedRead],
+      });
+    } else {
+      existing.consumers.push(acceptedRead);
     }
   }
-  await Promise.all([...distinctReads.values()].map(async ({ page, requirementState }) => {
+  await Promise.all([...distinctReads.values()].map(async ({
+    page,
+    requirementState,
+    consumers,
+  }) => {
     try {
-      await executeRead(
+      const executed = await executeRead(
         {
           action: "tool",
           tool: "kb.read_page",
@@ -993,13 +1170,37 @@ async function executeBatchReads(
         state,
         requirementState,
       );
-    } catch {
-      observe(state, {
-        type: "tool_unavailable",
-        requirementId: page.requirementId,
-        tool: "kb.read_page",
-      });
-      stopSearchAfterNoGain(requirementState);
+      if (executed !== undefined) {
+        for (const consumer of consumers) {
+          if (consumer.requirementState === requirementState) continue;
+          shareReadEvidenceToRequirement(
+            input,
+            state,
+            requirementState.requirement.id,
+            consumer.page.requirementId,
+            executed.page,
+            executed.citation,
+            executed.content,
+            true,
+          );
+        }
+      }
+    } catch (error) {
+      for (const consumer of consumers) {
+        if (consumer.requirementState !== requirementState) {
+          recordReadFailure(
+            consumer.requirementState,
+            page.path,
+            error,
+          );
+        }
+        observe(state, {
+          type: "tool_unavailable",
+          requirementId: consumer.page.requirementId,
+          tool: "kb.read_page",
+        });
+        stopSearchAfterNoGain(consumer.requirementState);
+      }
     }
   }));
 }
@@ -1015,13 +1216,22 @@ async function executeSupplementalSearch(
     requirementState.searchStopped ||
     requirementState.supplementalSearches >= MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT
   ) {
+    if (
+      requirementState.supplementalSearches >=
+        MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT
+    ) {
+      requirementState.searchBudgetExhausted = true;
+    }
     observe(state, {
       type: "requirement_search_budget_exhausted",
       requirementId: requirementState.requirement.id,
     });
     return;
   }
-  if (requirementState.queries.has(query)) {
+  if (
+    requirementState.queries.has(query) &&
+    !hasUnrecoveredQueryFailure(requirementState, query)
+  ) {
     observe(state, {
       type: "duplicate_query",
       requirementId: requirementState.requirement.id,
@@ -1039,15 +1249,49 @@ async function executeSupplementalSearch(
     queryChars: action.input.query.length,
     aspectIds: action.input.aspectIds,
   });
-  const result = await input.session.search(action.input.query, action.input.topK, toolSignal(input));
+  let result: KnowledgeSearchResult;
+  try {
+    result = await input.session.search(
+      action.input.query,
+      action.input.topK,
+      toolSignal(input),
+    );
+    requirementState.queryRecords.push({
+      phase: "supplemental",
+      query: action.input.query,
+      aspectIds: [...action.input.aspectIds],
+      status: result.hits.length > 0 ? "success" : "empty",
+      plannedQueryIndexes: [],
+    });
+  } catch (error) {
+    requirementState.toolUnavailableCount += 1;
+    requirementState.queryRecords.push({
+      phase: "supplemental",
+      query: action.input.query,
+      aspectIds: [...action.input.aspectIds],
+      status: "unavailable",
+      plannedQueryIndexes: [],
+    });
+    throw error;
+  }
   const gained = mergeSearchResults(requirementState, [{
     query: action.input.query,
     aspectIds: action.input.aspectIds,
     result,
-  }]);
+  }], true, "supplemental");
   requirementState.noGainRounds = gained ? 0 : requirementState.noGainRounds + 1;
   if (requirementState.noGainRounds >= 2) requirementState.searchStopped = true;
   observeCandidates(state, requirementState, "supplemental_search_result", input.trace);
+}
+
+function hasUnrecoveredQueryFailure(
+  requirementState: RequirementState,
+  normalizedQuery: string,
+): boolean {
+  const matching = requirementState.queryRecords.filter((record) =>
+    normalizeQuery(record.query) === normalizedQuery);
+  return matching.some((record) => record.status === "unavailable") &&
+    !matching.some((record) => record.status !== "unavailable");
 }
 
 async function executeRead(
@@ -1055,7 +1299,11 @@ async function executeRead(
   input: KnowledgeAgentInput,
   state: AgentState,
   requirementState: RequirementState,
-): Promise<void> {
+): Promise<{
+  readonly page: KnowledgePage;
+  readonly citation: number;
+  readonly content: string;
+} | undefined> {
   if (!requirementState.candidatePaths.has(action.input.path)) {
     observe(state, {
       type: "path_not_candidate_for_requirement",
@@ -1075,7 +1323,13 @@ async function executeRead(
     });
     return;
   }
-  const page = await input.session.readPage(action.input.path, toolSignal(input));
+  let page: KnowledgePage;
+  try {
+    page = await input.session.readPage(action.input.path, toolSignal(input));
+  } catch (error) {
+    recordReadFailure(requirementState, action.input.path, error);
+    throw error;
+  }
   if (
     requirementState.readPaths.has(page.path) ||
     !canReadEvidencePath(requirementState, page.path)
@@ -1087,9 +1341,11 @@ async function executeRead(
     revision: input.session.revision,
     page,
   });
-  requirementState.readPaths.add(page.path);
-  requirementState.directReadPaths.add(page.path);
-  requirementState.citationIndexes.add(reference.index);
+  recordSuccessfulRead(state, requirementState, {
+    path: page.path,
+    pageType: page.type,
+    sources: [...page.sources],
+  }, reference.index, true);
   const candidate = requirementState.candidatePaths.get(page.path);
   const terms = [
     requirementState.requirement.question,
@@ -1132,29 +1388,109 @@ async function executeRead(
   recordDiagnostic(input.trace, {
     event: "read",
     requirementId: requirementState.requirement.id,
-    path: page.path,
     citation: reference.index,
-    sectionHeadings: markdownHeadings(content),
+    sectionHeadingCount: markdownHeadings(content).length,
     aspectIds: resolvedAspectIds,
   });
   shareReadEvidence(
     input,
     state,
     requirementState.requirement.id,
-    page.path,
+    page,
     reference.index,
     content,
   );
+  return { page, citation: reference.index, content };
+}
+
+function recordReadFailure(
+  requirementState: RequirementState,
+  path: string,
+  error: unknown,
+): void {
+  const accessDenied = isAccessDeniedError(error);
+  if (accessDenied) {
+    requirementState.accessDeniedCount += 1;
+  } else {
+    requirementState.toolUnavailableCount += 1;
+  }
+  requirementState.readRecords.push({
+    path,
+    status: accessDenied ? "access_denied" : "unavailable",
+  });
+}
+
+function hasUnresolvedReadFailure(
+  requirementState: RequirementState,
+  path: string,
+): boolean {
+  return !requirementState.readPaths.has(path) &&
+    requirementState.readRecords.some((read) =>
+      read.path === path && read.status !== "success");
+}
+
+function recordSuccessfulRead(
+  state: AgentState,
+  requirementState: RequirementState,
+  provenance: {
+    readonly path: string;
+    readonly pageType: string;
+    readonly sources: readonly string[];
+  },
+  citation: number,
+  direct: boolean,
+): boolean {
+  if (requirementState.readRecords.some((read) =>
+    read.path === provenance.path && read.status === "success")) {
+    requirementState.readPaths.add(provenance.path);
+    requirementState.citationIndexes.add(citation);
+    if (direct) requirementState.directReadPaths.add(provenance.path);
+    state.readProvenanceByCitation.set(citation, {
+      path: provenance.path,
+      pageType: provenance.pageType,
+      sources: [...provenance.sources],
+    });
+    return false;
+  }
+  const resolvedFailures = requirementState.readRecords.filter((read) =>
+    read.path === provenance.path && read.status !== "success");
+  requirementState.accessDeniedCount = Math.max(
+    0,
+    requirementState.accessDeniedCount -
+      resolvedFailures.filter((read) => read.status === "access_denied").length,
+  );
+  requirementState.toolUnavailableCount = Math.max(
+    0,
+    requirementState.toolUnavailableCount -
+      resolvedFailures.filter((read) => read.status === "unavailable").length,
+  );
+  requirementState.readPaths.add(provenance.path);
+  if (direct) requirementState.directReadPaths.add(provenance.path);
+  requirementState.citationIndexes.add(citation);
+  requirementState.readRecords.push({
+    path: provenance.path,
+    status: "success",
+    citation,
+    pageType: provenance.pageType,
+    sources: [...provenance.sources],
+  });
+  state.readProvenanceByCitation.set(citation, {
+    path: provenance.path,
+    pageType: provenance.pageType,
+    sources: [...provenance.sources],
+  });
+  return true;
 }
 
 function shareReadEvidence(
   input: KnowledgeAgentInput,
   state: AgentState,
   fromRequirementId: string,
-  path: string,
+  page: KnowledgePage,
   citation: number,
   content: string,
 ): void {
+  const path = page.path;
   for (const [toRequirementId, requirementState] of state.requirements) {
     const targetCandidate = requirementState.candidatePaths.get(path);
     if (
@@ -1164,8 +1500,39 @@ function shareReadEvidence(
     ) {
       continue;
     }
-    requirementState.readPaths.add(path);
-    requirementState.citationIndexes.add(citation);
+    shareReadEvidenceToRequirement(
+      input,
+      state,
+      fromRequirementId,
+      toRequirementId,
+      page,
+      citation,
+      content,
+      false,
+    );
+  }
+}
+
+function shareReadEvidenceToRequirement(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+  fromRequirementId: string,
+  toRequirementId: string,
+  page: KnowledgePage,
+  citation: number,
+  content: string,
+  direct: boolean,
+): void {
+  const requirementState = state.requirements.get(toRequirementId);
+  const targetCandidate = requirementState?.candidatePaths.get(page.path);
+  if (requirementState === undefined || targetCandidate === undefined) return;
+  const newlyRecorded = recordSuccessfulRead(state, requirementState, {
+    path: page.path,
+    pageType: page.type,
+    sources: page.sources,
+  }, citation, direct);
+  if (!newlyRecorded) return;
+  const path = page.path;
     const resolvedAspectIds = [
       ...new Set([
         ...targetCandidate.aspectIds,
@@ -1196,10 +1563,8 @@ function shareReadEvidence(
       event: "evidence_shared",
       fromRequirementId,
       toRequirementId,
-      path,
       citation,
     });
-  }
 }
 
 function shareFinalAnswerEvidence(
@@ -1218,15 +1583,28 @@ function shareFinalAnswerEvidence(
           sourceRequirementId !== requirement.id && documents.has(citation),
       );
       const document = source?.[1].get(citation);
-      if (source === undefined || document === undefined) continue;
+      const provenance = state.readProvenanceByCitation.get(citation);
+      if (
+        source === undefined ||
+        document === undefined ||
+        provenance === undefined ||
+        provenance.path !== document.path
+      ) {
+        continue;
+      }
       if (
         input.plan.retrievalStrategy === "coverage_units" &&
         !targetState.candidatePaths.get(document.path)?.requirementSpecificMatch
       ) {
         continue;
       }
-      targetState.citationIndexes.add(citation);
-      targetState.readPaths.add(document.path);
+      recordSuccessfulRead(
+        state,
+        targetState,
+        provenance,
+        citation,
+        false,
+      );
       for (
         const aspectId of
           targetState.candidatePaths.get(document.path)?.aspectIds ?? []
@@ -1250,7 +1628,6 @@ function shareFinalAnswerEvidence(
         event: "evidence_shared",
         fromRequirementId: source[0],
         toRequirementId: requirement.id,
-        path: document.path,
         citation,
       });
     }
@@ -1287,7 +1664,27 @@ async function executeGraph(
     return;
   }
   requirementState.graphActions += 1;
-  const result = await input.session.graph(action.input.path, action.input.topK, toolSignal(input));
+  let result: KnowledgeGraphResult;
+  try {
+    result = await input.session.graph(
+      action.input.path,
+      action.input.topK,
+      toolSignal(input),
+    );
+  } catch (error) {
+    requirementState.toolUnavailableCount += 1;
+    requirementState.graphRecords.push({
+      sourcePath: action.input.path,
+      status: "unavailable",
+      hitCount: 0,
+    });
+    throw error;
+  }
+  requirementState.graphRecords.push({
+    sourcePath: action.input.path,
+    status: result.hits.length > 0 ? "success" : "empty",
+    hitCount: result.hits.length,
+  });
   const gained = mergeGraphResult(requirementState, action.input.path, result);
   requirementState.noGainRounds = gained ? 0 : requirementState.noGainRounds + 1;
   if (requirementState.noGainRounds >= 2) requirementState.searchStopped = true;
@@ -1302,6 +1699,7 @@ function mergeSearchResults(
     result: KnowledgeSearchResult;
   }[],
   requirementSpecific = true,
+  ledgerSource: EvidenceCandidateSource = "seed",
 ): boolean {
   let gained = false;
   for (const { query, aspectIds, result } of searches) {
@@ -1318,10 +1716,12 @@ function mergeSearchResults(
         snippets: new Set<string>(),
         graphRelations: new Set<string>(),
         aspectIds: new Set<string>(),
+        ledgerSources: new Set<EvidenceCandidateSource>(),
         requirementSpecificMatch: false,
       };
       candidate.title = hit.title;
       candidate.requirementSpecificMatch ||= requirementSpecific;
+      candidate.ledgerSources.add(ledgerSource);
       candidate.rrfScore += 1 / (RRF_K + index + 1);
       candidate.sourceQueries.add(query);
       for (const aspectId of attributedSearchAspectIds(
@@ -1363,10 +1763,12 @@ function mergeGraphResult(
       snippets: new Set<string>(),
       graphRelations: new Set<string>(),
       aspectIds: new Set<string>(),
+      ledgerSources: new Set<EvidenceCandidateSource>(),
       requirementSpecificMatch: true,
     };
     candidate.title = hit.title;
     candidate.requirementSpecificMatch = true;
+    candidate.ledgerSources.add("graph");
     candidate.rrfScore += 1 / (RRF_K + index + 1);
     candidate.sourceQueries.add(`graph:${sourcePath}`);
     candidate.graphRelations.add(hit.relation);
@@ -1404,13 +1806,7 @@ function observeCandidates(
     event: "candidates",
     requirementId: requirementState.requirement.id,
     source: type,
-    candidates: sortedCandidates(requirementState).slice(0, 10).map((candidate) => ({
-      path: candidate.path,
-      rrfScore: roundedScore(candidate.rrfScore),
-      sourceQueryCount: candidate.sourceQueries.size,
-      graphRelations: [...candidate.graphRelations],
-      aspectIds: [...candidate.aspectIds],
-    })),
+    candidateCount: requirementState.candidatePaths.size,
     aspects: aspectStatuses(requirementState).map((aspect) => ({
       id: aspect.id,
       candidateCount: aspect.candidateCount,
@@ -1542,6 +1938,300 @@ function recordCoverage(
         }),
     citations: action.citations,
     stopReason,
+  });
+}
+
+function buildEvidenceLedger(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+  action: FinalAction,
+  report: CoverageVerificationReport,
+): EvidenceLedger {
+  const actionById = new Map(
+    action.requirements.map((requirement) => [requirement.id, requirement] as const),
+  );
+  const verificationById = new Map(
+    report.summaries.map((summary) => [summary.id, summary] as const),
+  );
+  const bindings = evidenceBindings(input);
+  const bindingById = new Map(
+    bindings.map((binding) => [binding.requirementId, binding] as const),
+  );
+  const units: EvidenceLedgerDraftUnit[] = input.plan.requirements.map(
+    (requirement) => {
+      const requirementState = state.requirements.get(requirement.id);
+      const result = actionById.get(requirement.id);
+      const verification = verificationById.get(requirement.id);
+      const binding = bindingById.get(requirement.id);
+      if (
+        requirementState === undefined ||
+        result === undefined ||
+        verification === undefined ||
+        binding === undefined
+      ) {
+        throw new Error("evidence_ledger_binding_missing");
+      }
+
+      const missingAspectIds = new Set(verification.missingAspectIds);
+      const candidates: EvidenceCandidateDraft[] = sortedCandidates(
+        requirementState,
+      ).map((candidate) => {
+        const overlapsMissingAspect = [...candidate.aspectIds].some((id) =>
+          missingAspectIds.has(id));
+        const relevantToMissingEvidence = missingAspectIds.size === 0
+          ? candidate.requirementSpecificMatch
+          : overlapsMissingAspect || candidate.aspectIds.size === 0;
+        return {
+          path: candidate.path,
+          title: candidate.title,
+          sources: [...candidate.ledgerSources],
+          aspectIds: [...candidate.aspectIds],
+          reviewRequired:
+            result.coverage !== "complete" &&
+            relevantToMissingEvidence &&
+            !shouldDeferAdjacentComparisonRead(
+              requirementState,
+              candidate.path,
+              false,
+            ),
+        };
+      });
+      const knownCandidatePaths = new Set(
+        candidates.map((candidate) => candidate.path),
+      );
+      const sharedOnlyPaths = [...requirementState.readPaths]
+        .filter((path) => !knownCandidatePaths.has(path))
+        .sort((left, right) => left.localeCompare(right));
+      for (const path of sharedOnlyPaths) {
+        const sourceCandidate = [...state.requirements.values()]
+          .map((sourceState) => sourceState.candidatePaths.get(path))
+          .find((candidate) => candidate !== undefined);
+        const document = [...(
+          state.evidenceDocuments.get(requirement.id)?.values() ?? []
+        )].find((candidate) => candidate.path === path);
+        if (sourceCandidate === undefined || document === undefined) {
+          throw new Error("shared_evidence_provenance_missing");
+        }
+        candidates.push({
+          path,
+          title: document.title,
+          sources: [...sourceCandidate.ledgerSources],
+          aspectIds: document.aspectIds ?? [],
+          reviewRequired: false,
+        });
+        knownCandidatePaths.add(path);
+      }
+      const reads = materializeEvidenceReads(
+        state,
+        requirementState,
+        candidates.map((candidate) => candidate.path),
+      );
+      const successfulReadPaths = new Set(
+        reads.flatMap((read) => read.status === "success" ? [read.path] : []),
+      );
+      const hasUnreadReviewCandidate = candidates.some((candidate) =>
+        candidate.reviewRequired && !successfulReadPaths.has(candidate.path));
+      const claims = evidenceClaims(result, verification);
+      const conditions = state.evidenceConditions.get(requirement.id) ?? {
+        requirementId: requirement.id,
+        conflictDetected: false,
+        freshness: "not_assessed" as const,
+        inputState: "not_applicable" as const,
+        ambiguous: false,
+      };
+
+      return {
+        binding,
+        subject: input.plan.subject,
+        requirement,
+        queries: requirementState.queryRecords,
+        candidates,
+        reads,
+        graphs: requirementState.graphRecords,
+        claims,
+        retrieval: {
+          deadlineReached: deadlineReached(input),
+          searchBudgetExhausted:
+            requirementState.searchBudgetExhausted ||
+            (
+              result.coverage !== "complete" &&
+              requirementState.supplementalSearches >=
+                MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT
+            ),
+          readBudgetExhausted:
+            result.coverage !== "complete" &&
+            hasUnreadReviewCandidate &&
+            !hasRemainingReadCapacity(requirementState),
+          toolUnavailableCount: requirementState.toolUnavailableCount,
+          accessDeniedCount: requirementState.accessDeniedCount,
+        },
+        sourceBoundary: evidenceSourceBoundary(reads),
+        conflictDetected: conditions.conflictDetected,
+        freshness: conditions.freshness,
+        inputState: conditions.inputState,
+        ambiguous: conditions.ambiguous,
+        verification: {
+          coverage: result.coverage,
+          reason: verification.reason,
+          coveredAspectIds: verification.coveredAspectIds,
+          missingAspectIds: verification.missingAspectIds,
+        },
+      };
+    },
+  );
+  return finalizeEvidenceLedger({
+    project: input.session.project,
+    revision: input.session.revision,
+    units,
+  });
+}
+
+function requirementEvidenceConditions(
+  input: KnowledgeAgentInput,
+): ReadonlyMap<string, RequirementEvidenceCondition> {
+  const knownRequirementIds = new Set(
+    input.plan.requirements.map((requirement) => requirement.id),
+  );
+  const conditions = new Map<string, RequirementEvidenceCondition>();
+  for (const condition of input.requirementEvidenceConditions ?? []) {
+    if (
+      !knownRequirementIds.has(condition.requirementId) ||
+      conditions.has(condition.requirementId) ||
+      typeof condition.conflictDetected !== "boolean" ||
+      !["not_assessed", "current", "stale_or_unconfirmed"].includes(
+        condition.freshness,
+      ) ||
+      !["not_applicable", "available", "missing"].includes(
+        condition.inputState,
+      ) ||
+      typeof condition.ambiguous !== "boolean"
+    ) {
+      throw new Error("requirement_evidence_condition_invalid");
+    }
+    conditions.set(condition.requirementId, { ...condition });
+  }
+  return conditions;
+}
+
+function evidenceBindings(
+  input: KnowledgeAgentInput,
+): readonly DomainRequirementBinding[] {
+  const bindings = input.requirementBindings ?? input.plan.requirements.map(
+    (requirement, index) => ({
+      domain: input.session.project,
+      requirementId: requirement.id,
+      deliverableId: `D${index + 1}`,
+      obligationId: `O${index + 1}`,
+      order: index,
+    }),
+  );
+  if (
+    bindings.length !== input.plan.requirements.length ||
+    bindings.some((binding, index) =>
+      binding.requirementId !== input.plan.requirements[index]?.id ||
+      binding.domain !== input.session.project)
+  ) {
+    throw new Error("evidence_binding_mismatch");
+  }
+  return bindings;
+}
+
+function materializeEvidenceReads(
+  state: AgentState,
+  requirementState: RequirementState,
+  candidatePaths: readonly string[],
+): EvidenceReadDraft[] {
+  const reads = [...requirementState.readRecords];
+  const successfulReadPaths = new Set(
+    reads.flatMap((read) => read.status === "success" ? [read.path] : []),
+  );
+  const documents = state.evidenceDocuments.get(
+    requirementState.requirement.id,
+  );
+  for (const path of requirementState.readPaths) {
+    if (successfulReadPaths.has(path)) continue;
+    const citation = [...(documents?.entries() ?? [])].find(
+      ([, document]) => document.path === path,
+    )?.[0];
+    if (citation !== undefined) {
+      const provenance = state.readProvenanceByCitation.get(citation);
+      if (provenance === undefined || provenance.path !== path) {
+        throw new Error("shared_read_provenance_missing");
+      }
+      reads.push({
+        path,
+        status: "success",
+        citation,
+        pageType: provenance.pageType,
+        sources: [...provenance.sources],
+      });
+      successfulReadPaths.add(path);
+    }
+  }
+  return candidatePaths.flatMap((path) => {
+    return reads.filter((read) => read.path === path);
+  });
+}
+
+function evidenceClaims(
+  _requirement: FinalAction["requirements"][number],
+  verification: CoverageVerificationReport["summaries"][number],
+): EvidenceClaimRecord[] {
+  if (verification.claimDecisions === undefined) {
+    throw new Error("coverage_claim_decisions_missing");
+  }
+  return verification.claimDecisions.map((decision) => ({
+    claimIndex: decision.claimIndex,
+    status: decision.status,
+    citations: [...decision.citations],
+    coveredAspectIds: [...decision.coveredAspectIds],
+  }));
+}
+
+function evidenceSourceBoundary(
+  reads: readonly EvidenceReadDraft[],
+): EvidenceSourceBoundary {
+  const successful = reads.filter((read) => read.status === "success");
+  if (successful.length === 0) return "formal";
+  const pageTypes = successful.map((read) => read.pageType?.toLowerCase());
+  if (
+    pageTypes.every((pageType) => pageType !== undefined && [
+      "summary",
+      "overview",
+      "entity",
+      "index",
+      "navigation",
+    ].includes(pageType))
+  ) {
+    return "summary_only";
+  }
+  if (
+    pageTypes.every((pageType) =>
+      pageType === "external" || pageType === "external_reference") &&
+    successful.every((read) =>
+      (read.sources?.length ?? 0) > 0 &&
+      read.sources?.every((source) => /^https?:\/\//iu.test(source)))
+  ) {
+    return "external_only";
+  }
+  return "formal";
+}
+
+function recordCoverageGapDiagnostics(
+  input: KnowledgeAgentInput,
+  ledger: EvidenceLedger,
+  gaps: readonly CoverageGap[],
+): void {
+  recordDiagnostic(input.trace, {
+    event: "coverage_gaps",
+    domainCount: new Set(ledger.units.map((unit) => unit.binding.domain)).size,
+    gapCount: gaps.length,
+    gaps: gaps.map((gap) => ({
+      domain: gap.domain,
+      gapClass: gap.gapClass,
+      reason: gap.reason,
+      affectsConclusion: gap.affectsConclusion,
+    })),
   });
 }
 
@@ -1682,11 +2372,13 @@ function pendingEvidenceReviews(
     const hasUnreadCandidate = [...requirementState.candidatePaths.keys()]
       .some((path) =>
         !requirementState.readPaths.has(path) &&
+        !hasUnresolvedReadFailure(requirementState, path) &&
         !shouldDeferAdjacentComparisonRead(requirementState, path, false)
       );
     const hasUnreadAspectCandidate = [...requirementState.candidatePaths.values()]
       .some((candidate) =>
         !requirementState.readPaths.has(candidate.path) &&
+        !hasUnresolvedReadFailure(requirementState, candidate.path) &&
         !shouldDeferAdjacentComparisonRead(
           requirementState,
           candidate.path,
@@ -1748,6 +2440,7 @@ function preferredUnreadDirectComparisonPath(
   return [...requirementState.candidatePaths.values()]
     .filter((candidate) =>
       !requirementState.readPaths.has(candidate.path) &&
+      !hasUnresolvedReadFailure(requirementState, candidate.path) &&
       isExactDirectComparisonCandidate(requirementState, candidate.path)
     )
     .sort((left, right) =>
@@ -1980,7 +2673,9 @@ function normalizeTitleText(value: string): string {
 function hasAvailableToolAction(state: AgentState): boolean {
   return [...state.requirements.values()].some((requirementState) => {
     const unreadCandidate = [...requirementState.candidatePaths.keys()]
-      .some((path) => !requirementState.readPaths.has(path));
+      .some((path) =>
+        !requirementState.readPaths.has(path) &&
+        !hasUnresolvedReadFailure(requirementState, path));
     return (
       (!requirementState.searchStopped &&
         requirementState.supplementalSearches < MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT) ||
@@ -1999,7 +2694,9 @@ function countRemainingToolActions(state: AgentState): number {
       remaining += MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT - requirementState.supplementalSearches;
     }
     const unreadCandidates = [...requirementState.candidatePaths.keys()]
-      .filter((path) => !requirementState.readPaths.has(path)).length;
+      .filter((path) =>
+        !requirementState.readPaths.has(path) &&
+        !hasUnresolvedReadFailure(requirementState, path)).length;
     const standardReadCapacity = Math.max(
       0,
       readLimitFor(requirementState.requirement) -
@@ -2054,15 +2751,28 @@ function normalizeQuery(query: string): string {
 
 function expandSeedQueries(
   requirement: KnowledgeRequirement,
-): Array<{ text: string; aspectIds: string[] }> {
-  const expanded = new Map<string, { text: string; aspectIds: Set<string> }>();
-  for (const query of requirement.queries) {
+): Array<{
+  text: string;
+  aspectIds: string[];
+  plannedQueryIndexes: number[];
+}> {
+  const expanded = new Map<string, {
+    text: string;
+    aspectIds: Set<string>;
+    plannedQueryIndexes: Set<number>;
+  }>();
+  for (const [plannedQueryIndex, query] of requirement.queries.entries()) {
     const queryText = enrichSynthesisQuery(
       requirement,
       query.text,
       query.aspectIds,
     );
-    addExpandedQuery(expanded, queryText, query.aspectIds);
+    addExpandedQuery(
+      expanded,
+      queryText,
+      query.aspectIds,
+      [plannedQueryIndex],
+    );
     const variants = [
       queryText.replaceAll("注意事项", "要点"),
       queryText.replaceAll("关键注意", "重点"),
@@ -2071,7 +2781,7 @@ function expandSeedQueries(
     for (const variant of variants) {
       const normalized = normalizeQuery(variant);
       if (normalized !== normalizeQuery(queryText)) {
-        addExpandedQuery(expanded, variant, query.aspectIds);
+        addExpandedQuery(expanded, variant, query.aspectIds, []);
       }
     }
     if (
@@ -2082,7 +2792,7 @@ function expandSeedQueries(
         queryText.includes("要点")
       )
     ) {
-      addExpandedQuery(expanded, "POC测试要点", query.aspectIds);
+      addExpandedQuery(expanded, "POC测试要点", query.aspectIds, []);
     }
     if (
       queryText.includes("迁移") &&
@@ -2092,12 +2802,13 @@ function expandSeedQueries(
         .replace(/(?:执行步骤|操作步骤|操作流程|流程|方法)/gu, " ")
         .replace(/\s+/gu, " ")
         .trim()} 工具`;
-      addExpandedQuery(expanded, toolFocus, query.aspectIds);
+      addExpandedQuery(expanded, toolFocus, query.aspectIds, []);
     }
   }
   return [...expanded.values()].map((query) => ({
     text: query.text,
     aspectIds: [...query.aspectIds],
+    plannedQueryIndexes: [...query.plannedQueryIndexes],
   }));
 }
 
@@ -2131,16 +2842,25 @@ function enrichSynthesisQuery(
 }
 
 function addExpandedQuery(
-  expanded: Map<string, { text: string; aspectIds: Set<string> }>,
+  expanded: Map<string, {
+    text: string;
+    aspectIds: Set<string>;
+    plannedQueryIndexes: Set<number>;
+  }>,
   text: string,
   aspectIds: readonly string[],
+  plannedQueryIndexes: readonly number[],
 ): void {
   const normalized = normalizeQuery(text);
   const entry = expanded.get(normalized) ?? {
     text,
     aspectIds: new Set<string>(),
+    plannedQueryIndexes: new Set<number>(),
   };
   for (const aspectId of aspectIds) entry.aspectIds.add(aspectId);
+  for (const plannedQueryIndex of plannedQueryIndexes) {
+    entry.plannedQueryIndexes.add(plannedQueryIndex);
+  }
   expanded.set(normalized, entry);
 }
 
@@ -2165,6 +2885,15 @@ function seedTopKFor(requirement: KnowledgeRequirement): number {
         Math.max(SEED_TOP_K, requirement.evidenceAspects.length * 3),
       )
     : SEED_TOP_K;
+}
+
+function limitSearchResult(
+  result: KnowledgeSearchResult,
+  topK: number,
+): KnowledgeSearchResult {
+  return result.hits.length <= topK
+    ? result
+    : { ...result, hits: result.hits.slice(0, topK) };
 }
 
 function attributedSearchAspectIds(
@@ -2259,4 +2988,17 @@ function markdownHeadings(content: string): string[] {
 
 function assertNever(value: never): never {
   throw new Error(`unhandled_tool_action:${String(value)}`);
+}
+
+function isAccessDeniedError(error: unknown): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const record = error as Record<string, unknown>;
+  const response = record.response;
+  const responseStatus = response !== null && typeof response === "object"
+    ? (response as Record<string, unknown>).status
+    : undefined;
+  return [record.code, record.status, record.statusCode, responseStatus]
+    .some((value) =>
+      value === 401 || value === 403 ||
+      value === "401" || value === "403" || value === "EACCES");
 }

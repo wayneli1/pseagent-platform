@@ -3,7 +3,7 @@ import type {
   AnswerResult,
   HistoricalReference,
 } from "./contracts.js";
-import { pseAnswerInputSchema } from "./contracts.js";
+import { answerResultSchema, pseAnswerInputSchema } from "./contracts.js";
 import {
   HISTORICAL_BLOCK_MAX_CHARS,
   HISTORICAL_NOTICE_MESSAGES,
@@ -33,7 +33,9 @@ export function createPseMcpServer(dependencies: {
       inputSchema: pseAnswerInputSchema.shape,
     },
     async ({ question, conversationContext }, extra) => {
-      const result = await dependencies.answer(question, conversationContext, extra.signal);
+      const result = answerResultSchema.parse(
+        await dependencies.answer(question, conversationContext, extra.signal),
+      );
       return {
         content: [{ type: "text" as const, text: formatMcpText(result) }],
         structuredContent: result as unknown as Record<string, unknown>,

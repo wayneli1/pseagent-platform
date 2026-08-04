@@ -34,6 +34,7 @@ import {
   deriveDomainKnowledgePlans,
   type DomainKnowledgePlan,
   type DomainPlanInactiveReason,
+  type DomainRequirementBinding,
 } from "./domain-plan.js";
 import {
   DomainAnswerMergeError,
@@ -43,6 +44,9 @@ import {
 } from "./domain-answer-merge.js";
 import { formatKnowledgeFinal } from "./response.js";
 import type { KnowledgeDomain } from "./task-spec.js";
+import type { EvidenceLedger } from "./evidence-ledger.js";
+import type { CoverageGap } from "./coverage-gap.js";
+import type { CoverageVerificationReport } from "./coverage-verifier.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -55,6 +59,7 @@ export interface AgentRunnerInput {
   readonly question: string;
   readonly conversationContext?: string;
   readonly plan: KnowledgePlan;
+  readonly requirementBindings?: readonly DomainRequirementBinding[];
   readonly model: ModelClient;
   readonly session: KnowledgeSession;
   readonly deadlineAt: number;
@@ -83,6 +88,15 @@ export interface PseAnswerExecution {
   readonly historicalRejectedReason?: HistoricalRejectionReason;
   /** Internal execution metadata; never copied into the strict external AnswerResult. */
   readonly domainsUsed?: readonly KnowledgeDomain[];
+  readonly verification?: CoverageVerificationReport;
+  readonly domainEvidenceLedgers?: readonly EvidenceLedger[];
+  readonly coverageGaps?: readonly CoverageGap[];
+}
+
+interface ExecutionEvidenceMetadata {
+  readonly verification?: CoverageVerificationReport;
+  readonly domainEvidenceLedgers?: readonly EvidenceLedger[];
+  readonly coverageGaps?: readonly CoverageGap[];
 }
 
 export class AnswerService {
@@ -304,10 +318,6 @@ export class AnswerService {
           result: "rejected",
           reason: error.code,
           repairAttempt: 0,
-          ...(error.schemaDescription === undefined
-            ? {}
-            : { schemaDescription: error.schemaDescription }),
-          ...(error.rawPayload === undefined ? {} : { rawPayload: error.rawPayload }),
           ...(error.rawPayloadLength === undefined
             ? {}
             : { rawPayloadLength: error.rawPayloadLength }),
@@ -419,6 +429,7 @@ export class AnswerService {
           scope: domainPlan.scope,
           question: input.question,
           plan: domainPlan.plan,
+          requirementBindings: domainPlan.bindings,
           model: this.dependencies.model,
           session,
           deadlineAt: input.deadlineAt,
@@ -517,6 +528,19 @@ export class AnswerService {
       domainsUsed: merged.domainsUsed,
     });
     recordMergedCoverage(input.trace, input.plans, merged);
+    if (merged.coverageGaps !== undefined) {
+      recordDiagnostic(input.trace, {
+        event: "coverage_gaps",
+        domainCount: merged.domainsUsed.length,
+        gapCount: merged.coverageGaps.length,
+        gaps: merged.coverageGaps.map((gap) => ({
+          domain: gap.domain,
+          gapClass: gap.gapClass,
+          reason: gap.reason,
+          affectsConclusion: gap.affectsConclusion,
+        })),
+      });
+    }
     const primary = formatKnowledgeFinal(
       input.scope,
       merged.action,
@@ -529,6 +553,7 @@ export class AnswerService {
       trace: input.trace,
       startedAt: input.startedAt,
       domainsUsed: merged.domainsUsed,
+      evidenceMetadata: merged,
     });
   }
 
@@ -539,6 +564,7 @@ export class AnswerService {
     readonly trace: OutcomeTrace;
     readonly startedAt: number;
     readonly domainsUsed?: readonly KnowledgeDomain[];
+    readonly evidenceMetadata?: ExecutionEvidenceMetadata;
   }): Promise<PseAnswerExecution> {
     if (
       input.primary.status !== "not_covered" ||
@@ -552,6 +578,7 @@ export class AnswerService {
         false,
         false,
         input.domainsUsed,
+        input.evidenceMetadata,
       );
     }
     const historicalGate = evaluateHistoricalGate(input.question, input.trace);
@@ -568,6 +595,7 @@ export class AnswerService {
         false,
         false,
         input.domainsUsed,
+        input.evidenceMetadata,
       );
     }
     try {
@@ -584,6 +612,7 @@ export class AnswerService {
           historicalAttempted,
           false,
           input.domainsUsed,
+          input.evidenceMetadata,
         );
       }
       if (historicalLookup.outcome === "hidden") {
@@ -603,6 +632,7 @@ export class AnswerService {
           historicalAttempted,
           false,
           input.domainsUsed,
+          input.evidenceMetadata,
         );
       }
       const result = { ...input.primary, historicalAnswer: historicalLookup.answer };
@@ -613,6 +643,7 @@ export class AnswerService {
         historicalAttempted,
         true,
         input.domainsUsed,
+        input.evidenceMetadata,
       );
     } catch {
       return finishExecution(
@@ -622,6 +653,7 @@ export class AnswerService {
         true,
         false,
         input.domainsUsed,
+        input.evidenceMetadata,
       );
     }
   }
@@ -894,6 +926,7 @@ function finishExecution(
   historicalAttempted: boolean,
   historicalUsed: boolean,
   domainsUsed?: readonly KnowledgeDomain[],
+  evidenceMetadata?: ExecutionEvidenceMetadata,
 ): PseAnswerExecution {
   recordFinished(trace, result, startedAt, historicalAttempted, historicalUsed);
   const coverageMetadata = executionCoverageMetadata(trace);
@@ -913,6 +946,7 @@ function finishExecution(
       ...coverageMetadata,
       ...historicalNoticeMetadata,
       ...(domainsUsed === undefined ? {} : { domainsUsed }),
+      ...(evidenceMetadata ?? {}),
     };
   }
   const stopReason = trace.stopReason ?? "unknown_unavailable";
@@ -933,6 +967,7 @@ function finishExecution(
     ...coverageMetadata,
     ...historicalNoticeMetadata,
     ...(domainsUsed === undefined ? {} : { domainsUsed }),
+    ...(evidenceMetadata ?? {}),
   };
 }
 

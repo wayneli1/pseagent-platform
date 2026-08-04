@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { FinalAction, Reference } from "./contracts.js";
 import type { DomainKnowledgePlan } from "./domain-plan.js";
+import type { CoverageVerificationReport } from "./coverage-verifier.js";
+import { analyzeCoverageGaps } from "./coverage-gap.js";
+import { finalizeEvidenceLedger } from "./evidence-ledger.js";
 import {
   DomainAnswerMergeError,
   mergeDetailedDomainResults,
@@ -65,7 +68,248 @@ const complete = (answer: string): FinalAction => ({
   citations: [1],
 });
 
+function missingResultWithMetadata(
+  domainPlan: DomainKnowledgePlan,
+  revision: string,
+): DetailedDomainResult {
+  const requirement = domainPlan.plan.requirements[0]!;
+  const action: FinalAction = {
+    action: "final",
+    requirements: [{
+      id: "R1",
+      coverage: "none",
+      answer: "当前正式资料未覆盖该项。",
+      citations: [],
+    }],
+    citations: [],
+  };
+  const evidenceLedger = finalizeEvidenceLedger({
+    project: domainPlan.domain,
+    revision,
+    units: [{
+      binding: domainPlan.bindings[0]!,
+      subject: domainPlan.plan.subject,
+      requirement,
+      queries: [{
+        phase: "seed",
+        query: requirement.queries[0]!.text,
+        aspectIds: requirement.queries[0]!.aspectIds,
+        status: "empty",
+        plannedQueryIndexes: [0],
+      }],
+      candidates: [],
+      reads: [],
+      graphs: [],
+      claims: [],
+      retrieval: {
+        deadlineReached: false,
+        searchBudgetExhausted: false,
+        readBudgetExhausted: false,
+        toolUnavailableCount: 0,
+        accessDeniedCount: 0,
+      },
+      sourceBoundary: "formal",
+      conflictDetected: false,
+      freshness: "not_assessed",
+      inputState: "not_applicable",
+      ambiguous: false,
+      verification: {
+        coverage: "none",
+        reason: "target_omitted",
+        coveredAspectIds: [],
+        missingAspectIds: ["A1"],
+      },
+    }],
+  });
+  const verification: CoverageVerificationReport = {
+    summaries: [{
+      id: "R1",
+      reason: "target_omitted",
+      retainedDirectSegmentCount: 0,
+      retainedSynthesizedSegmentCount: 0,
+      removedSegmentCount: 0,
+      coveredAspectCount: 0,
+      missingAspectCount: 1,
+      coveredAspectIds: [],
+      missingAspectIds: ["A1"],
+      claimDecisions: [],
+    }],
+    coveredRequirementIds: [],
+    missingRequirementIds: ["R1"],
+  };
+  return {
+    domain: domainPlan.domain,
+    project: domainPlan.domain,
+    revision,
+    action,
+    references: [],
+    verification,
+    evidenceLedger,
+    coverageGaps: analyzeCoverageGaps(evidenceLedger),
+  };
+}
+
+function completeResultWithMetadata(
+  domainPlan: DomainKnowledgePlan,
+  revision: string,
+  path: string,
+  contentHash: string,
+): DetailedDomainResult {
+  const requirement = domainPlan.plan.requirements[0]!;
+  const action = complete("已核验事实[1]。");
+  const evidenceLedger = finalizeEvidenceLedger({
+    project: domainPlan.domain,
+    revision,
+    units: [{
+      binding: domainPlan.bindings[0]!,
+      subject: domainPlan.plan.subject,
+      requirement,
+      queries: requirement.queries.map((query, plannedQueryIndex) => ({
+        phase: "seed" as const,
+        query: query.text,
+        aspectIds: query.aspectIds,
+        status: "success" as const,
+        plannedQueryIndexes: [plannedQueryIndex],
+      })),
+      candidates: [{
+        path,
+        title: path,
+        sources: ["seed"],
+        aspectIds: ["A1"],
+        reviewRequired: false,
+      }],
+      reads: [{
+        path,
+        status: "success",
+        citation: 1,
+        pageType: "guide",
+        sources: [],
+      }],
+      graphs: [],
+      claims: [{
+        claimIndex: 0,
+        status: "retained_synthesized",
+        citations: [1],
+        coveredAspectIds: ["A1"],
+      }],
+      retrieval: {
+        deadlineReached: false,
+        searchBudgetExhausted: false,
+        readBudgetExhausted: false,
+        toolUnavailableCount: 0,
+        accessDeniedCount: 0,
+      },
+      sourceBoundary: "formal",
+      conflictDetected: false,
+      freshness: "not_assessed",
+      inputState: "not_applicable",
+      ambiguous: false,
+      verification: {
+        coverage: "complete",
+        reason: "synthesized_support",
+        coveredAspectIds: ["A1"],
+        missingAspectIds: [],
+      },
+    }],
+  });
+  return {
+    domain: domainPlan.domain,
+    project: domainPlan.domain,
+    revision,
+    action,
+    references: [reference(domainPlan.domain, revision, path, contentHash)],
+    verification: {
+      summaries: [{
+        id: "R1",
+        reason: "synthesized_support",
+        retainedDirectSegmentCount: 0,
+        retainedSynthesizedSegmentCount: 1,
+        removedSegmentCount: 0,
+        coveredAspectCount: 1,
+        missingAspectCount: 0,
+        coveredAspectIds: ["A1"],
+        missingAspectIds: [],
+        claimDecisions: [{
+          claimIndex: 0,
+          status: "retained_synthesized",
+          citations: [1],
+          coveredAspectIds: ["A1"],
+        }],
+      }],
+      coveredRequirementIds: ["R1"],
+      missingRequirementIds: [],
+    },
+    evidenceLedger,
+    coverageGaps: [],
+  };
+}
+
 describe("mergeDetailedDomainResults", () => {
+  it("merges evidence metadata by global obligation order without mixing snapshots", () => {
+    const professionalPlan = plan("coremail-professional", "O2", 1);
+    const generalPlan = plan("presales-general", "O1", 0);
+    const professional = missingResultWithMetadata(
+      professionalPlan,
+      "a".repeat(40),
+    );
+    const general = missingResultWithMetadata(generalPlan, "b".repeat(40));
+
+    const merged = mergeDetailedDomainResults({
+      plans: [professionalPlan, generalPlan],
+      results: [general, professional],
+    });
+
+    expect(merged.domainEvidenceLedgers?.map((ledger) => ledger.project)).toEqual([
+      "coremail-professional",
+      "presales-general",
+    ]);
+    expect(merged.coverageGaps).toMatchObject([
+      {
+        id: "G1",
+        requirementId: "R1",
+        obligationId: "O1",
+        domain: "presales-general",
+      },
+      {
+        id: "G2",
+        requirementId: "R2",
+        obligationId: "O2",
+        domain: "coremail-professional",
+      },
+    ]);
+    expect(merged.verification).toMatchObject({
+      coveredRequirementIds: [],
+      missingRequirementIds: ["R1", "R2"],
+      summaries: [{ id: "R1" }, { id: "R2" }],
+    });
+  });
+
+  it("rewrites verification claim citations into the merged global reference space", () => {
+    const professionalPlan = plan("coremail-professional", "O1", 0);
+    const generalPlan = plan("presales-general", "O2", 1);
+    const merged = mergeDetailedDomainResults({
+      plans: [professionalPlan, generalPlan],
+      results: [
+        completeResultWithMetadata(
+          professionalPlan,
+          "a".repeat(40),
+          "wiki/professional.md",
+          HASH_A,
+        ),
+        completeResultWithMetadata(
+          generalPlan,
+          "b".repeat(40),
+          "wiki/general.md",
+          HASH_B,
+        ),
+      ],
+    });
+
+    expect(merged.references.map((item) => item.index)).toEqual([1, 2]);
+    expect(merged.verification?.summaries.map((summary) =>
+      summary.claimDecisions[0]?.citations)).toEqual([[1], [2]]);
+  });
+
   it("is deterministic by obligation and domain order, not completion order", () => {
     const plans = [
       plan("coremail-professional", "O1", 0),

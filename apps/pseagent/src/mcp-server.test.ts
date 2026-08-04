@@ -50,8 +50,54 @@ describe("PSEAgent MCP", () => {
 
     expect(answer).toHaveBeenCalledWith("列出 Coremail AI 新功能", "客户关注客户端能力", expect.any(AbortSignal));
     expect(result.content).toEqual([{ type: "text", text: fixture.answer }]);
-    expect(result.structuredContent).toMatchObject({ scope: "professional", status: "answered" });
+    expect(result.structuredContent).toEqual(fixture);
     await Promise.all([pair.client.close(), pair.server.close()]);
+  });
+
+  it("fails closed without exposing canary data when answer returns internal ledger fields", async () => {
+    const canary = "INTERNAL_LEDGER_CANARY_DO_NOT_EXPOSE";
+    const answer = vi.fn(async () => ({
+      ...fixture,
+      domainEvidenceLedgers: [{
+        project: "coremail-professional",
+        canary,
+      }],
+    }));
+    const pair = await connectedClient(createPseMcpServer({ answer }));
+
+    try {
+      const result = await pair.client.callTool({
+        name: "pse_answer",
+        arguments: { question: "测试 MCP 公共结果边界" },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(canary);
+    } finally {
+      await Promise.all([pair.client.close(), pair.server.close()]);
+    }
+  });
+
+  it("fails closed without structured content when answer returns a malformed public result", async () => {
+    const answer = vi.fn(async () => ({
+      scope: "professional",
+      status: "answered",
+      answer: "缺少 references 的非法结果",
+    } as unknown as AnswerResult));
+    const pair = await connectedClient(createPseMcpServer({ answer }));
+
+    try {
+      const result = await pair.client.callTool({
+        name: "pse_answer",
+        arguments: { question: "测试 MCP 非法结果处理" },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+    } finally {
+      await Promise.all([pair.client.close(), pair.server.close()]);
+    }
   });
 
   it("renders a bounded historical section while preserving safe Markdown", () => {

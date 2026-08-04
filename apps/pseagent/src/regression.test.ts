@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { runKnowledgeAgent, type KnowledgeAgentSession } from "./agent-loop.js";
 import { AnswerService } from "./answer-service.js";
+import { inferCoverageVerificationReport } from "./coverage-verifier.js";
 import {
   answerStatusSchema,
   scopeSchema,
@@ -393,7 +394,15 @@ describe("fixed 41-question scripted protocol regression", () => {
         ...input,
         ...(testCase.id === "P11"
           ? {}
-          : { verifyCoverage: async ({ draft }) => draft }),
+          : {
+              verifyCoverage: async (verificationInput) => {
+                verificationInput.onReport?.(inferCoverageVerificationReport(
+                  verificationInput.draft,
+                  verificationInput.plan,
+                ));
+                return verificationInput.draft;
+              },
+            }),
       }),
     });
 

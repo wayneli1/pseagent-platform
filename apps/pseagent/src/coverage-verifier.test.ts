@@ -7,6 +7,8 @@ import {
   type KnowledgePlan,
 } from "./contracts.js";
 import {
+  coverageVerificationReport,
+  inferCoverageVerificationReport,
   InvalidCoverageVerificationError,
   type CoverageVerifierInput,
   verifyKnowledgeCoverage,
@@ -153,6 +155,125 @@ const evidence = [
 ] as const;
 
 describe("verifyKnowledgeCoverage", () => {
+  it("rejects duplicate or extra summaries when materializing a report", () => {
+    const summary = {
+      id: "R1",
+      reason: "direct_support" as const,
+      retainedDirectSegmentCount: 1,
+      retainedSynthesizedSegmentCount: 0,
+      removedSegmentCount: 0,
+      coveredAspectCount: 1,
+      missingAspectCount: 0,
+      coveredAspectIds: ["A1"],
+      missingAspectIds: [],
+      claimDecisions: [{
+        claimIndex: 0,
+        status: "retained_direct" as const,
+        citations: [1],
+        coveredAspectIds: ["A1"],
+      }],
+    };
+    expect(() => coverageVerificationReport(completeDraft, [summary, summary]))
+      .toThrowError(expect.objectContaining<Partial<InvalidCoverageVerificationError>>({
+        message: "verification_summary_mismatch",
+      }));
+  });
+
+  it.each([
+    {
+      name: "duplicate claim indexes",
+      claimDecisions: [
+        {
+          claimIndex: 0,
+          status: "retained_direct" as const,
+          citations: [1],
+          coveredAspectIds: ["A1"],
+        },
+        {
+          claimIndex: 0,
+          status: "removed" as const,
+          citations: [1],
+          coveredAspectIds: [],
+        },
+      ],
+      code: "verification_claim_index_invalid",
+    },
+    {
+      name: "retained citation outside the materialized requirement",
+      claimDecisions: [{
+        claimIndex: 0,
+        status: "retained_direct" as const,
+        citations: [2],
+        coveredAspectIds: ["A1"],
+      }],
+      code: "verification_claim_citation_invalid",
+    },
+    {
+      name: "claim aspect outside the covered aspect set",
+      claimDecisions: [{
+        claimIndex: 0,
+        status: "retained_direct" as const,
+        citations: [1],
+        coveredAspectIds: ["A2"],
+      }],
+      code: "verification_claim_aspect_invalid",
+    },
+  ])("rejects $name", ({ claimDecisions, code }) => {
+    expect(() => coverageVerificationReport(completeDraft, [{
+      id: "R1",
+      reason: "direct_support",
+      retainedDirectSegmentCount: claimDecisions.filter(
+        (claim) => claim.status === "retained_direct",
+      ).length,
+      retainedSynthesizedSegmentCount: 0,
+      removedSegmentCount: claimDecisions.filter(
+        (claim) => claim.status === "removed",
+      ).length,
+      coveredAspectCount: 1,
+      missingAspectCount: 0,
+      coveredAspectIds: ["A1"],
+      missingAspectIds: [],
+      claimDecisions,
+    }])).toThrowError(expect.objectContaining<Partial<InvalidCoverageVerificationError>>({
+      message: code,
+    }));
+  });
+
+  it("infers one conservative aggregate claim decision for an injected verifier", () => {
+    const report = inferCoverageVerificationReport(
+      completeDraft,
+      singleRequirementPlan,
+    );
+
+    expect(report.summaries[0]?.claimDecisions).toEqual([{
+      claimIndex: 0,
+      status: "retained_direct",
+      citations: [1],
+      coveredAspectIds: ["A1"],
+    }]);
+  });
+
+  it("marks a synthesized partial fallback as inferred instead of direct support", () => {
+    const report = inferCoverageVerificationReport(
+      {
+        ...synthesisDraft,
+        requirements: [{
+          ...synthesisDraft.requirements[0]!,
+          coverage: "partial",
+        }],
+      },
+      synthesisPlan,
+    );
+
+    expect(report.inferred).toBe(true);
+    expect(report.summaries[0]?.claimDecisions).toEqual([{
+      claimIndex: 0,
+      status: "retained_synthesized",
+      citations: [1, 2],
+      coveredAspectIds: [],
+    }]);
+  });
+
   it("keeps a sentence citation attached when it follows punctuation", async () => {
     const draft: FinalAction = {
       action: "final",
@@ -185,6 +306,109 @@ describe("verifyKnowledgeCoverage", () => {
     });
 
     expect(result.requirements[0]).toEqual(draft.requirements[0]);
+  });
+
+  it("audits an uncited factual segment, removes it, and keeps its structural heading", async () => {
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: [
+          "**1. 核心能力**",
+          "正文直接确认目标协议[1]。",
+          "未经引用的额外断言。",
+        ].join("\n"),
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const onReport = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "是否支持目标协议",
+      plan: singleRequirementPlan,
+      draft,
+      evidence: [{
+        ...evidence[0],
+        content: "正文直接确认目标协议。",
+        aspectIds: ["A1"],
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain_partial",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
+          reason: "partial_support",
+        }],
+      } as CoverageVerificationAction),
+      onReport,
+    });
+
+    expect(result.requirements[0]).toEqual({
+      id: "R1",
+      coverage: "complete",
+      answer: "**1. 核心能力**\n正文直接确认目标协议[1]。",
+      citations: [1],
+    });
+    expect(onReport).toHaveBeenCalledWith(expect.objectContaining({
+      summaries: [expect.objectContaining({
+        claimDecisions: [
+          {
+            claimIndex: 0,
+            status: "retained_direct",
+            citations: [1],
+            coveredAspectIds: ["A1"],
+          },
+          {
+            claimIndex: 1,
+            status: "removed",
+            citations: [],
+            coveredAspectIds: [],
+          },
+        ],
+      })],
+    }));
+    expect(result.requirements[0]?.answer).not.toContain("额外断言");
+  });
+
+  it("rejects a verifier decision that retains an uncited factual segment", async () => {
+    const completeJson = vi.fn(async (
+      _input: Parameters<ModelClient["completeJson"]>[0],
+    ) => ({
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        targetDecision: "retain",
+        retainedTargetSegmentIndexes: [0, 1],
+        synthesizedTargetSegmentIndexes: [],
+        retainedRelatedContextIndexes: [],
+        coveredAspectIds: ["A1"],
+        reason: "direct_support",
+      }],
+    } as CoverageVerificationAction));
+
+    await expect(verifyKnowledgeCoverage({
+      question: "是否支持目标协议",
+      plan: singleRequirementPlan,
+      draft: {
+        ...completeDraft,
+        requirements: [{
+          ...completeDraft.requirements[0]!,
+          answer: "正文直接确认目标协议[1]。未经引用的额外断言。",
+        }],
+      },
+      evidence,
+      model: modelFromCompleteJson(completeJson),
+    })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
+
+    expect(completeJson).toHaveBeenCalledTimes(3);
+    expect(completeJson.mock.calls[1]?.[0].messages.at(-1)?.content)
+      .toContain("retained_target_segment_without_citation:R1:1");
   });
 
   it("downgrades complete when cited pages do not cover every dynamic aspect", async () => {
@@ -326,7 +550,68 @@ describe("verifyKnowledgeCoverage", () => {
     ]);
   });
 
-  it("keeps a broad answer complete when one secondary planned aspect is omitted", async () => {
+  it("does not override the verifier's explicit missing aspect with a lexical match", async () => {
+    const plan: KnowledgePlan = {
+      subject: "两项能力",
+      requirements: [{
+        id: "R1",
+        question: "说明能力一和能力二",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "能力一", terms: ["能力一"] },
+          { id: "A2", label: "能力二", terms: ["能力二"] },
+        ],
+        queries: [{ text: "两项能力", aspectIds: ["A1", "A2"] }],
+      }],
+    };
+    const onReport = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "说明能力一和能力二",
+      plan,
+      draft: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: "草稿同时写了能力一和能力二[1]。",
+          citations: [1],
+        }],
+        citations: [1],
+      },
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "两项能力",
+        path: "wiki/two-aspects.md",
+        content: "正文提及能力一和能力二。",
+        aspectIds: ["A1", "A2"],
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [0],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
+          reason: "synthesized_support",
+        }],
+      } as CoverageVerificationAction),
+      onReport,
+    });
+
+    expect(result.requirements[0]?.coverage).toBe("partial");
+    expect(onReport).toHaveBeenCalledWith(expect.objectContaining({
+      summaries: [expect.objectContaining({
+        coveredAspectIds: ["A1"],
+        missingAspectIds: ["A2"],
+      })],
+    }));
+  });
+
+  it("marks a broad answer partial when one verifier-confirmed planned aspect is missing", async () => {
     const evidenceAspects = Array.from({ length: 4 }, (_, index) => ({
       id: `A${index + 1}` as `A${number}`,
       label: `主题${index + 1}`,
@@ -356,6 +641,7 @@ describe("verifyKnowledgeCoverage", () => {
       citations: [1],
     };
 
+    const onReport = vi.fn();
     const result = await verifyKnowledgeCoverage({
       question: plan.requirements[0]!.question,
       plan,
@@ -380,9 +666,21 @@ describe("verifyKnowledgeCoverage", () => {
           reason: "synthesized_support",
         }],
       } as CoverageVerificationAction),
+      onReport,
     });
 
-    expect(result.requirements[0]?.coverage).toBe("complete");
+    expect(result.requirements[0]).toMatchObject({
+      coverage: "partial",
+      citations: [1],
+    });
+    expect(onReport).toHaveBeenCalledWith(expect.objectContaining({
+      summaries: [expect.objectContaining({
+        coveredAspectIds: ["A1", "A2", "A3"],
+        missingAspectIds: ["A4"],
+      })],
+      coveredRequirementIds: ["R1"],
+      missingRequirementIds: ["R1"],
+    }));
   });
 
   it("restores complete after unsupported extras are removed when every aspect remains covered", async () => {
@@ -622,7 +920,7 @@ describe("verifyKnowledgeCoverage", () => {
     ]);
   });
 
-  it("counts an aspect named at paragraph start when its citation appears later", async () => {
+  it("binds a pure structural heading to its adjacent cited factual segment", async () => {
     const plan: KnowledgePlan = {
       subject: "职责归纳",
       requirements: [{
@@ -645,9 +943,9 @@ describe("verifyKnowledgeCoverage", () => {
         id: "R1",
         coverage: "complete",
         answer: [
-          "**需求诊断**：先澄清客户现状。",
-          "再用需求访谈确认问题与影响 [1]。",
-          "**信任建立**：先倾听并共同界定问题。",
+          "**需求诊断**",
+          "用需求访谈确认问题与影响 [1]。",
+          "**信任建立**",
           "再以可信顾问方式给出透明建议 [2]。",
         ].join("\n"),
         citations: [1, 2],
@@ -686,7 +984,7 @@ describe("verifyKnowledgeCoverage", () => {
           retainedTargetSegmentIndexes: [0, 1],
           synthesizedTargetSegmentIndexes: [0, 1],
           retainedRelatedContextIndexes: [],
-          coveredAspectIds: ["A1"],
+          coveredAspectIds: ["A1", "A2"],
           reason: "synthesized_support",
         }],
       } as CoverageVerificationAction),
@@ -700,6 +998,78 @@ describe("verifyKnowledgeCoverage", () => {
         missingAspectCount: 0,
       }),
     ]);
+  });
+
+  it("accepts semantically equivalent covered aspects without requiring literal labels or navigation tags", async () => {
+    const plan: KnowledgePlan = {
+      subject: "综合建议",
+      requirements: [{
+        id: "R1",
+        question: "给出发现问题并建立共识的建议",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "需求诊断", terms: ["需求访谈"] },
+          { id: "A2", label: "信任建立", terms: ["可信顾问"] },
+        ],
+        queries: [{ text: "发现问题 建立共识", aspectIds: ["A1", "A2"] }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "先共同澄清现状与影响[1]。再以透明沟通形成双方认可的下一步[1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const onVerified = vi.fn();
+    const onReport = vi.fn();
+
+    const result = await verifyKnowledgeCoverage({
+      question: "给出发现问题并建立共识的建议",
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "方法正文",
+        path: "wiki/method.md",
+        content: "正文说明共同澄清现状、识别影响并通过透明沟通形成共识。",
+        aspectIds: [],
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0, 1],
+          synthesizedTargetSegmentIndexes: [0, 1],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1", "A2"],
+          reason: "synthesized_support",
+        }],
+      } as CoverageVerificationAction),
+      onVerified,
+      onReport,
+    });
+
+    expect(result.requirements[0]?.coverage).toBe("complete");
+    expect(onVerified).toHaveBeenCalledWith([
+      expect.objectContaining({
+        coveredAspectCount: 2,
+        missingAspectCount: 0,
+      }),
+    ]);
+    expect(onReport).toHaveBeenCalledWith({
+      summaries: [expect.objectContaining({
+        coveredAspectIds: ["A1", "A2"],
+        missingAspectIds: [],
+      })],
+      coveredRequirementIds: ["R1"],
+      missingRequirementIds: [],
+    });
   });
 
   it("retains synthesized segments with deterministic disclosure and support counts", async () => {
@@ -717,6 +1087,7 @@ describe("verifyKnowledgeCoverage", () => {
           retainedTargetSegmentIndexes: [0, 1],
           synthesizedTargetSegmentIndexes: [0, 1],
           retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
           reason: "synthesized_support",
         }],
       } as unknown as CoverageVerificationAction),
@@ -739,8 +1110,8 @@ describe("verifyKnowledgeCoverage", () => {
       retainedDirectSegmentCount: 0,
       retainedSynthesizedSegmentCount: 2,
       removedSegmentCount: 0,
-      coveredAspectCount: 0,
-      missingAspectCount: 1,
+      coveredAspectCount: 1,
+      missingAspectCount: 0,
     }]);
   });
 
@@ -777,6 +1148,7 @@ describe("verifyKnowledgeCoverage", () => {
         retainedTargetSegmentIndexes: [0],
         synthesizedTargetSegmentIndexes: [0],
         retainedRelatedContextIndexes: [],
+        coveredAspectIds: ["A1"],
         reason: "synthesized_support" as const,
       }],
     }));
@@ -808,8 +1180,8 @@ describe("verifyKnowledgeCoverage", () => {
       retainedDirectSegmentCount: 0,
       retainedSynthesizedSegmentCount: 1,
       removedSegmentCount: 0,
-      coveredAspectCount: 0,
-      missingAspectCount: 1,
+      coveredAspectCount: 1,
+      missingAspectCount: 0,
     }]);
   });
 
@@ -843,6 +1215,121 @@ describe("verifyKnowledgeCoverage", () => {
       removedSegmentCount: 0,
       coveredAspectCount: 0,
       missingAspectCount: 1,
+    }]);
+  });
+
+  it("reports retained direct, retained synthesized, and removed segments without changing the legacy callback", async () => {
+    const plan: KnowledgePlan = {
+      subject: "混合证据决策",
+      requirements: [{
+        id: "R1",
+        question: "归纳两项有证据支持的结论",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "直接事实", terms: ["直接确认"] },
+          { id: "A2", label: "综合结论", terms: ["综合归纳"] },
+        ],
+        queries: [{
+          text: "直接事实 综合结论",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "partial",
+        answer: [
+          "正文直接确认事实一 [1]。",
+          "两篇资料可综合归纳结论二 [2]。",
+          "草稿还包含未获支持的结论三 [3]。",
+        ].join("\n"),
+        citations: [1, 2, 3],
+      }],
+      citations: [1, 2, 3],
+    };
+    const onVerified = vi.fn();
+    const onReport = vi.fn();
+
+    await verifyKnowledgeCoverage({
+      question: "归纳两项有证据支持的结论",
+      plan,
+      draft,
+      evidence: [
+        {
+          requirementId: "R1",
+          citation: 1,
+          title: "直接事实",
+          path: "wiki/direct.md",
+          content: "正文直接确认事实一。",
+          aspectIds: ["A1"],
+        },
+        {
+          requirementId: "R1",
+          citation: 2,
+          title: "综合材料",
+          path: "wiki/synthesis.md",
+          content: "正文提供形成结论二的基础事实。",
+          aspectIds: ["A2"],
+        },
+        {
+          requirementId: "R1",
+          citation: 3,
+          title: "相邻材料",
+          path: "wiki/adjacent.md",
+          content: "正文不支持草稿中的结论三。",
+          aspectIds: [],
+        },
+      ],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain_partial",
+          retainedTargetSegmentIndexes: [0, 1],
+          synthesizedTargetSegmentIndexes: [1],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1", "A2"],
+          reason: "partial_support",
+        }],
+      } as CoverageVerificationAction),
+      onVerified,
+      onReport,
+    });
+
+    expect(onReport).toHaveBeenCalledWith(expect.objectContaining({
+      summaries: [expect.objectContaining({
+        claimDecisions: [
+          {
+            claimIndex: 0,
+            status: "retained_direct",
+            citations: [1],
+            coveredAspectIds: ["A1"],
+          },
+          {
+            claimIndex: 1,
+            status: "retained_synthesized",
+            citations: [2],
+            coveredAspectIds: ["A2"],
+          },
+          {
+            claimIndex: 2,
+            status: "removed",
+            citations: [3],
+            coveredAspectIds: [],
+          },
+        ],
+      })],
+    }));
+    expect(onVerified).toHaveBeenCalledWith([{
+      id: "R1",
+      reason: "partial_support",
+      retainedDirectSegmentCount: 1,
+      retainedSynthesizedSegmentCount: 1,
+      removedSegmentCount: 1,
+      coveredAspectCount: 2,
+      missingAspectCount: 0,
     }]);
   });
 
@@ -1046,6 +1533,7 @@ describe("verifyKnowledgeCoverage", () => {
           retainedTargetSegmentIndexes: [0],
           synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
           reason: "direct_support",
           answer: "模型不得复制答案",
         }],
@@ -1091,6 +1579,7 @@ describe("verifyKnowledgeCoverage", () => {
           retainedTargetSegmentIndexes: [0],
           synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
           reason: "direct_support",
         }],
       }),
@@ -1441,6 +1930,7 @@ describe("verifyKnowledgeCoverage", () => {
           retainedTargetSegmentIndexes: [0],
           synthesizedTargetSegmentIndexes: [],
           retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
           reason: "direct_support",
         }],
       });

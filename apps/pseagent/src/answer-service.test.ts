@@ -23,6 +23,8 @@ import {
 import { ScopeRouter } from "./router.js";
 import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
 import { taskSpecSchema } from "./task-spec.js";
+import { finalizeEvidenceLedger } from "./evidence-ledger.js";
+import { analyzeCoverageGaps } from "./coverage-gap.js";
 
 const knowledgePlan = {
   subject: "Coremail",
@@ -1102,14 +1104,16 @@ describe("AnswerService", () => {
         references: [],
       },
     });
-    expect(events).toContainEqual(expect.objectContaining({
+    expect(events.find((event) => event.event === "model_payload")).toEqual({
       event: "model_payload",
+      result: "rejected",
       reason: "invalid_json",
-      rawPayload: "{\"subject\":",
+      repairAttempt: 0,
       rawPayloadLength: 11,
-      schemaDescription: "pse_knowledge_plan",
       finishReason: "abort",
-    }));
+    });
+    expect(JSON.stringify(events)).not.toContain("{\"subject\":");
+    expect(JSON.stringify(events)).not.toContain("pse_knowledge_plan");
     expect(events).toContainEqual({
       event: "fallback",
       reason: "invalid_model_payload",
@@ -1512,6 +1516,10 @@ describe("AnswerService", () => {
         .toEqual([["Coremail当前版本是什么"], ["客户信息不足时如何推进项目"]]);
       expect(new Set(inputs.map((input) => input.deadlineAt)).size).toBe(1);
       expect(new Set(inputs.map((input) => input.signal)).size).toBe(1);
+      expect(inputs.map((input) => input.requirementBindings)).toMatchObject([
+        [{ domain: "coremail-professional", deliverableId: "D1", obligationId: "O1", order: 0 }],
+        [{ domain: "presales-general", deliverableId: "D2", obligationId: "O2", order: 1 }],
+      ]);
       expect(execution.domainsUsed).toEqual([
         "coremail-professional",
         "presales-general",
@@ -1529,6 +1537,123 @@ describe("AnswerService", () => {
       expect(execution.result.answer.match(/资料来源：/gu)).toHaveLength(1);
       expect(answerResultSchema.parse(execution.result)).toEqual(execution.result);
       expect(execution.result).not.toHaveProperty("domainsUsed");
+    });
+
+    it("keeps merged evidence metadata internal while preserving global gap order", async () => {
+      const events: DiagnosticEvent[] = [];
+      const diagnostics: DiagnosticTraceFactory = {
+        start: () => ({
+          requestId: "merged-evidence-metadata",
+          record: (event) => events.push(event),
+        }),
+      };
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => {
+        const requirement = input.plan.requirements[0]!;
+        const binding = input.requirementBindings![0]!;
+        const missingAspectIds = requirement.evidenceAspects.map((aspect) => aspect.id);
+        const evidenceLedger = finalizeEvidenceLedger({
+          project: input.session.project,
+          revision: input.session.revision,
+          units: [{
+            binding,
+            subject: input.plan.subject,
+            requirement,
+            queries: requirement.queries.map((query, plannedQueryIndex) => ({
+              phase: "seed",
+              query: query.text,
+              aspectIds: query.aspectIds,
+              status: "empty",
+              plannedQueryIndexes: [plannedQueryIndex],
+            })),
+            candidates: [],
+            reads: [],
+            graphs: [],
+            claims: [],
+            retrieval: {
+              deadlineReached: false,
+              searchBudgetExhausted: false,
+              readBudgetExhausted: false,
+              toolUnavailableCount: 0,
+              accessDeniedCount: 0,
+            },
+            sourceBoundary: "formal",
+            conflictDetected: false,
+            freshness: "not_assessed",
+            inputState: "not_applicable",
+            ambiguous: false,
+            verification: {
+              coverage: "none",
+              reason: "target_omitted",
+              coveredAspectIds: [],
+              missingAspectIds,
+            },
+          }],
+        });
+        return {
+          outcome: "verified",
+          project: input.session.project,
+          revision: input.session.revision,
+          action: {
+            action: "final",
+            requirements: [{
+              id: "R1",
+              coverage: "none",
+              answer: "当前正式资料未覆盖该项。",
+              citations: [],
+            }],
+            citations: [],
+          },
+          references: [],
+          verification: {
+            summaries: [{
+              id: "R1",
+              reason: "target_omitted",
+              retainedDirectSegmentCount: 0,
+              retainedSynthesizedSegmentCount: 0,
+              removedSegmentCount: 0,
+              coveredAspectCount: 0,
+              missingAspectCount: missingAspectIds.length,
+              coveredAspectIds: [],
+              missingAspectIds,
+              claimDecisions: [],
+            }],
+            coveredRequirementIds: [],
+            missingRequirementIds: ["R1"],
+          },
+          evidenceLedger,
+          coverageGaps: analyzeCoverageGaps(evidenceLedger),
+        };
+      });
+      const { service } = createMixedService({ detailed, diagnostics });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+
+      expect(execution.domainEvidenceLedgers?.map((ledger) => ledger.project)).toEqual([
+        "coremail-professional",
+        "presales-general",
+      ]);
+      expect(execution.coverageGaps).toMatchObject([
+        { id: "G1", requirementId: "R1", obligationId: "O1" },
+        { id: "G2", requirementId: "R2", obligationId: "O2" },
+      ]);
+      expect(execution.verification?.missingRequirementIds).toEqual(["R1", "R2"]);
+      expect(answerResultSchema.parse(execution.result)).toEqual(execution.result);
+      expect(execution.result).not.toHaveProperty("coverageGaps");
+      expect(execution.result).not.toHaveProperty("domainEvidenceLedgers");
+      expect(execution.result).not.toHaveProperty("verification");
+      const gapEvent = events.find((event) =>
+        event.event === "coverage_gaps" && event.domainCount === 2);
+      expect(gapEvent).toMatchObject({
+        event: "coverage_gaps",
+        domainCount: 2,
+        gapCount: 2,
+        gaps: [
+          { domain: "coremail-professional", gapClass: "knowledge" },
+          { domain: "presales-general", gapClass: "knowledge" },
+        ],
+      });
+      expect(JSON.stringify(gapEvent)).not.toContain(mixedQuestion);
+      expect(JSON.stringify(gapEvent)).not.toContain("wiki/");
     });
 
     it("keeps the merged answer deterministic when domain completion order reverses", async () => {

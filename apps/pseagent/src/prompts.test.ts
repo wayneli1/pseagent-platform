@@ -223,6 +223,8 @@ describe("support and existence semantics", () => {
     }));
 
     expect(prompt).toContain("一个句段都没有正式支持时才选择 not_covered");
+    expect(prompt).toContain("每个实质目标句段，包括没有引用的句段");
+    expect(prompt).toContain("没有至少一个已读正文引用的事实句段不得保留");
     expect(prompt).toContain("正文未提及目标不得保留对应句段");
     expect(prompt).toContain("只支持部分句段时选择 retain_partial");
     expect(prompt).toContain("同义词、缩略词或等价表达必须有正文确认的等价关系");
@@ -253,8 +255,9 @@ describe("support and existence semantics", () => {
       "正式对比页已直接覆盖这些目标时应保留 complete",
     );
     expect(prompt).toContain(
-      "核心方向正确、主要结论有证据支持时应保留 complete",
+      "所有规划 aspect 都已在语义上确认覆盖时应保留 complete",
     );
+    expect(prompt).toContain("不得用覆盖百分比忽略已确认的缺口");
     expect(prompt).toContain("targetDecision=retain");
     expect(prompt).toContain("targetDecision=retain_partial");
     expect(prompt).toContain("targetDecision=not_covered");
