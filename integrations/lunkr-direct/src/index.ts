@@ -7,6 +7,7 @@ export * from "./conversation-store.js";
 export * from "./contracts.js";
 export * from "./dedupe.js";
 export * from "./feedback-receipt-store.js";
+export * from "./feedback-client.js";
 export * from "./http-client.js";
 export * from "./lunkr-api.js";
 export * from "./message-normalizer.js";

@@ -1,0 +1,19 @@
+{
+  "name": "@pseagent/knowledge-ops-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@pseagent/knowledge-governance-contracts": "0.0.0",
+    "@pseagent/knowledge-ops": "0.0.0",
+    "yaml": "2.9.0"
+  }
+}

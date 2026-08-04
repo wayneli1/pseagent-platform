@@ -4,6 +4,7 @@ import {
   LunkrAuthService,
   LunkrLoginRequiredError,
   LunkrPseBridge,
+  HttpFeedbackClient,
   LunkrSocketClient,
   SessionStore,
   createRuntimeLogger,
@@ -46,6 +47,20 @@ try {
 }
 
 const runtime = await createPseAgentRuntime(process.env);
+const feedbackValues = [
+  process.env.KNOWLEDGE_OPS_BASE_URL,
+  process.env.KNOWLEDGE_OPS_SERVICE_TOKEN,
+  process.env.PSE_FEEDBACK_PSEUDONYMIZATION_KEY,
+];
+if (feedbackValues.some(Boolean) && !feedbackValues.every(Boolean)) {
+  throw new Error("knowledge_ops_feedback_configuration_incomplete");
+}
+const feedbackClient = feedbackValues.every(Boolean)
+  ? new HttpFeedbackClient({
+      baseUrl: feedbackValues[0]!,
+      serviceToken: feedbackValues[1]!,
+    })
+  : undefined;
 const api = new LunkrApi(config, session);
 const logQuestionEvent = createRuntimeLogger(
   (line) => process.stderr.write(line),
@@ -82,6 +97,12 @@ const bridge = new LunkrPseBridge(config, {
   sendPost: (peerUid, title, content) =>
     api.sendPost(peerUid, title, content),
   onEvent: logQuestionEvent,
+  ...(feedbackClient === undefined ? {} : {
+    feedback: {
+      pseudonymizationKey: feedbackValues[2]!,
+      submit: (submission) => feedbackClient.submit(submission),
+    },
+  }),
 });
 const socket = new LunkrSocketClient(config, session, {
   onState(state) {

@@ -6,6 +6,8 @@
     "packages/knowledge-governance-contracts",
     "apps/pseagent",
     "services/knowledge-mcp",
+    "services/knowledge-ops",
+    "services/knowledge-ops-worker",
     "integrations/lunkr-direct"
   ],
   "scripts": {

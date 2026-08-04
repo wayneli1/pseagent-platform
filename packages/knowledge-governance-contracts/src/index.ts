@@ -92,6 +92,19 @@ export const questionFamilySchema = z.object({
   reviewStatus: governanceReviewStatusSchema,
 }).strict();
 
+export const catalogDomainSnapshotSchema = z.object({
+  domain: knowledgeDomainSchema,
+  revision: z.string().regex(/^[a-f0-9]{40}$/u),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+}).strict();
+
+export const answerCardCatalogSchema = z.object({
+  schemaVersion: z.literal(1),
+  domains: z.array(catalogDomainSnapshotSchema).length(2),
+  cards: z.array(answerCardSchema).max(10_000),
+  families: z.array(questionFamilySchema).max(10_000),
+}).strict();
+
 export const feedbackClassificationSchema = z.enum([
   "useful",
   "incorrect",
@@ -147,6 +160,8 @@ export type GovernanceReviewStatus = z.infer<typeof governanceReviewStatusSchema
 export type AnswerCard = z.infer<typeof answerCardSchema>;
 export type AnswerCardObligation = z.infer<typeof answerCardObligationSchema>;
 export type QuestionFamily = z.infer<typeof questionFamilySchema>;
+export type CatalogDomainSnapshot = z.infer<typeof catalogDomainSnapshotSchema>;
+export type AnswerCardCatalog = z.infer<typeof answerCardCatalogSchema>;
 export type FeedbackClassification = z.infer<typeof feedbackClassificationSchema>;
 export type FeedbackCase = z.infer<typeof feedbackCaseSchema>;
 export type Approval = z.infer<typeof approvalSchema>;

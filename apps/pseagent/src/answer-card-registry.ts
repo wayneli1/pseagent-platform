@@ -3,28 +3,19 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   answerCardSchema,
+  answerCardCatalogSchema,
+  catalogDomainSnapshotSchema,
   knowledgeDomainSchema,
   questionFamilySchema,
+  type AnswerCardCatalog,
   type AnswerCard,
   type KnowledgeDomain,
   type QuestionFamily,
 } from "@pseagent/knowledge-governance-contracts";
 import { z } from "zod";
 
-const catalogDomainSnapshotSchema = z.object({
-  domain: knowledgeDomainSchema,
-  revision: z.string().regex(/^[a-f0-9]{40}$/u),
-  contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
-}).strict();
-
-export const answerCardCatalogSchema = z.object({
-  schemaVersion: z.literal(1),
-  domains: z.array(catalogDomainSnapshotSchema).length(2),
-  cards: z.array(answerCardSchema).max(10_000),
-  families: z.array(questionFamilySchema).max(10_000),
-}).strict();
-
-export type AnswerCardCatalog = z.input<typeof answerCardCatalogSchema>;
+export { answerCardCatalogSchema } from "@pseagent/knowledge-governance-contracts";
+export type { AnswerCardCatalog } from "@pseagent/knowledge-governance-contracts";
 
 export interface ActiveAnswerCardCatalog {
   readonly schemaVersion: 1;
