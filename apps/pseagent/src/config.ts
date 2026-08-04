@@ -38,6 +38,7 @@ export type AppConfig = BaseConfig & {
     | { readonly enabled: false }
     | { readonly enabled: true; readonly timeoutMs: number };
   readonly taskSpecActiveEnabled: boolean;
+  readonly multiDomainActiveEnabled: boolean;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -68,6 +69,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     env,
     taskSpecShadow.enabled,
   );
+  const multiDomainActiveEnabled = loadMultiDomainActiveEnabled(
+    env,
+    taskSpecShadow.enabled,
+    taskSpecActiveEnabled,
+  );
   if (enabled === "false") {
     return {
       ...parsed,
@@ -75,6 +81,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       diagnostics,
       taskSpecShadow,
       taskSpecActiveEnabled,
+      multiDomainActiveEnabled,
     };
   }
 
@@ -102,7 +109,24 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     diagnostics,
     taskSpecShadow,
     taskSpecActiveEnabled,
+    multiDomainActiveEnabled,
   };
+}
+
+function loadMultiDomainActiveEnabled(
+  env: NodeJS.ProcessEnv,
+  shadowEnabled: boolean,
+  taskSpecActiveEnabled: boolean,
+): boolean {
+  const enabled = z.enum(["true", "false"]).parse(
+    env.PSE_MULTI_DOMAIN_ACTIVE_ENABLED ?? "false",
+  ) === "true";
+  if (enabled && (!shadowEnabled || !taskSpecActiveEnabled)) {
+    throw new Error(
+      "PSE_MULTI_DOMAIN_ACTIVE_ENABLED requires PSE_TASK_SPEC_SHADOW_ENABLED=true and PSE_TASK_SPEC_ACTIVE_ENABLED=true.",
+    );
+  }
+  return enabled;
 }
 
 function loadTaskSpecActiveEnabled(

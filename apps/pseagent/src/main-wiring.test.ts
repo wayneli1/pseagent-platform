@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { AgentRunner } from "./answer-service.js";
+import type { AgentRunner, DetailedAgentRunner } from "./answer-service.js";
 import type { AnswerResult } from "./contracts.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
@@ -9,6 +9,7 @@ import type { KnowledgePlanner } from "./knowledge-planner.js";
 import type { ModelClient } from "./model-client.js";
 import { createPseAgentRuntime } from "./main.js";
 import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
+import { taskSpecSchema } from "./task-spec.js";
 
 const configEnv = {
   PSE_MODEL_BASE_URL: "https://model.example.test/v1",
@@ -224,6 +225,135 @@ describe("main wiring", () => {
       }),
     );
     await enabledRuntime.close();
+  });
+
+  it("wires the multi-domain flag and detailed executor without changing the external result", async () => {
+    const model = {} as ModelClient;
+    const caller = {
+      connect: vi.fn(async () => undefined),
+      call: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } satisfies KnowledgeToolCaller;
+    let sessionSequence = 0;
+    const knowledge = {
+      open: vi.fn(async (scope: "professional" | "general") => ({
+        project: scope === "professional" ? "coremail-professional" : "presales-general",
+        revision: String(++sessionSequence).padStart(40, "0"),
+        purpose: `${scope} purpose`,
+        schema: `${scope} schema`,
+        planningOverview: `${scope} overview`,
+      }) as KnowledgeSession),
+    };
+    const shadow = {
+      analyze: vi.fn(async () => ({
+        resolvedQuestion: {
+          rawQuestion: "Coremail版本是什么，信息不足时怎样推进项目",
+          standaloneQuestion: "Coremail版本是什么，信息不足时怎样推进项目",
+          contextUsed: false,
+          inheritedSubjects: [],
+          corrections: [],
+        },
+        taskSpec: taskSpecSchema.parse({
+          subject: "Coremail 与项目推进",
+          entities: [
+            { id: "E1", label: "Coremail", role: "product", sourceText: "Coremail" },
+            { id: "E2", label: "项目", role: "target", sourceText: "项目" },
+          ],
+          deliverables: [
+            {
+              id: "D1",
+              label: "版本",
+              kind: "fact",
+              required: true,
+              sourceText: "Coremail版本是什么",
+              obligations: [{
+                id: "O1",
+                label: "确认版本",
+                targetEntityIds: ["E1"],
+                evidencePolicy: "direct",
+                domains: ["coremail-professional"],
+                required: true,
+                sourceText: "Coremail版本是什么",
+              }],
+            },
+            {
+              id: "D2",
+              label: "推进建议",
+              kind: "recommendation",
+              required: true,
+              sourceText: "信息不足时怎样推进项目",
+              obligations: [{
+                id: "O2",
+                label: "给出推进建议",
+                targetEntityIds: ["E2"],
+                evidencePolicy: "synthesis",
+                domains: ["presales-general"],
+                required: true,
+                sourceText: "信息不足时怎样推进项目",
+              }],
+            },
+          ],
+        }),
+        guard: {
+          ok: true,
+          issues: [],
+          explicitEntityCount: 2,
+          mappedExplicitEntityCount: 2,
+          explicitRequestCount: 2,
+          mappedExplicitRequestCount: 2,
+        },
+        elapsedMs: 1,
+      })),
+    } satisfies TaskAnalysisShadow;
+    const legacy = vi.fn<AgentRunner>();
+    const detailed = vi.fn<DetailedAgentRunner>(async (input) => ({
+      outcome: "verified",
+      project: input.session.project,
+      revision: input.session.revision,
+      action: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "该必答项暂无正式知识证据。",
+          citations: [],
+        }],
+        citations: [],
+      },
+      references: [],
+    }));
+    const server = { close: vi.fn(async () => undefined) } as unknown as McpServer;
+
+    const runtime = await createPseAgentRuntime({
+      ...configEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+    }, {
+      createModel: () => model,
+      createRouter: () => ({ route: vi.fn(async () => "professional" as const) }),
+      createKnowledgePlanner: () => ({ plan: vi.fn(async () => plan) }),
+      createKnowledgeCaller: () => caller,
+      createKnowledgeSessionFactory: () => knowledge,
+      runAgent: legacy,
+      runAgentDetailed: detailed,
+      createTaskAnalysisShadow: () => shadow,
+      createServer: () => server,
+    });
+
+    const execution = await runtime.answerDetailed(
+      "Coremail版本是什么，信息不足时怎样推进项目",
+    );
+    expect(legacy).not.toHaveBeenCalled();
+    expect(detailed).toHaveBeenCalledTimes(2);
+    expect(execution.domainsUsed).toEqual([
+      "coremail-professional",
+      "presales-general",
+    ]);
+    expect(execution.result).not.toHaveProperty("domainsUsed");
+    expect(execution.result.status).toBe("not_covered");
+    expect(new Set(detailed.mock.calls.map(([input]) => input.signal)).size).toBe(1);
+    await runtime.close();
   });
 
   it("lazily wires and idempotently closes the enabled historical provider", async () => {

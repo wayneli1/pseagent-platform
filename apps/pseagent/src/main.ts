@@ -1,8 +1,13 @@
 import { pathToFileURL } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { runKnowledgeAgent } from "./agent-loop.js";
-import { AnswerService, type AgentRunner, type KnowledgeSessionFactory } from "./answer-service.js";
+import { runKnowledgeAgent, runKnowledgeAgentDetailed } from "./agent-loop.js";
+import {
+  AnswerService,
+  type AgentRunner,
+  type DetailedAgentRunner,
+  type KnowledgeSessionFactory,
+} from "./answer-service.js";
 import { loadConfig, type AppConfig, type CoremailMcpConfig } from "./config.js";
 import {
   StdioCoremailHistoricalAnswerProvider,
@@ -36,6 +41,7 @@ export interface PseRuntimeDependencies {
   readonly createDiagnosticTraceFactory?: (config: AppConfig) => DiagnosticTraceFactory | undefined;
   readonly createKnowledgeSessionFactory?: (caller: KnowledgeToolCaller) => KnowledgeSessionFactory;
   readonly runAgent?: AgentRunner;
+  readonly runAgentDetailed?: DetailedAgentRunner;
   readonly createServer?: (answer: AnswerService["answer"]) => McpServer;
   readonly createHistoricalProvider?: (
     config: Extract<CoremailMcpConfig, { enabled: true }>,
@@ -95,9 +101,11 @@ export async function createPseAgentRuntime(
       ...(diagnostics === undefined ? {} : { diagnostics }),
       knowledge,
       runAgent: dependencies.runAgent ?? runKnowledgeAgent,
+      runAgentDetailed: dependencies.runAgentDetailed ?? runKnowledgeAgentDetailed,
       requestTimeoutMs: config.PSE_REQUEST_TIMEOUT_MS,
       activeDeadlineMs: config.PSE_ACTIVE_DEADLINE_MS,
       taskSpecActiveEnabled: config.taskSpecActiveEnabled,
+      multiDomainActiveEnabled: config.multiDomainActiveEnabled,
       ...(taskAnalysisShadow === undefined || !config.taskSpecShadow.enabled
         ? {}
         : {

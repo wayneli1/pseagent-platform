@@ -5,6 +5,7 @@ import {
   type FinalAction,
   type KnowledgePlan,
   type KnowledgeRequirement,
+  type Reference,
   type ToolAction,
 } from "./contracts.js";
 import type {
@@ -78,6 +79,19 @@ export interface KnowledgeAgentInput {
   ) => Promise<FinalAction>;
 }
 
+export type KnowledgeAgentDetailedResult =
+  | {
+      readonly outcome: "verified";
+      readonly project: ProjectKey;
+      readonly revision: string;
+      readonly action: FinalAction;
+      readonly references: readonly Reference[];
+    }
+  | {
+      readonly outcome: "unavailable";
+      readonly result: AnswerResult;
+    };
+
 type Candidate = {
   readonly path: string;
   title: string;
@@ -124,7 +138,27 @@ type AgentState = {
   successfulSeedSearches: number;
 };
 
-export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<AnswerResult> {
+export async function runKnowledgeAgent(
+  input: KnowledgeAgentInput,
+): Promise<AnswerResult> {
+  const detailed = await runKnowledgeAgentDetailed(input);
+  return detailed.outcome === "unavailable"
+    ? detailed.result
+    : formatKnowledgeFinal(input.scope, detailed.action, detailed.references);
+}
+
+export async function runKnowledgeAgentDetailed(
+  input: KnowledgeAgentInput,
+): Promise<KnowledgeAgentDetailedResult> {
+  const result = await runKnowledgeAgentCore(input);
+  return "outcome" in result
+    ? result
+    : { outcome: "unavailable", result };
+}
+
+async function runKnowledgeAgentCore(
+  input: KnowledgeAgentInput,
+): Promise<AnswerResult | Extract<KnowledgeAgentDetailedResult, { outcome: "verified" }>> {
   const state = createAgentState(input);
   await executeSeedSearches(input, state);
   if (state.successfulSeedSearches === 0) {
@@ -291,10 +325,18 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         "draft",
         deadlineReached(input) ? "deadline" : "final",
       );
+      if (deadlineReached(input)) {
+        recordDiagnostic(input.trace, {
+          event: "stop",
+          reason: "coverage_verifier_unavailable",
+        });
+        return unavailableResult(input.scope);
+      }
       let auditedAction: FinalAction;
       let verificationSummaries:
         readonly CoverageVerificationSummary[] | undefined;
       try {
+        const activeSignal = toolSignal(input);
         auditedAction = await (
           input.verifyCoverage ?? verifyKnowledgeCoverage
         )({
@@ -303,7 +345,7 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
           draft: normalizedAction,
           evidence: coverageEvidence(normalizedAction, state),
           model: input.model,
-          ...(input.signal === undefined ? {} : { signal: input.signal }),
+          ...(activeSignal === undefined ? {} : { signal: activeSignal }),
           onVerified(summaries) {
             verificationSummaries = summaries;
           },
@@ -340,11 +382,13 @@ export async function runKnowledgeAgent(input: KnowledgeAgentInput): Promise<Ans
         deadlineReached(input) ? "deadline" : "final",
         verificationSummaries,
       );
-      return formatKnowledgeFinal(
-        input.scope,
-        auditedAction,
-        state.references.resolve(auditedAction.citations),
-      );
+      return {
+        outcome: "verified",
+        project: input.session.project,
+        revision: input.session.revision,
+        action: auditedAction,
+        references: state.references.resolve(auditedAction.citations),
+      };
     }
     if (finalOnly) {
       observe(state, { type: "tool_not_allowed" });
@@ -661,7 +705,9 @@ async function requestAgentAction(
       remainingRetrievalActions: countRemainingToolActions(state),
       finalOnly,
     });
-  const request = (repairReason?: string) => input.model.completeJson({
+  const request = (repairReason?: string) => {
+    const activeSignal = toolSignal(input);
+    return input.model.completeJson({
       messages: repairReason !== undefined
         ? [...messages, {
             role: "user" as const,
@@ -672,8 +718,9 @@ async function requestAgentAction(
         : messages,
       schema: finalOnly ? finalOnlyActionSchema : agentActionSchema,
       schemaDescription: finalOnly ? "pse_final_action" : "pse_agent_action",
-      ...(input.signal === undefined ? {} : { signal: input.signal }),
+      ...(activeSignal === undefined ? {} : { signal: activeSignal }),
     });
+  };
   let repairReason: string | undefined;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
@@ -2175,13 +2222,22 @@ function deadlineReached(input: KnowledgeAgentInput): boolean {
   return input.deadlineAt !== undefined && Date.now() >= input.deadlineAt;
 }
 
+const activeSignalByInput = new WeakMap<KnowledgeAgentInput, AbortSignal | null>();
+
 function toolSignal(input: KnowledgeAgentInput): AbortSignal | undefined {
-  if (input.deadlineAt === undefined) return input.signal;
-  const remaining = Math.max(1, input.deadlineAt - Date.now());
-  const deadlineSignal = AbortSignal.timeout(remaining);
-  return input.signal === undefined
-    ? deadlineSignal
-    : AbortSignal.any([input.signal, deadlineSignal]);
+  if (activeSignalByInput.has(input)) {
+    return activeSignalByInput.get(input) ?? undefined;
+  }
+  const signal = input.deadlineAt === undefined
+    ? input.signal
+    : input.signal === undefined
+      ? AbortSignal.timeout(Math.max(1, input.deadlineAt - Date.now()))
+      : AbortSignal.any([
+          input.signal,
+          AbortSignal.timeout(Math.max(1, input.deadlineAt - Date.now())),
+        ]);
+  activeSignalByInput.set(input, signal ?? null);
+  return signal;
 }
 
 function observe(state: AgentState, value: unknown): void {

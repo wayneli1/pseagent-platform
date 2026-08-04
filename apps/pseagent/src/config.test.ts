@@ -24,6 +24,7 @@ describe("loadConfig", () => {
     expect(config.PSE_ACTIVE_DEADLINE_MS).toBe(270_000);
     expect(config.taskSpecShadow).toEqual({ enabled: false });
     expect(config.taskSpecActiveEnabled).toBe(false);
+    expect(config.multiDomainActiveEnabled).toBe(false);
     expect(config).not.toHaveProperty("JUDGE_MODEL_NAME");
   });
 
@@ -67,6 +68,36 @@ describe("loadConfig", () => {
     expect(() => loadConfig({
       ...baseEnv,
       PSE_TASK_SPEC_ACTIVE_ENABLED: "yes",
+    })).toThrow();
+  });
+
+  it("enables multi-domain execution only after both TaskSpec prerequisites", () => {
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+    }).multiDomainActiveEnabled).toBe(true);
+
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+    })).toThrow(
+      "PSE_MULTI_DOMAIN_ACTIVE_ENABLED requires PSE_TASK_SPEC_SHADOW_ENABLED=true and PSE_TASK_SPEC_ACTIVE_ENABLED=true",
+    );
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+    })).toThrow(
+      "PSE_MULTI_DOMAIN_ACTIVE_ENABLED requires PSE_TASK_SPEC_SHADOW_ENABLED=true and PSE_TASK_SPEC_ACTIVE_ENABLED=true",
+    );
+  });
+
+  it("rejects an invalid multi-domain feature flag instead of silently enabling it", () => {
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "yes",
     })).toThrow();
   });
 

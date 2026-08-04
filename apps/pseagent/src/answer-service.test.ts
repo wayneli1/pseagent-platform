@@ -1,14 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentRunner } from "./answer-service.js";
+import type { AgentRunner, DetailedAgentRunner } from "./answer-service.js";
 import {
   AnswerService,
   PSE_ACTIVE_DEADLINE_MS,
   temporaryUnavailableResult,
 } from "./answer-service.js";
 import type { AnswerResult, HistoricalAnswer } from "./contracts.js";
-import { HISTORICAL_ANSWER_WARNING } from "./contracts.js";
+import { answerResultSchema, HISTORICAL_ANSWER_WARNING } from "./contracts.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
-import type { DiagnosticEvent, DiagnosticTrace } from "./diagnostics.js";
+import type {
+  DiagnosticEvent,
+  DiagnosticTrace,
+  DiagnosticTraceFactory,
+} from "./diagnostics.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { KnowledgePlanner } from "./knowledge-planner.js";
 import {
@@ -1293,4 +1297,578 @@ describe("AnswerService", () => {
       });
     },
   );
+
+  describe("multi-domain active execution", () => {
+    const mixedQuestion = "Coremail当前版本是什么，客户信息不足时如何推进项目";
+
+    function mixedShadow(
+      evidencePolicy: "synthesis" | "customer_input" = "synthesis",
+    ): TaskAnalysisShadow {
+      return {
+        analyze: vi.fn(async () => ({
+          resolvedQuestion: {
+            rawQuestion: mixedQuestion,
+            standaloneQuestion: mixedQuestion,
+            contextUsed: false,
+            inheritedSubjects: [],
+            corrections: [],
+          },
+          taskSpec: taskSpecSchema.parse({
+            subject: "Coremail 与客户项目推进",
+            entities: [
+              { id: "E1", label: "Coremail", role: "product", sourceText: "Coremail" },
+              { id: "E2", label: "客户", role: "target", sourceText: "客户" },
+            ],
+            deliverables: [
+              {
+                id: "D1",
+                label: "当前版本",
+                kind: "fact",
+                required: true,
+                sourceText: "Coremail当前版本是什么",
+                obligations: [{
+                  id: "O1",
+                  label: "确认当前版本",
+                  targetEntityIds: ["E1"],
+                  evidencePolicy: "direct",
+                  domains: ["coremail-professional"],
+                  required: true,
+                  sourceText: "Coremail当前版本",
+                }],
+              },
+              {
+                id: "D2",
+                label: "推进项目",
+                kind: "recommendation",
+                required: true,
+                sourceText: "客户信息不足时如何推进项目",
+                obligations: [{
+                  id: "O2",
+                  label: "客户信息不足时的推进建议",
+                  targetEntityIds: ["E2"],
+                  evidencePolicy,
+                  domains: ["presales-general"],
+                  required: true,
+                  sourceText: "客户信息不足时如何推进项目",
+                }],
+              },
+            ],
+          }),
+          guard: {
+            ok: true,
+            issues: [],
+            explicitEntityCount: 2,
+            mappedExplicitEntityCount: 2,
+            explicitRequestCount: 2,
+            mappedExplicitRequestCount: 2,
+          },
+          elapsedMs: 5,
+        })),
+      };
+    }
+
+    function singleDomainShadow(
+      domain: "coremail-professional" | "presales-general",
+    ): TaskAnalysisShadow {
+      const source = mixedShadow();
+      return {
+        analyze: vi.fn(async (input) => {
+          const result = await source.analyze(input);
+          const deliverableIndex = domain === "coremail-professional" ? 0 : 1;
+          return {
+            ...result,
+            taskSpec: {
+              ...result.taskSpec,
+              deliverables: [result.taskSpec.deliverables[deliverableIndex]!],
+            },
+            guard: {
+              ...result.guard,
+              explicitRequestCount: 1,
+              mappedExplicitRequestCount: 1,
+            },
+          };
+        }),
+      };
+    }
+
+    function optionalGeneralShadow(): TaskAnalysisShadow {
+      const source = mixedShadow();
+      return {
+        analyze: vi.fn(async (input) => {
+          const result = await source.analyze(input);
+          return {
+            ...result,
+            taskSpec: {
+              ...result.taskSpec,
+              deliverables: result.taskSpec.deliverables.map((deliverable) =>
+                deliverable.id === "D2"
+                  ? { ...deliverable, required: false }
+                  : deliverable),
+            },
+          };
+        }),
+      };
+    }
+
+    function domainSession(project: "coremail-professional" | "presales-general", suffix: string) {
+      return {
+        ...createKnowledgeSessionFixture(),
+        project,
+        revision: suffix.repeat(40),
+        purpose: `${project} purpose`,
+        schema: `${project} schema`,
+        planningOverview: `${project} overview`,
+      } as unknown as KnowledgeSession;
+    }
+
+    function createMixedService(options: {
+      readonly detailed?: DetailedAgentRunner;
+      readonly shadow?: TaskAnalysisShadow;
+      readonly historicalProvider?: HistoricalAnswerProvider;
+      readonly multiDomainActiveEnabled?: boolean;
+      readonly diagnostics?: DiagnosticTraceFactory;
+    } = {}) {
+      const planningSession = domainSession("coremail-professional", "a");
+      const professionalSession = domainSession("coremail-professional", "b");
+      const generalSession = domainSession("presales-general", "c");
+      let openCount = 0;
+      const knowledge = {
+        open: vi.fn(async (scope: "professional" | "general") => {
+          if (openCount++ === 0) return planningSession;
+          return scope === "professional" ? professionalSession : generalSession;
+        }),
+      };
+      const runAgent = vi.fn<AgentRunner>(async () => ({
+        scope: "professional",
+        status: "answered",
+        answer: "legacy",
+        references: [],
+      }));
+      const defaultDetailed: DetailedAgentRunner = async (input) => {
+        const professional = input.session.project === "coremail-professional";
+        const index = 1;
+        return {
+          outcome: "verified",
+          project: input.session.project,
+          revision: input.session.revision,
+          action: {
+            action: "final",
+            requirements: [{
+              id: "R1",
+              coverage: "complete",
+              answer: professional ? "版本事实[1]。" : "推进建议[1]。",
+              citations: [index],
+            }],
+            citations: [index],
+          },
+          references: [{
+            index,
+            project: input.session.project,
+            revision: input.session.revision,
+            title: professional ? "版本资料" : "售前资料",
+            path: professional ? "wiki/version.md" : "wiki/presales.md",
+            contentHash: (professional ? "d" : "e").repeat(64),
+          }],
+        };
+      };
+      const runAgentDetailed = vi.fn<DetailedAgentRunner>(
+        options.detailed ?? defaultDetailed,
+      );
+      const service = new AnswerService({
+        model: {} as ModelClient,
+        router: { route: vi.fn(async () => "professional" as const) },
+        planner: createPlanner(),
+        knowledge,
+        runAgent,
+        runAgentDetailed,
+        taskAnalysisShadow: options.shadow ?? mixedShadow(),
+        taskSpecActiveEnabled: true,
+        multiDomainActiveEnabled: options.multiDomainActiveEnabled ?? true,
+        ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
+        ...(options.historicalProvider === undefined
+          ? {}
+          : { historicalProvider: options.historicalProvider }),
+      });
+      return { service, knowledge, runAgent, runAgentDetailed };
+    }
+
+    it("runs mixed obligations in isolated sessions and formats one deterministic answer", async () => {
+      const { service, knowledge, runAgent, runAgentDetailed } = createMixedService();
+      const execution = await service.answerDetailed(mixedQuestion);
+
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(knowledge.open.mock.calls.map(([scope]) => scope)).toEqual([
+        "professional",
+        "professional",
+        "general",
+      ]);
+      expect(runAgentDetailed).toHaveBeenCalledTimes(2);
+      const inputs = runAgentDetailed.mock.calls.map(([input]) => input);
+      expect(inputs.map((input) => input.session.project)).toEqual([
+        "coremail-professional",
+        "presales-general",
+      ]);
+      expect(inputs.map((input) => input.plan.requirements.map((item) => item.question)))
+        .toEqual([["Coremail当前版本是什么"], ["客户信息不足时如何推进项目"]]);
+      expect(new Set(inputs.map((input) => input.deadlineAt)).size).toBe(1);
+      expect(new Set(inputs.map((input) => input.signal)).size).toBe(1);
+      expect(execution.domainsUsed).toEqual([
+        "coremail-professional",
+        "presales-general",
+      ]);
+      expect(execution.result).toMatchObject({
+        scope: "professional",
+        status: "answered",
+        references: [
+          { index: 1, project: "coremail-professional" },
+          { index: 2, project: "presales-general" },
+        ],
+      });
+      expect(execution.result.answer).toContain("版本事实[1]");
+      expect(execution.result.answer).toContain("推进建议[2]");
+      expect(execution.result.answer.match(/资料来源：/gu)).toHaveLength(1);
+      expect(answerResultSchema.parse(execution.result)).toEqual(execution.result);
+      expect(execution.result).not.toHaveProperty("domainsUsed");
+    });
+
+    it("keeps the merged answer deterministic when domain completion order reverses", async () => {
+      function delayedDetailed(
+        professionalDelayMs: number,
+        generalDelayMs: number,
+      ): DetailedAgentRunner {
+        return async (input) => {
+          const professional = input.session.project === "coremail-professional";
+          await new Promise((resolve) => setTimeout(
+            resolve,
+            professional ? professionalDelayMs : generalDelayMs,
+          ));
+          return {
+            outcome: "verified",
+            project: input.session.project,
+            revision: input.session.revision,
+            action: {
+              action: "final",
+              requirements: [{
+                id: "R1",
+                coverage: "complete",
+                answer: professional ? "版本事实[1]。" : "推进建议[1]。",
+                citations: [1],
+              }],
+              citations: [1],
+            },
+            references: [{
+              index: 1,
+              project: input.session.project,
+              revision: input.session.revision,
+              title: professional ? "版本资料" : "售前资料",
+              path: professional ? "wiki/version.md" : "wiki/presales.md",
+              contentHash: (professional ? "d" : "e").repeat(64),
+            }],
+          };
+        };
+      }
+
+      const first = createMixedService({ detailed: delayedDetailed(10, 0) });
+      const second = createMixedService({ detailed: delayedDetailed(0, 10) });
+      const [firstExecution, secondExecution] = await Promise.all([
+        first.service.answerDetailed(mixedQuestion),
+        second.service.answerDetailed(mixedQuestion),
+      ]);
+      expect(firstExecution.result).toEqual(secondExecution.result);
+      expect(firstExecution.domainsUsed).toEqual(secondExecution.domainsUsed);
+    });
+
+    it("cancels siblings and fails the whole request when one required domain is unavailable", async () => {
+      let siblingAborted = false;
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => {
+        if (input.session.project === "coremail-professional") {
+          return {
+            outcome: "unavailable",
+            result: temporaryUnavailableResult("professional"),
+          };
+        }
+        return await new Promise((resolve) => {
+          input.signal?.addEventListener("abort", () => {
+            siblingAborted = true;
+            resolve({
+              outcome: "unavailable",
+              result: temporaryUnavailableResult("general"),
+            });
+          }, { once: true });
+        });
+      });
+      const { service } = createMixedService({ detailed });
+
+      await expect(service.answerDetailed(mixedQuestion)).resolves.toMatchObject({
+        retryable: true,
+        result: { status: "temporarily_unavailable", references: [] },
+      });
+      expect(siblingAborted).toBe(true);
+    });
+
+    it("never invokes historical fallback for a mixed-domain not-covered result", async () => {
+      const historicalProvider = {
+        answer: vi.fn(async () => displayedHistoricalLookup),
+        close: vi.fn(async () => undefined),
+      } satisfies HistoricalAnswerProvider;
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => {
+        input.trace.record({
+          event: "coverage",
+          stage: "verified",
+          requirements: [{
+            id: "R1",
+            evidenceMode: "direct_only",
+            coverage: "none",
+            citations: [],
+            retainedDirectSegmentCount: 0,
+            retainedSynthesizedSegmentCount: 0,
+            removedSegmentCount: 0,
+          }],
+          citations: [],
+          stopReason: "final",
+        });
+        return {
+          outcome: "verified",
+          project: input.session.project,
+          revision: input.session.revision,
+          action: {
+            action: "final",
+            requirements: [{
+              id: "R1",
+              coverage: "none",
+              answer: "正式库未覆盖该必答项。",
+              citations: [],
+            }],
+            citations: [],
+          },
+          references: [],
+        };
+      });
+      const { service } = createMixedService({ detailed, historicalProvider });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+      expect(execution.result.status).toBe("not_covered");
+      expect(historicalProvider.answer).not.toHaveBeenCalled();
+    });
+
+    it("allows historical fallback only for a pure professional formal miss", async () => {
+      const historicalProvider = {
+        answer: vi.fn(async () => displayedHistoricalLookup),
+        close: vi.fn(async () => undefined),
+      } satisfies HistoricalAnswerProvider;
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => ({
+        outcome: "verified",
+        project: input.session.project,
+        revision: input.session.revision,
+        action: {
+          action: "final",
+          requirements: [{
+            id: "R1",
+            coverage: "none",
+            answer: "版本资料未覆盖。",
+            citations: [],
+          }],
+          citations: [],
+        },
+        references: [],
+      }));
+      const { service } = createMixedService({
+        detailed,
+        historicalProvider,
+        shadow: singleDomainShadow("coremail-professional"),
+      });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+      expect(execution.domainsUsed).toEqual(["coremail-professional"]);
+      expect(execution.historicalAttempted).toBe(true);
+      expect(execution.historicalUsed).toBe(true);
+      expect(historicalProvider.answer).toHaveBeenCalledOnce();
+    });
+
+    it("never invokes historical fallback for a pure general formal miss", async () => {
+      const historicalProvider = {
+        answer: vi.fn(async () => displayedHistoricalLookup),
+        close: vi.fn(async () => undefined),
+      } satisfies HistoricalAnswerProvider;
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => ({
+        outcome: "verified",
+        project: input.session.project,
+        revision: input.session.revision,
+        action: {
+          action: "final",
+          requirements: [{
+            id: "R1",
+            coverage: "none",
+            answer: "通用方法库未覆盖。",
+            citations: [],
+          }],
+          citations: [],
+        },
+        references: [],
+      }));
+      const { service } = createMixedService({
+        detailed,
+        historicalProvider,
+        shadow: singleDomainShadow("presales-general"),
+      });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+      expect(execution.domainsUsed).toEqual(["presales-general"]);
+      expect(execution.result.status).toBe("not_covered");
+      expect(historicalProvider.answer).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when an execution session belongs to the wrong project snapshot", async () => {
+      const { service, knowledge, runAgentDetailed } = createMixedService();
+      knowledge.open.mockImplementation(async (scope) =>
+        scope === "professional"
+          ? domainSession("presales-general", "f")
+          : domainSession("presales-general", "c"));
+
+      const execution = await service.answerDetailed(mixedQuestion);
+      expect(execution).toMatchObject({
+        retryable: true,
+        stopReason: "domain_execution_unavailable",
+        result: { status: "temporarily_unavailable", references: [] },
+      });
+      expect(runAgentDetailed).not.toHaveBeenCalled();
+    });
+
+    it("fails closed on a detailed snapshot mismatch and emits content-free diagnostics", async () => {
+      const events: DiagnosticEvent[] = [];
+      const diagnostics: DiagnosticTraceFactory = {
+        start: () => ({
+          requestId: "multi-domain-test",
+          record: (event) => events.push(event),
+        }),
+      };
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => ({
+        outcome: "verified",
+        project: input.session.project,
+        revision: "wrong-revision",
+        action: {
+          action: "final",
+          requirements: [{
+            id: "R1",
+            coverage: "none",
+            answer: "本地未覆盖。",
+            citations: [],
+          }],
+          citations: [],
+        },
+        references: [],
+      }));
+      const { service } = createMixedService({ detailed, diagnostics });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+      expect(execution).toMatchObject({
+        retryable: true,
+        stopReason: "domain_execution_unavailable",
+        result: { status: "temporarily_unavailable", references: [] },
+      });
+      const executionEvent = events.find((event) =>
+        event.event === "domain_execution" &&
+        event.result === "unavailable" &&
+        event.reason === "session_snapshot_mismatch");
+      expect(executionEvent).toMatchObject({
+        event: "domain_execution",
+        result: "unavailable",
+        domainCount: 2,
+        domainsUsed: ["coremail-professional", "presales-general"],
+        reason: "session_snapshot_mismatch",
+      });
+      expect(JSON.stringify(executionEvent)).not.toContain(mixedQuestion);
+      expect(JSON.stringify(executionEvent)).not.toContain("本地未覆盖");
+    });
+
+    it("fails closed on an invalid local citation contract and emits content-free merge diagnostics", async () => {
+      const events: DiagnosticEvent[] = [];
+      const diagnostics: DiagnosticTraceFactory = {
+        start: () => ({
+          requestId: "multi-domain-merge-test",
+          record: (event) => events.push(event),
+        }),
+      };
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => ({
+        outcome: "verified",
+        project: input.session.project,
+        revision: input.session.revision,
+        action: {
+          action: "final",
+          requirements: [{
+            id: "R1",
+            coverage: "complete",
+            answer: "正文故意缺失引用标记。",
+            citations: [1],
+          }],
+          citations: [1],
+        },
+        references: [{
+          index: 1,
+          project: input.session.project,
+          revision: input.session.revision,
+          title: "测试资料",
+          path: "wiki/test.md",
+          contentHash: "f".repeat(64),
+        }],
+      }));
+      const { service } = createMixedService({ detailed, diagnostics });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+      expect(execution).toMatchObject({
+        retryable: false,
+        stopReason: "domain_merge_invalid",
+        result: { status: "temporarily_unavailable", references: [] },
+      });
+      const mergeEvent = events.find((event) =>
+        event.event === "domain_merge" && event.result === "invalid");
+      expect(mergeEvent).toMatchObject({
+        event: "domain_merge",
+        result: "invalid",
+        domainCount: 2,
+        requirementCount: 2,
+        domainsUsed: ["coremail-professional", "presales-general"],
+        reason: "citation_metadata_mismatch",
+      });
+      expect(JSON.stringify(mergeEvent)).not.toContain(mixedQuestion);
+      expect(JSON.stringify(mergeEvent)).not.toContain("正文故意缺失引用标记");
+    });
+
+    it("keeps customer-input obligations fail-closed before opening execution sessions", async () => {
+      const { service, knowledge, runAgent, runAgentDetailed } = createMixedService({
+        shadow: mixedShadow("customer_input"),
+      });
+      await expect(service.answerDetailed(mixedQuestion)).resolves.toMatchObject({
+        retryable: false,
+        stopReason: "domain_plan_invalid",
+        result: { status: "temporarily_unavailable" },
+      });
+      expect(knowledge.open).toHaveBeenCalledTimes(1);
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(runAgentDetailed).not.toHaveBeenCalled();
+    });
+
+    it("does not invoke the detailed executor while the multi-domain flag is off", async () => {
+      const { service, runAgent, runAgentDetailed } = createMixedService({
+        multiDomainActiveEnabled: false,
+      });
+      await expect(service.answer(mixedQuestion)).resolves.toMatchObject({ answer: "legacy" });
+      expect(runAgent).toHaveBeenCalledTimes(1);
+      expect(runAgentDetailed).not.toHaveBeenCalled();
+    });
+
+    it("does not open a general session for an optional cross-domain deliverable", async () => {
+      const { service, knowledge, runAgentDetailed } = createMixedService({
+        shadow: optionalGeneralShadow(),
+      });
+      const execution = await service.answerDetailed(mixedQuestion);
+
+      expect(execution.domainsUsed).toEqual(["coremail-professional"]);
+      expect(knowledge.open.mock.calls.map(([scope]) => scope)).toEqual([
+        "professional",
+        "professional",
+      ]);
+      expect(runAgentDetailed).toHaveBeenCalledOnce();
+    });
+  });
 });

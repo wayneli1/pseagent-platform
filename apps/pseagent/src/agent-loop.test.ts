@@ -5,7 +5,12 @@ import {
   type CoverageVerifierInput,
 } from "./coverage-verifier.js";
 import type { DiagnosticEvent, DiagnosticTrace } from "./diagnostics.js";
-import { readLimitFor, runKnowledgeAgent } from "./agent-loop.js";
+import {
+  readLimitFor,
+  runKnowledgeAgent,
+  runKnowledgeAgentDetailed,
+} from "./agent-loop.js";
+import { formatKnowledgeFinal } from "./response.js";
 import {
   InvalidModelPayloadError,
   ModelUnavailableError,
@@ -3415,5 +3420,105 @@ describe("runKnowledgeAgent", () => {
 
     expect(result.status).toBe("not_covered");
     expect(result.references).toEqual([]);
+  });
+
+  it("returns a verified unformatted detailed result and keeps the wrapper equivalent", async () => {
+    const createFixture = () => {
+      const session = fakeSession({ hits: { "seed-r1": [{ path: "wiki/r1.md" }] } });
+      const model = scriptedAgentModel([
+        read("R1", "wiki/r1.md"),
+        final("complete", "已验证事实[1]。", [1]),
+      ]);
+      return { session, model };
+    };
+    const detailedFixture = createFixture();
+    const detailed = await runKnowledgeAgentDetailed(
+      agentInput(detailedFixture.model, detailedFixture.session),
+    );
+    expect(detailed).toMatchObject({
+      outcome: "verified",
+      project: "coremail-professional",
+      revision,
+      action: {
+        action: "final",
+        requirements: [{ coverage: "complete", citations: [1] }],
+      },
+      references: [{ index: 1, path: "wiki/r1.md" }],
+    });
+    expect(detailed).not.toHaveProperty("answer");
+    expect(detailed).not.toHaveProperty("status");
+
+    const wrapperFixture = createFixture();
+    const wrapped = await runKnowledgeAgent(agentInput(wrapperFixture.model, wrapperFixture.session));
+    expect(wrapped).toMatchObject({
+      scope: "professional",
+      status: "answered",
+      references: [{ index: 1, path: "wiki/r1.md" }],
+    });
+    if (detailed.outcome === "verified") {
+      expect(wrapped).toEqual(formatKnowledgeFinal(
+        "professional",
+        detailed.action,
+        detailed.references,
+      ));
+    }
+  });
+
+  it("uses one absolute-deadline signal for tools, action model, and verifier", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
+    });
+    const model = scriptedAgentModel([
+      graph("R1", "wiki/r1.md"),
+      read("R1", "wiki/r1.md"),
+      final("complete", "已验证事实[1]。", [1]),
+    ]);
+    let verifierSignal: AbortSignal | undefined;
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(model, session),
+      signal: new AbortController().signal,
+      deadlineAt: Date.now() + 60_000,
+      verifyCoverage: async (input) => {
+        verifierSignal = input.signal;
+        return input.draft;
+      },
+    });
+    expect(result.outcome).toBe("verified");
+
+    const searchCalls = session.search.mock.calls as unknown as Array<
+      [string, number, AbortSignal?]
+    >;
+    const graphCalls = session.graph.mock.calls as unknown as Array<
+      [string, number, AbortSignal?]
+    >;
+    const readCalls = session.readPage.mock.calls as unknown as Array<
+      [string, AbortSignal?]
+    >;
+    const observedSignals = [
+      searchCalls[0]?.[2],
+      graphCalls[0]?.[2],
+      readCalls[0]?.[1],
+      ...((model.completeJson as unknown as { mock: { calls: Array<[{
+        signal?: AbortSignal;
+      }]> } }).mock.calls.map(([input]) => input.signal)),
+      verifierSignal,
+    ];
+    expect(observedSignals.every((signal) => signal instanceof AbortSignal)).toBe(true);
+    expect(new Set(observedSignals).size).toBe(1);
+  });
+
+  it("does not start the coverage verifier after the absolute deadline", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    const model = scriptedAgentModel([final("none", "当前资料未覆盖该问题")]);
+    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(model, session),
+      deadlineAt: Date.now() - 1,
+      verifyCoverage,
+    });
+
+    expect(result.outcome).toBe("unavailable");
+    expect(verifyCoverage).not.toHaveBeenCalled();
   });
 });

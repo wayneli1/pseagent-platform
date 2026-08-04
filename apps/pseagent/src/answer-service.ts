@@ -29,6 +29,20 @@ import type {
   TaskAnalysisShadowResult,
 } from "./task-analysis-shadow.js";
 import { adaptTaskSpecToKnowledgePlan } from "./task-plan-adapter.js";
+import type { KnowledgeAgentDetailedResult } from "./agent-loop.js";
+import {
+  deriveDomainKnowledgePlans,
+  type DomainKnowledgePlan,
+  type DomainPlanInactiveReason,
+} from "./domain-plan.js";
+import {
+  DomainAnswerMergeError,
+  mergeDetailedDomainResults,
+  type DetailedDomainResult,
+  type MergedDomainAnswer,
+} from "./domain-answer-merge.js";
+import { formatKnowledgeFinal } from "./response.js";
+import type { KnowledgeDomain } from "./task-spec.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -36,17 +50,22 @@ export const PSE_ACTIVE_DEADLINE_MS = 270_000;
 export interface KnowledgeSessionFactory {
   open(scope: Exclude<Scope, "normal">, signal?: AbortSignal): Promise<KnowledgeSession>;
 }
-export type AgentRunner = (input: {
-  scope: Exclude<Scope, "normal">;
-  question: string;
-  conversationContext?: string;
-  plan: KnowledgePlan;
-  model: ModelClient;
-  session: KnowledgeSession;
-  deadlineAt: number;
-  trace: DiagnosticTrace;
-  signal?: AbortSignal;
-}) => Promise<AnswerResult>;
+export interface AgentRunnerInput {
+  readonly scope: Exclude<Scope, "normal">;
+  readonly question: string;
+  readonly conversationContext?: string;
+  readonly plan: KnowledgePlan;
+  readonly model: ModelClient;
+  readonly session: KnowledgeSession;
+  readonly deadlineAt: number;
+  readonly trace: DiagnosticTrace;
+  readonly signal?: AbortSignal;
+}
+
+export type AgentRunner = (input: AgentRunnerInput) => Promise<AnswerResult>;
+export type DetailedAgentRunner = (
+  input: AgentRunnerInput,
+) => Promise<KnowledgeAgentDetailedResult>;
 
 export interface PseAnswerExecution {
   readonly result: AnswerResult;
@@ -62,6 +81,8 @@ export interface PseAnswerExecution {
   readonly historicalGateReason?: HistoricalGateReason;
   readonly historicalNoticeShown?: boolean;
   readonly historicalRejectedReason?: HistoricalRejectionReason;
+  /** Internal execution metadata; never copied into the strict external AnswerResult. */
+  readonly domainsUsed?: readonly KnowledgeDomain[];
 }
 
 export class AnswerService {
@@ -72,12 +93,14 @@ export class AnswerService {
     readonly diagnostics?: DiagnosticTraceFactory;
     readonly knowledge: KnowledgeSessionFactory;
     readonly runAgent: AgentRunner;
+    readonly runAgentDetailed?: DetailedAgentRunner;
     readonly historicalProvider?: HistoricalAnswerProvider;
     readonly requestTimeoutMs?: number;
     readonly activeDeadlineMs?: number;
     readonly taskAnalysisShadow?: TaskAnalysisShadow;
     readonly taskSpecShadowTimeoutMs?: number;
     readonly taskSpecActiveEnabled?: boolean;
+    readonly multiDomainActiveEnabled?: boolean;
   }) {}
 
   async answer(
@@ -94,6 +117,9 @@ export class AnswerService {
     signal?: AbortSignal,
   ): Promise<PseAnswerExecution> {
     const startedAt = Date.now();
+    const deadlineAt =
+      startedAt +
+      (this.dependencies.activeDeadlineMs ?? PSE_ACTIVE_DEADLINE_MS);
     const timeoutSignal = AbortSignal.timeout(
       this.dependencies.requestTimeoutMs ?? PSE_REQUEST_TIMEOUT_MS,
     );
@@ -165,29 +191,74 @@ export class AnswerService {
       let effectiveConversationContext = conversationContext;
       if (taskAnalysis !== undefined) {
         if (this.dependencies.taskSpecActiveEnabled === true) {
-          const adapted = adaptTaskSpecToKnowledgePlan({
-            scope,
-            resolvedQuestion: taskAnalysis.resolvedQuestion,
-            taskSpec: taskAnalysis.taskSpec,
-            guardResult: taskAnalysis.guard,
-          });
-          if (adapted.activated) {
-            effectiveQuestion = taskAnalysis.resolvedQuestion.standaloneQuestion;
-            effectivePlan = adapted.plan;
-            effectiveConversationContext = undefined;
-            recordDiagnostic(trace, {
-              event: "task_spec_activation",
-              activated: true,
-              reason: "activated",
-              requirementCount: adapted.plan.requirements.length,
+          if (this.dependencies.multiDomainActiveEnabled === true) {
+            const derived = deriveDomainKnowledgePlans({
+              resolvedQuestion: taskAnalysis.resolvedQuestion,
+              taskSpec: taskAnalysis.taskSpec,
+              guardResult: taskAnalysis.guard,
             });
-          } else {
+            if (derived.activated) {
+              const requirementCount = derived.plans.reduce(
+                (count, domainPlan) => count + domainPlan.plan.requirements.length,
+                0,
+              );
+              recordDiagnostic(trace, {
+                event: "task_spec_activation",
+                activated: true,
+                reason: "activated",
+                requirementCount,
+              });
+              return await this.answerAcrossDomains({
+                scope,
+                question: taskAnalysis.resolvedQuestion.standaloneQuestion,
+                plans: derived.plans,
+                requestSignal,
+                deadlineAt,
+                trace,
+                startedAt,
+              });
+            }
             recordDiagnostic(trace, {
               event: "task_spec_activation",
               activated: false,
-              reason: adapted.reason,
+              reason: derived.reason,
               requirementCount: 0,
             });
+            if (domainPlanFailureMustFailClosed(derived.reason)) {
+              recordDiagnostic(trace, { event: "stop", reason: "domain_plan_invalid" });
+              return finishExecution(
+                trace,
+                temporaryUnavailableResult(scope),
+                startedAt,
+                false,
+                false,
+              );
+            }
+          } else {
+            const adapted = adaptTaskSpecToKnowledgePlan({
+              scope,
+              resolvedQuestion: taskAnalysis.resolvedQuestion,
+              taskSpec: taskAnalysis.taskSpec,
+              guardResult: taskAnalysis.guard,
+            });
+            if (adapted.activated) {
+              effectiveQuestion = taskAnalysis.resolvedQuestion.standaloneQuestion;
+              effectivePlan = adapted.plan;
+              effectiveConversationContext = undefined;
+              recordDiagnostic(trace, {
+                event: "task_spec_activation",
+                activated: true,
+                reason: "activated",
+                requirementCount: adapted.plan.requirements.length,
+              });
+            } else {
+              recordDiagnostic(trace, {
+                event: "task_spec_activation",
+                activated: false,
+                reason: adapted.reason,
+                requirementCount: 0,
+              });
+            }
           }
         } else {
           recordDiagnostic(trace, {
@@ -211,9 +282,7 @@ export class AnswerService {
         plan: effectivePlan,
         model: this.dependencies.model,
         session,
-        deadlineAt:
-          startedAt +
-          (this.dependencies.activeDeadlineMs ?? PSE_ACTIVE_DEADLINE_MS),
+        deadlineAt,
         trace,
         ...(effectiveConversationContext === undefined
           ? {}
@@ -221,48 +290,13 @@ export class AnswerService {
         signal: requestSignal,
       };
       const primary = await this.dependencies.runAgent(input);
-      if (
-        primary.status !== "not_covered" ||
-        this.dependencies.historicalProvider === undefined
-      ) {
-        return finishExecution(trace, primary, startedAt, false, false);
-      }
-      const historicalGate = evaluateHistoricalGate(effectiveQuestion, trace);
-      recordDiagnostic(trace, {
-        event: "historical_gate",
-        eligible: historicalGate === "eligible",
-        reason: historicalGate,
+      return await this.finishPrimary({
+        primary,
+        question: effectiveQuestion,
+        requestSignal,
+        trace,
+        startedAt,
       });
-      if (historicalGate !== "eligible") {
-        return finishExecution(trace, primary, startedAt, false, false);
-      }
-      try {
-        const historicalAttempted = true;
-        const historicalLookup =
-          await this.dependencies.historicalProvider.answer(
-            effectiveQuestion,
-            requestSignal,
-          );
-        if (historicalLookup.outcome === "unavailable") {
-          return finishExecution(trace, primary, startedAt, historicalAttempted, false);
-        }
-        if (historicalLookup.outcome === "hidden") {
-          const result: AnswerResult = {
-            ...primary,
-            historicalNotice: {
-              provider: "coremail_mcp",
-              searched: true,
-              displayed: false,
-              reason: historicalLookup.reason,
-            },
-          };
-          return finishExecution(trace, result, startedAt, historicalAttempted, false);
-        }
-        const result = { ...primary, historicalAnswer: historicalLookup.answer };
-        return finishExecution(trace, result, startedAt, historicalAttempted, true);
-      } catch {
-        return finishExecution(trace, primary, startedAt, true, false);
-      }
     } catch (error) {
       if (error instanceof InvalidModelPayloadError) {
         recordDiagnostic(trace, {
@@ -298,6 +332,349 @@ export class AnswerService {
       return finishExecution(trace, result, startedAt, false, false);
     }
   }
+
+  private async answerAcrossDomains(input: {
+    readonly scope: Exclude<Scope, "normal">;
+    readonly question: string;
+    readonly plans: readonly DomainKnowledgePlan[];
+    readonly requestSignal: AbortSignal;
+    readonly deadlineAt: number;
+    readonly trace: OutcomeTrace;
+    readonly startedAt: number;
+  }): Promise<PseAnswerExecution> {
+    const domainsUsed = input.plans.map((plan) => plan.domain);
+    const runner = this.dependencies.runAgentDetailed;
+    if (runner === undefined || Date.now() >= input.deadlineAt) {
+      recordDiagnostic(input.trace, {
+        event: "domain_execution",
+        phase: "agent",
+        result: "unavailable",
+        domainCount: input.plans.length,
+        domainsUsed,
+        reason: runner === undefined ? "runner_missing" : "active_deadline_elapsed",
+      });
+      recordDiagnostic(input.trace, { event: "stop", reason: "domain_execution_unavailable" });
+      return finishExecution(
+        input.trace,
+        temporaryUnavailableResult(input.scope),
+        input.startedAt,
+        false,
+        false,
+        domainsUsed,
+      );
+    }
+
+    const siblingController = new AbortController();
+    const activeDeadlineSignal = AbortSignal.timeout(
+      Math.max(1, input.deadlineAt - Date.now()),
+    );
+    const sharedSignal = AbortSignal.any([
+      input.requestSignal,
+      activeDeadlineSignal,
+      siblingController.signal,
+    ]);
+    const tasks = input.plans.map(async (domainPlan): Promise<DetailedDomainResult> => {
+      let phase: "session" | "agent" = "session";
+      recordDiagnostic(input.trace, {
+        event: "domain_execution",
+        domain: domainPlan.domain,
+        phase,
+        result: "started",
+        domainCount: input.plans.length,
+        domainsUsed,
+      });
+      try {
+        const session = await this.dependencies.knowledge.open(
+          domainPlan.scope,
+          sharedSignal,
+        );
+        if (sharedSignal.aborted) {
+          throw new DomainExecutionError(
+            activeDeadlineSignal.aborted || Date.now() >= input.deadlineAt
+              ? "active_deadline_elapsed"
+              : "domain_signal_aborted",
+          );
+        }
+        if (session.project !== domainPlan.domain || !session.revision.trim()) {
+          throw new DomainExecutionError("session_snapshot_mismatch");
+        }
+        recordDiagnostic(input.trace, {
+          event: "domain_execution",
+          domain: domainPlan.domain,
+          phase,
+          result: "completed",
+          domainCount: input.plans.length,
+          domainsUsed,
+        });
+        phase = "agent";
+        recordDiagnostic(input.trace, {
+          event: "domain_execution",
+          domain: domainPlan.domain,
+          phase,
+          result: "started",
+          domainCount: input.plans.length,
+          domainsUsed,
+        });
+        const detailed = await runner({
+          scope: domainPlan.scope,
+          question: input.question,
+          plan: domainPlan.plan,
+          model: this.dependencies.model,
+          session,
+          deadlineAt: input.deadlineAt,
+          trace: input.trace,
+          signal: sharedSignal,
+        });
+        if (sharedSignal.aborted || Date.now() >= input.deadlineAt) {
+          throw new DomainExecutionError(
+            activeDeadlineSignal.aborted || Date.now() >= input.deadlineAt
+              ? "active_deadline_elapsed"
+              : "domain_signal_aborted",
+          );
+        }
+        if (detailed.outcome === "unavailable") {
+          throw new DomainExecutionError("agent_unavailable");
+        }
+        if (
+          detailed.project !== session.project ||
+          detailed.revision !== session.revision
+        ) {
+          throw new DomainExecutionError("session_snapshot_mismatch");
+        }
+        recordDiagnostic(input.trace, {
+          event: "domain_execution",
+          domain: domainPlan.domain,
+          phase,
+          result: "verified",
+          domainCount: input.plans.length,
+          domainsUsed,
+        });
+        return { ...detailed, domain: domainPlan.domain };
+      } catch (error) {
+        const failure = error instanceof DomainExecutionError
+          ? error
+          : new DomainExecutionError("domain_dependency_unavailable");
+        recordDiagnostic(input.trace, {
+          event: "domain_execution",
+          domain: domainPlan.domain,
+          phase,
+          result: "unavailable",
+          domainCount: input.plans.length,
+          domainsUsed,
+          reason: failure.code,
+        });
+        if (!siblingController.signal.aborted) siblingController.abort();
+        throw failure;
+      }
+    });
+    const settled = await Promise.allSettled(tasks);
+    if (settled.some((result) => result.status === "rejected")) {
+      recordDiagnostic(input.trace, { event: "stop", reason: "domain_execution_unavailable" });
+      return finishExecution(
+        input.trace,
+        temporaryUnavailableResult(input.scope),
+        input.startedAt,
+        false,
+        false,
+        domainsUsed,
+      );
+    }
+
+    let merged: MergedDomainAnswer;
+    try {
+      merged = mergeDetailedDomainResults({
+        plans: input.plans,
+        results: settled.map((result) =>
+          (result as PromiseFulfilledResult<DetailedDomainResult>).value),
+      });
+    } catch (error) {
+      recordDiagnostic(input.trace, {
+        event: "domain_merge",
+        result: "invalid",
+        domainCount: input.plans.length,
+        requirementCount: input.plans.reduce(
+          (count, plan) => count + plan.plan.requirements.length,
+          0,
+        ),
+        domainsUsed,
+        reason: error instanceof DomainAnswerMergeError ? error.code : "unexpected_error",
+      });
+      recordDiagnostic(input.trace, { event: "stop", reason: "domain_merge_invalid" });
+      return finishExecution(
+        input.trace,
+        temporaryUnavailableResult(input.scope),
+        input.startedAt,
+        false,
+        false,
+        domainsUsed,
+      );
+    }
+    recordDiagnostic(input.trace, {
+      event: "domain_merge",
+      result: "completed",
+      domainCount: merged.domainsUsed.length,
+      requirementCount: merged.action.requirements.length,
+      domainsUsed: merged.domainsUsed,
+    });
+    recordMergedCoverage(input.trace, input.plans, merged);
+    const primary = formatKnowledgeFinal(
+      input.scope,
+      merged.action,
+      merged.references,
+    );
+    return await this.finishPrimary({
+      primary,
+      question: input.question,
+      requestSignal: input.requestSignal,
+      trace: input.trace,
+      startedAt: input.startedAt,
+      domainsUsed: merged.domainsUsed,
+    });
+  }
+
+  private async finishPrimary(input: {
+    readonly primary: AnswerResult;
+    readonly question: string;
+    readonly requestSignal: AbortSignal;
+    readonly trace: OutcomeTrace;
+    readonly startedAt: number;
+    readonly domainsUsed?: readonly KnowledgeDomain[];
+  }): Promise<PseAnswerExecution> {
+    if (
+      input.primary.status !== "not_covered" ||
+      this.dependencies.historicalProvider === undefined ||
+      (input.domainsUsed !== undefined && !isPureProfessional(input.domainsUsed))
+    ) {
+      return finishExecution(
+        input.trace,
+        input.primary,
+        input.startedAt,
+        false,
+        false,
+        input.domainsUsed,
+      );
+    }
+    const historicalGate = evaluateHistoricalGate(input.question, input.trace);
+    recordDiagnostic(input.trace, {
+      event: "historical_gate",
+      eligible: historicalGate === "eligible",
+      reason: historicalGate,
+    });
+    if (historicalGate !== "eligible") {
+      return finishExecution(
+        input.trace,
+        input.primary,
+        input.startedAt,
+        false,
+        false,
+        input.domainsUsed,
+      );
+    }
+    try {
+      const historicalAttempted = true;
+      const historicalLookup = await this.dependencies.historicalProvider.answer(
+        input.question,
+        input.requestSignal,
+      );
+      if (historicalLookup.outcome === "unavailable") {
+        return finishExecution(
+          input.trace,
+          input.primary,
+          input.startedAt,
+          historicalAttempted,
+          false,
+          input.domainsUsed,
+        );
+      }
+      if (historicalLookup.outcome === "hidden") {
+        const result: AnswerResult = {
+          ...input.primary,
+          historicalNotice: {
+            provider: "coremail_mcp",
+            searched: true,
+            displayed: false,
+            reason: historicalLookup.reason,
+          },
+        };
+        return finishExecution(
+          input.trace,
+          result,
+          input.startedAt,
+          historicalAttempted,
+          false,
+          input.domainsUsed,
+        );
+      }
+      const result = { ...input.primary, historicalAnswer: historicalLookup.answer };
+      return finishExecution(
+        input.trace,
+        result,
+        input.startedAt,
+        historicalAttempted,
+        true,
+        input.domainsUsed,
+      );
+    } catch {
+      return finishExecution(
+        input.trace,
+        input.primary,
+        input.startedAt,
+        true,
+        false,
+        input.domainsUsed,
+      );
+    }
+  }
+}
+
+type DomainExecutionFailureCode =
+  | "runner_missing"
+  | "active_deadline_elapsed"
+  | "domain_signal_aborted"
+  | "session_snapshot_mismatch"
+  | "agent_unavailable"
+  | "domain_dependency_unavailable";
+
+class DomainExecutionError extends Error {
+  constructor(readonly code: DomainExecutionFailureCode) {
+    super(code);
+    this.name = "DomainExecutionError";
+  }
+}
+
+function domainPlanFailureMustFailClosed(reason: DomainPlanInactiveReason): boolean {
+  return reason !== "guard_rejected" && reason !== "no_applicable_obligations";
+}
+
+function isPureProfessional(domains: readonly KnowledgeDomain[]): boolean {
+  return domains.length === 1 && domains[0] === "coremail-professional";
+}
+
+function recordMergedCoverage(
+  trace: DiagnosticTrace,
+  plans: readonly DomainKnowledgePlan[],
+  merged: MergedDomainAnswer,
+): void {
+  const localRequirementByBinding = new Map(
+    plans.flatMap((plan) => plan.bindings.map((binding, index) => [
+      `${binding.domain}\u0000${binding.requirementId}`,
+      plan.plan.requirements[index]!,
+    ] as const)),
+  );
+  recordDiagnostic(trace, {
+    event: "coverage",
+    stage: "verified",
+    requirements: merged.bindings.map((binding, index) => ({
+      id: binding.globalRequirementId,
+      evidenceMode: localRequirementByBinding.get(
+        `${binding.domain}\u0000${binding.requirementId}`,
+      )!.evidenceMode,
+      coverage: merged.action.requirements[index]!.coverage,
+      citations: merged.action.requirements[index]!.citations,
+    })),
+    citations: merged.action.citations,
+    stopReason: "final",
+  });
 }
 
 async function observeTaskAnalysisShadow(input: {
@@ -416,6 +793,10 @@ class OutcomeTrace implements DiagnosticTrace {
       } else {
         this.formalCoverageVerified = true;
         this.verifiedCoverage = coverage;
+        delete this.retainedDirectSegmentCount;
+        delete this.retainedSynthesizedSegmentCount;
+        delete this.removedSegmentCount;
+        this.verifiedHasFormalSupport = false;
         const hasSegmentCounts = event.requirements.some((requirement) =>
           requirement.retainedDirectSegmentCount !== undefined ||
           requirement.retainedSynthesizedSegmentCount !== undefined ||
@@ -512,6 +893,7 @@ function finishExecution(
   startedAt: number,
   historicalAttempted: boolean,
   historicalUsed: boolean,
+  domainsUsed?: readonly KnowledgeDomain[],
 ): PseAnswerExecution {
   recordFinished(trace, result, startedAt, historicalAttempted, historicalUsed);
   const coverageMetadata = executionCoverageMetadata(trace);
@@ -530,6 +912,7 @@ function finishExecution(
       historicalUsed,
       ...coverageMetadata,
       ...historicalNoticeMetadata,
+      ...(domainsUsed === undefined ? {} : { domainsUsed }),
     };
   }
   const stopReason = trace.stopReason ?? "unknown_unavailable";
@@ -542,12 +925,14 @@ function finishExecution(
       stopReason === "invalid_final" ||
       stopReason === "evidence_review_unavailable" ||
       stopReason === "coverage_verifier_unavailable" ||
-      stopReason === "coverage_verifier_invalid",
+      stopReason === "coverage_verifier_invalid" ||
+      stopReason === "domain_execution_unavailable",
     stopReason,
     historicalAttempted,
     historicalUsed,
     ...coverageMetadata,
     ...historicalNoticeMetadata,
+    ...(domainsUsed === undefined ? {} : { domainsUsed }),
   };
 }
 
@@ -562,6 +947,7 @@ function executionCoverageMetadata(
   | "historicalUsed"
   | "historicalNoticeShown"
   | "historicalRejectedReason"
+  | "domainsUsed"
 > {
   return {
     ...(trace.draftCoverage === undefined

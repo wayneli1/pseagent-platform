@@ -13,6 +13,8 @@ const contentHash = "c".repeat(64);
 
 function fakeKnowledgeCaller(overrides: {
   revision?: string;
+  professionalRevision?: string;
+  generalRevision?: string;
   searchRevision?: string;
   searchProject?: string;
   pageProject?: string;
@@ -21,19 +23,32 @@ function fakeKnowledgeCaller(overrides: {
   const revision = overrides.revision ?? revisionA;
   const call = vi.fn(async (name: KnowledgeToolName, input: unknown) => {
     const project = (input as { project?: string }).project;
+    const projectRevision = project === "presales-general"
+      ? overrides.generalRevision ?? revision
+      : overrides.professionalRevision ?? revision;
     if (name === "knowledge_status") {
       return {
         status: "ready",
         projects: [
-          { project: "coremail-professional", revision, lexicalStatus: "ready", graphStatus: "ready" },
-          { project: "presales-general", revision, lexicalStatus: "ready", graphStatus: "ready" },
+          {
+            project: "coremail-professional",
+            revision: overrides.professionalRevision ?? revision,
+            lexicalStatus: "ready",
+            graphStatus: "ready",
+          },
+          {
+            project: "presales-general",
+            revision: overrides.generalRevision ?? revision,
+            lexicalStatus: "ready",
+            graphStatus: "ready",
+          },
         ],
       };
     }
     if (name === "knowledge_context") {
       return {
         project,
-        revision,
+        revision: projectRevision,
         purpose: "purpose",
         schema: "schema",
         planningOverview: "overview body",
@@ -50,16 +65,20 @@ function fakeKnowledgeCaller(overrides: {
     if (name === "knowledge_search") {
       return {
         project: overrides.searchProject ?? project,
-        revision: overrides.searchRevision ?? revision,
+        revision: overrides.searchRevision ?? projectRevision,
         hits: [{ path: "wiki/guide.md", title: "Guide", score: 1, matchedTerms: ["AI"], snippet: "snippet" }],
       };
     }
     if (name === "knowledge_graph") {
-      return { project, revision, hits: [{ path: "wiki/related.md", title: "Related", relation: "related" }] };
+      return {
+        project,
+        revision: projectRevision,
+        hits: [{ path: "wiki/related.md", title: "Related", relation: "related" }],
+      };
     }
     return {
       project,
-      revision,
+      revision: projectRevision,
       page: {
         project: overrides.pageProject ?? project,
         path: overrides.pagePath ?? (input as { path: string }).path,
@@ -116,6 +135,29 @@ describe("KnowledgeSession", () => {
     expect(session.planningOverview).toBe("overview body");
     expect(session.planningOverviewMeta.contentHash).toBe(contentHash);
     expect(caller.call).toHaveBeenNthCalledWith(2, "knowledge_context", { project: "presales-general" }, undefined);
+  });
+
+  it("opens independent sessions and preserves each domain revision", async () => {
+    const caller = fakeKnowledgeCaller({
+      professionalRevision: revisionA,
+      generalRevision: revisionB,
+    });
+
+    const [professional, general] = await Promise.all([
+      KnowledgeSession.open("professional", caller),
+      KnowledgeSession.open("general", caller),
+    ]);
+
+    expect(professional).not.toBe(general);
+    expect(professional).toMatchObject({
+      project: "coremail-professional",
+      revision: revisionA,
+    });
+    expect(general).toMatchObject({
+      project: "presales-general",
+      revision: revisionB,
+    });
+    expect(professional.seenPaths).not.toBe(general.seenPaths);
   });
 
   it("rejects any tool response from a different revision", async () => {

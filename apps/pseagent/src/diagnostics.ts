@@ -10,6 +10,7 @@ import type {
 } from "./contracts.js";
 import type { TaskSpecIssueCode } from "./task-spec.js";
 import type { TaskPlanAdapterInactiveReason } from "./task-plan-adapter.js";
+import type { DomainPlanInactiveReason } from "./domain-plan.js";
 
 export type PseStopReason =
   | "seed_unavailable"
@@ -20,7 +21,10 @@ export type PseStopReason =
   | "turn_budget_exhausted"
   | "evidence_review_unavailable"
   | "coverage_verifier_unavailable"
-  | "coverage_verifier_invalid";
+  | "coverage_verifier_invalid"
+  | "domain_plan_invalid"
+  | "domain_execution_unavailable"
+  | "domain_merge_invalid";
 
 export type HistoricalGateReason =
   | "eligible"
@@ -69,8 +73,36 @@ export type DiagnosticEvent =
         | "activated"
         | "disabled"
         | "analysis_unavailable"
-        | TaskPlanAdapterInactiveReason;
+        | TaskPlanAdapterInactiveReason
+        | DomainPlanInactiveReason;
       readonly requirementCount: number;
+    }
+  | {
+      readonly event: "domain_execution";
+      readonly domain?: "coremail-professional" | "presales-general";
+      readonly phase: "session" | "agent";
+      readonly result: "started" | "completed" | "verified" | "unavailable";
+      readonly domainCount: number;
+      readonly domainsUsed: readonly (
+        "coremail-professional" | "presales-general"
+      )[];
+      readonly reason?:
+        | "runner_missing"
+        | "active_deadline_elapsed"
+        | "domain_signal_aborted"
+        | "session_snapshot_mismatch"
+        | "agent_unavailable"
+        | "domain_dependency_unavailable";
+    }
+  | {
+      readonly event: "domain_merge";
+      readonly result: "completed" | "invalid";
+      readonly domainCount: number;
+      readonly requirementCount: number;
+      readonly domainsUsed: readonly (
+        "coremail-professional" | "presales-general"
+      )[];
+      readonly reason?: string;
     }
   | {
       readonly event: "plan";
