@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -17,14 +18,17 @@ use knowledge_engine::{
 };
 use tower::ServiceExt;
 
+static TEMP_DIRECTORY_NONCE: AtomicU64 = AtomicU64::new(0);
+
 fn project(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
-        "pse-http-{name}-{}-{}",
+        "pse-http-{name}-{}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        TEMP_DIRECTORY_NONCE.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir_all(root.join("wiki/concepts")).unwrap();
     fs::write(root.join("purpose.md"), "# Purpose").unwrap();
@@ -118,6 +122,28 @@ async fn exposes_only_health_context_search_read_and_graph() {
             Method::POST,
             "/v1/search",
             Some(r#"{"project":"coremail-professional","query":"AI","topK":21}"#),
+        )
+        .await,
+        400
+    );
+    assert_eq!(
+        request(
+            &app,
+            Method::POST,
+            "/v1/search",
+            Some(r#"{"project":"coremail-professional","query":"AI","topK":20,"pageType":"query","reviewStatus":"approved","searchMode":"answer_cards"}"#),
+        )
+        .await,
+        200
+    );
+    assert_eq!(
+        request(
+            &app,
+            Method::POST,
+            "/v1/search",
+            Some(
+                r#"{"project":"coremail-professional","query":"AI","topK":20,"pageType":"unknown"}"#
+            ),
         )
         .await,
         400

@@ -6,6 +6,7 @@ use std::{
 
 use knowledge_engine::{
     catalog::Catalog,
+    lexical::{SearchFilters, SearchMode},
     planning_context::load_planning_context,
     project::ProjectKey,
     service::{KnowledgeService, ProjectIndexes},
@@ -164,6 +165,80 @@ fn search_reserves_a_candidate_for_one_hop_graph_context() {
         .search(ProjectKey::CoremailProfessional, "安全网关功能", 5)
         .unwrap();
     assert!(result.hits.iter().any(|hit| hit.title == "网关POC测试要点"));
+    fs::remove_dir_all(professional).unwrap();
+    fs::remove_dir_all(general).unwrap();
+}
+
+#[test]
+fn governed_search_filters_are_enforced_at_the_service_boundary() {
+    let professional = root("professional-governed-search");
+    let general = root("general-governed-search");
+    fs::create_dir_all(professional.join("wiki/queries")).unwrap();
+    fs::write(
+        professional.join("wiki/queries/mail-assistant.md"),
+        "---\ntype: query\ntitle: Mail assistant support\ntags: [mail, assistant]\naliases: [What can Mail Assistant do?]\nquestion_family: mail assistant capabilities\nreview_status: approved\napplicable_product: [Coremail]\napplicable_version: ['*']\ncard_schema_version: 1\nowner: product-ops\nreview_due: 2026-12-31\nrelated: []\nsources: [wiki/concepts/mail-assistant.md]\n---\nApproved governed answer.",
+    )
+    .unwrap();
+    fs::write(
+        professional.join("wiki/queries/mail-assistant-draft.md"),
+        "---\ntype: query\ntitle: Mail assistant draft\ntags: [mail, assistant]\naliases: [What can Mail Assistant do?]\nquestion_family: mail assistant capabilities\nreview_status: draft\ncard_schema_version: 1\nrelated: []\nsources: []\n---\nDraft governed answer.",
+    )
+    .unwrap();
+    let revision = "a".repeat(40);
+    let service = KnowledgeService::new([
+        (
+            ProjectKey::CoremailProfessional,
+            ProjectIndexes::new(
+                Catalog::load(
+                    ProjectKey::CoremailProfessional,
+                    &professional,
+                    revision.clone(),
+                )
+                .unwrap(),
+                load_planning_context(&professional).unwrap(),
+            ),
+        ),
+        (
+            ProjectKey::PresalesGeneral,
+            ProjectIndexes::new(
+                Catalog::load(ProjectKey::PresalesGeneral, &general, revision).unwrap(),
+                load_planning_context(&general).unwrap(),
+            ),
+        ),
+    ])
+    .unwrap();
+    let filters = SearchFilters {
+        page_type: Some("query".to_owned()),
+        review_status: Some("approved".to_owned()),
+        mode: SearchMode::AnswerCards,
+    };
+
+    let result = service
+        .search_with_filters(
+            ProjectKey::CoremailProfessional,
+            "What can Mail Assistant do?",
+            5,
+            &filters,
+        )
+        .unwrap();
+
+    assert_eq!(result.hits.len(), 1);
+    assert_eq!(result.hits[0].path, "wiki/queries/mail-assistant.md");
+    assert_eq!(result.hits[0].page_type, "query");
+    assert_eq!(result.hits[0].review_status, "approved");
+
+    let invalid = SearchFilters {
+        page_type: Some("unknown".to_owned()),
+        ..SearchFilters::default()
+    };
+    assert!(service
+        .search_with_filters(
+            ProjectKey::CoremailProfessional,
+            "Mail assistant",
+            5,
+            &invalid,
+        )
+        .is_err());
     fs::remove_dir_all(professional).unwrap();
     fs::remove_dir_all(general).unwrap();
 }

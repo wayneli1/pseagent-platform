@@ -13,6 +13,7 @@ use tokio::sync::Semaphore;
 
 use crate::{
     error::EngineError,
+    lexical::{SearchFilters, SearchMode},
     project::ProjectKey,
     service::{GraphResponse, KnowledgeService, ProjectContext, ReadResponse, SearchResponse},
 };
@@ -52,6 +53,12 @@ struct SearchInput {
     project: ProjectKey,
     query: String,
     top_k: usize,
+    #[serde(default)]
+    page_type: Option<String>,
+    #[serde(default)]
+    review_status: Option<String>,
+    #[serde(default)]
+    search_mode: SearchMode,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,7 +127,16 @@ async fn search(
     Json(input): Json<SearchInput>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     run_bounded(state, move |service| {
-        service.search(input.project, &input.query, input.top_k)
+        service.search_with_filters(
+            input.project,
+            &input.query,
+            input.top_k,
+            &SearchFilters {
+                page_type: input.page_type,
+                review_status: input.review_status,
+                mode: input.search_mode,
+            },
+        )
     })
     .await
     .map(Json)

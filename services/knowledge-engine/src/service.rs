@@ -10,7 +10,7 @@ use crate::{
     document::WikiPage,
     error::EngineError,
     graph::{GraphHit, KnowledgeGraph},
-    lexical::{LexicalIndex, SearchHit},
+    lexical::{LexicalIndex, SearchFilters, SearchHit},
     planning_context::{PlanningContext, PlanningOverviewMeta},
     project::ProjectKey,
 };
@@ -58,6 +58,8 @@ pub struct SearchObservation {
     pub score: f32,
     pub matched_terms: Vec<String>,
     pub snippet: String,
+    pub page_type: String,
+    pub review_status: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,12 +164,24 @@ impl KnowledgeService {
         query: &str,
         top_k: usize,
     ) -> Result<SearchResponse, EngineError> {
+        self.search_with_filters(project, query, top_k, &SearchFilters::default())
+    }
+
+    pub fn search_with_filters(
+        &self,
+        project: ProjectKey,
+        query: &str,
+        top_k: usize,
+        filters: &SearchFilters,
+    ) -> Result<SearchResponse, EngineError> {
         validate_query(query, top_k)?;
+        validate_filters(filters)?;
         let indexes = self.indexes(project)?;
-        let lexical_hits = indexes
-            .lexical
-            .search(query, top_k.saturating_mul(3).max(top_k));
-        let hits = blend_search_with_graph(indexes, lexical_hits, top_k)?;
+        let lexical_hits =
+            indexes
+                .lexical
+                .search_with_filters(query, top_k.saturating_mul(3).max(top_k), filters);
+        let hits = blend_search_with_graph(indexes, lexical_hits, top_k, filters)?;
         Ok(SearchResponse {
             project,
             revision: indexes.catalog.revision().to_owned(),
@@ -213,6 +227,7 @@ fn blend_search_with_graph(
     indexes: &ProjectIndexes,
     lexical_hits: Vec<SearchHit>,
     top_k: usize,
+    filters: &SearchFilters,
 ) -> Result<Vec<SearchObservation>, EngineError> {
     if lexical_hits.is_empty() {
         return Ok(Vec::new());
@@ -225,6 +240,10 @@ fn blend_search_with_graph(
     for (rank, seed) in lexical_hits.iter().take(5).enumerate() {
         for neighbor in indexes.graph.neighbors(&seed.path, MAX_TOP_K)? {
             if lexical_paths.contains(&neighbor.path) {
+                continue;
+            }
+            let page = indexes.catalog.read(&neighbor.path)?;
+            if !filters.matches_page(&page) {
                 continue;
             }
             let candidate_score = seed.score / (rank as f32 + 1.0);
@@ -271,6 +290,44 @@ fn blend_search_with_graph(
     Ok(observations)
 }
 
+fn validate_filters(filters: &SearchFilters) -> Result<(), EngineError> {
+    const PAGE_TYPES: &[&str] = &[
+        "source",
+        "entity",
+        "concept",
+        "synthesis",
+        "comparison",
+        "query",
+        "finding",
+    ];
+    const REVIEW_STATUSES: &[&str] = &[
+        "pending",
+        "needs_review",
+        "needs_human_confirmation",
+        "missing_source",
+        "draft",
+        "in_review",
+        "changes_requested",
+        "approved",
+        "release_ready",
+        "released",
+        "stale",
+        "deprecated",
+    ];
+    if filters
+        .page_type
+        .as_deref()
+        .is_some_and(|value| !PAGE_TYPES.contains(&value))
+        || filters
+            .review_status
+            .as_deref()
+            .is_some_and(|value| !REVIEW_STATUSES.contains(&value))
+    {
+        return Err(EngineError::InvalidQuery);
+    }
+    Ok(())
+}
+
 fn validate_query(query: &str, top_k: usize) -> Result<(), EngineError> {
     if query.trim().is_empty() || query.len() > MAX_QUERY_BYTES || !(1..=MAX_TOP_K).contains(&top_k)
     {
@@ -290,6 +347,8 @@ fn search_observation(
         score: hit.score,
         snippet: bounded_snippet(&page.body, &hit.matched_terms),
         matched_terms: hit.matched_terms,
+        page_type: page.page_type.clone(),
+        review_status: page.review_status.clone(),
     })
 }
 

@@ -36,6 +36,8 @@ const searchHitSchema = z.object({
   score: z.number(),
   matchedTerms: z.array(z.string()),
   snippet: z.string().max(2_000),
+  pageType: z.string().optional(),
+  reviewStatus: z.string().optional(),
 }).strict();
 const searchResultSchema = z.object({
   project: projectSchema,
@@ -53,6 +55,14 @@ export const knowledgePageSchema = z.object({
   title: z.string().min(1),
   type: z.string(),
   tags: z.array(z.string()),
+  aliases: z.array(z.string()).optional(),
+  questionFamily: z.string().optional(),
+  reviewStatus: z.string().optional(),
+  applicableProduct: z.array(z.string()).optional(),
+  applicableVersion: z.array(z.string()).optional(),
+  cardSchemaVersion: z.number().int().positive().optional(),
+  owner: z.string().optional(),
+  reviewDue: z.string().optional(),
   related: z.array(z.string()),
   sources: z.array(z.string()),
   body: z.string(),

@@ -4,7 +4,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use knowledge_engine::{catalog::Catalog, lexical::LexicalIndex, project::ProjectKey};
+use knowledge_engine::{
+    catalog::Catalog,
+    lexical::{LexicalIndex, SearchFilters, SearchMode},
+    project::ProjectKey,
+};
 
 fn fixture() -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -32,6 +36,27 @@ fn write_page(root: &Path, name: &str, title: &str, body: &str) {
         root.join("wiki/concepts").join(name),
         format!(
             "---\ntype: concept\ntitle: {title}\ntags: []\nrelated: []\nsources: []\n---\n# {title}\n{body}"
+        ),
+    )
+    .unwrap();
+}
+
+fn write_governed_page(
+    root: &Path,
+    name: &str,
+    page_type: &str,
+    title: &str,
+    aliases: &str,
+    review_status: &str,
+    card_schema_version: Option<u32>,
+) {
+    let card_schema = card_schema_version
+        .map(|version| format!("card_schema_version: {version}\n"))
+        .unwrap_or_default();
+    fs::write(
+        root.join("wiki/concepts").join(name),
+        format!(
+            "---\ntype: {page_type}\ntitle: {title}\ntags: [POC]\naliases: [{aliases}]\nquestion_family: poc_scope\nreview_status: {review_status}\napplicable_product: Coremail\napplicable_version: ['*']\n{card_schema}related: []\nsources: []\n---\n# {title}\nPOC 范围治理正文。"
         ),
     )
     .unwrap();
@@ -100,5 +125,97 @@ fn multi_character_queries_do_not_report_single_cjk_matches() {
             .iter()
             .all(|term| term.chars().count() > 1));
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn governed_fields_rank_and_filter_answer_cards_without_hiding_legacy_pages() {
+    let root = fixture();
+    let query = "POC未采购功能是否测试";
+    write_governed_page(
+        &root,
+        "alias-card.md",
+        "query",
+        "POC范围控制",
+        query,
+        "approved",
+        Some(1),
+    );
+    write_governed_page(
+        &root,
+        "title-card.md",
+        "query",
+        query,
+        "其他问法",
+        "approved",
+        Some(1),
+    );
+    write_governed_page(
+        &root,
+        "draft-card.md",
+        "query",
+        "未批准答案卡",
+        query,
+        "draft",
+        Some(1),
+    );
+    write_governed_page(
+        &root,
+        "legacy-query.md",
+        "query",
+        "历史 Query 页面",
+        "历史 POC 问法",
+        "pending",
+        None,
+    );
+    write_governed_page(
+        &root,
+        "ordinary.md",
+        "concept",
+        query,
+        "普通概念别名",
+        "pending",
+        None,
+    );
+    let catalog = Catalog::load(ProjectKey::CoremailProfessional, &root, "a".repeat(40)).unwrap();
+    let index = LexicalIndex::build(&catalog);
+
+    let hybrid = index.search(query, 10);
+    assert_eq!(hybrid[0].path, "wiki/concepts/alias-card.md");
+    assert!(
+        hybrid
+            .iter()
+            .position(|hit| hit.path.ends_with("title-card.md"))
+            < hybrid
+                .iter()
+                .position(|hit| hit.path.ends_with("ordinary.md"))
+    );
+    assert!(!hybrid.iter().any(|hit| hit.path.ends_with("draft-card.md")));
+    assert!(index
+        .search("历史 POC 问法", 10)
+        .iter()
+        .any(|hit| hit.path.ends_with("legacy-query.md")));
+
+    let answer_cards = index.search_with_filters(
+        query,
+        10,
+        &SearchFilters {
+            mode: SearchMode::AnswerCards,
+            ..SearchFilters::default()
+        },
+    );
+    assert_eq!(answer_cards.len(), 2);
+    assert!(answer_cards
+        .iter()
+        .all(|hit| hit.path.ends_with("-card.md")));
+    let standard = index.search_with_filters(
+        query,
+        10,
+        &SearchFilters {
+            mode: SearchMode::Standard,
+            ..SearchFilters::default()
+        },
+    );
+    assert!(standard.iter().all(|hit| !hit.path.ends_with("-card.md")));
     fs::remove_dir_all(root).unwrap();
 }

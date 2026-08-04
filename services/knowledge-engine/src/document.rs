@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{error::EngineError, project::ProjectKey};
@@ -16,6 +16,15 @@ pub struct WikiPage {
     #[serde(rename = "type")]
     pub page_type: String,
     pub tags: Vec<String>,
+    pub aliases: Vec<String>,
+    pub question_family: String,
+    pub review_status: String,
+    pub applicable_product: Vec<String>,
+    pub applicable_version: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_schema_version: Option<u32>,
+    pub owner: String,
+    pub review_due: String,
     pub related: Vec<String>,
     pub sources: Vec<String>,
     pub body: String,
@@ -30,6 +39,22 @@ struct Frontmatter {
     title: String,
     #[serde(default)]
     tags: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_list")]
+    aliases: Vec<String>,
+    #[serde(default)]
+    question_family: String,
+    #[serde(default)]
+    review_status: String,
+    #[serde(default, deserialize_with = "deserialize_string_list")]
+    applicable_product: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_list")]
+    applicable_version: Vec<String>,
+    #[serde(default)]
+    card_schema_version: Option<u32>,
+    #[serde(default)]
+    owner: String,
+    #[serde(default)]
+    review_due: String,
     #[serde(default)]
     related: Vec<String>,
     #[serde(default)]
@@ -74,11 +99,37 @@ pub fn load_page(
         },
         page_type: frontmatter.page_type,
         tags: frontmatter.tags,
+        aliases: frontmatter.aliases,
+        question_family: frontmatter.question_family,
+        review_status: frontmatter.review_status,
+        applicable_product: frontmatter.applicable_product,
+        applicable_version: frontmatter.applicable_version,
+        card_schema_version: frontmatter.card_schema_version,
+        owner: frontmatter.owner,
+        review_due: frontmatter.review_due,
         related: frontmatter.related,
         sources: frontmatter.sources,
         body: body.to_owned(),
         content_hash,
     }))
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StringOrList {
+    One(String),
+    Many(Vec<String>),
+}
+
+fn deserialize_string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match Option::<StringOrList>::deserialize(deserializer)? {
+        None => Vec::new(),
+        Some(StringOrList::One(value)) => vec![value],
+        Some(StringOrList::Many(values)) => values,
+    })
 }
 
 pub fn is_navigation_path(relative: &str) -> bool {

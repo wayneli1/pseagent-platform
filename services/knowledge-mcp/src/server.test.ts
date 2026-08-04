@@ -31,7 +31,19 @@ describe("Knowledge MCP", () => {
       project: "presales-general",
       query: "多证据面归纳",
       topK: 20,
-    }).topK).toBe(20);
+    })).toMatchObject({ topK: 20, searchMode: "hybrid" });
+    expect(searchInputSchema.parse({
+      project: "presales-general",
+      query: "迁移风险",
+      topK: 5,
+      pageType: "query",
+      reviewStatus: "approved",
+      searchMode: "answer_cards",
+    })).toMatchObject({
+      pageType: "query",
+      reviewStatus: "approved",
+      searchMode: "answer_cards",
+    });
     expect(searchInputSchema.safeParse({
       project: "presales-general",
       query: "多证据面归纳",

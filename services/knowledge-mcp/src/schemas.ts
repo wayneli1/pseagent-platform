@@ -3,6 +3,34 @@ import { z } from "zod";
 export const projectSchema = z.enum(["coremail-professional", "presales-general"]);
 export const revisionSchema = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u);
 export const topKSchema = z.number().int().min(1).max(20);
+export const pageTypeSchema = z.enum([
+  "source",
+  "entity",
+  "concept",
+  "synthesis",
+  "comparison",
+  "query",
+  "finding",
+]);
+export const reviewStatusSchema = z.enum([
+  "pending",
+  "needs_review",
+  "needs_human_confirmation",
+  "missing_source",
+  "draft",
+  "in_review",
+  "changes_requested",
+  "approved",
+  "release_ready",
+  "released",
+  "stale",
+  "deprecated",
+]);
+export const searchModeSchema = z.enum([
+  "hybrid",
+  "answer_cards",
+  "standard",
+]);
 export const safeRelativePathSchema = z
   .string()
   .trim()
@@ -20,6 +48,9 @@ export const searchInputSchema = z.object({
   project: projectSchema,
   query: z.string().trim().min(1).max(16_384),
   topK: topKSchema,
+  pageType: pageTypeSchema.optional(),
+  reviewStatus: reviewStatusSchema.optional(),
+  searchMode: searchModeSchema.default("hybrid"),
 }).strict();
 export const readInputSchema = z.object({
   project: projectSchema,
@@ -62,6 +93,8 @@ const searchHitSchema = z.object({
   score: z.number(),
   matchedTerms: z.array(z.string()),
   snippet: z.string().max(2_000),
+  pageType: z.string(),
+  reviewStatus: z.string(),
 }).strict();
 export const searchResultSchema = z.object({
   project: projectSchema,
@@ -74,6 +107,14 @@ export const pageSchema = z.object({
   title: z.string().min(1),
   type: z.string(),
   tags: z.array(z.string()),
+  aliases: z.array(z.string()),
+  questionFamily: z.string(),
+  reviewStatus: z.string(),
+  applicableProduct: z.array(z.string()),
+  applicableVersion: z.array(z.string()),
+  cardSchemaVersion: z.number().int().positive().optional(),
+  owner: z.string(),
+  reviewDue: z.string(),
   related: z.array(z.string()),
   sources: z.array(z.string()),
   body: z.string(),
