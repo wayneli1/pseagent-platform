@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type {
+  AnswerStatus,
   AnswerResult,
   Coverage,
   HistoricalRejectionReason,
@@ -92,6 +94,8 @@ export type DetailedAgentRunner = (
 ) => Promise<KnowledgeAgentDetailedResult>;
 
 export interface PseAnswerExecution {
+  /** Opaque correlation id for opt-in feedback; never exposed inside AnswerResult. */
+  readonly requestId: string;
   readonly result: AnswerResult;
   readonly retryable: boolean;
   readonly stopReason: PseStopReason | "final" | "unknown_unavailable";
@@ -110,6 +114,29 @@ export interface PseAnswerExecution {
   readonly verification?: CoverageVerificationReport;
   readonly domainEvidenceLedgers?: readonly EvidenceLedger[];
   readonly coverageGaps?: readonly CoverageGap[];
+  readonly answerCardMatch?: AnswerCardExecutionSummary;
+  readonly feedbackContext: FeedbackSafeExecutionContext;
+}
+
+export interface AnswerCardExecutionSummary {
+  readonly matchType: "exact" | "family" | "partial" | "none";
+  readonly confidence: "deterministic" | "high" | "none";
+  readonly candidateCount: number;
+  readonly obligationCount: number;
+  readonly cardIdHashes: readonly string[];
+  readonly catalogHash: string;
+  readonly reason?: Extract<
+    DiagnosticEvent,
+    { event: "answer_card_match" }
+  >["reason"];
+}
+
+export interface FeedbackSafeExecutionContext {
+  readonly scope: Scope;
+  readonly status: AnswerStatus;
+  readonly referenceCount: number;
+  readonly historicalUsed: boolean;
+  readonly domainsUsed?: readonly KnowledgeDomain[];
 }
 
 interface ExecutionEvidenceMetadata {
@@ -1173,6 +1200,7 @@ class OutcomeTrace implements DiagnosticTrace {
   retainedSynthesizedSegmentCount?: number;
   removedSegmentCount?: number;
   historicalGateReason?: HistoricalGateReason;
+  answerCardMatch?: AnswerCardExecutionSummary;
 
   constructor(private readonly delegate: DiagnosticTrace) {}
 
@@ -1183,6 +1211,17 @@ class OutcomeTrace implements DiagnosticTrace {
   record(event: DiagnosticEvent): void {
     if (event.event === "stop") this.stopReason = event.reason;
     if (event.event === "fallback") this.structuralFallback = true;
+    if (event.event === "answer_card_match") {
+      this.answerCardMatch = {
+        matchType: event.matchType,
+        confidence: event.confidence,
+        candidateCount: event.candidateCount,
+        obligationCount: event.obligationCount,
+        cardIdHashes: [...event.cardIdHashes],
+        catalogHash: event.catalogHash,
+        ...(event.reason === undefined ? {} : { reason: event.reason }),
+      };
+    }
     if (event.event === "coverage") {
       const coverage = event.requirements.map(
         (requirement) => requirement.coverage,
@@ -1255,11 +1294,22 @@ function evaluateHistoricalGate(
 }
 
 function startDiagnosticTrace(factory: DiagnosticTraceFactory | undefined): DiagnosticTrace {
+  let delegate: DiagnosticTrace;
   try {
-    return factory?.start() ?? NOOP_DIAGNOSTIC_TRACE;
+    delegate = factory?.start() ?? NOOP_DIAGNOSTIC_TRACE;
   } catch {
-    return NOOP_DIAGNOSTIC_TRACE;
+    delegate = NOOP_DIAGNOSTIC_TRACE;
   }
+  const requestId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+      .test(delegate.requestId)
+    ? delegate.requestId
+    : randomUUID();
+  return {
+    requestId,
+    record(event) {
+      delegate.record(event);
+    },
+  };
 }
 
 function recordFinished(
@@ -1309,8 +1359,24 @@ function finishExecution(
         historicalNoticeShown: true as const,
         historicalRejectedReason: result.historicalNotice.reason,
       };
+  const safeExecutionMetadata = {
+    requestId: trace.requestId,
+    ...(trace.answerCardMatch === undefined
+      ? {}
+      : { answerCardMatch: trace.answerCardMatch }),
+    feedbackContext: {
+      scope: result.scope,
+      status: result.status,
+      referenceCount:
+        result.references.length +
+        (result.historicalAnswer?.references.length ?? 0),
+      historicalUsed,
+      ...(domainsUsed === undefined ? {} : { domainsUsed }),
+    },
+  };
   if (result.status !== "temporarily_unavailable") {
     return {
+      ...safeExecutionMetadata,
       result,
       retryable: false,
       stopReason: "final",
@@ -1324,6 +1390,7 @@ function finishExecution(
   }
   const stopReason = trace.stopReason ?? "unknown_unavailable";
   return {
+    ...safeExecutionMetadata,
     result,
     retryable:
       stopReason === "model_unavailable" ||
@@ -1356,6 +1423,9 @@ function executionCoverageMetadata(
   | "historicalNoticeShown"
   | "historicalRejectedReason"
   | "domainsUsed"
+  | "requestId"
+  | "answerCardMatch"
+  | "feedbackContext"
 > {
   return {
     ...(trace.draftCoverage === undefined

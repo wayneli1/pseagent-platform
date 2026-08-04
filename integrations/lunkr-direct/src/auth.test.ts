@@ -27,6 +27,8 @@ const config: LunkrDirectConfig = {
   maxActivePeers: 4,
   maxPendingPerPeer: 5,
   sessionIdleMs: 86_400_000,
+  feedbackReceiptTtlMs: 30 * 60_000,
+  feedbackReceiptMax: 2_000,
 };
 
 describe("Lunkr auth", () => {

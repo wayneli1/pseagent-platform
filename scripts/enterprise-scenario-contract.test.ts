@@ -28,6 +28,7 @@ const scenario: EnterpriseScenario = {
 
 function execution(answer = "当前无法可靠判断赢率。请补齐信息并访谈决策人。"): PseAnswerExecution {
   return {
+    requestId: "019fcd9f-cfb9-7c62-93a9-39b84c7e00f9",
     result: {
       scope: "general",
       status: "partially_answered",
@@ -47,6 +48,12 @@ function execution(answer = "当前无法可靠判断赢率。请补齐信息并
     stopReason: "final",
     historicalAttempted: false,
     historicalUsed: false,
+    feedbackContext: {
+      scope: "general",
+      status: "partially_answered",
+      referenceCount: 1,
+      historicalUsed: false,
+    },
     coverageGaps: [{
       id: "G1",
       requirementId: "R1",

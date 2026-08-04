@@ -3,8 +3,10 @@ import type { LunkrDirectConfig } from "./config.js";
 import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
 import {
   LunkrPseBridge,
+  type BridgeFeedbackDependencies,
   type BridgeQuestionEvent,
 } from "./bridge.js";
+import type { BridgeFeedbackSubmission } from "./feedback-receipt-store.js";
 
 const config: LunkrDirectConfig = {
   baseUrl: "https://lunkr.example.test",
@@ -22,9 +24,12 @@ const config: LunkrDirectConfig = {
   maxActivePeers: 4,
   maxPendingPerPeer: 5,
   sessionIdleMs: 86_400_000,
+  feedbackReceiptTtlMs: 30 * 60_000,
+  feedbackReceiptMax: 2_000,
 };
 
 type TestResult = {
+  readonly requestId?: string;
   readonly answer: string;
   readonly status: "answered" | "temporarily_unavailable" | "not_covered";
   readonly scope?: "normal" | "professional" | "general";
@@ -241,6 +246,125 @@ describe("LunkrPseBridge", () => {
       "已开始新会话，之前处理中和排队的问题已取消。",
     );
     expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
+  });
+
+  it("persists original question and answer only after explicit pseudonymous feedback", async () => {
+    const submissions: BridgeFeedbackSubmission[] = [];
+    const answer = vi.fn<Answer>(async () => answered("完整回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer,
+      sendText,
+      feedback: feedbackDependencies(async (submission) => {
+        submissions.push(submission);
+      }),
+    });
+
+    await bridge.handle(message("q1", "#private-user#U", "原始问题"));
+    expect(submissions).toEqual([]);
+    await bridge.handle(feedbackMessage(
+      "f1",
+      "#private-user#U",
+      1,
+      "incorrect",
+      "遗漏了实施边界",
+    ));
+    await bridge.handle(message("q2", "#private-user#U", "第二问"));
+
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(sentTexts(sendText)).toContain("已收到问题 #2，正在处理。");
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      requestId: "019fcd9f-cfb9-7c62-93a9-39b84c7e00f9",
+      questionId: 1,
+      classification: "incorrect",
+      comment: "遗漏了实施边界",
+      question: "原始问题",
+      answer: "完整回答",
+      source: "lunkr_direct",
+      audit: { event: "feedback_submitted" },
+    });
+    expect(submissions[0]?.pseudonymousUserId).toMatch(/^[a-f0-9]{64}$/u);
+    expect(JSON.stringify(submissions[0])).not.toContain("private-user");
+  });
+
+  it("handles malformed or unavailable feedback without allocating a question id", async () => {
+    const answer = vi.fn<Answer>(async () => answered("回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    await bridge.handle({
+      ...message("bad-feedback", "#a#U", "/feedback #1 missing", "feedback"),
+    });
+    await bridge.handle(feedbackMessage("no-service", "#a#U", 1, "useful", ""));
+    await bridge.handle(message("q1", "#a#U", "问题"));
+
+    expect(answer).toHaveBeenCalledOnce();
+    expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
+    expect(sentTexts(sendText)).toContain(
+      "反馈服务暂时不可用，本次未保存任何内容。",
+    );
+    expect(sentTexts(sendText).some((text) => text.startsWith("反馈格式无效")))
+      .toBe(true);
+  });
+
+  it("expires feedback receipts and clears them on a new session", async () => {
+    let now = 1_000;
+    const submit = vi.fn(async (_submission: BridgeFeedbackSubmission) => undefined);
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer: async () => answered("回答"),
+      sendText,
+      config: { feedbackReceiptTtlMs: 100 },
+      now: () => now,
+      feedback: feedbackDependencies(submit),
+    });
+
+    await bridge.handle(message("q1", "#a#U", "第一问"));
+    now = 1_100;
+    await bridge.handle(feedbackMessage("expired", "#a#U", 1, "useful", ""));
+    await bridge.handle(message("q2", "#a#U", "第二问"));
+    await bridge.handle(message("new", "#a#U", "/new", "new"));
+    await bridge.handle(feedbackMessage("reset", "#a#U", 2, "useful", ""));
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(sentTexts(sendText).filter((text) => text.startsWith("未找到问题")))
+      .toHaveLength(2);
+  });
+
+  it("submits concurrent duplicate feedback once and releases a failed claim for retry", async () => {
+    const firstSubmission = deferred<void>();
+    let attempt = 0;
+    const submit = vi.fn(async (_submission: BridgeFeedbackSubmission) => {
+      attempt += 1;
+      if (attempt === 1) return firstSubmission.promise;
+      if (attempt === 2) throw new Error("ops unavailable");
+    });
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer: async () => answered("回答"),
+      sendText,
+      feedback: feedbackDependencies(submit),
+    });
+    await bridge.handle(message("q1", "#a#U", "第一问"));
+
+    const first = bridge.handle(feedbackMessage("f1", "#a#U", 1, "useful", ""));
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    await bridge.handle(feedbackMessage("f2", "#a#U", 1, "useful", ""));
+    expect(sentTexts(sendText)).toContain("问题 #1 已提交过反馈，请勿重复提交。");
+    firstSubmission.resolve(undefined);
+    await first;
+
+    await bridge.handle(message("q2", "#a#U", "第二问"));
+    await bridge.handle(feedbackMessage("f3", "#a#U", 2, "incorrect", "有误"));
+    expect(sentTexts(sendText)).toContain(
+      "反馈服务暂时不可用，本次未保存，可稍后重试。",
+    );
+    await bridge.handle(feedbackMessage("f4", "#a#U", 2, "incorrect", "有误"));
+
+    expect(submit).toHaveBeenCalledTimes(3);
+    expect(submit.mock.calls[1]?.[0].caseId).toBe(submit.mock.calls[2]?.[0].caseId);
+    expect(sentTexts(sendText)).toContain("已记录问题 #2 的反馈，感谢你的帮助。");
   });
 
   it("silently starts at #1 when accepted-question inactivity reaches the limit", async () => {
@@ -935,6 +1059,7 @@ function createBridge(options: {
   readonly config?: Partial<LunkrDirectConfig>;
   readonly now?: () => number;
   readonly onEvent?: (event: BridgeQuestionEvent) => void;
+  readonly feedback?: BridgeFeedbackDependencies;
 }) {
   return new LunkrPseBridge(
     { ...config, ...options.config },
@@ -942,6 +1067,7 @@ function createBridge(options: {
       answer: options.answer,
       formatAnswer: (result) => result.answer,
       describeResult: (result) => ({
+        requestId: result.requestId,
         scope: result.scope,
         status: result.status,
         retryable: result.retryable ?? false,
@@ -963,13 +1089,20 @@ function createBridge(options: {
       sendTextFile: options.sendTextFile ?? (async () => undefined),
       sendPost: options.sendPost ?? (async () => undefined),
       onEvent: options.onEvent,
+      feedback: options.feedback,
     },
     options.now,
   );
 }
 
 function answered(answer: string): TestResult {
-  return { answer, status: "answered", retryable: false, stopReason: "final" };
+  return {
+    requestId: "019fcd9f-cfb9-7c62-93a9-39b84c7e00f9",
+    answer,
+    status: "answered",
+    retryable: false,
+    stopReason: "final",
+  };
 }
 
 function unavailable(retryable: boolean, stopReason: string): TestResult {
@@ -999,6 +1132,33 @@ function message(
     text,
     hasAttachments: false,
     ...(command === undefined ? {} : { command }),
+  };
+}
+
+function feedbackMessage(
+  id: string,
+  peerUid: string,
+  questionId: number,
+  classification: "useful" | "incorrect" | "missing" | "evidence",
+  comment: string,
+): LunkrDirectMessage {
+  return {
+    ...message(
+      id,
+      peerUid,
+      `/feedback #${questionId} ${classification}${comment === "" ? "" : ` ${comment}`}`,
+      "feedback",
+    ),
+    feedback: { questionId, classification, comment },
+  };
+}
+
+function feedbackDependencies(
+  submit: (submission: BridgeFeedbackSubmission) => Promise<void>,
+): BridgeFeedbackDependencies {
+  return {
+    pseudonymizationKey: "feedback-test-key-with-at-least-32-characters",
+    submit,
   };
 }
 

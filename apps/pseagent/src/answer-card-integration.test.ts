@@ -145,6 +145,19 @@ describe("answer card online orchestration", () => {
 
     const result = await service.answerDetailed(question);
 
+    expect(result.requestId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(result.requestId).not.toBe("answer-card-integration");
+    expect(result.answerCardMatch).toMatchObject({
+      matchType: "exact",
+      confidence: "deterministic",
+      cardIdHashes: [cardIdHash],
+    });
+    expect(result.feedbackContext).toEqual({
+      scope: "professional",
+      status: "answered",
+      referenceCount: 0,
+      historicalUsed: false,
+    });
     expect(result.result.answer).toBe("沿用原链路");
     expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ plan: legacyPlan }));
     expect(events).toContainEqual(expect.objectContaining({

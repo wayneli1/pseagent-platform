@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { normalizeDirectMessage } from "./message-normalizer.js";
+import {
+  normalizeDirectMessage,
+  parseFeedbackCommand,
+} from "./message-normalizer.js";
 
 describe("normalizeDirectMessage", () => {
   it("normalizes string and object private-message payloads", () => {
@@ -263,6 +266,7 @@ describe("normalizeDirectMessage", () => {
     ["/\u200Bnew", "new"],
     ["／new", "new"],
     ["/help", "help"],
+    ["/feedback #12 useful", "feedback"],
   ] as const)("recognizes exact normalized command %j", (subject, command) => {
     expect(normalizeDirectMessage({
       topic: "inbox",
@@ -275,7 +279,42 @@ describe("normalizeDirectMessage", () => {
     }, "#bot#U")).toMatchObject({ command });
   });
 
-  it.each(["/new 请继续", "前缀/new", "/newer", "```/new```"])(
+  it("parses valid feedback without widening invalid feedback into a question", () => {
+    expect(parseFeedbackCommand("／feedback ＃１２ incorrect  缺少版本边界 "))
+      .toEqual({
+        questionId: 12,
+        classification: "incorrect",
+        comment: "缺少版本边界",
+      });
+    expect(parseFeedbackCommand("/feedback #2 useful")).toEqual({
+      questionId: 2,
+      classification: "useful",
+      comment: "",
+    });
+    expect(parseFeedbackCommand("/feedback #2 missing")).toBeUndefined();
+
+    const malformed = normalizeDirectMessage({
+      topic: "inbox",
+      payload: {
+        msgId: "invalid-feedback",
+        sourceId: "#peer#U",
+        from: { uid: "#peer#U" },
+        subject: "/feedback #2 evidence",
+      },
+    }, "#bot#U");
+    expect(malformed).toMatchObject({ command: "feedback" });
+    expect(malformed).not.toHaveProperty("feedback");
+  });
+
+  it.each([
+    "/feedback #0 useful",
+    "/feedback #999999999999999999999 useful",
+    `/feedback #1 incorrect ${"x".repeat(4_001)}`,
+  ])("rejects unsafe feedback payload %j", (text) => {
+    expect(parseFeedbackCommand(text)).toBeUndefined();
+  });
+
+  it.each(["/new 请继续", "前缀/new", "/newer", "```/new```", "/feedbacker"])(
     "does not widen command matching for %j",
     (subject) => {
       expect(normalizeDirectMessage({

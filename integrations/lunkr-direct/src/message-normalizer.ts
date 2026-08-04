@@ -1,4 +1,8 @@
-import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
+import type {
+  DirectCommand,
+  FeedbackCommand,
+  LunkrDirectMessage,
+} from "./contracts.js";
 
 const INVISIBLE_COMMAND_CHARACTERS = /[\u200B-\u200D\u2060\uFEFF]/gu;
 const ATTACHMENT_MESSAGE_TYPE =
@@ -61,6 +65,9 @@ export function normalizeDirectMessage(
   if (text.trim() === "" && !hasAttachments) return undefined;
   const timestamp = parseTimestamp(payload.time ?? payload.timestamp, now);
   const command = recognizeDirectCommand(text);
+  const feedback = command === "feedback"
+    ? parseFeedbackCommand(text)
+    : undefined;
   return {
     id,
     peerUid,
@@ -69,17 +76,43 @@ export function normalizeDirectMessage(
     text: text.trim(),
     hasAttachments,
     ...(command === undefined ? {} : { command }),
+    ...(feedback === undefined ? {} : { feedback }),
   };
 }
 
 export function recognizeDirectCommand(text: string): DirectCommand | undefined {
-  const normalized = text
+  const normalized = normalizeCommandText(text);
+  if (normalized === "/new") return "new";
+  if (normalized === "/help") return "help";
+  if (/^\/feedback(?:\s|$)/iu.test(normalized)) return "feedback";
+  return undefined;
+}
+
+export function parseFeedbackCommand(text: string): FeedbackCommand | undefined {
+  const normalized = normalizeCommandText(text);
+  const match = /^\/feedback\s+#([1-9]\d*)\s+(useful|incorrect|missing|evidence)(?:\s+([\s\S]*))?$/iu
+    .exec(normalized);
+  if (match === null) return undefined;
+  const questionId = Number(match[1]);
+  const classification = match[2]!.toLocaleLowerCase("en-US") as
+    FeedbackCommand["classification"];
+  const comment = (match[3] ?? "").trim();
+  if (
+    !Number.isSafeInteger(questionId) ||
+    questionId <= 0 ||
+    comment.length > 4_000 ||
+    (classification !== "useful" && comment === "")
+  ) {
+    return undefined;
+  }
+  return { questionId, classification, comment };
+}
+
+function normalizeCommandText(text: string): string {
+  return text
     .normalize("NFKC")
     .replace(INVISIBLE_COMMAND_CHARACTERS, "")
     .trim();
-  if (normalized === "/new") return "new";
-  if (normalized === "/help") return "help";
-  return undefined;
 }
 
 function decodeLunkrSubject(subject: string): string {

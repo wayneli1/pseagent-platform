@@ -8,6 +8,12 @@ import { ConversationStore } from "./conversation-store.js";
 import type { LunkrDirectMessage } from "./contracts.js";
 import { MessageDedupe } from "./dedupe.js";
 import {
+  FeedbackReceiptStore,
+  pseudonymizeFeedbackUser,
+  type BridgeFeedbackSubmission,
+  type FeedbackAnswerCardSummary,
+} from "./feedback-receipt-store.js";
+import {
   PeerScheduler,
   type AdmissionNotice,
   type QuestionStart,
@@ -19,6 +25,7 @@ const HELP_TEXT = [
   "我是 PSEAgent 论客私聊机器人。",
   "直接发送文字即可提问，不需要 /bot。",
   "发送 /new 可取消当前题和排队题，并清空连续对话上下文。",
+  "发送 /feedback #题号 useful 可标记有用；incorrect、missing、evidence 后需填写说明。",
   "当前暂不支持群聊、图片、文件或语音。",
 ].join("\n");
 
@@ -41,6 +48,7 @@ export type BridgeHistoricalRejectionReason =
   | "no_reliable_source";
 
 export interface BridgeAnswerMetadata {
+  readonly requestId?: string | undefined;
   readonly scope?: string | undefined;
   readonly status?: string | undefined;
   readonly retryable: boolean;
@@ -56,6 +64,7 @@ export interface BridgeAnswerMetadata {
   readonly retainedSynthesizedSegmentCount?: number | undefined;
   readonly removedSegmentCount?: number | undefined;
   readonly historicalGateReason?: BridgeHistoricalGateReason | undefined;
+  readonly answerCardMatch?: FeedbackAnswerCardSummary | undefined;
 }
 
 export interface BridgeQuestionEvent {
@@ -113,12 +122,19 @@ export interface LunkrBridgeDependencies<Result> {
     caption: string,
   ) => Promise<void>;
   readonly onEvent?: ((event: BridgeQuestionEvent) => void) | undefined;
+  readonly feedback?: BridgeFeedbackDependencies | undefined;
+}
+
+export interface BridgeFeedbackDependencies {
+  readonly pseudonymizationKey: string;
+  readonly submit: (submission: BridgeFeedbackSubmission) => Promise<void>;
 }
 
 export class LunkrPseBridge<Result> {
   private readonly conversations: ConversationStore;
   private readonly dedupe: MessageDedupe;
   private readonly scheduler: PeerScheduler;
+  private readonly feedbackReceipts: FeedbackReceiptStore;
   private readonly lastAcceptedQuestionAt = new Map<string, number>();
 
   constructor(
@@ -139,6 +155,11 @@ export class LunkrPseBridge<Result> {
       config.maxActivePeers,
       config.maxPendingPerPeer,
     );
+    this.feedbackReceipts = new FeedbackReceiptStore(
+      config.feedbackReceiptTtlMs,
+      config.feedbackReceiptMax,
+      now,
+    );
   }
 
   handle(message: LunkrDirectMessage): Promise<void> {
@@ -147,6 +168,7 @@ export class LunkrPseBridge<Result> {
     if (message.command === "help") {
       return this.sendWithRetry(message.peerUid, HELP_TEXT);
     }
+    if (message.command === "feedback") return this.handleFeedback(message);
     if (message.hasAttachments) {
       return this.sendWithRetry(message.peerUid, "当前仅支持文字私聊。");
     }
@@ -360,6 +382,19 @@ export class LunkrPseBridge<Result> {
         question,
       });
     }
+    this.feedbackReceipts.remember(message.peerUid, {
+      questionId: start.questionId,
+      requestId: metadata.requestId ?? "",
+      question,
+      answer: normalizedAnswer,
+      answerStatus: metadata.status ?? "unknown",
+      ...(metadata.scope === undefined ? {} : { scope: metadata.scope }),
+      referenceCount: metadata.referenceCount,
+      answeredAt: new Date(this.now()).toISOString(),
+      ...(metadata.answerCardMatch === undefined
+        ? {}
+        : { answerCardMatch: metadata.answerCardMatch }),
+    });
     this.emit({
       type: "answered",
       peerUid: message.peerUid,
@@ -423,12 +458,93 @@ export class LunkrPseBridge<Result> {
     );
   }
 
+  private async handleFeedback(message: LunkrDirectMessage): Promise<void> {
+    if (message.feedback === undefined) {
+      await this.sendWithRetry(
+        message.peerUid,
+        "反馈格式无效。示例：/feedback #12 useful；或 /feedback #12 incorrect <说明>。",
+      );
+      return;
+    }
+    const feedback = this.dependencies.feedback;
+    if (feedback === undefined) {
+      await this.sendWithRetry(
+        message.peerUid,
+        "反馈服务暂时不可用，本次未保存任何内容。",
+      );
+      return;
+    }
+    const claimResult = this.feedbackReceipts.claim(
+      message.peerUid,
+      message.feedback.questionId,
+    );
+    if (claimResult.kind === "missing") {
+      await this.sendWithRetry(
+        message.peerUid,
+        `未找到问题 #${message.feedback.questionId} 的可反馈回答，可能已过期或会话已重置。`,
+      );
+      return;
+    }
+    if (claimResult.kind === "duplicate") {
+      await this.sendWithRetry(
+        message.peerUid,
+        `问题 #${message.feedback.questionId} 已提交过反馈，请勿重复提交。`,
+      );
+      return;
+    }
+    const { claim } = claimResult;
+    const submittedAt = new Date(this.now()).toISOString();
+    try {
+      const pseudonymousUserId = pseudonymizeFeedbackUser(
+        message.peerUid,
+        feedback.pseudonymizationKey,
+      );
+      await feedback.submit({
+        caseId: claim.caseId,
+        requestId: claim.receipt.requestId,
+        pseudonymousUserId,
+        questionId: claim.receipt.questionId,
+        classification: message.feedback.classification,
+        comment: message.feedback.comment,
+        question: claim.receipt.question,
+        answer: claim.receipt.answer,
+        answerStatus: claim.receipt.answerStatus,
+        ...(claim.receipt.scope === undefined
+          ? {}
+          : { scope: claim.receipt.scope }),
+        referenceCount: claim.receipt.referenceCount,
+        answeredAt: claim.receipt.answeredAt,
+        submittedAt,
+        source: "lunkr_direct",
+        ...(claim.receipt.answerCardMatch === undefined
+          ? {}
+          : { answerCardMatch: claim.receipt.answerCardMatch }),
+        audit: {
+          event: "feedback_submitted",
+          occurredAt: submittedAt,
+        },
+      });
+      claim.settle(true);
+      await this.sendWithRetry(
+        message.peerUid,
+        `已记录问题 #${message.feedback.questionId} 的反馈，感谢你的帮助。`,
+      );
+    } catch {
+      claim.settle(false);
+      await this.sendWithRetry(
+        message.peerUid,
+        "反馈服务暂时不可用，本次未保存，可稍后重试。",
+      );
+    }
+  }
+
   private resetPeerState(
     peerUid: string,
     resetReason: "manual" | "idle",
   ): void {
     const reset = this.scheduler.reset(peerUid);
     this.conversations.clear(peerUid);
+    this.feedbackReceipts.clearPeer(peerUid);
     this.lastAcceptedQuestionAt.delete(peerUid);
     this.emit({
       type: "cancelled",

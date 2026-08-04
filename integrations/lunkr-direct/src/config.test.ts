@@ -13,6 +13,8 @@ describe("loadLunkrConfig", () => {
     expect(config.maxActivePeers).toBe(4);
     expect(config.maxPendingPerPeer).toBe(5);
     expect(config.sessionIdleMs).toBe(86_400_000);
+    expect(config.feedbackReceiptTtlMs).toBe(30 * 60_000);
+    expect(config.feedbackReceiptMax).toBe(2_000);
   });
 
   it("loads a bounded question budget", () => {
@@ -61,5 +63,20 @@ describe("loadLunkrConfig", () => {
       .toThrow("正整数");
     expect(() => loadLunkrConfig({ LUNKR_SESSION_IDLE_MS: "1.5" }))
       .toThrow("正整数");
+  });
+
+  it("bounds short-lived feedback receipt retention", () => {
+    const config = loadLunkrConfig({
+      LUNKR_FEEDBACK_RECEIPT_TTL_MS: "60000",
+      LUNKR_FEEDBACK_RECEIPT_MAX: "25",
+    });
+    expect(config.feedbackReceiptTtlMs).toBe(60_000);
+    expect(config.feedbackReceiptMax).toBe(25);
+    expect(() => loadLunkrConfig({
+      LUNKR_FEEDBACK_RECEIPT_TTL_MS: "59999",
+    })).toThrow("介于");
+    expect(() => loadLunkrConfig({
+      LUNKR_FEEDBACK_RECEIPT_MAX: "100001",
+    })).toThrow("介于");
   });
 });

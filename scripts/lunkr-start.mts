@@ -55,6 +55,7 @@ const bridge = new LunkrPseBridge(config, {
   formatAnswer: (execution) => formatMcpText(execution.result),
   formatContextAnswer: (execution) => execution.result.answer,
   describeResult: (execution) => ({
+    requestId: execution.requestId,
     scope: execution.result.scope,
     status: execution.result.status,
     retryable: execution.retryable,
@@ -73,6 +74,7 @@ const bridge = new LunkrPseBridge(config, {
       execution.retainedSynthesizedSegmentCount,
     removedSegmentCount: execution.removedSegmentCount,
     historicalGateReason: execution.historicalGateReason,
+    answerCardMatch: execution.answerCardMatch,
   }),
   sendText: (peerUid, text) => api.sendText(peerUid, text),
   sendTextFile: (peerUid, title, content, caption) =>

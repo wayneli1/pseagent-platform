@@ -25,7 +25,15 @@ export interface StoredLunkrSession {
   readonly lastVerifiedAt: string;
 }
 
-export type DirectCommand = "help" | "new";
+import type { FeedbackClassification } from "@pseagent/knowledge-governance-contracts";
+
+export type DirectCommand = "help" | "new" | "feedback";
+
+export interface FeedbackCommand {
+  readonly questionId: number;
+  readonly classification: FeedbackClassification;
+  readonly comment: string;
+}
 
 export interface LunkrDirectMessage {
   readonly id: string;
@@ -35,6 +43,7 @@ export interface LunkrDirectMessage {
   readonly text: string;
   readonly hasAttachments: boolean;
   readonly command?: DirectCommand;
+  readonly feedback?: FeedbackCommand;
 }
 
 export interface LunkrApiEnvelope<T = unknown> {
