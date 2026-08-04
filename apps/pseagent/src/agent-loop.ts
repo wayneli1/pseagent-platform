@@ -356,11 +356,11 @@ async function runKnowledgeAgentCore(
               pages: forcedRead.input.pages,
             });
             if (turn < maxTurns) continue;
-            recordDiagnostic(input.trace, {
-              event: "stop",
-              reason: "turn_budget_exhausted",
-            });
-            return unavailableResult(input.scope);
+            normalizedAction = closeEvidenceReviewAtRetrievalBoundary(
+              normalizedAction,
+              pendingReviews,
+              state,
+            );
           }
         }
       }

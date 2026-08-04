@@ -597,6 +597,7 @@ describe("analyzeObligationSource", () => {
     "要怎样做才能提升赢率",
     "应该如何建立决策链",
     "应当怎么控制 POC 范围",
+    "售前应该怎样控制范围又不伤害关系",
   ])("recognizes modal procedure questions as synthesis: %s", (sourceText) => {
     const analysis = analyzeObligationSource(sourceText);
     expect(analysis.requiresDirectEvidence).toBe(false);

@@ -193,7 +193,7 @@ const SYNTHESIS_CHANGE_WORD =
 const SYNTHESIS_CHANGE_GOVERNOR =
   /^(?:(?:如何|怎样|怎么)\s*)?(?:提升|优化|改造|升级|扩容|适配|迁移|调整|实施|处置)\S*|^.+(?:如何|怎样|怎么|需要|应当|应该)(?:提升|优化|改造|升级|扩容|适配|迁移|调整)\S*$/u;
 const SYNTHESIS_PROCEDURE_GOVERNOR =
-  /^(?:(?:要|应该|应当)\s*)?(?:如何|怎样|怎么)\s*\S+/u;
+  /^(?:(?:要|应该|应当)\s*)?(?:如何|怎样|怎么)\s*\S+|^[\p{Script=Han}A-Za-z0-9/]{1,12}(?:要|应该|应当)(?:如何|怎样|怎么)\s*\S+/u;
 const SYNTHESIS_DIAGNOSIS_PREDICATE = /(?:能力)?是否足够$|^是否(?:应该|应当|可以|能够|具备).*(?:推进|实施|执行|条件)/u;
 const INCOMPLETE_DIAGNOSTIC_GOVERNOR = /^(?:评估|分析|诊断|预测|判断)$/u;
 const INCOMPLETE_PROCEDURE_GOVERNOR = /^(?:如何|怎样|怎么)[\p{Script=Han}]{1,2}$/u;

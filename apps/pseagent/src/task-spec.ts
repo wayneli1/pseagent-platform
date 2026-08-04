@@ -498,7 +498,10 @@ export class ModelTaskCompiler implements TaskCompiler {
         });
         const taskSpec = repairProfessionalDirectDomains(
           input.scopeHint,
-          input.resolvedQuestion.standaloneQuestion,
+          [
+            input.resolvedQuestion.standaloneQuestion,
+            ...input.resolvedQuestion.inheritedSubjects,
+          ].join(" "),
           repairExplicitEvidenceConditions(
             input.resolvedQuestion.standaloneQuestion,
             repairNumericOpportunityForecastPolicy(
@@ -583,7 +586,7 @@ export class ModelTaskCompiler implements TaskCompiler {
 }
 
 const DETERMINISTIC_SYNTHESIS_OVERRIDE_PATTERN =
-  /(?:结合客户现状|(?:如何|怎样|怎么|应该怎样).{0,24}设计|(?:重新)?评估(?:项目|商机|机会).*(?:下一步|建议|行动))/u;
+  /(?:结合客户现状|(?:如何|怎样|怎么|应该怎样).{0,24}设计|(?:重新)?评估(?:项目|商机|机会).*(?:下一步|建议|行动)|(?:^|[，,；;。])[^，,；;。]{0,12}(?:应该|应当)(?:如何|怎样|怎么)\S+)/u;
 const DETERMINISTIC_GENERAL_DOMAIN_PATTERN =
   /(?:售前|销售|商机|赢率|胜率|成交|机会|项目评估|评估项目|下一步|预算|竞争|决策链|客户信息|采购|POC)/iu;
 const DETERMINISTIC_PROFESSIONAL_DOMAIN_PATTERN =

@@ -1770,7 +1770,7 @@ describe("ModelTaskCompiler", () => {
     const result = await compiler.compile({
       resolvedQuestion: {
         rawQuestion: "只看刚才对比中的安全和信创两部分，给出可核验的能力、限制和 POC 验证项。",
-        standaloneQuestion: question,
+        standaloneQuestion: "只看刚才对比中的安全和信创两部分，给出可核验的能力、限制和 POC 验证项。",
         contextUsed: true,
         inheritedSubjects: ["Exchange 与 Coremail 对比"],
         corrections: [],
@@ -1787,6 +1787,52 @@ describe("ModelTaskCompiler", () => {
       deliverable.obligations).every((obligation) =>
         obligation.evidencePolicy !== "direct" ||
         obligation.domains.includes("coremail-professional"))).toBe(true);
+  });
+
+  it("keeps a customer premise plus actor-prefixed procedure in synthesis", async () => {
+    const question = "客户在 POC 中不断要求免费增加非标项，售前应该怎样控制范围又不伤害关系？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "POC 范围与客户关系",
+      entities: [{ id: "E1", label: "客户", role: "subject", sourceText: "客户" }],
+      deliverables: [{
+        id: "D1",
+        label: "控制范围又不伤害关系",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "控制范围又不伤害关系",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "general",
+      knowledgeContext: {
+        purpose: "售前知识边界",
+        schema: "知识结构",
+        planningOverview: "范围控制与客户沟通",
+      },
+    });
+
+    expect(result.deliverables[0]?.obligations[0]?.evidencePolicy).toBe("synthesis");
   });
 
   it("derives explicit conflict state without client-specific rules", async () => {
