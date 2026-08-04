@@ -608,6 +608,10 @@ export class AnswerService {
         ...(merged.coverageGaps === undefined
           ? {}
           : { coverageGaps: merged.coverageGaps }),
+        requirementBindings: merged.bindings,
+        ...(merged.verification === undefined
+          ? {}
+          : { verification: merged.verification }),
       },
     );
     return await this.finishPrimary({

@@ -197,6 +197,9 @@ export async function runKnowledgeAgent(
         ...(detailed.coverageGaps === undefined
           ? {}
           : { coverageGaps: detailed.coverageGaps }),
+        ...(detailed.verification === undefined
+          ? {}
+          : { verification: detailed.verification }),
       });
 }
 

@@ -9,7 +9,14 @@ import type {
   Scope,
 } from "./contracts.js";
 import type { CoverageGap } from "./coverage-gap.js";
+import type { CoverageVerificationReport } from "./coverage-verifier.js";
 import type { EvidenceLedger } from "./evidence-ledger.js";
+import {
+  buildStructuredAnswer,
+  renderStructuredAnswer,
+  type StructuredAnswerBinding,
+} from "./structured-answer.js";
+import type { KnowledgeDomain } from "./task-spec.js";
 
 export const NOT_COVERED_TEXT = "当前知识库暂未覆盖该问题，暂时无法给出可靠答案。";
 export const KNOWLEDGE_UNAVAILABLE_TEXT = "知识问答服务暂时不可用，请稍后重试。";
@@ -19,6 +26,8 @@ export interface KnowledgeResponseContext {
   readonly evidenceLedgers?: readonly EvidenceLedger[];
   readonly coverageGaps?: readonly CoverageGap[];
   readonly question?: string;
+  readonly requirementBindings?: readonly StructuredAnswerBinding[];
+  readonly verification?: CoverageVerificationReport;
 }
 
 export function deriveStatus(
@@ -42,6 +51,7 @@ export function formatKnowledgeFinal(
   const { knowledgeCoverage, caseAssessability } = deriveAnswerAxes(
     action,
     context.evidenceLedgers,
+    context.requirementBindings,
   );
   const status = knowledgeCoverage === "none" && caseAssessability === "insufficient"
     ? "partially_answered"
@@ -50,9 +60,19 @@ export function formatKnowledgeFinal(
   const evidenceConditionSection = formatEvidenceConditionSection(
     context.evidenceLedgers ?? [],
   );
+  const structuredAnswer = buildStructuredAnswer(action, {
+    ...(context.requirementBindings === undefined
+      ? {}
+      : { bindings: context.requirementBindings }),
+    ...(context.verification === undefined
+      ? {}
+      : { verification: context.verification }),
+    defaultDomain: domainForScope(scope),
+  });
+  const renderedSupportedAnswer = renderStructuredAnswer(structuredAnswer);
   const userContextSection = formatUserProvidedContext(
     context.question,
-    action.requirements.map((requirement) => requirement.answer).join("\n"),
+    renderedSupportedAnswer,
   );
   const relatedContext = action.requirements
     .flatMap((requirement) => requirement.relatedContext ?? [])
@@ -87,14 +107,9 @@ export function formatKnowledgeFinal(
       references: [...references],
     };
   }
-  const supportedAnswer = action.requirements
-    .filter((requirement) => requirement.coverage !== "none")
-    .map((requirement) => requirement.answer.trim())
-    .filter(Boolean)
-    .join("\n\n");
   const answer = [
     userContextSection,
-    supportedAnswer,
+    renderedSupportedAnswer,
     evidenceConditionSection,
     gapSection,
   ]
@@ -108,6 +123,14 @@ export function formatKnowledgeFinal(
     answer,
     references: status === "not_covered" && answer === "" ? [] : references,
   });
+}
+
+function domainForScope(
+  scope: "professional" | "general",
+): KnowledgeDomain {
+  return scope === "professional"
+    ? "coremail-professional"
+    : "presales-general";
 }
 
 function formatUserProvidedContext(
@@ -167,15 +190,37 @@ function formatEvidenceConditionSection(
 export function deriveAnswerAxes(
   action: FinalAction,
   evidenceLedgers: readonly EvidenceLedger[] = [],
+  requirementBindings: readonly StructuredAnswerBinding[] = [],
 ): {
   readonly knowledgeCoverage: KnowledgeCoverage;
   readonly caseAssessability: CaseAssessability;
 } {
   const units = evidenceLedgers.flatMap((ledger) => ledger.units);
+  const requiredRequirementIds = new Set(
+    requirementBindings
+      .filter((binding) => binding.required !== false)
+      .map((binding) => binding.globalRequirementId),
+  );
+  const requiredObligations = new Set(
+    requirementBindings
+      .filter((binding) => binding.required !== false)
+      .map((binding) => `${binding.domain}\u0000${binding.obligationId}`),
+  );
   const knowledgeCoverages = units.length === 0
-    ? action.requirements.map((requirement) => requirement.coverage)
+    ? action.requirements
+        .filter((requirement) =>
+          requiredRequirementIds.size === 0 ||
+          requiredRequirementIds.has(requirement.id))
+        .map((requirement) => requirement.coverage)
     : units
-        .filter((unit) => unit.inputState === "not_applicable")
+        .filter((unit) =>
+          unit.inputState === "not_applicable" &&
+          (
+            requiredObligations.size === 0 ||
+            requiredObligations.has(
+              `${unit.binding.domain}\u0000${unit.binding.obligationId}`,
+            )
+          ))
         .map((unit) => unit.verification.coverage);
   const knowledgeCoverage = aggregateCoverage(knowledgeCoverages);
 

@@ -177,6 +177,74 @@ describe("knowledge response", () => {
     expect(result.references).toEqual([reference]);
   });
 
+  it("uses the structured renderer to deduplicate cross-obligation text", () => {
+    const result = formatKnowledgeFinal("professional", {
+      action: "final",
+      requirements: [
+        {
+          id: "R1",
+          coverage: "complete",
+          answer: "1. 支持标准协议 [1]。",
+          citations: [1],
+        },
+        {
+          id: "R2",
+          coverage: "complete",
+          answer: "支持标准协议 [1]。\n2. 此外，需核对适用版本 [1]。",
+          citations: [1],
+        },
+      ],
+      citations: [1],
+    }, [reference]);
+
+    expect(result.answer.match(/支持标准协议/gu)).toHaveLength(1);
+    expect(result.answer).toContain("- 需核对适用版本 [1]。");
+    expect(result.answer).not.toContain("1. 支持标准协议");
+    expect(result.answer).not.toContain("2. 此外");
+  });
+
+  it("does not downgrade coverage for an optional uncovered obligation", () => {
+    const result = formatKnowledgeFinal("professional", {
+      action: "final",
+      requirements: [
+        {
+          id: "R1",
+          coverage: "complete",
+          answer: "必答项已覆盖 [1]。",
+          citations: [1],
+        },
+        {
+          id: "R2",
+          coverage: "none",
+          answer: "可选项未覆盖。",
+          citations: [],
+        },
+      ],
+      citations: [1],
+    }, [reference], {
+      requirementBindings: [
+        {
+          globalRequirementId: "R1",
+          deliverableId: "D1",
+          obligationId: "O1",
+          domain: "coremail-professional",
+        },
+        {
+          globalRequirementId: "R2",
+          deliverableId: "D1",
+          obligationId: "O2",
+          domain: "coremail-professional",
+          required: false,
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      status: "answered",
+      knowledgeCoverage: "complete",
+    });
+  });
+
   it.each([
     {
       question: "已知客户现网是 Exchange、约 1.5 万用户、计划 Q4 采购、预算未批、竞争对手已进场，请重新评估项目并给出下一步。",
