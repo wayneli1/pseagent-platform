@@ -141,13 +141,35 @@ pub fn is_navigation_path(relative: &str) -> bool {
 }
 
 fn parse_frontmatter(text: &str) -> Result<(Frontmatter, &str), EngineError> {
-    let Some(rest) = text.strip_prefix("---\n") else {
+    let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
         return Ok((Frontmatter::default(), text));
     };
-    let Some(end) = rest.find("\n---\n") else {
+    let Some((end, closing_length)) = ["\r\n---\r\n", "\r\n---\n", "\n---\r\n", "\n---\n"]
+        .into_iter()
+        .filter_map(|closing| rest.find(closing).map(|end| (end, closing.len())))
+        .min_by_key(|(end, _)| *end)
+    else {
         return Err(EngineError::InvalidDocument);
     };
-    let frontmatter =
-        serde_yaml_ng::from_str(&rest[..end]).map_err(|_| EngineError::InvalidDocument)?;
-    Ok((frontmatter, &rest[end + 5..]))
+    let source = &rest[..end];
+    let frontmatter = match serde_yaml_ng::from_str(source) {
+        Ok(frontmatter) => frontmatter,
+        Err(_) if !declares_governed_answer_card(source) => Frontmatter {
+            review_status: "invalid_metadata".to_owned(),
+            ..Frontmatter::default()
+        },
+        Err(_) => return Err(EngineError::InvalidDocument),
+    };
+    Ok((frontmatter, &rest[end + closing_length..]))
+}
+
+fn declares_governed_answer_card(frontmatter: &str) -> bool {
+    frontmatter.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix("card_schema_version:")
+            .is_some()
+    })
 }
