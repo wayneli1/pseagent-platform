@@ -234,7 +234,8 @@ export type OpsJobType =
   | "validate_repair_draft"
   | "publish_repair"
   | "publish_repair_batch"
-  | "rollback_repair";
+  | "rollback_repair"
+  | "rollback_repair_batch";
 
 export interface OpsJob {
   readonly jobId: string;
