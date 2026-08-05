@@ -1,7 +1,7 @@
 import "./styles.css";
 import { ApiError, OpsApiClient } from "./api.js";
 import { badge, h, json, shortId, time } from "./format.js";
-import {issueStatusHelp,label,option} from "./labels.js";
+import {errorMessage,issueStatusHelp,label,option} from "./labels.js";
 import type {
   Audit,
   AnswerReviewDetail,
@@ -640,7 +640,7 @@ function viewFromHash(): ViewName {
 }
 function message(error: unknown) {
   return error instanceof ApiError
-    ? `${error.status} · ${error.code}`
+    ? errorMessage(error.code)
     : error instanceof Error
       ? error.message
       : "操作失败";

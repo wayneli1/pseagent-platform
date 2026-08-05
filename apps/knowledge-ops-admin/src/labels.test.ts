@@ -1,5 +1,5 @@
 import {describe,expect,it} from "vitest";
-import {isKnownLabel,label} from "./labels.js";
+import {errorMessage,isKnownLabel,label} from "./labels.js";
 
 describe("管理台中文状态词典",()=>{
   it.each([
@@ -10,4 +10,5 @@ describe("管理台中文状态词典",()=>{
     ["user_incorrect","用户报告答案错误"],["judgement_conflict","用户与系统判断冲突"],["review_error","自动复查异常"],
   ])("将 %s 显示为中文",(value,expected)=>{expect(label(value)).toBe(expected);expect(isKnownLabel(value)).toBe(true);});
   it("保留未知技术值以便审计排查",()=>expect(label("future_status")).toBe("future_status"));
+  it("把业务错误翻译成可行动提示",()=>{expect(errorMessage("issue_owner_required")).toBe("请先填写负责人，再进入该处理阶段");expect(errorMessage("future_error")).toBe("操作失败（future_error）");});
 });

@@ -14,11 +14,19 @@ const LABELS: Readonly<Record<string,string>>={
   professional:"Coremail 专业库",general:"售前通用库",coremail:"Coremail 专业库",
   p0:"紧急",p1:"高",p2:"普通",p3:"低",
 };
+const ERROR_MESSAGES:Readonly<Record<string,string>>={
+  issue_owner_required:"请先填写负责人，再进入该处理阶段",
+  invalid_issue_transition:"请按“分派 → 修订 → 验证 → 解决”的顺序推进",
+  permission_denied:"当前账号没有执行此操作的权限",
+  authentication_required:"登录已失效，请重新输入访问令牌",
+  creator_cannot_self_approve:"创建人不能审核自己创建的修订",
+};
 
 export function label(value:string):string{return LABELS[value]??value;}
 export function labelWithCode(value:string):string{return `${label(value)}（${value}）`;}
 export function option(value:string,current?:string):string{return`<option value="${escapeAttribute(value)}"${value===current?" selected":""}>${escapeAttribute(label(value))}</option>`;}
 export function isKnownLabel(value:string):boolean{return Object.hasOwn(LABELS,value);}
+export function errorMessage(value:string):string{return ERROR_MESSAGES[value]??`操作失败（${value}）`;}
 
 export function issueStatusHelp(value:string):string{return({open:"等待负责人接单",assigned:"已明确负责人，等待开始",in_progress:"正在修订答案卡或知识",validating:"修订完成，等待回归验证",resolved:"修复已验证并关闭",dismissed:"误报、重复或无需处理"} as Readonly<Record<string,string>>)[value]??"";}
 
