@@ -17,6 +17,8 @@ import type {
   IssueStatus,
   OpsJob,
   RegressionRun,
+  RepairBatch,
+  RepairBatchDetail,
   RepairDraft,
   RepairProposal,
   RepairPublication,
@@ -31,6 +33,7 @@ const root: HTMLDivElement = rootElement;
 const nav: { id: ViewName; label: string; icon: string }[] = [
   { id: "dashboard", label: "总览", icon: "⌂" },
   { id: "issues", label: "问题中心", icon: "!" },
+  { id: "batches", label: "待发布", icon: "⇧" },
   { id: "feedback", label: "原始记录", icon: "◎" },
   { id: "cards", label: "答案卡", icon: "▤" },
   { id: "regressions", label: "回归评测", icon: "✓" },
@@ -46,6 +49,7 @@ let repairIssueId=repairIdFromHash();
 let activeRepairDraft:RepairDraft|undefined;
 let repairSaveTimer:ReturnType<typeof setTimeout>|undefined;
 let repairRefreshTimer:ReturnType<typeof setTimeout>|undefined;
+const selectedRepairDraftIds=new Set<string>();
 const ISSUE_PAGE_SIZE=25;
 let issueFilters:{status:"actionable"|"all"|IssueStatus;priority:"all"|IssuePriority;offset:number}={status:"actionable",priority:"all",offset:0};
 
@@ -86,6 +90,9 @@ async function loadCurrent() {
       case "repair":
         await renderRepairWorkbench();
         break;
+      case "batches":
+        await renderRepairBatches();
+        break;
       case "feedback":
         await renderFeedback();
         break;
@@ -117,7 +124,7 @@ async function renderDashboard() {
   const automated=summary.answerReviews.total===0?0:Math.round((summary.answerReviews.passed/summary.answerReviews.total)*100);
   const actionRows=issues.items.map((item)=>issueRow(item,true));
   content(
-    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>正常回答由系统收敛；后台管理员只关注高风险、超时和等待验证的问题组。</p></div><button class="button primary" data-nav="issues">进入问题中心</button></div><div class="grid metrics operations-metrics">${metric("紧急问题",summary.issues.urgent,"P0 / P1 优先处理",summary.issues.urgent?"danger":"neutral")}${metric("已经超时",summary.issues.overdue,"超过处理时限",summary.issues.overdue?"danger":"neutral")}${metric("等待验证",summary.issues.validating,"修订后需要回归验证",summary.issues.validating?"warning":"neutral")}${metric("待处理问题",summary.issues.actionable,"已合并重复反馈","warning")}${metric("自动复查通过",summary.answerReviews.passed,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${issues.total} 个问题组，已按风险和最近发生时间排序</span></div><button class="button small" data-nav="issues">查看全部</button></div>${actionRows.length?table(["优先级","问题类型","状态","影响","处理时限","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>问题优先级</h2><span class="muted">一个问题组可包含多位用户的重复反馈</span></div></div><div class="panel-body stack">${bars(summary.issues.byPriority)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
+    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>正常回答由系统自动收敛；管理员重点确认高风险问题、修订质量和待发布批次。</p></div><div><button class="button" data-nav="issues">进入问题中心</button> <button class="button primary" data-nav="batches">查看待发布</button></div></div><div class="grid metrics operations-metrics">${metric("紧急问题",summary.issues.urgent,"P0 / P1 优先处理",summary.issues.urgent?"danger":"neutral")}${metric("待发布修订",summary.issues.readyToPublish,"已验证，可组成批次",summary.issues.readyToPublish?"warning":"neutral")}${metric("正在验证",summary.issues.validating,"可同时处理其他修订",summary.issues.validating?"warning":"neutral")}${metric("发布失败批次",summary.repairBatches.failed,"需要检查 Git 或回归结果",summary.repairBatches.failed?"danger":"neutral")}${metric("自动复查通过",summary.answerReviews.passed,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${issues.total} 个问题组，已按风险和最近发生时间排序</span></div><button class="button small" data-nav="issues">查看全部</button></div>${actionRows.length?table(["优先级","问题类型","状态","影响","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>问题优先级</h2><span class="muted">一个问题组可包含多位用户的重复反馈</span></div></div><div class="panel-body stack">${bars(summary.issues.byPriority)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
       jobs
         .slice(0, 3)
         .map((x) => `${badge(x.status)} ${h(label(x.type))}`)
@@ -136,9 +143,20 @@ async function renderIssues(){
   content(`<div class="page-intro"><div><h2>只管理需要行动的问题</h2><p>系统自动合并重复反馈和复查异常；原始问答仅在证据记录中按需查看。</p></div></div>
     <div class="notice workflow-note"><strong>后台管理员负责：</strong>确认问题类型、完成修订、执行回归验证并关闭问题。系统不会因为用户点了“答案错误”就直接改写线上知识。</div>
     <section class="panel mt-16"><div class="panel-head"><div><h2>问题队列</h2><span class="muted">共 ${page.total} 个问题组</span></div></div>
-    <div class="toolbar issue-toolbar"><select id="issue-status" class="button" aria-label="按处理阶段筛选"><option value="actionable"${issueFilters.status==="actionable"?" selected":""}>只看待处理</option><option value="all"${issueFilters.status==="all"?" selected":""}>全部阶段</option>${(["open","in_progress","validating","resolved","dismissed"] as IssueStatus[]).map((value)=>option(value,issueFilters.status)).join("")}</select><select id="issue-priority" class="button" aria-label="按优先级筛选"><option value="all"${issueFilters.priority==="all"?" selected":""}>全部优先级</option>${(["p0","p1","p2","p3"] as IssuePriority[]).map((value)=>option(value,issueFilters.priority)).join("")}</select><span class="muted">P0 2小时 · P1 8小时 · P2 24小时 · P3 72小时</span></div>
-    ${page.items.length?table(["优先级","问题类型","状态","影响","处理时限","最近发生","下一步"],page.items.map((item)=>issueRow(item,false))):empty("当前筛选条件下没有问题")}
+    <div class="toolbar issue-toolbar"><select id="issue-status" class="button" aria-label="按处理阶段筛选"><option value="actionable"${issueFilters.status==="actionable"?" selected":""}>只看待处理</option><option value="all"${issueFilters.status==="all"?" selected":""}>全部阶段</option>${(["open","in_progress","validating","resolved","dismissed"] as IssueStatus[]).map((value)=>option(value,issueFilters.status)).join("")}</select><select id="issue-priority" class="button" aria-label="按优先级筛选"><option value="all"${issueFilters.priority==="all"?" selected":""}>全部优先级</option>${(["p0","p1","p2","p3"] as IssuePriority[]).map((value)=>option(value,issueFilters.priority)).join("")}</select><span class="muted">重复反馈已自动合并；优先看影响用户多、风险高的问题</span></div>
+    ${page.items.length?table(["优先级","问题类型","状态","影响","最近发生","下一步"],page.items.map((item)=>issueRow(item,false))):empty("当前筛选条件下没有问题")}
     <div class="pagination"><span class="muted">显示 ${start}–${end} / ${page.total}</span><div><button class="button small" data-action="issue-page-prev"${issueFilters.offset===0?" disabled":""}>上一页</button> <button class="button small" data-action="issue-page-next"${issueFilters.offset+ISSUE_PAGE_SIZE>=page.total?" disabled":""}>下一页</button></div></div></section>`);
+}
+async function renderRepairBatches(){
+  const [ready,batches]=await Promise.all([api.get<RepairDraft[]>("/v1/repair-drafts/ready"),api.get<RepairBatch[]>("/v1/repair-batches")]),readyIds=new Set(ready.map((item)=>item.draftId));
+  for(const id of selectedRepairDraftIds)if(!readyIds.has(id))selectedRepairDraftIds.delete(id);
+  const rows=ready.map((draft)=>`<tr><td><input type="checkbox" data-batch-draft="${h(draft.draftId)}" aria-label="选择 ${h(draft.proposal?.title??draft.draftId)}"${selectedRepairDraftIds.has(draft.draftId)?" checked":""}></td><td><strong>${h(draft.proposal?.title??"未命名修订")}</strong><br><span class="muted">${h(draft.proposal?.canonicalQuestion??"—")}</span></td><td>${h(domainName(draft.targetDomain??draft.proposal?.targetDomain??"—"))}</td><td class="mono">${h(draft.targetPath??draft.proposal?.targetPath??"—")}</td><td>${time(draft.updatedAt)}</td><td><button class="button small" data-action="open-repair" data-id="${h(draft.issueId)}">查看修订</button></td></tr>`);
+  const batchRows=batches.map((batch)=>`<tr data-action="repair-batch-detail" data-id="${h(batch.batchId)}"><td class="mono">${shortId(batch.batchId,12)}</td><td>${badge(batch.status)}</td><td>${batch.itemCount} 项</td><td>${batch.domains.map(domainName).map(h).join("<br>")}</td><td>${batch.errorCode?`<span class="danger-text">${h(errorMessage(batch.errorCode))}</span>`:batch.status==="published"?"已写入并同步 GitHub":"—"}</td><td>${time(batch.createdAt)}</td></tr>`);
+  content(`<div class="page-intro"><div><h2>把已验证修订组成一次发布</h2><p>草稿生成和验证可以并行；这里只汇总已经通过验证、等待管理员最终发布的内容。</p></div><button class="button" data-nav="issues">继续处理问题</button></div>
+    <div class="notice workflow-note"><strong>发布规则：</strong>同一知识库的多项修订会合并成一个 Git 提交并一次推送到 GitHub；两个知识库分别提交。任何回归或推送失败都会阻止整批生效，已推送部分会自动补偿回滚。</div>
+    <section class="panel mt-16"><div class="panel-head"><div><h2>待发布池</h2><span class="muted">已选择 <strong id="batch-selected-count">${selectedRepairDraftIds.size}</strong> / ${ready.length} 项</span></div><button class="button primary" data-action="publish-repair-batch"${selectedRepairDraftIds.size===0?" disabled":""}>发布所选并同步 GitHub</button></div>${rows.length?table(["选择","标准答案","知识库","写入页面","验证完成","操作"],rows):empty("暂无待发布修订；先在问题中心完成草稿生成和自动验证")}</section>
+    <section class="panel mt-16"><div class="panel-head"><div><h2>最近发布批次</h2><span class="muted">点击一行查看每个知识库的同步结果</span></div></div>${batchRows.length?table(["批次","状态","修订数","知识库","结果","创建时间"],batchRows):empty("尚无发布批次")}</section>`);
+  if(batches.some((batch)=>batch.status==="queued"||batch.status==="publishing"))repairRefreshTimer=setTimeout(()=>{if(current==="batches")void renderRepairBatches().catch(handleApiError);},1_800);
 }
 async function renderRepairWorkbench(){
   if(!repairIssueId){location.hash="issues";return;}
@@ -149,7 +167,7 @@ async function renderRepairWorkbench(){
     Promise.all(issue.occurrences.slice(0,8).map(async(occurrence)=>occurrence.sourceType==="feedback"?{kind:"feedback" as const,value:await api.get<FeedbackDetail>(`/v1/feedback/${encodeURIComponent(occurrence.sourceId)}`)}:{kind:"answer_review" as const,value:await api.get<AnswerReviewDetail>(`/v1/answer-reviews/${encodeURIComponent(occurrence.sourceId)}`)})),
   ]);
   const latestValidation=validations[0],latestPublication=publications[0],action=repairPrimaryAction(draft),step=repairStep(draft?.status),published=draft?.status==="published";
-  const primaryAction=action.id==="generate"||action.id==="retry"?"repair-generate":action.id==="validate"?"repair-validate":action.id==="publish"?"repair-publish":"";
+  const primaryAction=action.id==="generate"||action.id==="retry"?"repair-generate":action.id==="validate"?"repair-validate":action.id==="batch"?"repair-add-to-batch":"";
   const evidenceHtml=evidenceRecords.map((record)=>{const value=record.value,user=value.userDisplayName??"未获取到聊天名";if(record.kind==="feedback"){const feedback=value as FeedbackDetail;return`<article class="evidence-card"><div class="evidence-head"><strong>${h(user)}</strong>${badge(feedback.classification)}</div><h4>原始问题</h4><div class="content-box">${h(feedback.question)}</div><h4>原始回答</h4><div class="content-box">${h(feedback.answer)}</div>${feedback.comment?`<h4>用户补充</h4><div class="content-box">${h(feedback.comment)}</div>`:""}</article>`;}const review=value as AnswerReviewDetail;return`<article class="evidence-card"><div class="evidence-head"><strong>${h(user)}</strong>${badge(review.verdict)}</div><h4>自动复查结论</h4><div class="content-box">${h(review.result?.summary??"复查尚未完成")}</div>${review.result?.defects.length?table(["程度","问题","依据"],review.result.defects.map((item)=>`<tr><td>${badge(item.severity)}</td><td>${h(item.summary)}</td><td>${h(item.evidence)}</td></tr>`)):""}</article>`;}).join("");
   const validationHtml=renderRepairValidation(latestValidation),proposalHtml=draft?.proposal?renderRepairProposal(draft):renderRepairState(draft),originalAnswer=evidenceRecords[0]?.value.answer,diffHtml=shouldShowRepairDiff(draft,originalAnswer)?`<section class="panel mt-16"><div class="panel-head"><h2>回答变化预览</h2></div><div class="panel-body"><div class="repair-diff"><div><span>用户当时收到的回答</span><div class="content-box">${h(originalAnswer!)}</div></div><div><span>修订后标准答案</span><div class="content-box repair-answer-preview">${h(draft!.proposal!.answerTemplate)}</div></div></div></div></section>`:"";
   content(`<div class="repair-header"><div><h2>${h(label(issue.category))}</h2><p>${badge(issue.priority)} ${badge(issue.status)} · ${issue.affectedUserCount} 位用户 · ${issue.occurrenceCount} 次重复</p></div><div class="repair-header-status"><span>当前下一步</span><strong>${h(action.label)}</strong></div></div>
@@ -161,19 +179,19 @@ async function renderRepairWorkbench(){
   if(draft&&["generating","validating","publishing"].includes(draft.status))scheduleRepairRefresh();
 }
 
-function repairStepper(currentStep:number,published:boolean){const steps=["确认问题","编辑修订","自动验证","发布生效"];return`<ol class="repair-stepper" aria-label="知识修订进度">${steps.map((title,index)=>{const number=index+1,state=published||number<currentStep?"done":number===currentStep?"active":"pending";return`<li class="${state}"${state==="active"?' aria-current="step"':""}><i>${state==="done"?"✓":number}</i><span>${h(title)}</span></li>`;}).join("")}</ol>`;}
+function repairStepper(currentStep:number,published:boolean){const steps=["确认问题","编辑修订","自动验证","批次发布"];return`<ol class="repair-stepper" aria-label="知识修订进度">${steps.map((title,index)=>{const number=index+1,state=published||number<currentStep?"done":number===currentStep?"active":"pending";return`<li class="${state}"${state==="active"?' aria-current="step"':""}><i>${state==="done"?"✓":number}</i><span>${h(title)}</span></li>`;}).join("")}</ol>`;}
 function renderRepairState(draft:RepairDraft|undefined){if(draft===undefined)return`<div class="empty action-empty"><strong>尚未生成修订草稿</strong><span>Agent 将只使用已校验正式资料，生成客户中立的答案卡建议。</span></div>`;if(draft.status==="generating")return`<div class="repair-progress"><div class="spinner" aria-hidden="true"></div><strong>正在读取问题、复查缺陷和正式证据</strong><span>模型固定为 ${h(draft.model)}，草稿不会影响线上回答。</span></div>`;return`<div class="empty action-empty"><strong>${h(label(draft.status))}</strong><span>${h(errorMessage(draft.errorCode??"repair_draft_unavailable"))}</span></div>`;}
 function renderRepairProposal(draft:RepairDraft){if(!hasCompleteRepairProposal(draft)){const proposal=draft.proposal!;return`<div class="repair-blocked" role="alert"><strong>本次没有生成可用的标准答案</strong><p>${h(proposal.blockingReason??proposal.generationSummary)}</p><span>系统不会把空内容写入知识库。点击下方“重新生成完整草稿”，将按当前答案卡目录和正式证据重新处理。</span></div>`;}return renderRepairProposalForm(draft);}
 function renderRepairProposalForm(draft:RepairDraft){const proposal=draft.proposal!,editable=isRepairEditable(draft.status),disabled=editable?"":" disabled";return`<form id="repair-proposal-form" data-id="${h(draft.draftId)}"><div class="repair-target"><div><span>根因</span><strong>${h(label(proposal.rootCause))}</strong></div><div><span>修订对象</span><strong>${h(label(proposal.targetKind))}</strong></div><div><span>写入位置</span><strong>${h(domainName(proposal.targetDomain??"—"))}</strong></div></div><div class="field"><label for="repair-title">答案卡标题</label><input id="repair-title" name="title" value="${h(proposal.title)}" maxlength="500" required${disabled}></div><div class="field"><label for="repair-question">标准问题</label><textarea id="repair-question" name="canonicalQuestion" required${disabled}>${h(proposal.canonicalQuestion)}</textarea></div><div class="field"><label for="repair-aliases">同义问法与口语问法</label><textarea id="repair-aliases" name="aliases"${disabled}>${h(proposal.aliases.join("\n"))}</textarea><div class="field-help">每行一个问法；系统会用它们提升相同问题和口语表达的命中率。</div></div><div class="field"><label for="repair-answer">修订后的标准答案</label><textarea id="repair-answer" class="repair-answer" name="answerTemplate" required${disabled}>${h(proposal.answerTemplate)}</textarea></div><div class="repair-section-title"><h3>必答项和证据边界</h3><span>不能删除正式答案卡已有的安全约束</span></div>${proposal.obligations.map((item)=>`<fieldset class="obligation-card" data-obligation data-id="${h(item.id)}"><legend>${h(item.id)} · ${h(item.label)}</legend><div class="field"><label>必答项名称</label><input aria-label="${h(item.id)} 必答项名称" data-field="label" value="${h(item.label)}" required${disabled}></div><div class="grid two-col"><div class="field"><label>必须覆盖的概念</label><textarea aria-label="${h(item.id)} 必须覆盖的概念" data-field="requiredConcepts"${disabled}>${h(item.requiredConcepts.join("\n"))}</textarea></div><div class="field"><label>禁止出现的承诺</label><textarea aria-label="${h(item.id)} 禁止出现的承诺" data-field="forbiddenClaims"${disabled}>${h(item.forbiddenClaims.join("\n"))}</textarea></div></div><div class="field"><label>正式证据路径</label><textarea aria-label="${h(item.id)} 正式证据路径" data-field="preferredEvidencePaths"${disabled}>${h(item.preferredEvidencePaths.join("\n"))}</textarea></div><input type="hidden" data-field="evidencePolicy" value="${h(item.evidencePolicy)}"></fieldset>`).join("")}<div class="repair-section-title"><h3>五类验证问题</h3><span>标准、同义、口语、追问和边界负例各一条</span></div><div class="regression-grid">${proposal.regressionQuestions.map((item)=>`<label><span>${h(label(item.kind))}</span><textarea data-regression-kind="${h(item.kind)}" required${disabled}>${h(item.question)}</textarea></label>`).join("")}</div><div class="field"><label for="repair-summary">修订说明</label><textarea id="repair-summary" name="generationSummary"${disabled}>${h(proposal.generationSummary)}</textarea></div></form>`;}
 function renderRepairValidation(validation:RepairValidation|undefined){if(validation===undefined)return empty("提交草稿后，系统会在隔离环境执行五类验证");if(validation.status==="queued"||validation.status==="running")return`<div class="repair-progress compact"><div class="spinner" aria-hidden="true"></div><strong>${h(label(validation.status))}</strong><span>正在检查 Schema、证据、命中、必答项和禁答主张。</span></div>`;const rows=validation.result?.targeted??[];return`<div class="validation-summary ${validation.status}"><strong>${validation.status==="passed"?"五类问题全部通过":"验证未通过，已退回修订"}</strong><span>${validation.passedCases} / ${validation.totalCases} 项通过</span></div>${rows.length?table(["问题类型","验证问题","结论","说明"],rows.map((item)=>`<tr><td>${badge(item.kind)}</td><td>${h(item.question)}</td><td>${badge(item.passed?"passed":"failed")}</td><td>${h(item.assessment?.explanation??item.review?.summary??"确定性检查未通过")}</td></tr>`)):""}${validation.errorCode?`<div class="notice error mt-16">${h(errorMessage(validation.errorCode))}</div>`:""}`;}
-function repairActionHelp(draft:RepairDraft|undefined){if(!draft)return"只生成运营草稿，不会直接改写知识库";if((draft.status==="draft_ready"||draft.status==="validation_failed")&&draft.proposal?.publishable===false)return"将按当前答案卡目录和正式证据重新生成，不会写入空内容";if(draft.status==="draft_ready"||draft.status==="validation_failed")return"修改会自动保存；验证期间正式知识库保持不变";if(draft.status==="ready_to_publish")return"发布成功后，相同问法和同义问法会使用新答案卡";if(draft.status==="published")return"本次修订已写入正式知识库并切换活动快照";return"后台作业执行中，可离开页面后再回来查看";}
+function repairActionHelp(draft:RepairDraft|undefined){if(!draft)return"只生成运营草稿，不会直接改写知识库";if((draft.status==="draft_ready"||draft.status==="validation_failed")&&draft.proposal?.publishable===false)return"将按当前答案卡目录和正式证据重新生成，不会写入空内容";if(draft.status==="draft_ready"||draft.status==="validation_failed")return"修改会自动保存；验证期间可离开页面继续处理其他问题";if(draft.status==="ready_to_publish")return"先进入待发布池，可与其他已验证修订合并后一次推送 GitHub";if(draft.status==="published")return"本次修订已写入正式知识库、同步 GitHub 并切换活动快照";return"后台作业执行中，可离开页面后再回来查看";}
 async function renderFeedback() {
   const [values,reviews] = await Promise.all([api.get<FeedbackMeta[]>("/v1/feedback"),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
   const reviewByRequest=new Map(reviews.map((review)=>[review.requestId,review]));
   const reviewNeedsAction=reviews.filter((item)=>item.processingStatus==="errored"||item.verdict==="fail"||item.verdict==="needs_review"||item.workflowStatus==="open"||item.workflowStatus==="in_review").length;
   const feedbackNeedsAction=values.filter((item)=>item.status!=="resolved"&&item.status!=="rejected"&&item.classification!=="useful").length;
   content(
-    `<div class="notice workflow-note"><strong>管理原则：</strong>默认只显示需要人工介入的记录。复查通过和“回答有帮助”由系统自动收敛；只有人工审核后的答案卡或知识修订才会影响后续回答。</div><section class="panel mt-16"><div class="panel-head"><div><h2>自动复查异常</h2><span class="muted">只处理未通过、需要人工复核和执行异常</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部复查记录</option>${["pending","pass","needs_review","fail"].map((x)=>option(x)).join("")}</select><span class="muted">待处理 ${reviewNeedsAction} 条 · 全部 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","执行状态","复查结论","分数","缺陷","时间"],reviews.map((x)=>{const actionable=x.processingStatus==="errored"||x.verdict==="fail"||x.verdict==="needs_review"||x.workflowStatus==="open"||x.workflowStatus==="in_review";return`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}" data-actionable="${actionable}"${actionable?"":" hidden"}><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${h(x.questionPreview)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`;})):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户负面反馈</h2><span class="muted">默认隐藏“回答有帮助”和已关闭记录</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按反馈状态筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部反馈记录</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x)).join("")}</select><span class="muted">待处理 ${feedbackNeedsAction} 条 · 全部 ${values.length} 条；原问原答仅在详情中解密</span></div>${
+    `<div class="notice workflow-note"><strong>反馈仍然有用：</strong>系统用它合并重复问题、判断影响人数、发现“用户反馈与自动复查冲突”，并作为修订 Agent 的问题证据。反馈本身不会直接改写答案，也不要求管理员逐条办理。</div><section class="panel mt-16"><div class="panel-head"><div><h2>自动复查异常</h2><span class="muted">只处理未通过、需要人工复核和执行异常</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部复查记录</option>${["pending","pass","needs_review","fail"].map((x)=>option(x)).join("")}</select><span class="muted">待处理 ${reviewNeedsAction} 条 · 全部 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","执行状态","复查结论","分数","缺陷","时间"],reviews.map((x)=>{const actionable=x.processingStatus==="errored"||x.verdict==="fail"||x.verdict==="needs_review"||x.workflowStatus==="open"||x.workflowStatus==="in_review";return`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}" data-actionable="${actionable}"${actionable?"":" hidden"}><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${h(x.questionPreview)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`;})):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户负面反馈</h2><span class="muted">默认隐藏“回答有帮助”和已关闭记录</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按反馈状态筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部反馈记录</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x)).join("")}</select><span class="muted">待处理 ${feedbackNeedsAction} 条 · 全部 ${values.length} 条；原问原答仅在详情中解密</span></div>${
       values.length
         ? table(
             [
@@ -333,14 +351,27 @@ async function handleClick(event: MouseEvent) {
     case "issue-detail":
       location.hash=`repair/${encodeURIComponent(target.dataset.id!)}`;
       break;
+    case "open-repair":
+      location.hash=`repair/${encodeURIComponent(target.dataset.id!)}`;
+      break;
     case "repair-generate":
       await runRepairAction(target,()=>api.post(`/v1/issues/${encodeURIComponent(repairIssueId!)}/repair-drafts`,{}),"修订 Agent 已开始生成草稿");
       break;
     case "repair-validate":
       try{await saveRepairDraftNow();await runRepairAction(target,()=>api.post(`/v1/repair-drafts/${encodeURIComponent(activeRepairDraft!.draftId)}/validate`,{}),"自动验证已开始");}catch(error){toast(message(error),true);}
       break;
-    case "repair-publish":
-      if(window.confirm("确认发布这份修订？验证通过后，系统会写入正式知识库并应用到后续回答。"))await runRepairAction(target,()=>api.post(`/v1/repair-drafts/${encodeURIComponent(activeRepairDraft!.draftId)}/publish`,{}),"正在发布并切换线上知识版本");
+    case "repair-add-to-batch":
+      if(activeRepairDraft){selectedRepairDraftIds.add(activeRepairDraft.draftId);location.hash="batches";}
+      break;
+    case "publish-repair-batch": {
+      const draftIds=[...selectedRepairDraftIds];if(draftIds.length===0)break;
+      if(!window.confirm(`确认发布所选 ${draftIds.length} 项修订？系统会写入正式知识库、推送 GitHub，并在整批验证通过后应用到后续回答。`))break;
+      target.setAttribute("disabled","");
+      try{await api.post("/v1/repair-batches",{draftIds});selectedRepairDraftIds.clear();toast("发布批次已创建，系统正在合并提交、回归验证并同步 GitHub");await renderRepairBatches();}catch(error){target.removeAttribute("disabled");toast(message(error),true);}
+      break;
+    }
+    case "repair-batch-detail":
+      await repairBatchDrawer(target.dataset.id!);
       break;
     case "repair-dismiss":
       if(window.confirm("确认该问题无需处理？这不会修改线上知识。")){await api.patch(`/v1/issues/${encodeURIComponent(repairIssueId!)}`,{status:"dismissed"});toast("问题已标记为无需处理");location.hash="issues";}
@@ -445,6 +476,7 @@ async function handleSubmit(event: SubmitEvent) {
 
 async function handleChange(event: Event) {
   const select = event.target;
+  if(select instanceof HTMLInputElement&&select.dataset.batchDraft){if(select.checked)selectedRepairDraftIds.add(select.dataset.batchDraft);else selectedRepairDraftIds.delete(select.dataset.batchDraft);const count=document.querySelector("#batch-selected-count"),publish=document.querySelector<HTMLButtonElement>('[data-action="publish-repair-batch"]');if(count)count.textContent=String(selectedRepairDraftIds.size);if(publish)publish.disabled=selectedRepairDraftIds.size===0;return;}
   if (!(select instanceof HTMLSelectElement)) return;
   if(select.id==="feedback-status"){
     for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="feedback-detail"]')) row.hidden=select.value==="actionable"?row.dataset.actionable!=="true":select.value!=="all"&&row.dataset.status!==select.value;
@@ -477,6 +509,11 @@ function collectRepairProposal(form:HTMLFormElement,base:RepairProposal):RepairP
 }
 async function runRepairAction(button:HTMLElement,operation:()=>Promise<unknown>,notice:string){const control=button instanceof HTMLButtonElement?button:undefined;if(control){control.disabled=true;control.setAttribute("aria-busy","true");}try{await operation();toast(notice);await renderRepairWorkbench();scheduleRepairRefresh(true);}catch(error){toast(message(error),true);}finally{if(control){control.disabled=false;control.removeAttribute("aria-busy");}}}
 function scheduleRepairRefresh(force=false){if(repairRefreshTimer!==undefined)clearTimeout(repairRefreshTimer);repairRefreshTimer=setTimeout(()=>{if(current==="repair"&&(force||activeRepairDraft&&["generating","validating","publishing"].includes(activeRepairDraft.status)))void renderRepairWorkbench().catch(handleApiError);},1_800);}
+
+async function repairBatchDrawer(id:string){
+  const item=await api.get<RepairBatchDetail>(`/v1/repair-batches/${encodeURIComponent(id)}`),synced=item.publications.filter((publication)=>publication.remoteSyncStatus==="synced").length,compensated=item.publications.filter((publication)=>publication.remoteSyncStatus==="compensated").length;
+  overlay(`<div class="drawer-head"><div><strong>发布批次 ${shortId(item.batchId,12)}</strong> ${badge(item.status)}</div><button class="button" data-action="close-overlay">关闭</button></div><div class="drawer-body"><div class="notice"><strong>批次结果：</strong>${item.status==="published"?`${synced} 项修订已写入知识库并同步 GitHub，新的活动快照已生效。`:item.status==="failed"?`整批未生效；${compensated} 项已完成远端补偿回滚。请按错误提示修复后重新验证。`:"系统正在按知识库合并提交、执行完整回归并同步 GitHub。"}</div>${item.errorCode?`<div class="notice error mt-16"><strong>失败原因：</strong>${h(errorMessage(item.errorCode))}</div>`:""}<div class="detail-section"><h3>批次信息</h3><div class="repair-target"><div><span>修订数量</span><strong>${item.itemCount} 项</strong></div><div><span>涉及知识库</span><strong>${item.domains.map(domainName).map(h).join("、")}</strong></div><div><span>创建时间</span><strong>${time(item.createdAt)}</strong></div></div></div><div class="detail-section"><h3>知识写入与 GitHub 同步</h3>${table(["知识库","知识页面","发布状态","GitHub 状态","提交版本"],item.publications.map((publication)=>`<tr><td>${h(domainName(publication.targetDomain))}</td><td class="mono">${h(publication.targetPath)}</td><td>${badge(publication.status)}</td><td>${badge(publication.remoteSyncStatus)}</td><td class="mono">${publication.resultingGitRevision?shortId(publication.resultingGitRevision,12):"—"}</td></tr>`))}</div></div>`);
+}
 
 async function answerReviewDrawer(id:string){
   const item=await api.get<AnswerReviewDetail>(`/v1/answer-reviews/${id}`);
@@ -631,13 +668,9 @@ function jsonDrawer(value: unknown) {
 
 function issueRow(item:IssuePage["items"][number],compact:boolean){
   const impact=`${item.affectedUserCount} 位用户 · ${item.occurrenceCount} 次`;
-  const deadline=slaText(item.slaDueAt,item.status),overdue=isOverdue(item.slaDueAt)&&isActionableStatus(item.status);
-  return `<tr data-action="issue-detail" data-id="${h(item.issueId)}"><td>${badge(item.priority)}</td><td><strong>${h(label(item.category))}</strong>${item.answerCardKey?`<br><span class="muted">答案卡 ${shortId(item.answerCardKey,10)}</span>`:""}</td><td>${badge(item.status)}${compact?"":`<br><span class="muted">${h(issueStatusHelp(item.status))}</span>`}</td><td>${h(impact)}</td><td><span class="${overdue?"danger-text":""}">${h(deadline)}</span></td>${compact?"":`<td>${time(item.lastSeenAt)}</td>`}<td><span class="action-link">${h(nextIssueAction(item))}</span></td></tr>`;
+  return `<tr data-action="issue-detail" data-id="${h(item.issueId)}"><td>${badge(item.priority)}</td><td><strong>${h(label(item.category))}</strong>${item.answerCardKey?`<br><span class="muted">答案卡 ${shortId(item.answerCardKey,10)}</span>`:""}</td><td>${badge(item.status)}${compact?"":`<br><span class="muted">${h(issueStatusHelp(item.status))}</span>`}</td><td>${h(impact)}</td>${compact?"":`<td>${time(item.lastSeenAt)}</td>`}<td><span class="action-link">${h(nextIssueAction(item))}</span></td></tr>`;
 }
-function isActionableStatus(value:IssueStatus){return value!=="resolved"&&value!=="dismissed";}
-function isOverdue(value:string){return new Date(value).valueOf()<Date.now();}
-function slaText(value:string,status:IssueStatus){if(!isActionableStatus(status))return"已结束";const milliseconds=new Date(value).valueOf()-Date.now(),absolute=Math.abs(milliseconds),hours=Math.max(1,Math.ceil(absolute/3_600_000));return milliseconds<0?`已超时 ${hours} 小时`:`剩余 ${hours} 小时`;}
-function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open")return"打开修订工作台";if(item.status==="in_progress")return"继续修订";if(item.status==="validating")return"查看验证或发布";if(item.status==="resolved")return"查看已发布记录";return"查看记录";}
+function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open")return"打开修订工作台";if(item.status==="in_progress")return"继续修订";if(item.status==="validating")return"查看验证或待发布";if(item.status==="resolved")return"查看已发布记录";return"查看记录";}
 
 function content(value: string) {
   const element = document.querySelector("#content");

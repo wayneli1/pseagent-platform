@@ -10,7 +10,8 @@ const LABELS: Readonly<Record<string,string>>={
   canonical:"标准问法",alias:"同义问法",colloquial:"口语问法",follow_up:"上下文追问",negative:"边界负例",
   direct:"直接证据",synthesis:"多证据综合",customer_input:"需客户确认",feedback_case:"用户反馈",answer_review:"自动复查",
   enabled:"已启用",disabled:"已停用",covered:"已覆盖",
-  compile_catalog:"同步答案卡",regression_run:"运行回归",publish_release:"发布知识",rollback_release:"回滚发布",git_writeback:"写回知识库",generate_repair_draft:"生成修订草稿",validate_repair_draft:"验证修订",publish_repair:"发布修订",rollback_repair:"回滚修订",
+  compile_catalog:"同步答案卡",regression_run:"运行回归",publish_release:"发布知识",rollback_release:"回滚发布",git_writeback:"写回知识库",generate_repair_draft:"生成修订草稿",validate_repair_draft:"验证修订",publish_repair:"发布修订",publish_repair_batch:"发布修订批次",rollback_repair:"回滚修订",rollback_repair_batch:"回滚修订批次",
+  pushing:"正在推送 GitHub",synced:"已同步 GitHub",compensated:"已补偿回滚",
   knowledge_gap:"知识缺口",retrieval_gap:"检索缺口",planning_gap:"回答规划问题",coverage_gap:"关键信息遗漏",logic_gap:"逻辑或事实冲突",citation_gap:"引用问题",expression_gap:"表达问题",
   user_incorrect:"用户报告答案错误",user_missing:"用户报告信息不完整",judgement_conflict:"用户与系统判断冲突",review_error:"自动复查异常",
   feedback:"用户反馈",
@@ -30,6 +31,12 @@ const ERROR_MESSAGES:Readonly<Record<string,string>>={
   passing_repair_validation_required:"必须先完成并通过自动验证",
   full_regression_failed_after_publish:"现有回归用例未全部通过，系统已自动恢复上一版本",
   repair_publication_not_current:"只能回滚当前正在生效的最近一次修订",
+  repair_batch_not_found:"没有找到该发布批次",
+  repair_batch_not_ready:"批次中的修订已变化，请刷新后重新选择",
+  repair_batch_target_conflict:"同一批次不能同时修改同一知识页面",
+  repair_draft_not_ready_for_batch:"该修订尚未通过验证，不能加入发布批次",
+  git_upstream_missing:"知识库尚未配置 GitHub 上游分支，发布已停止",
+  git_remote_ahead:"GitHub 上存在本地没有的新提交，请先同步知识库再发布",
   rolled_back:"本次修订已回滚，可以重新生成草稿",
 };
 
