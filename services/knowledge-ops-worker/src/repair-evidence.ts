@@ -78,3 +78,4 @@ export function findCardByHashedKey(catalog:AnswerCardCatalog,key:string|undefin
 }
 
 export function catalogRevision(catalog:AnswerCardCatalog,domain:KnowledgeDomain):string|undefined{return catalog.domains.find((item)=>item.domain===domain)?.revision;}
+export async function readKnowledgeFileAtRevision(source:KnowledgeSource,revision:string,relativePath:string):Promise<string>{if(!safeWikiPath(relativePath))throw new Error("repair_evidence_path_rejected");return readGitFile(source.root,revision,relativePath);}

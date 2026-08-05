@@ -29,6 +29,9 @@ const repairCandidateSchema=z.object({
   if(value.publishable&&value.answerTemplate==="")context.addIssue({code:"custom",path:["answerTemplate"],message:"publishable_repair_requires_answer_template"});
   if(!value.publishable&&value.blockingReason===undefined)context.addIssue({code:"custom",path:["blockingReason"],message:"non_publishable_repair_requires_reason"});
 });
+const caseAssessmentSchema=z.object({cases:z.array(z.object({kind:regressionKindSchema,passed:z.boolean(),explanation:z.string().trim().min(1).max(1_000)}).strict()).length(5)}).strict().superRefine((value,context)=>{
+  const kinds=new Set(value.cases.map((item)=>item.kind));if(regressionKindSchema.options.some((kind)=>!kinds.has(kind)))context.addIssue({code:"custom",path:["cases"],message:"repair_assessment_requires_five_kinds"});
+});
 
 export interface RepairRecord {
   readonly question: string;
@@ -108,12 +111,24 @@ export class KnowledgeRepairAgent {
     if(candidate===undefined)throw firstError;
     return enforceRepairCandidate(input,candidate);
   }
+  async assess(input:{readonly proposal:RepairDraftProposal;readonly evidence:readonly RepairEvidence[];readonly signal?:AbortSignal}):Promise<readonly {readonly kind:z.infer<typeof regressionKindSchema>;readonly passed:boolean;readonly explanation:string}[]>{
+    const messages=[{role:"system" as const,content:[
+      "你是企业知识修订的独立验证员，固定使用 deepseek_v4_flash。只能依据 proposal 与 evidence 判定。",
+      "对 canonical、alias、colloquial、follow_up：passed 表示该问法确实属于答案卡适用范围，且 answerTemplate 被正式证据支持并完整覆盖 obligations。",
+      "对 negative：passed 表示该负例不应命中或套用这张答案卡，答案卡的适用边界能够排除它。",
+      "五类必须各返回一项。证据不足、承诺超出资料、缺少必答项或负例仍会误命中时必须为 false。只输出严格 JSON。",
+    ].join("\n")},{role:"user" as const,content:JSON.stringify({proposal:input.proposal,evidence:input.evidence})}];
+    let result:z.infer<typeof caseAssessmentSchema>|undefined;let firstError:unknown;
+    for(let attempt=1;attempt<=2;attempt+=1){try{result=await this.model.completeJson({messages:attempt===1?messages:[...messages,{role:"user",content:"上一次输出未通过 Schema。请按五类各一项重新输出，不要增加其他字段。"}],schema:caseAssessmentSchema,schemaDescription:"five knowledge repair validation case assessments",...(input.signal===undefined?{}:{signal:input.signal})});break;}catch(error){firstError??=error;if(attempt===2)throw firstError;}}
+    if(result===undefined)throw firstError;return result.cases;
+  }
 }
 
 function enforceRepairCandidate(input:RepairGenerationInput,candidate:z.infer<typeof repairCandidateSchema>):RepairDraftProposal{
   const evidencePaths=new Set(input.evidence.map((item)=>item.path));
   const {obligations,unsupportedEvidence}=mergeObligations(candidate.obligations,input.route.existingCard,evidencePaths);
-  const aliases=unique([...(input.route.existingCard?.aliases??[]),...candidate.aliases]).filter((value)=>normalize(value)!==normalize(candidate.canonicalQuestion));
+  const regressionAliases=candidate.regressionQuestions.filter((item)=>item.kind==="alias"||item.kind==="colloquial").map((item)=>item.question);
+  const aliases=unique([...(input.route.existingCard?.aliases??[]),...candidate.aliases,...regressionAliases]).filter((value)=>normalize(value)!==normalize(candidate.canonicalQuestion));
   const protectedText=[candidate.title,candidate.canonicalQuestion,...aliases,candidate.answerTemplate,...obligations.flatMap((item)=>[item.label,...item.requiredConcepts,...item.forbiddenClaims])].join("\n");
   const leakedSensitive=(input.sensitiveTerms??[]).find((term)=>term.trim().length>=2&&normalize(protectedText).includes(normalize(term)));
   const forbiddenClaim=obligations.flatMap((item)=>item.forbiddenClaims).find((claim)=>claim!==""&&normalize(candidate.answerTemplate).includes(normalize(claim)));

@@ -7,3 +7,4 @@ export * from "./answer-review-config.js";
 export * from "./answer-reviewer.js";
 export * from "./repair-agent.js";
 export * from "./repair-evidence.js";
+export * from "./repair-renderer.js";

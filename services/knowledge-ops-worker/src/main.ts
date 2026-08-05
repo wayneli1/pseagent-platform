@@ -1,5 +1,7 @@
 import { loadContentCipher, PostgresKnowledgeOpsStore } from "@pseagent/knowledge-ops";
 import { OpenAiCompatibleModelClient } from "@pseagent/app/embedded";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { SafeGitWorkspace } from "./git-workspace.js";
 import { SnapshotManager } from "./snapshot-manager.js";
 import { KnowledgeOpsWorker } from "./worker.js";
@@ -13,6 +15,7 @@ const store=PostgresKnowledgeOpsStore.connect(required("KNOWLEDGE_OPS_DATABASE_U
 await store.migrate();
 const reviewModelConfig=loadAnswerReviewModelConfig(process.env);
 const modelClient=new OpenAiCompatibleModelClient(reviewModelConfig);
+const answerContractRevision=process.env.KNOWLEDGE_OPS_ANSWER_CONTRACT_REVISION??(await promisify(execFile)("git",["rev-parse","HEAD"],{cwd:process.cwd(),windowsHide:true})).stdout.trim();
 const worker=new KnowledgeOpsWorker(process.env.KNOWLEDGE_OPS_WORKER_ID??`worker-${process.pid}`,{
   store,sources:[{domain:"coremail-professional",root:professional},{domain:"presales-general",root:general}],
   snapshots:new SnapshotManager(required("KNOWLEDGE_OPS_SNAPSHOT_ROOT")),
@@ -20,6 +23,7 @@ const worker=new KnowledgeOpsWorker(process.env.KNOWLEDGE_OPS_WORKER_ID??`worker
   cipher:loadContentCipher(process.env),
   answerReviewer:new IndependentAnswerReviewer(modelClient),
   repairAgent:new KnowledgeRepairAgent(modelClient),
+  answerContractRevision,
 });
 await store.enqueueJob("compile_catalog",{trigger:"worker_startup"});
 let stopping=false;process.once("SIGINT",()=>{stopping=true;});process.once("SIGTERM",()=>{stopping=true;});
