@@ -40,3 +40,12 @@
 - 执行 TypeScript 全量测试、类型检查和构建。
 - 汇总答案卡数量、反馈/复查关联、连续追问和 PostgreSQL 重启证据。
 - 确认工作树只包含本任务提交与用户原有未提交内容，不推送远端。
+
+### 验收结果
+
+- TypeScript：contracts `5/5`、PSEAgent `1236/1236`、Knowledge MCP `6/6`、Knowledge Ops `27/27`、Worker `18/18`、Lunkr Direct `176/176`。
+- Rust 知识引擎：`38/38`；全仓 `typecheck` 与生产 `build` 通过。
+- 正式 Knowledge Ops API：`/healthz=alive`、`/readyz=ready`；管理后台由 `http://127.0.0.1:19830/` 提供。
+- PostgreSQL 数据库 `pseagent_ops_live`：`13` 张目录答案卡、`2` 条实名反馈、`2` 条已完成自动复查、`4` 条迁移账本记录；API 和 Worker 重启后数量保持不变。
+- 反馈明文与复查明文只存在于加密载荷中；关系表不增加问题、答案和补充说明的明文字段。
+- 工作树只保留用户原有的 `docs/local-runbook.md` 与 `.sisyphus/`，未推送远端。
