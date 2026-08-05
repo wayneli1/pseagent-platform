@@ -72,7 +72,7 @@ export class KnowledgeOpsWorker {
       const issue=await this.dependencies.store.getIssue(draft.issueId);if(issue===undefined)throw new Error("repair_issue_not_found");
       if(issue.status==="dismissed"||issue.status==="resolved")throw new Error("repair_issue_closed");
       const context=await this.loadRepairRecords(issue.issueId,cipher),catalog=await this.compile();
-      const catalogCard=findCardByHashedKey(catalog,issue.answerCardKey),located=catalogCard===undefined?undefined:await locateAnswerCard(this.dependencies.sources,catalog,catalogCard.cardId);
+      const catalogCard=findCardByHashedKey(catalog,issue.answerCardKey)??findCardByCurrentQuestion(catalog,context.records),located=catalogCard===undefined?undefined:await locateAnswerCard(this.dependencies.sources,catalog,catalogCard.cardId);
       const domain=located?.card.domain??catalogCard?.domain??domainForIssueScope(issue.scope),source=domain===undefined?undefined:this.dependencies.sources.find((item)=>item.domain===domain),revision=domain===undefined?undefined:catalogRevision(catalog,domain);
       const paths=located===undefined?[]:[located.path,...located.card.obligations.flatMap((item)=>item.preferredEvidencePaths)];
       const evidence=source===undefined||revision===undefined?{documents:[],issues:["repair_domain_or_revision_missing"]}:await loadRepairEvidence({source,revision,paths,references:context.references});
@@ -181,6 +181,10 @@ function safeCode(error:unknown){return error instanceof Error?error.message.rep
 function primaryIssueCategory(result:{readonly defects:readonly{readonly category:IssueCategory;readonly severity:string}[]}):IssueCategory{return result.defects.find((item)=>item.severity==="critical")?.category??result.defects.find((item)=>item.severity==="major")?.category??result.defects[0]?.category??"coverage_gap";}
 function cardKey(match:Record<string,unknown>|undefined):string|undefined{const values=match?.cardIdHashes;return Array.isArray(values)&&typeof values[0]==="string"&&/^[a-f0-9]{64}$/u.test(values[0])?values[0]:undefined;}
 function hashText(value:string):string{return createHash("sha256").update(value,"utf8").digest("hex");}
+function findCardByCurrentQuestion(catalog:AnswerCardCatalog,records:readonly RepairRecord[]):AnswerCard|undefined{
+  const questions=new Set(records.map((record)=>normalize(record.question)).filter(Boolean));
+  return catalog.cards.find((card)=>isActiveCard(card.reviewStatus)&&[card.canonicalQuestion,...card.aliases].some((question)=>questions.has(normalize(question))));
+}
 function repairRoute(input:{readonly category:IssueCategory;readonly domain:KnowledgeDomain|undefined;readonly revision:string|undefined;readonly located:LocatedAnswerCard|undefined;readonly hasEvidence:boolean}):RepairRoute{
   if(input.category==="logic_gap"||input.category==="judgement_conflict"||input.category==="review_error")return{targetKind:"system_fix",publishableAllowed:false,blockingReason:input.category==="judgement_conflict"?"用户反馈与自动复查结论冲突，需要管理员裁决，不能自动写入知识库。":"该问题属于逻辑或程序链路，不应通过改写企业知识掩盖，需要创建系统修复任务。"};
   if(input.category==="knowledge_gap")return{targetKind:"knowledge_page",...(input.domain===undefined?{}:{targetDomain:input.domain}),publishableAllowed:false,blockingReason:"正式资料存在缺口，请先由管理员补充和确认知识来源，再生成答案卡。"};

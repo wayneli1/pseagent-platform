@@ -156,6 +156,7 @@ export const repairProposalSchema=z.object({
     if(value.targetPath===undefined)context.addIssue({code:"custom",path:["targetPath"],message:"publishable_repair_requires_target_path"});
     if(value.targetKind==="answer_card"&&value.cardId===undefined)context.addIssue({code:"custom",path:["cardId"],message:"answer_card_repair_requires_card_id"});
     if(value.canonicalQuestion==="")context.addIssue({code:"custom",path:["canonicalQuestion"],message:"publishable_repair_requires_canonical_question"});
+    if(value.aliases.length===0)context.addIssue({code:"custom",path:["aliases"],message:"publishable_repair_requires_alias"});
     if(value.answerTemplate==="")context.addIssue({code:"custom",path:["answerTemplate"],message:"publishable_repair_requires_answer_template"});
     if(value.obligations.length===0)context.addIssue({code:"custom",path:["obligations"],message:"publishable_repair_requires_obligations"});
     const kinds=new Set(value.regressionQuestions.map((item)=>item.kind));

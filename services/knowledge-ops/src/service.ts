@@ -107,7 +107,15 @@ export class KnowledgeOpsService {
     assertAuthorized(actor,"repair:edit");const issue=await this.store.getIssue(issueId);if(issue===undefined)throw new OpsNotFoundError("issue_not_found");
     if(issue.status==="resolved"||issue.status==="dismissed")throw new Error("issue_not_open_for_repair");
     const existing=(await this.store.listRepairDrafts(issueId)).find((draft)=>draft.status!=="published"&&draft.status!=="failed");
-    if(existing!==undefined)return{draft:repairSummary(existing),enqueued:false};
+    if(existing!==undefined){
+      if(existing.status!=="draft_ready"&&existing.status!=="validation_failed")return{draft:repairSummary(existing),enqueued:false};
+      const proposal=this.cipher.decrypt<{proposal?:RepairDraftProposal}>(existing.encryptedPayload).proposal;
+      if(proposal?.publishable!==false)return{draft:repairSummary(existing),enqueued:false};
+      const reset=await this.store.updateRepairDraft(existing.draftId,{status:"generating",encryptedPayload:this.cipher.encrypt({})});
+      if(reset===undefined)throw new OpsNotFoundError("repair_draft_not_found");
+      const job=await this.store.enqueueJob("generate_repair_draft",{draftId:reset.draftId});await this.store.updateIssue(issueId,"in_progress");
+      await this.audit(actor,"repair.draft.regenerate","repair_draft",reset.draftId,{issueId,jobId:job.jobId});return{draft:repairSummary(reset),job,enqueued:true};
+    }
     const timestamp=this.timestamp(),draft:KnowledgeRepairDraft={draftId:randomUUID(),issueId,status:"generating",model:"deepseek_v4_flash",encryptedPayload:this.cipher.encrypt({}),createdBy:actor.actorId,createdAt:timestamp,updatedAt:timestamp};
     const created=await this.store.createRepairDraft(draft);await this.store.updateIssue(issueId,"in_progress");const job=await this.store.enqueueJob("generate_repair_draft",{draftId:created.draftId});
     await this.audit(actor,"repair.draft.request","repair_draft",created.draftId,{issueId,jobId:job.jobId});return{draft:repairSummary(created),job,enqueued:true};

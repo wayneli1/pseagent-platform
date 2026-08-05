@@ -9,4 +9,5 @@ describe("repair proposal schema",()=>{
     expect(repairProposalSchema.safeParse({...proposal,aliases:["????Coremail????"]}).success).toBe(false);
     expect(repairProposalSchema.safeParse({...proposal,answerTemplate:"迁移前先确认�域名"}).success).toBe(false);
   });
+  it("requires at least one reusable alias for a publishable repair",()=>{expect(repairProposalSchema.safeParse({...proposal,aliases:[]}).success).toBe(false);expect(repairProposalSchema.safeParse({...proposal,aliases:[],answerTemplate:"",obligations:[],regressionQuestions:[],publishable:false,blockingReason:"缺少正式证据"}).success).toBe(true);});
 });

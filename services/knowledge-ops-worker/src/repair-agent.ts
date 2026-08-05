@@ -29,6 +29,7 @@ const repairCandidateSchema=z.object({
   generationSummary:z.unknown().optional(),publishable:z.boolean(),blockingReason:z.unknown().optional(),
 }).passthrough().superRefine((value,context)=>{
   if(value.publishable&&value.answerTemplate==="")context.addIssue({code:"custom",path:["answerTemplate"],message:"publishable_repair_requires_answer_template"});
+  if(value.publishable&&value.aliases.length===0)context.addIssue({code:"custom",path:["aliases"],message:"publishable_repair_requires_alias"});
 });
 const caseAssessmentSchema=z.object({cases:z.unknown().optional()}).passthrough();
 
