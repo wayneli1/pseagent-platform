@@ -17,6 +17,8 @@ import type {
   KnowledgeRepairDraft,
   OpsJob,
   OpsJobType,
+  RepairBatch,
+  RepairBatchView,
   RepairPublication,
   RepairValidationRun,
   RegressionCaseRecord,
@@ -46,6 +48,7 @@ export interface KnowledgeOpsStore {
   createRepairDraft(value: KnowledgeRepairDraft): Promise<KnowledgeRepairDraft>;
   getRepairDraft(draftId: string): Promise<KnowledgeRepairDraft | undefined>;
   listRepairDrafts(issueId: string): Promise<readonly KnowledgeRepairDraft[]>;
+  listRepairDraftsByStatus(status: KnowledgeRepairDraft["status"]): Promise<readonly KnowledgeRepairDraft[]>;
   updateRepairDraft(draftId: string, patch: Partial<Pick<KnowledgeRepairDraft,"status"|"targetKind"|"targetDomain"|"targetPath"|"baseGitRevision"|"encryptedPayload"|"errorCode">>): Promise<KnowledgeRepairDraft | undefined>;
   createRepairValidation(value: RepairValidationRun): Promise<RepairValidationRun>;
   getRepairValidation(validationId: string): Promise<RepairValidationRun | undefined>;
@@ -54,7 +57,12 @@ export interface KnowledgeOpsStore {
   createRepairPublication(value: RepairPublication): Promise<RepairPublication>;
   getRepairPublication(publicationId: string): Promise<RepairPublication | undefined>;
   listRepairPublications(draftId: string): Promise<readonly RepairPublication[]>;
-  updateRepairPublication(publicationId: string, patch: Partial<Pick<RepairPublication,"status"|"resultingGitRevision"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>): Promise<RepairPublication | undefined>;
+  updateRepairPublication(publicationId: string, patch: Partial<Pick<RepairPublication,"status"|"remoteSyncStatus"|"remoteName"|"remoteBranch"|"resultingGitRevision"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>): Promise<RepairPublication | undefined>;
+  createRepairBatch(value: RepairBatch, publications: readonly RepairPublication[]): Promise<RepairBatchView>;
+  getRepairBatch(batchId: string): Promise<RepairBatchView | undefined>;
+  listRepairBatches(): Promise<readonly RepairBatch[]>;
+  updateRepairBatch(batchId: string, patch: Partial<Pick<RepairBatch,"status"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>): Promise<RepairBatch | undefined>;
+  listRepairPublicationsByBatch(batchId: string): Promise<readonly RepairPublication[]>;
   createCardRevision(value: CardRevision): Promise<CardRevision>;
   syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult>;
   listCardRevisions(): Promise<readonly CardRevision[]>;
@@ -92,6 +100,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   private readonly repairDrafts = new Map<string,KnowledgeRepairDraft>();
   private readonly repairValidations = new Map<string,RepairValidationRun>();
   private readonly repairPublications = new Map<string,RepairPublication>();
+  private readonly repairBatches = new Map<string,RepairBatch>();
   private readonly revisions = new Map<string, CardRevision>();
   private readonly reviews = new Map<string, ReviewRecord>();
   private readonly approvals = new Map<string, ApprovalRecord>();
@@ -151,6 +160,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async createRepairDraft(value:KnowledgeRepairDraft){const active=[...this.repairDrafts.values()].find((item)=>item.issueId===value.issueId&&item.status!=="published"&&item.status!=="failed");if(active!==undefined)throw new Error("active_repair_draft_already_exists");this.repairDrafts.set(value.draftId,copy(value));return copy(value);}
   async getRepairDraft(id:string){return maybeCopy(this.repairDrafts.get(id));}
   async listRepairDrafts(issueId:string){return newest([...this.repairDrafts.values()].filter((item)=>item.issueId===issueId).map(copy));}
+  async listRepairDraftsByStatus(status:KnowledgeRepairDraft["status"]){return newest([...this.repairDrafts.values()].filter((item)=>item.status===status).map(copy));}
   async updateRepairDraft(id:string,patch:Partial<Pick<KnowledgeRepairDraft,"status"|"targetKind"|"targetDomain"|"targetPath"|"baseGitRevision"|"encryptedPayload"|"errorCode">>){const old=this.repairDrafts.get(id);if(old===undefined)return undefined;const next={...old,...patch,updatedAt:now()};this.repairDrafts.set(id,next);return copy(next);}
   async createRepairValidation(value:RepairValidationRun){this.repairValidations.set(value.validationId,copy(value));return copy(value);}
   async getRepairValidation(id:string){return maybeCopy(this.repairValidations.get(id));}
@@ -159,7 +169,19 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async createRepairPublication(value:RepairPublication){this.repairPublications.set(value.publicationId,copy(value));return copy(value);}
   async getRepairPublication(id:string){return maybeCopy(this.repairPublications.get(id));}
   async listRepairPublications(draftId:string){return newest([...this.repairPublications.values()].filter((item)=>item.draftId===draftId).map(copy));}
-  async updateRepairPublication(id:string,patch:Partial<Pick<RepairPublication,"status"|"resultingGitRevision"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const old=this.repairPublications.get(id);if(old===undefined)return undefined;const next={...old,...patch};this.repairPublications.set(id,next);return copy(next);}
+  async updateRepairPublication(id:string,patch:Partial<Pick<RepairPublication,"status"|"remoteSyncStatus"|"remoteName"|"remoteBranch"|"resultingGitRevision"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const old=this.repairPublications.get(id);if(old===undefined)return undefined;const next={...old,...patch};this.repairPublications.set(id,next);return copy(next);}
+  async createRepairBatch(value:RepairBatch,publications:readonly RepairPublication[]):Promise<RepairBatchView>{
+    if(publications.length!==value.itemCount||publications.length===0)throw new Error("repair_batch_item_count_invalid");
+    if(this.repairBatches.has(value.batchId))throw new Error("repair_batch_already_exists");
+    for(const publication of publications){const draft=this.repairDrafts.get(publication.draftId),issue=this.issues.get(publication.issueId);if(draft===undefined||issue===undefined)throw new Error("repair_batch_source_not_found");if(draft.status!=="ready_to_publish")throw new Error("repair_draft_not_ready_for_batch");if(this.repairPublications.has(publication.publicationId))throw new Error("repair_publication_already_exists");}
+    this.repairBatches.set(value.batchId,copy(value));
+    for(const publication of publications){this.repairPublications.set(publication.publicationId,copy(publication));const draft=this.repairDrafts.get(publication.draftId)!;this.repairDrafts.set(draft.draftId,{...draft,status:"publishing",updatedAt:now()});const issue=this.issues.get(publication.issueId)!;this.issues.set(issue.issueId,{...issue,status:"validating",updatedAt:now()});}
+    return{...copy(value),publications:publications.map(copy)};
+  }
+  async getRepairBatch(id:string):Promise<RepairBatchView|undefined>{const batch=this.repairBatches.get(id);return batch===undefined?undefined:{...copy(batch),publications:await this.listRepairPublicationsByBatch(id)};}
+  async listRepairBatches(){return newest([...this.repairBatches.values()].map(copy));}
+  async updateRepairBatch(id:string,patch:Partial<Pick<RepairBatch,"status"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const old=this.repairBatches.get(id);if(old===undefined)return undefined;const next={...old,...patch};this.repairBatches.set(id,next);return copy(next);}
+  async listRepairPublicationsByBatch(id:string){return [...this.repairPublications.values()].filter((item)=>item.batchId===id).map(copy).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));}
   async createCardRevision(value: CardRevision) { this.revisions.set(value.revisionId, copy(value)); return copy(value); }
   async syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult> {
     const existing = [...this.revisions.values()].find((revision) =>
@@ -248,7 +270,9 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
       if(review.processingStatus==="errored")answerReviews.errored++;
       if(review.workflowStatus==="open"&&(review.verdict==="needs_review"||review.verdict==="fail"||review.processingStatus==="errored"))answerReviews.pendingHuman++;
     }
-    return { issues:{actionable,urgent,overdue,validating,byPriority},feedback, answerReviews, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
+    const readyToPublish=[...this.repairDrafts.values()].filter((item)=>item.status==="ready_to_publish").length,repairBatches={queued:0,publishing:0,published:0,failed:0};
+    for(const batch of this.repairBatches.values())if(batch.status!=="rolled_back")repairBatches[batch.status]++;
+    return { issues:{actionable,urgent,overdue,validating,readyToPublish,byPriority},repairBatches,feedback, answerReviews, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
   }
   private finishJob(id: string, patch: Partial<OpsJob>) {
     const old = this.jobs.get(id); if (!old) throw new Error("job_not_found");

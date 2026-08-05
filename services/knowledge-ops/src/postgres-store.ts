@@ -6,7 +6,7 @@ import type { KnowledgeOpsStore } from "./store.js";
 import type {
   ApprovalRecord, AuditEvent, CatalogCardRevisionInput, CatalogCardSyncResult, CardRevision, DashboardSummary, OpsJob, OpsJobType,
   IssueCase, IssueCaseSummary, IssueListQuery, IssueOccurrence, IssuePage, IssueRecordInput, IssueStatus,
-  KnowledgeRepairDraft, RepairPublication, RepairValidationRun, RegressionCaseRecord, RegressionRun, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
+  KnowledgeRepairDraft, RepairBatch, RepairBatchView, RepairPublication, RepairValidationRun, RegressionCaseRecord, RegressionRun, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
   StoredAnswerReviewCase,
 } from "./types.js";
 
@@ -35,6 +35,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       "005_issue_center.sql",
       "006_single_admin_workflow.sql",
       "007_knowledge_repair_workflow.sql",
+      "008_repair_batches.sql",
     ]) {
       if (applied.has(fileName)) continue;
       const migration = await readFile(fileURLToPath(
@@ -155,6 +156,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     [v.draftId,v.issueId,v.status,v.targetKind??null,v.targetDomain??null,v.targetPath??null,v.baseGitRevision??null,v.model,v.encryptedPayload,v.createdBy,v.errorCode??null,v.createdAt,v.updatedAt]));}
   async getRepairDraft(id:string){return optional<KnowledgeRepairDraft>(await this.pool.query("SELECT * FROM knowledge_repair_drafts WHERE draft_id=$1",[id]));}
   async listRepairDrafts(issueId:string){return rows<KnowledgeRepairDraft>(await this.pool.query("SELECT * FROM knowledge_repair_drafts WHERE issue_id=$1 ORDER BY created_at DESC",[issueId]));}
+  async listRepairDraftsByStatus(status:KnowledgeRepairDraft["status"]){return rows<KnowledgeRepairDraft>(await this.pool.query("SELECT * FROM knowledge_repair_drafts WHERE status=$1 ORDER BY created_at DESC",[status]));}
   async updateRepairDraft(id:string,patch:Partial<Pick<KnowledgeRepairDraft,"status"|"targetKind"|"targetDomain"|"targetPath"|"baseGitRevision"|"encryptedPayload"|"errorCode">>){const current=await this.getRepairDraft(id);if(current===undefined)return undefined;return optional<KnowledgeRepairDraft>(await this.pool.query(`UPDATE knowledge_repair_drafts SET
     status=$2,target_kind=$3,target_domain=$4,target_path=$5,base_git_revision=$6,encrypted_payload=$7,error_code=$8,updated_at=now()
     WHERE draft_id=$1 RETURNING *`,[id,patch.status??current.status,patch.targetKind??current.targetKind??null,patch.targetDomain??current.targetDomain??null,patch.targetPath??current.targetPath??null,patch.baseGitRevision??current.baseGitRevision??null,patch.encryptedPayload??current.encryptedPayload,patch.errorCode??current.errorCode??null]));}
@@ -166,12 +168,36 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   async updateRepairValidation(id:string,patch:Partial<Pick<RepairValidationRun,"status"|"totalCases"|"passedCases"|"encryptedPayload"|"errorCode"|"completedAt">>){const current=await this.getRepairValidation(id);if(current===undefined)return undefined;return optional<RepairValidationRun>(await this.pool.query(`UPDATE repair_validation_runs SET
     status=$2,total_cases=$3,passed_cases=$4,encrypted_payload=$5,error_code=$6,completed_at=$7 WHERE validation_id=$1 RETURNING *`,[id,patch.status??current.status,patch.totalCases??current.totalCases,patch.passedCases??current.passedCases,patch.encryptedPayload??current.encryptedPayload,patch.errorCode??current.errorCode??null,patch.completedAt??current.completedAt??null]));}
   async createRepairPublication(v:RepairPublication){return map<RepairPublication>(await one(this.pool,`INSERT INTO repair_publications
-    (publication_id,draft_id,issue_id,status,target_domain,target_path,base_git_revision,resulting_git_revision,catalog_hash,snapshot_release_id,previous_release_id,created_by,error_code,created_at,published_at,rolled_back_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,[v.publicationId,v.draftId,v.issueId,v.status,v.targetDomain,v.targetPath,v.baseGitRevision,v.resultingGitRevision??null,v.catalogHash??null,v.snapshotReleaseId??null,v.previousReleaseId??null,v.createdBy,v.errorCode??null,v.createdAt,v.publishedAt??null,v.rolledBackAt??null]));}
+    (publication_id,batch_id,draft_id,issue_id,status,target_domain,target_path,base_git_revision,remote_sync_status,remote_name,remote_branch,resulting_git_revision,catalog_hash,snapshot_release_id,previous_release_id,created_by,error_code,created_at,published_at,rolled_back_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,[v.publicationId,v.batchId??null,v.draftId,v.issueId,v.status,v.targetDomain,v.targetPath,v.baseGitRevision,v.remoteSyncStatus,v.remoteName??null,v.remoteBranch??null,v.resultingGitRevision??null,v.catalogHash??null,v.snapshotReleaseId??null,v.previousReleaseId??null,v.createdBy,v.errorCode??null,v.createdAt,v.publishedAt??null,v.rolledBackAt??null]));}
   async getRepairPublication(id:string){return optional<RepairPublication>(await this.pool.query("SELECT * FROM repair_publications WHERE publication_id=$1",[id]));}
   async listRepairPublications(draftId:string){return rows<RepairPublication>(await this.pool.query("SELECT * FROM repair_publications WHERE draft_id=$1 ORDER BY created_at DESC",[draftId]));}
-  async updateRepairPublication(id:string,patch:Partial<Pick<RepairPublication,"status"|"resultingGitRevision"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const current=await this.getRepairPublication(id);if(current===undefined)return undefined;return optional<RepairPublication>(await this.pool.query(`UPDATE repair_publications SET
-    status=$2,resulting_git_revision=$3,catalog_hash=$4,snapshot_release_id=$5,previous_release_id=$6,error_code=$7,published_at=$8,rolled_back_at=$9 WHERE publication_id=$1 RETURNING *`,[id,patch.status??current.status,patch.resultingGitRevision??current.resultingGitRevision??null,patch.catalogHash??current.catalogHash??null,patch.snapshotReleaseId??current.snapshotReleaseId??null,patch.previousReleaseId??current.previousReleaseId??null,patch.errorCode??current.errorCode??null,patch.publishedAt??current.publishedAt??null,patch.rolledBackAt??current.rolledBackAt??null]));}
+  async updateRepairPublication(id:string,patch:Partial<Pick<RepairPublication,"status"|"remoteSyncStatus"|"remoteName"|"remoteBranch"|"resultingGitRevision"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const current=await this.getRepairPublication(id);if(current===undefined)return undefined;return optional<RepairPublication>(await this.pool.query(`UPDATE repair_publications SET
+    status=$2,remote_sync_status=$3,remote_name=$4,remote_branch=$5,resulting_git_revision=$6,catalog_hash=$7,snapshot_release_id=$8,previous_release_id=$9,error_code=$10,published_at=$11,rolled_back_at=$12 WHERE publication_id=$1 RETURNING *`,[id,patch.status??current.status,patch.remoteSyncStatus??current.remoteSyncStatus,patch.remoteName??current.remoteName??null,patch.remoteBranch??current.remoteBranch??null,patch.resultingGitRevision??current.resultingGitRevision??null,patch.catalogHash??current.catalogHash??null,patch.snapshotReleaseId??current.snapshotReleaseId??null,patch.previousReleaseId??current.previousReleaseId??null,patch.errorCode??current.errorCode??null,patch.publishedAt??current.publishedAt??null,patch.rolledBackAt??current.rolledBackAt??null]));}
+  async createRepairBatch(v:RepairBatch,publications:readonly RepairPublication[]):Promise<RepairBatchView>{
+    if(publications.length!==v.itemCount||publications.length===0)throw new Error("repair_batch_item_count_invalid");
+    const client=await this.pool.connect();const createdPublications:RepairPublication[]=[];
+    try{
+      await client.query("BEGIN");
+      const draftIds=publications.map((item)=>item.draftId),locked=await client.query("SELECT draft_id,status FROM knowledge_repair_drafts WHERE draft_id=ANY($1::uuid[]) FOR UPDATE",[draftIds]);
+      if(locked.rows.length!==draftIds.length)throw new Error("repair_batch_source_not_found");
+      if(locked.rows.some((row)=>row.status!=="ready_to_publish"))throw new Error("repair_draft_not_ready_for_batch");
+      const batch=map<RepairBatch>(await one(client,`INSERT INTO repair_batches
+        (batch_id,status,item_count,domains,catalog_hash,snapshot_release_id,previous_release_id,created_by,error_code,created_at,published_at,rolled_back_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[v.batchId,v.status,v.itemCount,JSON.stringify(v.domains),v.catalogHash??null,v.snapshotReleaseId??null,v.previousReleaseId??null,v.createdBy,v.errorCode??null,v.createdAt,v.publishedAt??null,v.rolledBackAt??null]));
+      for(const publication of publications)createdPublications.push(map<RepairPublication>(await one(client,`INSERT INTO repair_publications
+        (publication_id,batch_id,draft_id,issue_id,status,target_domain,target_path,base_git_revision,remote_sync_status,remote_name,remote_branch,resulting_git_revision,catalog_hash,snapshot_release_id,previous_release_id,created_by,error_code,created_at,published_at,rolled_back_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,[publication.publicationId,v.batchId,publication.draftId,publication.issueId,publication.status,publication.targetDomain,publication.targetPath,publication.baseGitRevision,publication.remoteSyncStatus,publication.remoteName??null,publication.remoteBranch??null,publication.resultingGitRevision??null,publication.catalogHash??null,publication.snapshotReleaseId??null,publication.previousReleaseId??null,publication.createdBy,publication.errorCode??null,publication.createdAt,publication.publishedAt??null,publication.rolledBackAt??null])));
+      await client.query("UPDATE knowledge_repair_drafts SET status='publishing',updated_at=now() WHERE draft_id=ANY($1::uuid[])",[draftIds]);
+      await client.query("UPDATE issue_cases SET status='validating',updated_at=now() WHERE issue_id=ANY($1::uuid[])",[publications.map((item)=>item.issueId)]);
+      await client.query("COMMIT");return{...batch,publications:createdPublications};
+    }catch(error){await safeRollback(client);throw error;}finally{client.release();}
+  }
+  async getRepairBatch(id:string):Promise<RepairBatchView|undefined>{const batch=optional<RepairBatch>(await this.pool.query("SELECT * FROM repair_batches WHERE batch_id=$1",[id]));return batch===undefined?undefined:{...batch,publications:await this.listRepairPublicationsByBatch(id)};}
+  async listRepairBatches(){return rows<RepairBatch>(await this.pool.query("SELECT * FROM repair_batches ORDER BY created_at DESC"));}
+  async updateRepairBatch(id:string,patch:Partial<Pick<RepairBatch,"status"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const current=optional<RepairBatch>(await this.pool.query("SELECT * FROM repair_batches WHERE batch_id=$1",[id]));if(current===undefined)return undefined;return optional<RepairBatch>(await this.pool.query(`UPDATE repair_batches SET
+    status=$2,catalog_hash=$3,snapshot_release_id=$4,previous_release_id=$5,error_code=$6,published_at=$7,rolled_back_at=$8 WHERE batch_id=$1 RETURNING *`,[id,patch.status??current.status,patch.catalogHash??current.catalogHash??null,patch.snapshotReleaseId??current.snapshotReleaseId??null,patch.previousReleaseId??current.previousReleaseId??null,patch.errorCode??current.errorCode??null,patch.publishedAt??current.publishedAt??null,patch.rolledBackAt??current.rolledBackAt??null]));}
+  async listRepairPublicationsByBatch(id:string){return rows<RepairPublication>(await this.pool.query("SELECT * FROM repair_publications WHERE batch_id=$1 ORDER BY created_at",[id]));}
 
   async createCardRevision(v: CardRevision) {
     const row = await one(this.pool, `INSERT INTO card_revisions
@@ -277,7 +303,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listAudit() { return rows<AuditEvent>(await this.pool.query("SELECT * FROM audit_events ORDER BY created_at DESC")); }
   async dashboard(): Promise<DashboardSummary> {
-    const [issueRows,feedback,reviews,cards,jobs,release] = await Promise.all([
+    const [issueRows,feedback,reviews,cards,jobs,release,readyDrafts,batches] = await Promise.all([
       this.pool.query(`SELECT priority,count(*)::int AS count,
         count(*) FILTER (WHERE sla_due_at<now())::int AS overdue,
         count(*) FILTER (WHERE status='validating')::int AS validating
@@ -287,6 +313,8 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       this.pool.query("SELECT status,count(*)::int AS count FROM card_revisions GROUP BY status"),
       this.pool.query("SELECT status,count(*)::int AS count FROM ops_jobs GROUP BY status"),
       this.pool.query("SELECT release_id FROM releases WHERE status='active' LIMIT 1"),
+      this.pool.query("SELECT count(*)::int AS count FROM knowledge_repair_drafts WHERE status='ready_to_publish'"),
+      this.pool.query("SELECT status,count(*)::int AS count FROM repair_batches WHERE status<>'rolled_back' GROUP BY status"),
     ]);
     const byPriority={p0:0,p1:0,p2:0,p3:0};let actionable=0,overdue=0,validating=0;
     for(const row of issueRows.rows){const priority=row.priority as keyof typeof byPriority,count=Number(row.count);byPriority[priority]=count;actionable+=count;overdue+=Number(row.overdue);validating+=Number(row.validating);}
@@ -299,7 +327,8 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     const activeReleaseId = release.rows[0]?.release_id as string|undefined;
     const answerReviews={pendingHuman:0,passed:0,errored:0,total:0};
     for(const row of reviews.rows){const count=row.count as number;answerReviews.total+=count;if(row.verdict==="pass")answerReviews.passed+=count;if(row.processing_status==="errored")answerReviews.errored+=count;if(row.workflow_status==="open"&&(row.verdict==="needs_review"||row.verdict==="fail"||row.processing_status==="errored"))answerReviews.pendingHuman+=count;}
-    return { issues:{actionable,urgent:byPriority.p0+byPriority.p1,overdue,validating,byPriority},feedback:feedbackCounts,answerReviews,cardsByStatus,jobs:jobCounts,...(activeReleaseId?{activeReleaseId}:{}) };
+    const repairBatches={queued:0,publishing:0,published:0,failed:0};for(const row of batches.rows)repairBatches[row.status as keyof typeof repairBatches]=Number(row.count);
+    return { issues:{actionable,urgent:byPriority.p0+byPriority.p1,overdue,validating,readyToPublish:Number(readyDrafts.rows[0]?.count??0),byPriority},repairBatches,feedback:feedbackCounts,answerReviews,cardsByStatus,jobs:jobCounts,...(activeReleaseId?{activeReleaseId}:{}) };
   }
   private async changeActiveRelease(id: string,previousStatus:"superseded"|"rolled_back") {
     const client=await this.pool.connect();

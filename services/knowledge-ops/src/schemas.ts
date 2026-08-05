@@ -124,6 +124,12 @@ export const issueListQuerySchema=z.object({
 }).strict();
 export const issuePatchSchema=z.object({status:z.enum(["open","dismissed"])}).strict();
 
+export const repairBatchRequestSchema=z.object({
+  draftIds:z.array(z.string().uuid()).min(1).max(50),
+}).strict().superRefine((value,context)=>{
+  if(new Set(value.draftIds).size!==value.draftIds.length)context.addIssue({code:"custom",path:["draftIds"],message:"duplicate_repair_batch_draft"});
+});
+
 export const repairTargetKindSchema=z.enum(["answer_card","knowledge_page","retrieval_rule","system_fix"]);
 export const repairRegressionKindSchema=z.enum(["canonical","alias","colloquial","follow_up","negative"]);
 const repairPathSchema=z.string().trim().min(1).max(1_000).refine((value)=>

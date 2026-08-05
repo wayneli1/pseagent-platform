@@ -233,6 +233,7 @@ export type OpsJobType =
   | "generate_repair_draft"
   | "validate_repair_draft"
   | "publish_repair"
+  | "publish_repair_batch"
   | "rollback_repair";
 
 export interface OpsJob {
@@ -343,6 +344,8 @@ export type RepairDraftStatus =
   | "ready_to_publish" | "publishing" | "published" | "failed";
 export type RepairValidationStatus = "queued" | "running" | "passed" | "failed";
 export type RepairPublicationStatus = "pending" | "publishing" | "published" | "failed" | "rolled_back";
+export type RepairBatchStatus = "queued" | "publishing" | "published" | "failed" | "rolled_back";
+export type RepairRemoteSyncStatus = "not_requested" | "pending" | "pushing" | "synced" | "failed" | "compensated";
 export type RepairRegressionKind = "canonical" | "alias" | "colloquial" | "follow_up" | "negative";
 
 export interface RepairObligation {
@@ -410,12 +413,16 @@ export interface RepairValidationRunView extends Omit<RepairValidationRun,"encry
 
 export interface RepairPublication {
   readonly publicationId: string;
+  readonly batchId?: string;
   readonly draftId: string;
   readonly issueId: string;
   readonly status: RepairPublicationStatus;
   readonly targetDomain: KnowledgeDomain;
   readonly targetPath: string;
   readonly baseGitRevision: string;
+  readonly remoteSyncStatus: RepairRemoteSyncStatus;
+  readonly remoteName?: string;
+  readonly remoteBranch?: string;
   readonly resultingGitRevision?: string;
   readonly catalogHash?: string;
   readonly snapshotReleaseId?: string;
@@ -427,13 +434,39 @@ export interface RepairPublication {
   readonly rolledBackAt?: string;
 }
 
+export interface RepairBatch {
+  readonly batchId: string;
+  readonly status: RepairBatchStatus;
+  readonly itemCount: number;
+  readonly domains: readonly KnowledgeDomain[];
+  readonly catalogHash?: string;
+  readonly snapshotReleaseId?: string;
+  readonly previousReleaseId?: string;
+  readonly createdBy: string;
+  readonly errorCode?: string;
+  readonly createdAt: string;
+  readonly publishedAt?: string;
+  readonly rolledBackAt?: string;
+}
+
+export interface RepairBatchView extends RepairBatch {
+  readonly publications: readonly RepairPublication[];
+}
+
 export interface DashboardSummary {
   readonly issues: {
     readonly actionable: number;
     readonly urgent: number;
     readonly overdue: number;
     readonly validating: number;
+    readonly readyToPublish: number;
     readonly byPriority: Record<IssuePriority,number>;
+  };
+  readonly repairBatches: {
+    readonly queued: number;
+    readonly publishing: number;
+    readonly published: number;
+    readonly failed: number;
   };
   readonly feedback: Record<StoredFeedbackCase["status"], number>;
   readonly answerReviews: {

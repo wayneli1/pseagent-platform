@@ -7,7 +7,7 @@ import type { KnowledgeOpsStore } from "./store.js";
 import type {
   AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision,
   FeedbackCaseListView, FeedbackCaseView, IssueCategory, IssueListQuery, IssuePriority, IssueStatus, OpsActor, RegressionCaseRecord,
-  KnowledgeRepairDraft, KnowledgeRepairDraftSummary, KnowledgeRepairDraftView, RepairDraftProposal, RepairPublication,
+  KnowledgeRepairDraft, KnowledgeRepairDraftSummary, KnowledgeRepairDraftView, RepairBatch, RepairDraftProposal, RepairPublication,
   RepairValidationRun, RepairValidationRunView, ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
 } from "./types.js";
 
@@ -103,6 +103,7 @@ export class KnowledgeOpsService {
 
   async listRepairDrafts(actor:OpsActor,issueId:string):Promise<readonly KnowledgeRepairDraftView[]>{assertAuthorized(actor,"repair:read");if(await this.store.getIssue(issueId)===undefined)throw new OpsNotFoundError("issue_not_found");return Promise.all((await this.store.listRepairDrafts(issueId)).map((draft)=>this.repairDraftView(draft)));}
   async repairDraftDetail(actor:OpsActor,draftId:string):Promise<KnowledgeRepairDraftView|undefined>{assertAuthorized(actor,"repair:read");const draft=await this.store.getRepairDraft(draftId);return draft===undefined?undefined:this.repairDraftView(draft);}
+  async listReadyRepairDrafts(actor:OpsActor):Promise<readonly KnowledgeRepairDraftView[]>{assertAuthorized(actor,"repair:read");return Promise.all((await this.store.listRepairDraftsByStatus("ready_to_publish")).map((draft)=>this.repairDraftView(draft)));}
   async requestRepairDraft(actor:OpsActor,issueId:string){
     assertAuthorized(actor,"repair:edit");const issue=await this.store.getIssue(issueId);if(issue===undefined)throw new OpsNotFoundError("issue_not_found");
     if(issue.status==="resolved"||issue.status==="dismissed")throw new Error("issue_not_open_for_repair");
@@ -135,14 +136,20 @@ export class KnowledgeOpsService {
   }
   async listRepairValidations(actor:OpsActor,draftId:string):Promise<readonly RepairValidationRunView[]>{assertAuthorized(actor,"repair:read");return Promise.all((await this.store.listRepairValidations(draftId)).map((run)=>this.repairValidationView(run)));}
   async requestRepairPublication(actor:OpsActor,draftId:string){
-    assertAuthorized(actor,"repair:publish");const draft=await this.store.getRepairDraft(draftId);if(draft===undefined)throw new OpsNotFoundError("repair_draft_not_found");
-    const latest=(await this.store.listRepairValidations(draftId))[0],latestPublication=(await this.store.listRepairPublications(draftId))[0];
-    const retryableFailedPublication=draft.status==="failed"&&latestPublication?.status==="failed"&&latestPublication.resultingGitRevision===undefined;
-    if((draft.status!=="ready_to_publish"&&!retryableFailedPublication)||draft.targetDomain===undefined||draft.targetPath===undefined||draft.baseGitRevision===undefined)throw new Error("repair_draft_not_ready_for_publish");if(latest?.status!=="passed")throw new Error("passing_repair_validation_required");
-    const timestamp=this.timestamp(),publication:RepairPublication={publicationId:randomUUID(),draftId,issueId:draft.issueId,status:"pending",targetDomain:draft.targetDomain,targetPath:draft.targetPath,baseGitRevision:draft.baseGitRevision,createdBy:actor.actorId,createdAt:timestamp};
-    const created=await this.store.createRepairPublication(publication);await this.store.updateRepairDraft(draftId,{status:"publishing"});await this.store.updateIssue(draft.issueId,"validating");const job=await this.store.enqueueJob("publish_repair",{publicationId:created.publicationId});
-    await this.audit(actor,"repair.publication.request","repair_publication",created.publicationId,{draftId,issueId:draft.issueId,jobId:job.jobId,targetDomain:draft.targetDomain,targetPath:draft.targetPath});return{publication:created,job};
+    const result=await this.requestRepairBatch(actor,[draftId]);return{publication:result.batch.publications[0]!,batch:batchSummary(result.batch),job:result.job};
   }
+  async requestRepairBatch(actor:OpsActor,draftIds:readonly string[]){
+    assertAuthorized(actor,"repair:publish");if(draftIds.length<1||draftIds.length>50)throw new Error("repair_batch_size_invalid");if(new Set(draftIds).size!==draftIds.length)throw new Error("duplicate_repair_batch_draft");
+    const drafts:KnowledgeRepairDraft[]=[];
+    for(const draftId of draftIds){const draft=await this.store.getRepairDraft(draftId);if(draft===undefined)throw new OpsNotFoundError("repair_draft_not_found");if(draft.status!=="ready_to_publish"||draft.targetDomain===undefined||draft.targetPath===undefined||draft.baseGitRevision===undefined)throw new Error("repair_draft_not_ready_for_batch");const latest=(await this.store.listRepairValidations(draftId))[0];if(latest?.status!=="passed")throw new Error("passing_repair_validation_required");drafts.push(draft);}
+    const targets=new Set<string>();for(const draft of drafts){const key=`${draft.targetDomain}:${draft.targetPath}`;if(targets.has(key))throw new Error("repair_batch_target_conflict");targets.add(key);}
+    const timestamp=this.timestamp(),batchId=randomUUID(),domains=[...new Set(drafts.map((draft)=>draft.targetDomain!))].sort(),batch:RepairBatch={batchId,status:"queued",itemCount:drafts.length,domains,createdBy:actor.actorId,createdAt:timestamp};
+    const publications:RepairPublication[]=drafts.map((draft)=>({publicationId:randomUUID(),batchId,draftId:draft.draftId,issueId:draft.issueId,status:"pending",targetDomain:draft.targetDomain!,targetPath:draft.targetPath!,baseGitRevision:draft.baseGitRevision!,remoteSyncStatus:"pending",createdBy:actor.actorId,createdAt:timestamp}));
+    const created=await this.store.createRepairBatch(batch,publications),job=await this.store.enqueueJob("publish_repair_batch",{batchId});
+    await this.audit(actor,"repair.batch.request","repair_batch",batchId,{draftIds:[...draftIds],issueIds:drafts.map((draft)=>draft.issueId),domains,itemCount:drafts.length,jobId:job.jobId});return{batch:created,job};
+  }
+  async listRepairBatches(actor:OpsActor){assertAuthorized(actor,"repair:read");return this.store.listRepairBatches();}
+  async repairBatchDetail(actor:OpsActor,batchId:string){assertAuthorized(actor,"repair:read");return this.store.getRepairBatch(batchId);}
   async listRepairPublications(actor:OpsActor,draftId:string){assertAuthorized(actor,"repair:read");return this.store.listRepairPublications(draftId);}
   async requestRepairRollback(actor:OpsActor,publicationId:string){assertAuthorized(actor,"repair:rollback");const publication=await this.store.getRepairPublication(publicationId);if(publication===undefined)throw new OpsNotFoundError("repair_publication_not_found");if(publication.status!=="published")throw new Error("repair_publication_not_rollbackable");const job=await this.store.enqueueJob("rollback_repair",{publicationId});await this.audit(actor,"repair.rollback.request","repair_publication",publicationId,{draftId:publication.draftId,issueId:publication.issueId,jobId:job.jobId});return job;}
 
@@ -218,3 +225,4 @@ function primaryReviewIssueCategory(payload:AnswerReviewEncryptedPayload):IssueC
 function validManualIssueTransition(current:IssueStatus,next:"open"|"dismissed"):boolean{return current===next||next==="dismissed"&&current!=="resolved"||next==="open"&&(current==="dismissed"||current==="resolved");}
 function repairSummary(draft:KnowledgeRepairDraft):KnowledgeRepairDraftSummary{const{encryptedPayload:_secret,...summary}=draft;return summary;}
 function validationSummary(run:RepairValidationRun):Omit<RepairValidationRun,"encryptedPayload">{const{encryptedPayload:_secret,...summary}=run;return summary;}
+function batchSummary(batch:RepairBatch):RepairBatch{return batch;}
