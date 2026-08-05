@@ -47,11 +47,13 @@ export type AppConfig = BaseConfig & {
   readonly answerCards:
     | {
         readonly enabled: false;
+        readonly required: false;
         readonly exactActiveEnabled: false;
         readonly familyActiveEnabled: false;
       }
     | {
         readonly enabled: true;
+        readonly required: boolean;
         readonly catalogPath: string;
         readonly exactActiveEnabled: boolean;
         readonly familyActiveEnabled: boolean;
@@ -175,6 +177,14 @@ function loadAnswerCardConfig(
   const familyActiveEnabled = z.enum(["true", "false"]).parse(
     env.PSE_ANSWER_CARD_FAMILY_ACTIVE_ENABLED ?? "false",
   ) === "true";
+  const required = z.enum(["true", "false"]).parse(
+    env.PSE_ANSWER_CARD_REQUIRED ?? "false",
+  ) === "true";
+  if (required && (!enabled || !exactActiveEnabled)) {
+    throw new Error(
+      "PSE_ANSWER_CARD_REQUIRED requires answer-card shadow and exact activation.",
+    );
+  }
   if (exactActiveEnabled && (!enabled || !taskSpecShadowEnabled || !taskSpecActiveEnabled)) {
     throw new Error(
       "PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED requires answer-card shadow and active TaskSpec.",
@@ -191,6 +201,7 @@ function loadAnswerCardConfig(
     }
     return {
       enabled: false,
+      required: false,
       exactActiveEnabled: false,
       familyActiveEnabled: false,
     };
@@ -204,6 +215,7 @@ function loadAnswerCardConfig(
   }
   return {
     enabled: true,
+    required,
     catalogPath,
     exactActiveEnabled,
     familyActiveEnabled,

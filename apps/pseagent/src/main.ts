@@ -177,8 +177,10 @@ function defaultCreateAnswerCardMatcher(
   model: ModelClient,
   config: Extract<AppConfig["answerCards"], { enabled: true }>,
 ): AnswerCardMatcher {
+  const registry = loadAnswerCardRegistry(config.catalogPath);
+  if (config.required) registry.assertHasActiveCards();
   return new DefaultAnswerCardMatcher(
-    loadAnswerCardRegistry(config.catalogPath),
+    registry,
     model,
   );
 }

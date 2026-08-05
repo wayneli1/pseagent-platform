@@ -148,8 +148,25 @@ describe("answer card registry and matching", () => {
       .toBe("CM-MIGRATION-001");
     expect(registry.expectedRevision("presales-general")).toBe(generalRevision);
     expect(registry.catalogHash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(registry.activeCardCount).toBe(2);
+    expect(() => registry.assertHasActiveCards()).not.toThrow();
     expect(registry.cardApplicable("CM-MIGRATION-001", "Coremail 迁移能力")).toBe(true);
     expect(registry.cardApplicable("CM-MIGRATION-001", "其他产品迁移能力")).toBe(false);
+  });
+
+  it("rejects a catalog with no active cards when production requires governed cards", () => {
+    const source = catalog();
+    source.cards[0]!.reviewStatus = "draft";
+    source.cards[1]!.reviewStatus = "draft";
+    source.families[0]!.reviewStatus = "draft";
+    const registry = new AnswerCardRegistry(source);
+
+    expect(registry.activeCardCount).toBe(0);
+    expect(() => registry.assertHasActiveCards()).toThrowError(
+      expect.objectContaining<Partial<AnswerCardRegistryError>>({
+        code: "answer_card_catalog_has_no_active_cards",
+      }),
+    );
   });
 
   it("rejects a family binding that does not resolve to a governed card obligation", () => {

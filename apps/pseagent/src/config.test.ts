@@ -27,6 +27,7 @@ describe("loadConfig", () => {
     expect(config.multiDomainActiveEnabled).toBe(false);
     expect(config.answerCards).toEqual({
       enabled: false,
+      required: false,
       exactActiveEnabled: false,
       familyActiveEnabled: false,
     });
@@ -145,6 +146,7 @@ describe("loadConfig", () => {
       PSE_ANSWER_CARD_CATALOG_PATH: catalogPath,
     }).answerCards).toEqual({
       enabled: true,
+      required: false,
       catalogPath,
       exactActiveEnabled: false,
       familyActiveEnabled: false,
@@ -182,6 +184,33 @@ describe("loadConfig", () => {
       PSE_ANSWER_CARD_FAMILY_ACTIVE_ENABLED: "true",
       PSE_ANSWER_CARD_CATALOG_PATH: catalogPath,
     }).answerCards).toMatchObject({ familyActiveEnabled: true });
+  });
+
+  it("fails startup configuration when governed answer cards are required but not active", () => {
+    const catalogPath = "C:\\pseagent\\answer-card-catalog.json";
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_ANSWER_CARD_REQUIRED: "true",
+    })).toThrow("requires answer-card shadow and exact activation");
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_ANSWER_CARD_REQUIRED: "true",
+      PSE_ANSWER_CARD_SHADOW_ENABLED: "true",
+      PSE_ANSWER_CARD_CATALOG_PATH: catalogPath,
+    })).toThrow("requires answer-card shadow and exact activation");
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_REQUIRED: "true",
+      PSE_ANSWER_CARD_SHADOW_ENABLED: "true",
+      PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED: "true",
+      PSE_ANSWER_CARD_CATALOG_PATH: catalogPath,
+    }).answerCards).toMatchObject({
+      enabled: true,
+      required: true,
+      exactActiveEnabled: true,
+    });
   });
 
   it("loads bounded request and active deadline budgets", () => {

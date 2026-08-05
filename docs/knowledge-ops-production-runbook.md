@@ -146,7 +146,13 @@ PSE_TASK_SPEC_ACTIVE_ENABLED=true
 PSE_MULTI_DOMAIN_ACTIVE_ENABLED=true
 PSE_ANSWER_CARD_SHADOW_ENABLED=true
 PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED=true
+PSE_ANSWER_CARD_REQUIRED=true
 PSE_ANSWER_CARD_FAMILY_ACTIVE_ENABLED=true
+PSE_ANSWER_CARD_CATALOG_PATH=C:/runtime/pseagent/answer-card-catalog.json
+
+PSE_ANSWER_REVIEW_MODEL_NAME=deepseek_v4_flash
+PSE_ANSWER_REVIEW_TIMEOUT_MS=60000
+PSE_ANSWER_REVIEW_MAX_TOKENS=4096
 
 KNOWLEDGE_OPS_HOST=127.0.0.1
 KNOWLEDGE_OPS_PORT=19830
@@ -162,7 +168,7 @@ KNOWLEDGE_OPS_ALLOW_REMOTE=false
 3. 启动 Knowledge Ops worker。
 4. 使用已批准的两个 Git revision 启动 Knowledge Engine。
 5. 编译并发布与这两个 revision 对齐的答案卡目录。
-6. 启动 PSEAgent / 论客直连进程。
+6. 启动 PSEAgent / 论客直连进程。生产环境启用 `PSE_ANSWER_CARD_REQUIRED=true` 后，答案卡未启用、目录不可读、结构无效或不存在已批准卡片时会拒绝启动，不能静默降级为无卡回答。
 7. 通过反向代理开放管理后台。
 
 常用命令：

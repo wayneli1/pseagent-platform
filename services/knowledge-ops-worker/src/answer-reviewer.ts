@@ -35,6 +35,7 @@ export class IndependentAnswerReviewer {
           "逐项检查正确性、完整性、逻辑、引用和表达；证据不足时选择 needs_review，不得猜测 pass。",
           "exactCard 存在时，必须为每个 required obligation 返回且只返回一个 obligationChecks 项。",
           "发现与正式证据冲突的关键结论时选择 fail；缺项或证据不足选择 needs_review。",
+          "score 采用 0-100 正向评分，0 最差、100 最好；pass 必须为 80-100 分。",
           "只输出一个 JSON 对象，不输出推理过程或额外字段。必须严格使用以下结构和类型：",
           '{"verdict":"pass|needs_review|fail","score":0,"summary":"字符串","defects":[{"category":"knowledge_gap|retrieval_gap|planning_gap|coverage_gap|logic_gap|citation_gap|expression_gap","severity":"critical|major|minor","summary":"字符串","evidence":"字符串"}],"obligationChecks":[{"obligationId":"O1","covered":true,"explanation":"字符串"}]}',
         ].join("\n")},
@@ -90,7 +91,8 @@ export function enforceDeterministicReview(
     }else if(!check.covered){
       defects.push({category:"coverage_gap",severity:"major",summary:`必答项 ${obligation.id} 未完整覆盖`,evidence:check.explanation});
     }
-    const missingConcepts=obligation.requiredConcepts.filter((concept)=>!normalizedAnswer.includes(normalize(concept)));
+    const missingConcepts=obligation.requiredConcepts.filter((concept)=>
+      !containsGovernedConcept(normalizedAnswer,normalize(concept)));
     if(missingConcepts.length>0){
       defects.push({category:"coverage_gap",severity:"major",summary:`必答项 ${obligation.id} 缺少受治理概念`,evidence:missingConcepts.join("、")});
     }
@@ -107,7 +109,11 @@ export function enforceDeterministicReview(
     : hasMajor||modelResult.verdict==="needs_review"
       ? "needs_review" as const
       : "pass" as const;
-  const score=verdict==="fail"?Math.min(modelResult.score,39):verdict==="needs_review"?Math.min(modelResult.score,69):modelResult.score;
+  const score=verdict==="fail"
+    ? Math.min(modelResult.score,39)
+    : verdict==="needs_review"
+      ? Math.min(modelResult.score,69)
+      : Math.max(modelResult.score,80);
   return answerReviewResultSchema.parse({...modelResult,verdict,score,defects:unique});
 }
 
@@ -116,3 +122,14 @@ function uniqueDefects(defects:AnswerReviewResult["defects"]):AnswerReviewResult
 }
 
 function normalize(value:string):string{return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu,"");}
+
+function containsGovernedConcept(answer:string,concept:string):boolean{
+  if(answer.includes(concept))return true;
+  let answerIndex=0;
+  for(const character of concept){
+    answerIndex=answer.indexOf(character,answerIndex);
+    if(answerIndex<0)return false;
+    answerIndex+=character.length;
+  }
+  return true;
+}

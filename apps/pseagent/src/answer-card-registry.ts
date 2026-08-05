@@ -34,6 +34,7 @@ export class AnswerCardRegistryError extends Error {
 export class AnswerCardRegistry {
   readonly catalogHash: string;
   readonly catalog: ActiveAnswerCardCatalog;
+  readonly activeCardCount: number;
   private readonly snapshotByDomain: ReadonlyMap<
     KnowledgeDomain,
     z.infer<typeof catalogDomainSnapshotSchema>
@@ -77,7 +78,9 @@ export class AnswerCardRegistry {
     );
     this.cardById = cards;
     const exactCards = new Map<string, AnswerCard>();
-    for (const card of this.catalog.cards.filter(isCardActive)) {
+    const activeCards = this.catalog.cards.filter(isCardActive);
+    this.activeCardCount = activeCards.length;
+    for (const card of activeCards) {
       for (const question of [card.canonicalQuestion, ...card.aliases]) {
         const key = normalizeQuestion(question);
         if (key === "") {
@@ -126,6 +129,12 @@ export class AnswerCardRegistry {
 
   exactCard(question: string): AnswerCard | undefined {
     return this.exactCardByQuestion.get(normalizeQuestion(question));
+  }
+
+  assertHasActiveCards(): void {
+    if (this.activeCardCount === 0) {
+      throw new AnswerCardRegistryError("answer_card_catalog_has_no_active_cards");
+    }
   }
 
   familyCandidates(

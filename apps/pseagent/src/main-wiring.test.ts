@@ -324,6 +324,7 @@ describe("main wiring", () => {
     expect(createAnswerCardMatcher).toHaveBeenCalledOnce();
     expect(createAnswerCardMatcher).toHaveBeenCalledWith(model, {
       enabled: true,
+      required: false,
       catalogPath: "C:\\runtime\\answer-card-catalog.json",
       exactActiveEnabled: false,
       familyActiveEnabled: false,
