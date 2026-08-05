@@ -27,13 +27,15 @@
     "probe:layered-evidence": "node --env-file=.env.local --import tsx scripts/probe-layered-evidence.mts",
     "probe:exchange-comparison": "node --env-file=.env.local --import tsx scripts/probe-exchange-comparison.mts",
     "probe:enterprise": "node --env-file=.env.local --import tsx scripts/probe-enterprise-scenarios.mts",
+    "probe:release-quality": "node --env-file=.env.local --import tsx scripts/probe-release-quality.mts",
     "probe:stability": "node --env-file=.env.local --import tsx scripts/probe-stability.mts",
     "test:regression": "npm exec -w @pseagent/app -- vitest run src/regression.test.ts",
     "lunkr:login": "node --import tsx scripts/lunkr-login.mts",
     "lunkr:forget-password": "node --import tsx scripts/lunkr-forget-password.mts",
     "lunkr:status": "node --import tsx scripts/lunkr-status.mts",
     "lunkr:start": "node --env-file=.env.local --import tsx scripts/lunkr-start.mts",
-    "ops:admin:preview": "npm run build -w @pseagent/knowledge-ops-admin && node --import tsx scripts/knowledge-ops-admin-preview.mts"
+    "ops:admin:preview": "npm run build -w @pseagent/knowledge-ops-admin && node --import tsx scripts/knowledge-ops-admin-preview.mts",
+    "ops:catalog:compile": "node --import tsx scripts/compile-answer-card-catalog.mts"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

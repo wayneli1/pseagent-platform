@@ -30,6 +30,7 @@ export interface KnowledgeOpsStore {
   listRegressionCases(): Promise<readonly RegressionCaseRecord[]>;
   createRegressionRun(value: RegressionRun): Promise<RegressionRun>;
   getRegressionRun(runId: string): Promise<RegressionRun | undefined>;
+  listRegressionRuns(): Promise<readonly RegressionRun[]>;
   updateRegressionRun(value: RegressionRun): Promise<RegressionRun>;
   enqueueJob(type: OpsJobType, payload: Record<string, unknown>, availableAt?: string): Promise<OpsJob>;
   claimJob(workerId: string): Promise<OpsJob | undefined>;
@@ -86,6 +87,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async listRegressionCases() { return [...this.regressionCases.values()].map(copy).sort((a,b) => a.caseId.localeCompare(b.caseId)); }
   async createRegressionRun(value: RegressionRun) { this.regressionRuns.set(value.runId, copy(value)); return copy(value); }
   async getRegressionRun(id: string) { return maybeCopy(this.regressionRuns.get(id)); }
+  async listRegressionRuns() { return newest([...this.regressionRuns.values()].map(copy)); }
   async updateRegressionRun(value: RegressionRun) { this.regressionRuns.set(value.runId, copy(value)); return copy(value); }
   async enqueueJob(type: OpsJobType, payload: Record<string, unknown>, availableAt = now()) {
     const timestamp = now();

@@ -84,6 +84,7 @@ export interface KnowledgeAgentSession {
   readonly revision: string;
   readonly purpose: string;
   readonly schema: string;
+  authorizeGovernedPaths?(paths: readonly string[]): void;
   search(query: string, topK: number, signal?: AbortSignal): Promise<KnowledgeSearchResult>;
   graph(path: string, topK: number, signal?: AbortSignal): Promise<KnowledgeGraphResult>;
   readPage(path: string, signal?: AbortSignal): Promise<KnowledgePage>;
@@ -228,12 +229,21 @@ async function runKnowledgeAgentCore(
   input: KnowledgeAgentInput,
 ): Promise<AnswerResult | Extract<KnowledgeAgentDetailedResult, { outcome: "verified" }>> {
   const state = createAgentState(input);
+  prepareGovernedEvidenceCandidates(input, state);
   await executeSeedSearches(input, state);
+  await preloadGovernedEvidence(input, state);
   const hasRetrievalRequirement = [...state.requirements.keys()].some(
     (requirementId) =>
       state.evidenceConditions.get(requirementId)?.inputState !== "missing",
   );
-  if (hasRetrievalRequirement && state.successfulSeedSearches === 0) {
+  const hasGovernedEvidence = [...state.requirements.values()].some(
+    (requirementState) => requirementState.directReadPaths.size > 0,
+  );
+  if (
+    hasRetrievalRequirement &&
+    state.successfulSeedSearches === 0 &&
+    !hasGovernedEvidence
+  ) {
     if (input.plan.retrievalStrategy === "coverage_units") {
       recordDiagnostic(input.trace, {
         event: "coverage_unit_seed_snapshot",
@@ -608,6 +618,70 @@ async function preloadCoverageUnitEvidence(
   );
   if (action === undefined) return;
   await executeToolAction(action, input, state);
+}
+
+function prepareGovernedEvidenceCandidates(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+): void {
+  for (const binding of input.requirementBindings ?? []) {
+    const paths = binding.preferredEvidencePaths ?? [];
+    if (paths.length === 0) continue;
+    input.session.authorizeGovernedPaths?.(paths);
+    const requirementState = state.requirements.get(binding.requirementId);
+    if (requirementState === undefined) {
+      throw new Error("governed_evidence_requirement_missing");
+    }
+    for (const path of paths) {
+      if (requirementState.candidatePaths.has(path)) continue;
+      requirementState.candidatePaths.set(path, {
+        path,
+        title: path.split("/").at(-1)?.replace(/\.md$/u, "") ?? path,
+        rrfScore: 1,
+        sourceQueries: new Set(["answer-card"]),
+        rankings: [],
+        matchedTerms: new Set(binding.requiredConcepts ?? []),
+        snippets: new Set(),
+        graphRelations: new Set(),
+        aspectIds: new Set(
+          requirementState.requirement.evidenceAspects.map((aspect) => aspect.id),
+        ),
+        ledgerSources: new Set(["seed"]),
+        requirementSpecificMatch: true,
+      });
+    }
+  }
+}
+
+async function preloadGovernedEvidence(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+): Promise<void> {
+  for (const binding of input.requirementBindings ?? []) {
+    const requirementState = state.requirements.get(binding.requirementId);
+    if (requirementState === undefined) continue;
+    for (const path of binding.preferredEvidencePaths ?? []) {
+      if (!hasRemainingReadCapacity(requirementState)) break;
+      try {
+        await executeRead(
+          {
+            action: "tool",
+            tool: "kb.read_page",
+            input: { requirementId: binding.requirementId, path },
+          },
+          input,
+          state,
+          requirementState,
+        );
+      } catch {
+        observe(state, {
+          type: "tool_unavailable",
+          requirementId: binding.requirementId,
+          tool: "kb.read_page",
+        });
+      }
+    }
+  }
 }
 
 async function preloadBroadSynthesisEvidence(
@@ -1471,12 +1545,13 @@ async function executeRead(
     revision: input.session.revision,
     page,
   });
+  const candidate = requirementState.candidatePaths.get(page.path);
+  if (candidate !== undefined) candidate.title = page.title;
   recordSuccessfulRead(state, requirementState, {
     path: page.path,
     pageType: page.type,
     sources: [...page.sources],
   }, reference.index, true);
-  const candidate = requirementState.candidatePaths.get(page.path);
   const terms = [
     requirementState.requirement.question,
     ...requirementState.requirement.queries.map((query) => query.text),

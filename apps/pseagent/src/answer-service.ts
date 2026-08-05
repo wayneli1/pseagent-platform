@@ -64,11 +64,14 @@ import type {
 import {
   adaptAnswerCardToTaskSpec,
   applyAnswerCardPoliciesToPlan,
+  compileExactAnswerCardTaskSpec,
   type AnswerCardObligationPolicy,
 } from "./answer-card-task-spec-adapter.js";
+import { identityResolvedQuestion } from "./question-resolver.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
+const DOMAIN_AGENT_RETRY_RESERVE_MS = 30_000;
 
 export interface KnowledgeSessionFactory {
   open(scope: Exclude<Scope, "normal">, signal?: AbortSignal): Promise<KnowledgeSession>;
@@ -115,6 +118,7 @@ export interface PseAnswerExecution {
   readonly domainEvidenceLedgers?: readonly EvidenceLedger[];
   readonly coverageGaps?: readonly CoverageGap[];
   readonly answerCardMatch?: AnswerCardExecutionSummary;
+  readonly answerCardActivation?: AnswerCardActivationSummary;
   readonly feedbackContext: FeedbackSafeExecutionContext;
 }
 
@@ -129,6 +133,15 @@ export interface AnswerCardExecutionSummary {
     DiagnosticEvent,
     { event: "answer_card_match" }
   >["reason"];
+}
+
+export interface AnswerCardActivationSummary {
+  readonly activated: boolean;
+  readonly reason: Extract<
+    DiagnosticEvent,
+    { event: "answer_card_activation" }
+  >["reason"];
+  readonly obligationCount: number;
 }
 
 export interface FeedbackSafeExecutionContext {
@@ -195,17 +208,25 @@ export class AnswerService {
     );
     let scope: Scope | undefined;
     try {
-      scope = await observeModelCall({
-        trace,
-        role: "resolver",
-        operation: "route",
-        signal: requestSignal,
-        call: () => this.dependencies.router.route(
-          question,
-          conversationContext,
-          requestSignal,
-        ),
-      });
+      const exactRoute = (
+        this.dependencies.answerCardExactActiveEnabled === true &&
+        this.dependencies.taskSpecActiveEnabled === true
+      )
+        ? this.dependencies.answerCardMatcher?.routeExact?.(question)
+        : undefined;
+      scope = exactRoute === undefined
+        ? await observeModelCall({
+            trace,
+            role: "resolver",
+            operation: "route",
+            signal: requestSignal,
+            call: () => this.dependencies.router.route(
+              question,
+              conversationContext,
+              requestSignal,
+            ),
+          })
+        : scopeForDomain(exactRoute.domain);
       recordDiagnostic(trace, { event: "route", scope });
       if (scope === "normal") {
         const answer = await observeModelCall({
@@ -246,27 +267,31 @@ export class AnswerService {
         return legacyPlan;
       };
       const taskSpecActive = this.dependencies.taskSpecActiveEnabled === true &&
-        this.dependencies.taskAnalysisShadow !== undefined;
+        (this.dependencies.taskAnalysisShadow !== undefined || exactRoute !== undefined);
       let legacyPlan = taskSpecActive ? undefined : await loadLegacyPlan();
-      let taskAnalysis = await observeTaskAnalysisShadow({
-        ...(this.dependencies.taskAnalysisShadow === undefined
-          ? {}
-          : { analyzer: this.dependencies.taskAnalysisShadow }),
-        question,
-        ...(conversationContext === undefined ? {} : { conversationContext }),
-        scope,
-        ...(legacyPlan === undefined ? {} : { legacyPlan }),
-        knowledgeContext: {
-          purpose: session.purpose,
-          schema: session.schema,
-          planningOverview: session.planningOverview,
-        },
-        trace,
-        signal: requestSignal,
-        timeoutMs: this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
-      });
+      let taskAnalysis = exactRoute === undefined
+        ? await observeTaskAnalysisShadow({
+            ...(this.dependencies.taskAnalysisShadow === undefined
+              ? {}
+              : { analyzer: this.dependencies.taskAnalysisShadow }),
+            question,
+            ...(conversationContext === undefined ? {} : { conversationContext }),
+            scope,
+            ...(legacyPlan === undefined ? {} : { legacyPlan }),
+            knowledgeContext: {
+              purpose: session.purpose,
+              schema: session.schema,
+              planningOverview: session.planningOverview,
+            },
+            trace,
+            signal: requestSignal,
+            timeoutMs: this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
+          })
+        : undefined;
       const answerCardMatch = await this.matchAnswerCard({
-        question: taskAnalysis?.resolvedQuestion.standaloneQuestion ?? question,
+        question: exactRoute === undefined
+          ? taskAnalysis?.resolvedQuestion.standaloneQuestion ?? question
+          : question,
         currentDomain: session.project,
         currentRevision: session.revision,
         requestSignal,
@@ -288,30 +313,37 @@ export class AnswerService {
             reason: "shadow_only",
             obligationCount: answerCardMatch.bindings.length,
           });
-        } else if (taskAnalysis === undefined) {
-          recordDiagnostic(trace, {
-            event: "answer_card_activation",
-            activated: false,
-            reason: "analysis_unavailable",
-            obligationCount: answerCardMatch.bindings.length,
-          });
         } else {
-          const adapted = adaptAnswerCardToTaskSpec({
-            match: answerCardMatch,
-            resolvedQuestion: taskAnalysis.resolvedQuestion,
-            taskSpec: taskAnalysis.taskSpec,
-          });
+          const adapted = answerCardMatch.matchType === "exact"
+            ? compileExactAnswerCardTaskSpec({
+                match: answerCardMatch,
+                resolvedQuestion: taskAnalysis?.resolvedQuestion ??
+                  identityResolvedQuestion(question),
+              })
+            : taskAnalysis === undefined
+              ? { activated: false as const, reason: "match_not_active" as const }
+              : adaptAnswerCardToTaskSpec({
+                  match: answerCardMatch,
+                  resolvedQuestion: taskAnalysis.resolvedQuestion,
+                  taskSpec: taskAnalysis.taskSpec,
+                });
           recordDiagnostic(trace, {
             event: "answer_card_activation",
             activated: adapted.activated,
-            reason: adapted.activated ? "activated" : adapted.reason,
+            reason: adapted.activated
+              ? "activated"
+              : taskAnalysis === undefined && answerCardMatch.matchType !== "exact"
+                ? "analysis_unavailable"
+                : adapted.reason,
             obligationCount: adapted.activated ? adapted.policies.length : 0,
           });
           if (adapted.activated) {
             taskAnalysis = {
-              ...taskAnalysis,
+              resolvedQuestion: taskAnalysis?.resolvedQuestion ??
+                identityResolvedQuestion(question),
               taskSpec: adapted.taskSpec,
               guard: adapted.guard,
+              elapsedMs: taskAnalysis?.elapsedMs ?? 0,
             };
             answerCardPolicies = adapted.policies;
             activeAnswerCardMatch = answerCardMatch;
@@ -633,7 +665,7 @@ export class AnswerService {
           domainCount: input.plans.length,
           domainsUsed,
         });
-        const detailed = await runner({
+        const runnerInput = {
           scope: domainPlan.scope,
           question: input.question,
           plan: domainPlan.plan,
@@ -649,7 +681,28 @@ export class AnswerService {
           deadlineAt: input.deadlineAt,
           trace: input.trace,
           signal: sharedSignal,
-        });
+        };
+        let detailed = await runner(runnerInput);
+        if (
+          detailed.outcome === "unavailable" &&
+          input.plans.length === 1 &&
+          !sharedSignal.aborted &&
+          Date.now() + DOMAIN_AGENT_RETRY_RESERVE_MS < input.deadlineAt
+        ) {
+          // A complete verified attempt is still required. Retry one isolated
+          // domain once for transient model/verifier failures; never retry
+          // snapshot mismatches or cross-domain sibling failures.
+          delete input.trace.stopReason;
+          recordDiagnostic(input.trace, {
+            event: "domain_execution",
+            domain: domainPlan.domain,
+            phase,
+            result: "started",
+            domainCount: input.plans.length,
+            domainsUsed,
+          });
+          detailed = await runner(runnerInput);
+        }
         if (sharedSignal.aborted || Date.now() >= input.deadlineAt) {
           throw new DomainExecutionError(
             activeDeadlineSignal.aborted || Date.now() >= input.deadlineAt
@@ -884,6 +937,10 @@ export class AnswerService {
       );
     }
   }
+}
+
+function scopeForDomain(domain: KnowledgeDomain): Exclude<Scope, "normal"> {
+  return domain === "coremail-professional" ? "professional" : "general";
 }
 
 function singleDomainBindings(input: {
@@ -1201,6 +1258,7 @@ class OutcomeTrace implements DiagnosticTrace {
   removedSegmentCount?: number;
   historicalGateReason?: HistoricalGateReason;
   answerCardMatch?: AnswerCardExecutionSummary;
+  answerCardActivation?: AnswerCardActivationSummary;
 
   constructor(private readonly delegate: DiagnosticTrace) {}
 
@@ -1220,6 +1278,13 @@ class OutcomeTrace implements DiagnosticTrace {
         cardIdHashes: [...event.cardIdHashes],
         catalogHash: event.catalogHash,
         ...(event.reason === undefined ? {} : { reason: event.reason }),
+      };
+    }
+    if (event.event === "answer_card_activation") {
+      this.answerCardActivation = {
+        activated: event.activated,
+        reason: event.reason,
+        obligationCount: event.obligationCount,
       };
     }
     if (event.event === "coverage") {
@@ -1364,6 +1429,9 @@ function finishExecution(
     ...(trace.answerCardMatch === undefined
       ? {}
       : { answerCardMatch: trace.answerCardMatch }),
+    ...(trace.answerCardActivation === undefined
+      ? {}
+      : { answerCardActivation: trace.answerCardActivation }),
     feedbackContext: {
       scope: result.scope,
       status: result.status,
@@ -1425,6 +1493,7 @@ function executionCoverageMetadata(
   | "domainsUsed"
   | "requestId"
   | "answerCardMatch"
+  | "answerCardActivation"
   | "feedbackContext"
 > {
   return {

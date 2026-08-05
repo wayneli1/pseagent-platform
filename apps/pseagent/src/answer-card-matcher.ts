@@ -69,7 +69,13 @@ export interface AnswerCardMatcherInput {
   readonly signal?: AbortSignal;
 }
 
+export interface AnswerCardRouteHint {
+  readonly domain: KnowledgeDomain;
+  readonly expectedRevision: string;
+}
+
 export interface AnswerCardMatcher {
+  routeExact?(question: string): AnswerCardRouteHint | undefined;
   match(input: AnswerCardMatcherInput): Promise<AnswerCardMatch>;
 }
 
@@ -78,6 +84,20 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
     private readonly registry: AnswerCardRegistry,
     private readonly model: ModelClient,
   ) {}
+
+  routeExact(question: string): AnswerCardRouteHint | undefined {
+    const card = this.registry.exactCard(question);
+    if (
+      card === undefined ||
+      !this.registry.exactCardApplicable(card.cardId, question)
+    ) {
+      return undefined;
+    }
+    return {
+      domain: card.domain,
+      expectedRevision: this.registry.expectedRevision(card.domain),
+    };
+  }
 
   async match(input: AnswerCardMatcherInput): Promise<AnswerCardMatch> {
     const exact = this.registry.exactCard(input.question);
@@ -88,7 +108,7 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
       if (!this.registry.snapshotCurrent(exact.domain, input.currentRevision)) {
         return this.none("stale_catalog", 1);
       }
-      if (!this.registry.cardApplicable(exact.cardId, input.question)) {
+      if (!this.registry.exactCardApplicable(exact.cardId, input.question)) {
         return this.none("applicability_mismatch", 1);
       }
       return this.hitFromCard(exact);

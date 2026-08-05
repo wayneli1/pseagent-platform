@@ -6,7 +6,10 @@ import {
   normalizeQuestion,
 } from "./answer-card-registry.js";
 import { DefaultAnswerCardMatcher } from "./answer-card-matcher.js";
-import { adaptAnswerCardToTaskSpec } from "./answer-card-task-spec-adapter.js";
+import {
+  adaptAnswerCardToTaskSpec,
+  compileExactAnswerCardTaskSpec,
+} from "./answer-card-task-spec-adapter.js";
 import { applyAnswerCardPoliciesToPlan } from "./answer-card-task-spec-adapter.js";
 import { identityResolvedQuestion } from "./question-resolver.js";
 import { taskSpecSchema } from "./task-spec.js";
@@ -106,6 +109,35 @@ function catalog() {
 }
 
 describe("answer card registry and matching", () => {
+  it("trusts governed exact aliases without requiring broad applicability labels in the question", async () => {
+    const source = catalog();
+    source.cards[0]!.aliases.push("What migration capabilities are supported?");
+    const registry = new AnswerCardRegistry(source);
+    const matcher = new DefaultAnswerCardMatcher(
+      registry,
+      { completeJson: vi.fn() } as unknown as ModelClient,
+    );
+
+    expect(registry.cardApplicable(
+      "CM-MIGRATION-001",
+      "What migration capabilities are supported?",
+    )).toBe(false);
+    expect(registry.exactCardApplicable(
+      "CM-MIGRATION-001",
+      "What migration capabilities are supported?",
+    )).toBe(true);
+    expect(matcher.routeExact("What migration capabilities are supported?")).toEqual({
+      domain: "coremail-professional",
+      expectedRevision: professionalRevision,
+    });
+    await expect(matcher.match({
+      question: "What migration capabilities are supported?",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    })).resolves.toMatchObject({ matchType: "exact", confidence: "deterministic" });
+  });
+
   it("normalizes punctuation for deterministic exact matching and binds revisions", () => {
     const registry = new AnswerCardRegistry(catalog());
 
@@ -200,6 +232,137 @@ describe("answer card registry and matching", () => {
 });
 
 describe("answer card TaskSpec adapter", () => {
+  it("compiles approved exact bindings without a model-authored TaskSpec", async () => {
+    const source = catalog();
+    const exactQuestion = source.cards[0]!.canonicalQuestion;
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(source),
+      { completeJson: vi.fn() } as unknown as ModelClient,
+    );
+    const match = await matcher.match({
+      question: exactQuestion,
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    });
+    expect(match.matchType).toBe("exact");
+    if (match.matchType === "none") return;
+
+    const compiled = compileExactAnswerCardTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(exactQuestion),
+    });
+
+    expect(compiled).toMatchObject({ activated: true });
+    if (!compiled.activated) return;
+    expect(compiled.guard).toMatchObject({ ok: true, issues: [] });
+    expect(compiled.taskSpec.deliverables[0]!.obligations).toEqual([
+      expect.objectContaining({
+        id: "O1",
+        label: source.cards[0]!.obligations[0]!.label,
+        evidencePolicy: "direct",
+        domains: ["coremail-professional"],
+      }),
+    ]);
+    expect(compiled.policies).toEqual([
+      expect.objectContaining({
+        obligationId: "O1",
+        cardId: "CM-MIGRATION-001",
+        preferredEvidencePaths: ["wiki/queries/coremail-migration.md"],
+      }),
+    ]);
+  });
+
+  it("routes professional-card customer inputs through the general input boundary", async () => {
+    const source = catalog();
+    source.cards[0]!.obligations[0]!.evidencePolicy = "customer_input";
+    const exactQuestion = source.cards[0]!.canonicalQuestion;
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(source),
+      { completeJson: vi.fn() } as unknown as ModelClient,
+    );
+    const match = await matcher.match({
+      question: exactQuestion,
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    });
+    if (match.matchType === "none") throw new Error("expected_exact_match");
+
+    const compiled = compileExactAnswerCardTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(exactQuestion),
+    });
+
+    expect(compiled).toMatchObject({ activated: true });
+    if (!compiled.activated) return;
+    expect(compiled.taskSpec.deliverables[0]!.obligations[0]).toMatchObject({
+      evidencePolicy: "customer_input",
+      domains: ["presales-general"],
+      evidenceCondition: { inputState: "missing" },
+    });
+  });
+
+  it("makes an exact governed card authoritative over model-invented obligations", async () => {
+    const source = catalog();
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(source),
+      { completeJson: vi.fn() } as unknown as ModelClient,
+    );
+    const exactQuestion = source.cards[0]!.canonicalQuestion;
+    const taskSpec = taskSpecSchema.parse({
+      subject: exactQuestion,
+      entities: [{ id: "E1", label: "Coremail", role: "product", sourceText: "Coremail" }],
+      deliverables: [{
+        id: "D1",
+        label: "answer",
+        kind: "recommendation",
+        required: true,
+        sourceText: exactQuestion,
+        obligations: [
+          {
+            id: "O1",
+            label: "migration",
+            targetEntityIds: ["E1"],
+            evidencePolicy: "direct",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: exactQuestion,
+          },
+          {
+            id: "O2",
+            label: "model-invented generic advice",
+            targetEntityIds: ["E1"],
+            evidencePolicy: "synthesis",
+            domains: ["presales-general"],
+            required: true,
+            sourceText: "generic advice",
+          },
+        ],
+      }],
+    });
+    const match = await matcher.match({
+      question: exactQuestion,
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    });
+    const adapted = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(exactQuestion),
+      taskSpec,
+    });
+
+    expect(adapted).toMatchObject({ activated: true });
+    if (!adapted.activated) return;
+    expect(adapted.taskSpec.deliverables).toHaveLength(1);
+    expect(adapted.taskSpec.deliverables[0]!.obligations).toHaveLength(1);
+    expect(adapted.taskSpec.deliverables[0]!.obligations[0]).toMatchObject({
+      domains: ["coremail-professional"],
+      label: source.cards[0]!.obligations[0]!.label,
+    });
+  });
+
   it("overlays governed obligations while preserving a different user request", async () => {
     const question = "请说明 Coremail 迁移能力及迁移风险沟通方法。";
     const taskSpec = taskSpecSchema.parse({

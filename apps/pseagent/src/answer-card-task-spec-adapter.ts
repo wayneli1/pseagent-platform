@@ -37,6 +37,94 @@ export type AnswerCardTaskSpecAdapterResult =
         | "guard_rejected";
     };
 
+/**
+ * Compile an approved exact answer card without depending on model-authored
+ * entities or obligations. Exact aliases are part of the reviewed catalog, so
+ * the catalog bindings are the authoritative contract for this request.
+ */
+export function compileExactAnswerCardTaskSpec(input: {
+  readonly match: Exclude<AnswerCardMatch, { matchType: "none" }>;
+  readonly resolvedQuestion: ResolvedQuestion;
+}): AnswerCardTaskSpecAdapterResult {
+  if (input.match.matchType !== "exact") {
+    return { activated: false, reason: "match_not_active" };
+  }
+  if (input.match.bindings.length === 0 || input.match.bindings.length > 6) {
+    return { activated: false, reason: "requirement_limit_exceeded" };
+  }
+
+  const question = boundedText(
+    input.resolvedQuestion.standaloneQuestion,
+    512,
+    "当前问题",
+  );
+  const candidate = {
+    subject: boundedText(question, 1_024, "当前问题"),
+    entities: [{
+      id: "E1",
+      label: boundedText(question, 128, "当前问题"),
+      role: "subject" as const,
+      sourceText: boundedText(question, 256, "当前问题"),
+    }],
+    deliverables: [{
+      id: "D1",
+      label: boundedText(question, 256, "受治理答案"),
+      kind: "recommendation" as const,
+      required: true,
+      sourceText: question,
+      obligations: input.match.bindings.map((binding, index) => ({
+        id: `O${index + 1}`,
+        label: binding.label,
+        targetEntityIds: ["E1"],
+        evidencePolicy: binding.evidencePolicy,
+        evidenceCondition: binding.evidencePolicy === "customer_input"
+          ? {
+              inputState: "missing" as const,
+              ambiguous: false,
+              conflictDetected: false,
+              freshness: "not_assessed" as const,
+            }
+          : {
+              inputState: "not_applicable" as const,
+              ambiguous: false,
+              conflictDetected: false,
+              freshness: "not_assessed" as const,
+            },
+        domains: taskDomainsForBinding(binding),
+        required: binding.required,
+        sourceText: question,
+      })),
+    }],
+  };
+  const parsed = taskSpecSchema.safeParse(candidate);
+  if (!parsed.success) {
+    return { activated: false, reason: "task_spec_contract_exceeded" };
+  }
+
+  const policies = input.match.bindings.map((binding, index) => Object.freeze({
+    obligationId: `O${index + 1}`,
+    cardId: binding.cardId,
+    cardObligationId: binding.cardObligationId,
+    requiredConcepts: Object.freeze([...binding.requiredConcepts]),
+    forbiddenClaims: Object.freeze([...binding.forbiddenClaims]),
+    preferredEvidencePaths: Object.freeze([...binding.preferredEvidencePaths]),
+  }));
+  const guard: TaskSpecGuardResult = Object.freeze({
+    ok: true,
+    issues: Object.freeze([]),
+    explicitEntityCount: 0,
+    mappedExplicitEntityCount: 0,
+    explicitRequestCount: 0,
+    mappedExplicitRequestCount: 0,
+  });
+  return {
+    activated: true,
+    taskSpec: parsed.data,
+    guard,
+    policies: Object.freeze(policies),
+  };
+}
+
 interface DraftObligation {
   value: TaskSpec["deliverables"][number]["obligations"][number];
   cardBinding?: AnswerCardMatchBinding;
@@ -106,7 +194,16 @@ export function adaptAnswerCardToTaskSpec(input: {
     });
   }
 
-  const requiredCount = draftDeliverables.reduce((count, deliverable) =>
+  const governedDeliverables = input.match.matchType === "exact"
+    ? draftDeliverables
+        .map((deliverable) => ({
+          ...deliverable,
+          obligations: deliverable.obligations.filter((draft) =>
+            draft.cardBinding !== undefined),
+        }))
+        .filter((deliverable) => deliverable.obligations.length > 0)
+    : draftDeliverables;
+  const requiredCount = governedDeliverables.reduce((count, deliverable) =>
     count + (deliverable.required
       ? deliverable.obligations.filter((obligation) => obligation.value.required).length
       : 0), 0);
@@ -118,7 +215,7 @@ export function adaptAnswerCardToTaskSpec(input: {
   let obligationIndex = 0;
   const candidate = {
     ...input.taskSpec,
-    deliverables: draftDeliverables.map((deliverable) => ({
+    deliverables: governedDeliverables.map((deliverable) => ({
       ...deliverable,
       obligations: deliverable.obligations.map((draft) => {
         obligationIndex += 1;
@@ -230,8 +327,19 @@ function applyBinding(
           conflictDetected: obligation.evidenceCondition?.conflictDetected ?? false,
           freshness: obligation.evidenceCondition?.freshness ?? "not_assessed",
         },
-    domains: [...binding.domains] as KnowledgeDomain[],
+    domains: taskDomainsForBinding(binding),
   };
+}
+
+function taskDomainsForBinding(
+  binding: AnswerCardMatchBinding,
+): KnowledgeDomain[] {
+  // Customer-specific facts are never retrieved as product facts. They are
+  // collected through the general presales input boundary even when the card
+  // itself belongs to the professional product domain.
+  return binding.evidencePolicy === "customer_input"
+    ? ["presales-general"]
+    : [...binding.domains] as KnowledgeDomain[];
 }
 
 function obligationSimilarity(
@@ -265,4 +373,9 @@ function stableSemanticText(values: readonly string[]): string[] {
 function boundedSourceText(primary: string, fallback: string): string {
   const value = primary.trim() || fallback.trim();
   return [...value].slice(0, 512).join("");
+}
+
+function boundedText(value: string, limit: number, fallback: string): string {
+  const normalized = value.trim() || fallback;
+  return [...normalized].slice(0, limit).join("");
 }

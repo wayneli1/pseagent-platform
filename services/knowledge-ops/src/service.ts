@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { answerCardSchema, releaseManifestSchema, type KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import { ContentCipher } from "./crypto.js";
 import { assertAuthorized, assertSeparationOfDuties } from "./rbac.js";
-import { feedbackIntakeSchema } from "./schemas.js";
+import { feedbackIntakeSchema, releaseQualityReportImportSchema } from "./schemas.js";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
   CardRevision, FeedbackCaseView, OpsActor,
@@ -70,6 +70,12 @@ export class KnowledgeOpsService {
   }
 
   async listRegressionCases(actor:OpsActor){assertAuthorized(actor,"regression:read");return this.store.listRegressionCases();}
+  async listRegressionRuns(actor:OpsActor){assertAuthorized(actor,"regression:read");return this.store.listRegressionRuns();}
+  async recordRegressionRun(actor:OpsActor,source:unknown){
+    assertAuthorized(actor,"regression:run");const report=releaseQualityReportImportSchema.parse(source);const timestamp=this.timestamp();
+    const run={runId:randomUUID(),status:report.passed?"passed" as const:"failed" as const,totalCases:report.summary.total,passedCases:report.summary.passedCases,report,createdAt:timestamp,completedAt:timestamp};
+    const result=await this.store.createRegressionRun(run);await this.audit(actor,"regression.quality.record","regression_run",result.runId,{model:report.model,passed:report.passed});return result;
+  }
   async saveRegressionCase(actor:OpsActor,value:RegressionCaseRecord){assertAuthorized(actor,"regression:run");const result=await this.store.upsertRegressionCase(value);await this.audit(actor,"regression.case.save","regression_case",result.caseId,{});return result;}
   async enqueueRegression(actor:OpsActor,payload:Record<string,unknown>={}){assertAuthorized(actor,"regression:run");const job=await this.store.enqueueJob("regression_run",payload);await this.audit(actor,"regression.enqueue","job",job.jobId,{});return job;}
 
@@ -77,7 +83,8 @@ export class KnowledgeOpsService {
   async requestRelease(actor:OpsActor,manifestSource:unknown){
     assertAuthorized(actor,"release:publish");const manifest=releaseManifestSchema.parse(manifestSource);
     if(manifest.approvedBy.includes(actor.actorId)) throw new Error("release_requester_cannot_be_sole_approver");
-    const run=await this.store.getRegressionRun(manifest.regressionRunId);if(!run||run.status!=="passed")throw new Error("passing_regression_run_required");
+    const run=await this.store.getRegressionRun(manifest.regressionRunId);const qualityGate=releaseQualityReportImportSchema.safeParse(run?.report);
+    if(!run||run.status!=="passed"||!qualityGate.success||!qualityGate.data.passed)throw new Error("passing_release_quality_gate_required");
     const release:ReleaseRecord={...manifest,manifest,status:"pending",createdBy:actor.actorId};
     await this.store.createRelease(release);const job=await this.store.enqueueJob("publish_release",{releaseId:release.releaseId});
     await this.audit(actor,"release.request","release",release.releaseId,{jobId:job.jobId});return {release,job};

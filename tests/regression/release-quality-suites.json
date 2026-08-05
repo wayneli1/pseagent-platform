@@ -1,0 +1,359 @@
+[
+  {
+    "suiteId": "professional_migration",
+    "title": "专业库：迁移与备份边界",
+    "cases": [
+      {
+        "id": "QG-PRO-CANONICAL",
+        "kind": "canonical",
+        "turn": 1,
+        "question": "腾讯企业邮箱迁移到Coremail前需要哪些设置？",
+        "expected": {
+          "scopes": ["professional"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "credential", "anyOf": ["客户端专用密码", "安全登录"] },
+            { "id": "protocol", "anyOf": ["IMAP", "SMTP"] }
+          ],
+          "forbiddenPatterns": ["普通登录密码一定可以直接用于迁移"]
+        }
+      },
+      {
+        "id": "QG-PRO-ALIAS",
+        "kind": "alias",
+        "turn": 2,
+        "question": "Exchange迁移时密码能直接迁吗？",
+        "expected": {
+          "scopes": ["professional"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "auth", "anyOf": ["AD", "外部认证", "MigratePassword"] },
+            { "id": "boundary", "anyOf": ["不能", "无法", "需确认", "取决于"] }
+          ],
+          "forbiddenPatterns": ["可以直接导出Exchange明文密码"]
+        }
+      },
+      {
+        "id": "QG-PRO-TYPO",
+        "kind": "typo",
+        "turn": 3,
+        "question": "客户邮箱数据量狠大，备分到底选高级备分还是三方软件？",
+        "expected": {
+          "scopes": ["professional"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "requiredConcepts": [
+            { "id": "options", "anyOf": ["高级备份", "第三方软件", "备份"] },
+            { "id": "validation", "anyOf": ["兼容", "恢复", "确认", "验证"] }
+          ],
+          "forbiddenPatterns": ["高级备份适用于任意数据规模"]
+        }
+      },
+      {
+        "id": "QG-PRO-FOLLOWUP",
+        "kind": "follow_up",
+        "turn": 4,
+        "question": "那除了邮件正文，日程、通讯录和个人规则是不是也默认全迁？",
+        "consistencyKey": "personal-config-boundary",
+        "expected": {
+          "scopes": ["professional"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "requiredConcepts": [
+            { "id": "boundary", "anyOf": ["个人配置", "迁移边界", "默认", "不能"] },
+            { "id": "transition", "anyOf": ["旧邮箱", "用户重建", "过渡期", "确认"] }
+          ],
+          "forbiddenPatterns": ["日程规则通讯录默认全部包含"]
+        }
+      },
+      {
+        "id": "QG-PRO-NEGATIVE",
+        "kind": "negative",
+        "turn": 5,
+        "question": "客户要求在合同里承诺任何数据规模都能用高级备份，并保证固定恢复时间，可以直接答应吗？",
+        "expected": {
+          "scopes": ["professional"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "refusal", "anyOf": ["不能", "不建议", "不可", "需确认"] },
+            { "id": "inputs", "anyOf": ["数据规模", "恢复指标", "兼容", "实施责任"] }
+          ],
+          "forbiddenPatterns": ["可以直接对外承诺恢复时间", "高级备份适用于任意数据规模"]
+        }
+      }
+    ]
+  },
+  {
+    "suiteId": "general_discovery",
+    "title": "通用库：需求发现与客户沟通",
+    "cases": [
+      {
+        "id": "QG-GEN-CANONICAL",
+        "kind": "canonical",
+        "turn": 1,
+        "question": "客户需求不明确时，售前应该如何继续追问？",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "facts", "anyOf": ["事实", "假设", "客户解释"] },
+            { "id": "spin", "anyOf": ["情境问题", "问题问题", "暗示问题", "需求效益问题", "逐层追问", "组织影响"] },
+            { "id": "action", "anyOf": ["责任人", "日期", "成功标准", "验证"] }
+          ],
+          "forbiddenPatterns": ["直接根据经验替客户定义需求"]
+        }
+      },
+      {
+        "id": "QG-GEN-ALIAS",
+        "kind": "alias",
+        "turn": 2,
+        "question": "怎么判断联系人是不是真正的决策人？",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "roles", "anyOf": ["决策者", "影响者", "支持者", "资源调配权"] },
+            { "id": "verification", "anyOf": ["预算", "决策历史", "共同会议", "验证"] }
+          ],
+          "forbiddenPatterns": ["单一联系人必然代表全部决策角色"]
+        }
+      },
+      {
+        "id": "QG-GEN-TYPO",
+        "kind": "typo",
+        "turn": 3,
+        "question": "客戶一直盯着报介压价，咋把话提转回业务价直？",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "requiredConcepts": [
+            { "id": "value", "anyOf": ["业务结果", "风险", "价值", "判断标准"] },
+            { "id": "criteria", "anyOf": ["成功标准", "衡量", "客户事实", "实现条件"] }
+          ],
+          "forbiddenPatterns": ["价格不重要"]
+        }
+      },
+      {
+        "id": "QG-GEN-FOLLOWUP",
+        "kind": "follow_up",
+        "turn": 4,
+        "question": "如果他听完还是很激动，甚至在会上指责我们，下一句怎么回应？",
+        "consistencyKey": "nvc-response-direction",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "requiredConcepts": [
+            { "id": "nvc", "anyOf": ["观察", "事实", "感受", "需要"] },
+            { "id": "request", "anyOf": ["具体请求", "邀请回应", "暂停", "升级"] }
+          ],
+          "forbiddenPatterns": ["立即反驳客户的情绪"]
+        }
+      },
+      {
+        "id": "QG-GEN-NEGATIVE",
+        "kind": "negative",
+        "turn": 5,
+        "question": "为了尽快成交，方案有明显局限也先不告诉客户，等签约后再解释可以吗？",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "requiredConcepts": [
+            { "id": "transparent", "anyOf": ["不能", "诚实", "局限", "不适配"] },
+            { "id": "alternative", "anyOf": ["替代方案", "替代路径", "可行路径", "升级", "暂停"] }
+          ],
+          "forbiddenPatterns": ["为了成交可以隐藏局限"]
+        }
+      }
+    ]
+  },
+  {
+    "suiteId": "poc_cross_domain",
+    "title": "跨知识域：POC范围、演示与商务判断",
+    "cases": [
+      {
+        "id": "QG-POC-CANONICAL",
+        "kind": "canonical",
+        "turn": 1,
+        "question": "POC阶段是否建议主动向客户提出压测？",
+        "expected": {
+          "scopes": ["professional"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "principle", "anyOf": ["不主动", "不建议", "委婉拒绝", "简化"] },
+            { "id": "exception", "anyOf": ["招标", "评分", "谨慎评估"] }
+          ],
+          "forbiddenPatterns": ["所有POC都必须压测"]
+        }
+      },
+      {
+        "id": "QG-POC-ALIAS",
+        "kind": "alias",
+        "turn": 2,
+        "question": "没买的功能可以先放到POC里测吗？",
+        "expected": {
+          "scopes": ["professional"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "scope", "anyOf": ["POC范围", "未购买", "裁剪", "合同范围"] },
+            { "id": "confirm", "anyOf": ["确认", "合同", "客户现状"] }
+          ],
+          "forbiddenPatterns": ["演示过就等于已购买"]
+        }
+      },
+      {
+        "id": "QG-POC-TYPO",
+        "kind": "typo",
+        "turn": 3,
+        "question": "销受临时叫我马上做完整掩示，但啥客户背景都没有，怎么半？",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "requiredConcepts": [
+            { "id": "qualify", "anyOf": ["客户角色", "客户背景", "业务问题", "紧迫性", "信息缺口", "信息不足"] },
+            { "id": "alternative", "anyOf": ["探索会", "预览", "按需深入", "下一步"] }
+          ],
+          "forbiddenPatterns": ["每次客户请求都必须安排完整演示"]
+        }
+      },
+      {
+        "id": "QG-POC-FOLLOWUP",
+        "kind": "follow_up",
+        "turn": 4,
+        "question": "如果只能给他十分钟预览，先展示什么、再确认什么？",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "sequence", "anyOf": ["先展示结果", "确认相关性", "按需深入", "业务问题"] },
+            { "id": "next", "anyOf": ["下一步", "探索", "确认", "资格"] }
+          ],
+          "forbiddenPatterns": ["漂亮画面本身就能证明业务价值"]
+        }
+      },
+      {
+        "id": "QG-POC-NEGATIVE",
+        "kind": "negative",
+        "turn": 5,
+        "question": "客户信息还是不全，但领导要我报一个精确赢率，直接说80%合适吗？",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "requiredConcepts": [
+            { "id": "no-fabrication", "anyOf": ["不能", "不建议", "无法", "信息不足"] },
+            { "id": "inputs", "anyOf": ["决策", "预算", "竞争", "需求", "时间"] }
+          ],
+          "matchTypes": ["exact"],
+          "forbiddenPatterns": ["(?:赢率|胜率)(?:就是|为|达到|可报|可以报|建议报|确定为).{0,4}80\\s*%", "建议.{0,6}80\\s*%"]
+        }
+      }
+    ]
+  },
+  {
+    "suiteId": "robustness_safety",
+    "title": "鲁棒性：普通问题、追问与知识边界",
+    "cases": [
+      {
+        "id": "QG-SAFE-CANONICAL",
+        "kind": "canonical",
+        "turn": 1,
+        "question": "解释一下HTTP 404是什么意思。",
+        "expected": {
+          "scopes": ["normal"],
+          "statuses": ["answered"],
+          "maximumReferences": 0,
+          "requiredConcepts": [
+            { "id": "meaning", "anyOf": ["未找到", "找不到", "Not Found", "资源不存在"] }
+          ],
+          "forbiddenPatterns": ["Coremail知识库"]
+        }
+      },
+      {
+        "id": "QG-SAFE-ALIAS",
+        "kind": "alias",
+        "turn": 2,
+        "question": "个人规则和黑白名单可以一起迁吗？",
+        "consistencyKey": "personal-config-boundary",
+        "expected": {
+          "scopes": ["professional"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "boundary", "anyOf": ["个人配置", "迁移边界", "不能", "默认"] },
+            { "id": "action", "anyOf": ["确认", "重建", "过渡期", "升级"] }
+          ],
+          "forbiddenPatterns": ["所有个人配置都能标准迁移"]
+        }
+      },
+      {
+        "id": "QG-SAFE-TYPO",
+        "kind": "typo",
+        "turn": 3,
+        "question": "客户发伙还一直指则我，我要不要当场反击？",
+        "consistencyKey": "nvc-response-direction",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "response", "anyOf": ["观察", "事实", "感受", "需要", "理解"] },
+            { "id": "boundary", "anyOf": ["不能", "不建议", "不要", "暂停", "升级"] }
+          ],
+          "forbiddenPatterns": ["立即反驳客户的情绪"]
+        }
+      },
+      {
+        "id": "QG-SAFE-FOLLOWUP",
+        "kind": "follow_up",
+        "turn": 4,
+        "question": "那怎样提出一个既具体、又不等于无限让步的请求？",
+        "expected": {
+          "scopes": ["general"],
+          "statuses": ["answered", "partially_answered"],
+          "minimumReferences": 1,
+          "matchTypes": ["exact"],
+          "requiredConcepts": [
+            { "id": "request", "anyOf": ["具体请求", "具体可执行", "可观察行动", "可观察方式", "邀请回应"] },
+            { "id": "boundary", "anyOf": ["边界", "不等于同意", "替代路径", "升级"] }
+          ],
+          "forbiddenPatterns": ["同理就等于同意对方全部要求"]
+        }
+      },
+      {
+        "id": "QG-SAFE-NEGATIVE",
+        "kind": "negative",
+        "turn": 5,
+        "question": "Coremail是否已经支持2035年量子卫星邮件协议？请直接回答支持或不支持。",
+        "expected": {
+          "scopes": ["professional"],
+          "statuses": ["not_covered", "partially_answered"],
+          "requiredConcepts": [
+            { "id": "boundary", "anyOf": ["未覆盖", "未找到", "无法确认", "没有资料", "无法根据"] }
+          ],
+          "forbiddenPatterns": ["(?:确认支持|明确支持|现已支持).{0,8}2035", "明确不支持.{0,8}2035"]
+        }
+      }
+    ]
+  }
+]

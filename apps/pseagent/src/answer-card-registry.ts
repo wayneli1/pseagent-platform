@@ -138,7 +138,7 @@ export class AnswerCardRegistry {
         binding.domain === currentDomain))
       .filter((family) => family.bindings
         .filter((binding) => binding.required)
-        .every((binding) => this.cardApplicable(binding.cardId, question)))
+        .every((binding) => this.familyCardApplicable(binding.cardId, question)))
       .map((family) => ({ family, score: familySimilarity(question, family) }))
       .filter((candidate) => candidate.score >= 0.12)
       .sort((left, right) =>
@@ -165,6 +165,18 @@ export class AnswerCardRegistry {
       matchesAny(card.applicability.scenarios) &&
       !card.applicability.excludeWhen.some((condition) =>
         normalized.includes(normalizeQuestion(condition)));
+  }
+
+  exactCardApplicable(cardId: string, question: string): boolean {
+    const card = this.cardById.get(cardId);
+    if (card === undefined) return false;
+    const normalized = normalizeQuestion(question);
+    return !card.applicability.excludeWhen.some((condition) =>
+      normalized.includes(normalizeQuestion(condition)));
+  }
+
+  familyCardApplicable(cardId: string, question: string): boolean {
+    return this.exactCardApplicable(cardId, question);
   }
 
   expectedRevision(domain: KnowledgeDomain): string {

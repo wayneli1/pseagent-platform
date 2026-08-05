@@ -2029,6 +2029,55 @@ describe("AnswerService", () => {
       expect(historicalProvider.answer).not.toHaveBeenCalled();
     });
 
+    it("retries one isolated domain after a transient detailed-agent failure", async () => {
+      const detailed = vi.fn<DetailedAgentRunner>()
+        .mockResolvedValueOnce({
+          outcome: "unavailable",
+          result: {
+            scope: "general",
+            status: "temporarily_unavailable",
+            answer: "temporarily unavailable",
+            references: [],
+          },
+        })
+        .mockImplementation(async (input) => ({
+          outcome: "verified",
+          project: input.session.project,
+          revision: input.session.revision,
+          action: {
+            action: "final",
+            requirements: [{
+              id: "R1",
+              coverage: "complete",
+              answer: "verified answer[1]",
+              citations: [1],
+            }],
+            citations: [1],
+          },
+          references: [{
+            index: 1,
+            project: input.session.project,
+            revision: input.session.revision,
+            title: "verified source",
+            path: "wiki/verified.md",
+            contentHash: "f".repeat(64),
+          }],
+        }));
+      const { service } = createMixedService({
+        detailed,
+        shadow: singleDomainShadow("presales-general"),
+      });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+
+      expect(detailed).toHaveBeenCalledTimes(2);
+      expect(execution).toMatchObject({
+        retryable: false,
+        stopReason: "final",
+        result: { status: "answered" },
+      });
+    });
+
     it("fails closed when an execution session belongs to the wrong project snapshot", async () => {
       const { service, knowledge, runAgentDetailed } = createMixedService();
       knowledge.open.mockImplementation(async (scope) =>

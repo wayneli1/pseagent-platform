@@ -119,7 +119,10 @@ pub fn canonical_relative_path(path: &str) -> Result<String, EngineError> {
 
 fn run_git(root: &Path, args: &[&str]) -> Result<String, EngineError> {
     let output = Command::new("git")
-        .current_dir(root)
+        .arg("-c")
+        .arg(format!("safe.directory={}", root.display()))
+        .arg("-C")
+        .arg(root)
         .args(args)
         .output()
         .map_err(|_| EngineError::InvalidRevision)?;

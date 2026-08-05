@@ -47,7 +47,8 @@ async fn run() -> Result<(), EngineError> {
         (ProjectKey::PresalesGeneral, general),
     ])?;
     let state = HttpState::new(service, token)?;
-    let address = SocketAddr::from(([127, 0, 0, 1], 19_829));
+    let port = optional_port("KNOWLEDGE_ENGINE_PORT", 19_829)?;
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .map_err(|_| EngineError::ListenerUnavailable)?;
@@ -73,6 +74,24 @@ fn required_path(name: &str) -> Result<PathBuf, EngineError> {
     Ok(path)
 }
 
+fn optional_port(name: &str, default: u16) -> Result<u16, EngineError> {
+    match env::var(name) {
+        Ok(value) => parse_port(Some(&value), default),
+        Err(_) => Ok(default),
+    }
+}
+
+fn parse_port(value: Option<&str>, default: u16) -> Result<u16, EngineError> {
+    match value {
+        Some(value) => value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port > 0)
+            .ok_or(EngineError::InvalidConfiguration),
+        None => Ok(default),
+    }
+}
+
 async fn shutdown_signal() {
     let control_c = async {
         let _ = tokio::signal::ctrl_c().await;
@@ -88,5 +107,26 @@ async fn shutdown_signal() {
     tokio::select! {
         () = control_c => {},
         () = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_port;
+
+    #[test]
+    fn port_uses_default_when_unset() {
+        assert_eq!(parse_port(None, 19_829).expect("default port"), 19_829);
+    }
+
+    #[test]
+    fn port_accepts_valid_override() {
+        assert_eq!(parse_port(Some("19839"), 19_829).expect("port"), 19_839);
+    }
+
+    #[test]
+    fn port_rejects_zero_or_invalid_values() {
+        assert!(parse_port(Some("0"), 19_829).is_err());
+        assert!(parse_port(Some("invalid"), 19_829).is_err());
     }
 }

@@ -213,6 +213,96 @@ describe("answer card online orchestration", () => {
     }));
   });
 
+  it("activates an exact card when model task analysis is unavailable", async () => {
+    const plan = vi.fn();
+    const runAgent = vi.fn(async () => ({
+      scope: "professional" as const,
+      status: "answered" as const,
+      answer: "governed exact answer",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: {} as never,
+      router: { route: vi.fn() },
+      planner: { plan },
+      knowledge: {
+        open: vi.fn(async () => ({
+          project: "coremail-professional",
+          revision: professionalRevision,
+          purpose: "purpose",
+          schema: "schema",
+          planningOverview: "overview",
+        }) as never),
+      },
+      runAgent,
+      taskSpecActiveEnabled: true,
+      answerCardMatcher: {
+        routeExact: vi.fn(() => ({
+          domain: "coremail-professional" as const,
+          expectedRevision: professionalRevision,
+        })),
+        match: vi.fn(async () => exactMatch()),
+      },
+      answerCardExactActiveEnabled: true,
+    });
+
+    const result = await service.answerDetailed(question);
+
+    expect(result.result).toMatchObject({ status: "answered" });
+    expect(result.answerCardActivation).toEqual({
+      activated: true,
+      reason: "activated",
+      obligationCount: 1,
+    });
+    expect(plan).not.toHaveBeenCalled();
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      requirementBindings: [expect.objectContaining({
+        obligationId: "O1",
+        cardId: "CM-MIGRATION-001",
+        preferredEvidencePaths: ["wiki/queries/coremail-migration.md"],
+      })],
+    }));
+  });
+
+  it("lets an active governed exact card correct a model routing mistake", async () => {
+    const router = { route: vi.fn(async () => "general" as const) };
+    const open = vi.fn(async (scope: "professional" | "general") => ({
+      project: scope === "professional" ? "coremail-professional" : "presales-general",
+      revision: scope === "professional" ? professionalRevision : generalRevision,
+      purpose: "purpose",
+      schema: "schema",
+      planningOverview: "overview",
+    }) as never);
+    const service = new AnswerService({
+      model: {} as never,
+      router,
+      planner: { plan: vi.fn(async () => legacyPlan) },
+      knowledge: { open },
+      runAgent: vi.fn(async () => ({
+        scope: "professional" as const,
+        status: "answered" as const,
+        answer: "governed answer",
+        references: [],
+      })),
+      taskAnalysisShadow: taskAnalysis("single"),
+      taskSpecActiveEnabled: true,
+      answerCardMatcher: {
+        routeExact: vi.fn(() => ({
+          domain: "coremail-professional" as const,
+          expectedRevision: professionalRevision,
+        })),
+        match: vi.fn(async () => exactMatch()),
+      },
+      answerCardExactActiveEnabled: true,
+    });
+
+    const result = await service.answerDetailed(question);
+
+    expect(result.result.scope).toBe("professional");
+    expect(router.route).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith("professional", expect.any(AbortSignal));
+  });
+
   it("fails a cross-domain active card closed when a bound release revision drifts", async () => {
     const events: DiagnosticEvent[] = [];
     const familyMatch: Exclude<AnswerCardMatch, { matchType: "none" }> = {

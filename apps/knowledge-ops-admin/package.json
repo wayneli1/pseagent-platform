@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite --host 127.0.0.1",
+    "build": "vite build --configLoader runner",
+    "dev": "vite --host 127.0.0.1 --configLoader runner",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

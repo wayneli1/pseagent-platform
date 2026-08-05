@@ -52,6 +52,29 @@ describe("StdioKnowledgeToolCaller", () => {
     expect(client.connect).toHaveBeenCalledOnce();
   });
 
+  it("serializes calls over the shared stdio transport", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const client = fakeClient();
+    client.callTool.mockImplementation(async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return { structuredContent: { ok: true } };
+    });
+    const caller = new StdioKnowledgeToolCaller(process.execPath, {
+      createClient: () => client,
+      createTransport: () => ({ stderr: null }),
+    });
+
+    await Promise.all(Array.from({ length: 7 }, (_, index) =>
+      caller.call("knowledge_search", { query: `q${index}` })));
+
+    expect(client.callTool).toHaveBeenCalledTimes(7);
+    expect(maximumActive).toBe(1);
+  });
+
   it("waits when closed during connect and cannot resurrect the transport", async () => {
     const gate = deferred<void>();
     const client = fakeClient();

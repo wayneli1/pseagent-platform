@@ -29,6 +29,8 @@ export class KnowledgeOpsApi {
         const input=reviewInputSchema.parse(request.body);return created(await this.service.reviewRevision(actor,segments[2],input.decision,input.comment));
       }
       if(request.method==="GET"&&pathname==="/v1/regressions")return ok(await this.service.listRegressionCases(actor));
+      if(request.method==="GET"&&pathname==="/v1/regression-runs")return ok(await this.service.listRegressionRuns(actor));
+      if(request.method==="POST"&&pathname==="/v1/regression-runs")return created(await this.service.recordRegressionRun(actor,request.body));
       if(request.method==="POST"&&pathname==="/v1/regressions/run")return created(await this.service.enqueueRegression(actor,record(request.body)));
       if(request.method==="GET"&&pathname==="/v1/releases")return ok(await this.service.listReleases(actor));
       if(request.method==="POST"&&pathname==="/v1/releases")return created(await this.service.requestRelease(actor,request.body));

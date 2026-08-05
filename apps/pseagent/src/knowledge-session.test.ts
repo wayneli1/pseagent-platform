@@ -181,6 +181,19 @@ describe("KnowledgeSession", () => {
     await expect(session.graph("wiki/unknown.md", 5)).rejects.toThrow(UnknownKnowledgePathError);
   });
 
+  it("allows only safe reviewed answer-card paths to bypass lexical discovery", async () => {
+    const session = await KnowledgeSession.open(
+      "professional",
+      fakeKnowledgeCaller({ pagePath: "wiki/queries/governed-answer.md" }),
+    );
+
+    session.authorizeGovernedPaths(["wiki/queries/governed-answer.md"]);
+    await expect(session.readPage("wiki/queries/governed-answer.md")).resolves.toMatchObject({
+      path: "wiki/queries/governed-answer.md",
+    });
+    expect(() => session.authorizeGovernedPaths(["../outside.md"])).toThrow();
+  });
+
   it("adds search and graph paths, then fails closed on a mismatched page path", async () => {
     const caller = fakeKnowledgeCaller({ pagePath: "wiki/other.md" });
     const session = await KnowledgeSession.open("professional", caller);

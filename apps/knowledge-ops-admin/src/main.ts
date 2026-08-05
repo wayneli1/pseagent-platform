@@ -8,6 +8,7 @@ import type {
   FeedbackDetail,
   FeedbackMeta,
   OpsJob,
+  RegressionRun,
   Release,
   ViewName,
 } from "./types.js";
@@ -158,13 +159,18 @@ async function renderCards() {
   );
 }
 async function renderRegressions() {
-  const [cases, jobs] = await Promise.all([
+  const [cases, jobs, qualityRuns] = await Promise.all([
     api.get<Array<Record<string, unknown>>>("/v1/regressions"),
     api.get<OpsJob[]>("/v1/jobs"),
+    api.get<RegressionRun[]>("/v1/regression-runs"),
   ]);
   const runs = jobs.filter((x) => x.type === "regression_run");
+  const latestQuality = qualityRuns[0];
+  const gateBanner = latestQuality === undefined
+    ? '<div class="notice">尚无发布质量报告；发布前必须完成 4 组 × 5 类问题的 deepseek_v4_flash 门禁。</div>'
+    : `<div class="notice ${latestQuality.status === "passed" ? "" : "error"}">最新发布门禁：${badge(latestQuality.status)} · ${latestQuality.passedCases}/${latestQuality.totalCases} 题通过 · 模型 ${h(latestQuality.report?.model ?? "未记录")} · P95 ${h(latestQuality.report?.summary?.p95LatencyMs ?? "—")} ms</div>`;
   content(
-    `<div class="toolbar"><button class="button primary" data-action="run-regression">运行全量回归</button><span class="muted">回归在独立 Worker 执行，不阻塞在线问答</span></div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>测试用例</h2><span class="muted">${cases.length} 条</span></div>${
+    gateBanner + `<div class="toolbar mt-14"><button class="button primary" data-action="run-regression">运行全量回归</button><span class="muted">回归在独立 Worker 执行，不阻塞在线问答</span></div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>测试用例</h2><span class="muted">${cases.length} 条</span></div>${
       cases.length
         ? table(
             ["用例", "知识域", "类型", "预期答案卡", "状态"],

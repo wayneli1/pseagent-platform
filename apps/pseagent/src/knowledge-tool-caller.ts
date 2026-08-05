@@ -36,6 +36,13 @@ type McpClientFacade = {
 
 type TransportFacade = { stderr?: { on(event: "data", listener: (chunk: unknown) => void): unknown } | null };
 
+interface ToolCallWaiter {
+  readonly signal?: AbortSignal;
+  readonly resolve: (release: () => void) => void;
+  readonly reject: (error: KnowledgeToolCallerError) => void;
+  readonly onAbort?: () => void;
+}
+
 export interface KnowledgeToolCallerDependencies {
   command?: string;
   env?: Record<string, string>;
@@ -59,6 +66,8 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
   private connectPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private client: McpClientFacade | undefined;
+  private toolCallActive = false;
+  private readonly toolCallWaiters: ToolCallWaiter[] = [];
 
   constructor(
     private readonly entryPath: string,
@@ -92,6 +101,8 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
       throw new KnowledgeToolCallerError("knowledge_mcp_tool_forbidden");
     }
     if (!isRecord(input)) throw new KnowledgeToolCallerError("knowledge_mcp_invalid_input");
+    const releaseToolCall = await this.acquireToolCall(signal);
+    try {
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
         await this.connect();
@@ -120,6 +131,9 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
       }
     }
     throw new KnowledgeToolCallerError("knowledge_mcp_call_failed");
+    } finally {
+      releaseToolCall();
+    }
   }
 
   async close(): Promise<void> {
@@ -192,6 +206,61 @@ export class StdioKnowledgeToolCaller implements KnowledgeToolCaller {
 
   private isClosingOrClosed(): boolean {
     return this.state === "closing" || this.state === "closed";
+  }
+
+  private acquireToolCall(signal?: AbortSignal): Promise<() => void> {
+    if (this.isClosingOrClosed()) {
+      return Promise.reject(new KnowledgeToolCallerError("knowledge_mcp_closed"));
+    }
+    if (!this.toolCallActive) {
+      this.toolCallActive = true;
+      return Promise.resolve(this.releaseToolCall());
+    }
+    if (signal?.aborted === true) {
+      return Promise.reject(new KnowledgeToolCallerError("knowledge_mcp_cancelled"));
+    }
+    return new Promise<() => void>((resolve, reject) => {
+      const onAbort = signal === undefined
+        ? undefined
+        : (): void => {
+            const index = this.toolCallWaiters.findIndex(
+              (waiter) => waiter.onAbort === onAbort,
+            );
+            if (index >= 0) this.toolCallWaiters.splice(index, 1);
+            reject(new KnowledgeToolCallerError("knowledge_mcp_cancelled"));
+          };
+      const waiter: ToolCallWaiter = {
+        ...(signal === undefined ? {} : { signal }),
+        resolve,
+        reject,
+        ...(onAbort === undefined ? {} : { onAbort }),
+      };
+      this.toolCallWaiters.push(waiter);
+      signal?.addEventListener("abort", onAbort!, { once: true });
+    });
+  }
+
+  private releaseToolCall(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.toolCallActive = false;
+      while (this.toolCallWaiters.length > 0) {
+        const waiter = this.toolCallWaiters.shift()!;
+        if (waiter.onAbort !== undefined) {
+          waiter.signal?.removeEventListener("abort", waiter.onAbort);
+        }
+        if (waiter.signal?.aborted === true) continue;
+        if (this.isClosingOrClosed()) {
+          waiter.reject(new KnowledgeToolCallerError("knowledge_mcp_closed"));
+          continue;
+        }
+        this.toolCallActive = true;
+        waiter.resolve(this.releaseToolCall());
+        break;
+      }
+    };
   }
 }
 

@@ -238,6 +238,7 @@ function fakeSession(options: {
     revision,
     purpose: "purpose",
     schema: "schema",
+    authorizeGovernedPaths: vi.fn(),
     search: searchMock,
     graph: graphMock,
     readPage: readPageMock,
@@ -3359,6 +3360,41 @@ describe("runKnowledgeAgent", () => {
 
     expect(result.status).toBe("temporarily_unavailable");
     expect(model.calls).toBe(0);
+  });
+
+  it("preloads reviewed answer-card evidence even when lexical seed search misses", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    const model = scriptedAgentModel([
+      final("complete", "Reviewed governed evidence [1]", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        cardId: "CM-MIGRATION-001",
+        cardObligationId: "O1",
+        requiredConcepts: ["migration"],
+        preferredEvidencePaths: ["wiki/queries/governed-answer.md"],
+      }],
+    });
+
+    expect(session.authorizeGovernedPaths).toHaveBeenCalledWith([
+      "wiki/queries/governed-answer.md",
+    ]);
+    expect(session.readPage).toHaveBeenCalledWith(
+      "wiki/queries/governed-answer.md",
+      undefined,
+    );
+    expect(result).toMatchObject({
+      status: "answered",
+      references: [{ path: "wiki/queries/governed-answer.md" }],
+    });
+    expect(model.calls).toBe(1);
   });
 
   it("repairs one invalid action with an explicit schema instruction", async () => {

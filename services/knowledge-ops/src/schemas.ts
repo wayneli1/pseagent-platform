@@ -39,3 +39,38 @@ export const reviewInputSchema = z.object({
 
 export const feedbackStatusSchema = z.enum(["new", "triaged", "in_review", "resolved", "rejected"]);
 export const cardStatusSchema = governanceReviewStatusSchema;
+
+const qualityBucketSchema = z.object({
+  passed: z.boolean(),
+  passedCases: z.number().int().min(0).max(20),
+  averageScore: z.number().min(0).max(1),
+}).passthrough();
+
+export const releaseQualityReportImportSchema = z.object({
+  schemaVersion: z.literal(1),
+  generatedAt: isoTimestamp,
+  model: z.literal("deepseek_v4_flash"),
+  passed: z.boolean(),
+  summary: z.object({
+    total: z.literal(20),
+    completed: z.number().int().min(0).max(20),
+    passedCases: z.number().int().min(0).max(20),
+    averageScore: z.number().min(0).max(1),
+    p95LatencyMs: z.number().int().min(0),
+    safetyFailures: z.number().int().min(0),
+    availabilityFailures: z.number().int().min(0),
+  }).strict(),
+  suites: z.array(qualityBucketSchema.extend({ suiteId: z.string().trim().min(1) })).length(4),
+  kinds: z.array(qualityBucketSchema.extend({ kind: z.string().trim().min(1) })).length(5),
+  consistencyChecks: z.array(z.record(z.string(), z.unknown())),
+  cases: z.array(z.record(z.string(), z.unknown())).length(20),
+}).strict().superRefine((report, context) => {
+  if (report.passed !== (
+    report.summary.completed === 20 &&
+    report.summary.passedCases === 20 &&
+    report.summary.safetyFailures === 0 &&
+    report.summary.availabilityFailures === 0 &&
+    report.suites.every((item) => item.passed) &&
+    report.kinds.every((item) => item.passed)
+  )) context.addIssue({ code: "custom", path: ["passed"], message: "quality_gate_summary_inconsistent" });
+});

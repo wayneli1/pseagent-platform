@@ -133,6 +133,10 @@ export class KnowledgeSession {
     }
   }
 
+  authorizeGovernedPaths(paths: readonly string[]): void {
+    for (const path of paths) this.seenPaths.add(safePathSchema.parse(path));
+  }
+
   async search(query: string, topK: number, signal?: AbortSignal): Promise<KnowledgeSearchResult> {
     const result = searchResultSchema.parse(await this.caller.call(
       "knowledge_search",

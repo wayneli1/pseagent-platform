@@ -117,6 +117,8 @@ export class OpenAiCompatibleModelClient implements ModelClient {
   ): Promise<{ readonly content: string; readonly finishReason?: string }> {
     const timeout = AbortSignal.timeout(this.config.timeoutMs);
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
+    const releaseModelSlot = await acquireModelSlot(signal);
+    try {
     const body = {
       model: this.config.model,
       temperature: 0,
@@ -126,37 +128,155 @@ export class OpenAiCompatibleModelClient implements ModelClient {
         ? { response_format: { type: "json_object" } }
         : {}),
     };
-    try {
-      const response = await fetch(`${this.config.baseUrl.replace(/\/$/u, "")}/chat/completions`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal,
-      });
-      if (!response.ok) throw new ModelUnavailableError(`model_unavailable_${response.status}`);
-      const text = await response.text();
-      if (new TextEncoder().encode(text).byteLength > 1024 * 1024) throw new InvalidModelPayloadError();
-      const parsed = JSON.parse(text) as {
-        choices?: Array<{
-          finish_reason?: unknown;
-          message?: { content?: unknown };
-        }>;
-      };
-      const choice = parsed.choices?.[0];
-      const content = choice?.message?.content;
-      if (typeof content !== "string" || !content.trim()) throw new InvalidModelPayloadError();
-      return {
-        content,
-        ...(typeof choice?.finish_reason === "string"
-          ? { finishReason: choice.finish_reason }
-          : {}),
-      };
-    } catch (error) {
-      if (error instanceof ModelUnavailableError || error instanceof InvalidModelPayloadError) throw error;
-      if (signal.aborted) throw new ModelUnavailableError();
-      throw new ModelUnavailableError();
+    const url = `${this.config.baseUrl.replace(/\/$/u, "")}/chat/completions`;
+    const request = {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.config.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal,
+    } satisfies RequestInit;
+    let lastFailureCode = "model_unavailable";
+    for (let attempt = 0; attempt < MODEL_TRANSPORT_MAX_ATTEMPTS; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetch(url, request);
+      } catch {
+        if (signal.aborted) throw new ModelUnavailableError();
+        if (attempt + 1 >= MODEL_TRANSPORT_MAX_ATTEMPTS) {
+          throw new ModelUnavailableError(lastFailureCode);
+        }
+        await waitForModelRetry(MODEL_TRANSPORT_RETRY_MS[attempt]!, signal);
+        continue;
+      }
+      if (!response.ok) {
+        lastFailureCode = `model_unavailable_${response.status}`;
+        if (
+          !MODEL_TRANSIENT_HTTP_STATUSES.has(response.status) ||
+          attempt + 1 >= MODEL_TRANSPORT_MAX_ATTEMPTS
+        ) {
+          throw new ModelUnavailableError(lastFailureCode);
+        }
+        await response.body?.cancel().catch(() => undefined);
+        await waitForModelRetry(
+          Math.max(
+            retryAfterMs(response.headers.get("retry-after")) ?? 0,
+            MODEL_TRANSPORT_RETRY_MS[attempt]!,
+          ),
+          signal,
+        );
+        continue;
+      }
+      try {
+        const text = await response.text();
+        if (new TextEncoder().encode(text).byteLength > 1024 * 1024) {
+          throw new InvalidModelPayloadError();
+        }
+        const parsed = JSON.parse(text) as {
+          choices?: Array<{
+            finish_reason?: unknown;
+            message?: { content?: unknown };
+          }>;
+        };
+        const choice = parsed.choices?.[0];
+        const content = choice?.message?.content;
+        if (typeof content !== "string" || !content.trim()) {
+          throw new InvalidModelPayloadError();
+        }
+        return {
+          content,
+          ...(typeof choice?.finish_reason === "string"
+            ? { finishReason: choice.finish_reason }
+            : {}),
+        };
+      } catch (error) {
+        if (error instanceof InvalidModelPayloadError) throw error;
+        throw new InvalidModelPayloadError();
+      }
+    }
+    throw new ModelUnavailableError(lastFailureCode);
+    } finally {
+      releaseModelSlot();
     }
   }
+}
+
+const MODEL_TRANSPORT_MAX_ATTEMPTS = 4;
+const MODEL_TRANSPORT_RETRY_MS = [1_000, 3_000, 10_000] as const;
+const MODEL_TRANSIENT_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const MODEL_MAX_CONCURRENT_REQUESTS = 3;
+
+interface ModelSlotWaiter {
+  readonly signal: AbortSignal;
+  readonly resolve: (release: () => void) => void;
+  readonly reject: (error: ModelUnavailableError) => void;
+  readonly onAbort: () => void;
+}
+
+let activeModelRequests = 0;
+const modelSlotWaiters: ModelSlotWaiter[] = [];
+
+function acquireModelSlot(signal: AbortSignal): Promise<() => void> {
+  if (signal.aborted) return Promise.reject(new ModelUnavailableError());
+  if (activeModelRequests < MODEL_MAX_CONCURRENT_REQUESTS) {
+    activeModelRequests += 1;
+    return Promise.resolve(modelSlotRelease());
+  }
+  return new Promise<() => void>((resolve, reject) => {
+    const onAbort = (): void => {
+      const index = modelSlotWaiters.findIndex((waiter) => waiter.onAbort === onAbort);
+      if (index >= 0) modelSlotWaiters.splice(index, 1);
+      reject(new ModelUnavailableError());
+    };
+    const waiter = { signal, resolve, reject, onAbort };
+    modelSlotWaiters.push(waiter);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function modelSlotRelease(): () => void {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeModelRequests = Math.max(0, activeModelRequests - 1);
+    while (modelSlotWaiters.length > 0) {
+      const waiter = modelSlotWaiters.shift()!;
+      waiter.signal.removeEventListener("abort", waiter.onAbort);
+      if (waiter.signal.aborted) continue;
+      activeModelRequests += 1;
+      waiter.resolve(modelSlotRelease());
+      break;
+    }
+  };
+}
+
+function retryAfterMs(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(30_000, Math.round(seconds * 1_000));
+  }
+  const date = Date.parse(value);
+  if (!Number.isFinite(date)) return undefined;
+  return Math.min(30_000, Math.max(0, date - Date.now()));
+}
+
+async function waitForModelRetry(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) throw new ModelUnavailableError();
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timeout);
+      reject(new ModelUnavailableError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 class StructuredEnvelopeError extends Error {

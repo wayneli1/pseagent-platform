@@ -75,6 +75,51 @@ describe("model client", () => {
     await expect(client().completeText({ messages: [] })).rejects.not.toThrow(/top-secret|raw body/u);
   });
 
+  it("retries transient provider throttling without exposing the response body", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("limited secret", {
+        status: 429,
+        headers: { "retry-after": "0" },
+      }))
+      .mockResolvedValueOnce(Response.json({
+        choices: [{ message: { content: "recovered" } }],
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(client({ timeoutMs: 3_000 }).completeText({ messages: [] }))
+      .resolves.toBe("recovered");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a non-transient authentication failure", async () => {
+    const fetchMock = vi.fn(async () => new Response("secret", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(client().completeText({ messages: [] })).rejects.toMatchObject({
+      code: "model_unavailable_401",
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("queues model traffic above the process-wide concurrency limit", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const fetchMock = vi.fn(async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return Response.json({ choices: [{ message: { content: "ok" } }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Promise.all(Array.from({ length: 7 }, () =>
+      client().completeText({ messages: [] })));
+
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(maximumActive).toBeLessThanOrEqual(3);
+  });
+
   it("accepts one strict JSON object wrapped by a leading think block and JSON fence", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({
       choices: [{ message: { content: "<think>内部推理，不应进入结果</think>\n```json\n{\"ok\":true}\n```" } }],
