@@ -1,10 +1,13 @@
 {
   "name": "pseagent-platform",
   "private": true,
-  "engines": { "node": ">=24 <25" },
+  "engines": {
+    "node": ">=24 <25"
+  },
   "workspaces": [
     "packages/knowledge-governance-contracts",
     "apps/pseagent",
+    "apps/knowledge-ops-admin",
     "services/knowledge-mcp",
     "services/knowledge-ops",
     "services/knowledge-ops-worker",
@@ -29,7 +32,8 @@
     "lunkr:login": "node --import tsx scripts/lunkr-login.mts",
     "lunkr:forget-password": "node --import tsx scripts/lunkr-forget-password.mts",
     "lunkr:status": "node --import tsx scripts/lunkr-status.mts",
-    "lunkr:start": "node --env-file=.env.local --import tsx scripts/lunkr-start.mts"
+    "lunkr:start": "node --env-file=.env.local --import tsx scripts/lunkr-start.mts",
+    "ops:admin:preview": "npm run build -w @pseagent/knowledge-ops-admin && node --import tsx scripts/knowledge-ops-admin-preview.mts"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
