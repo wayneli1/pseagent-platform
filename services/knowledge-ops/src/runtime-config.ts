@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
-import type { TokenActorEntry } from "./rbac.js";
+import type { AdminLoginConfig, TokenActorEntry } from "./rbac.js";
 import { ContentCipher } from "./crypto.js";
 
 const roleSchema = z.enum([
@@ -53,6 +53,13 @@ export function loadListenConfig(env:NodeJS.ProcessEnv):{
   const staticRoot=env.KNOWLEDGE_OPS_ADMIN_ROOT?.trim();
   if(staticRoot!==undefined&&staticRoot!==""&&!path.isAbsolute(staticRoot))throw new Error("knowledge_ops_admin_root_must_be_absolute");
   return{host,port,...(staticRoot?{staticRoot}:{})};
+}
+
+export function loadAdminLoginConfig(env:NodeJS.ProcessEnv):AdminLoginConfig{
+  const username=z.string().trim().min(1).max(64).parse(env.KNOWLEDGE_OPS_ADMIN_USERNAME);
+  const passwordHash=z.string().regex(/^scrypt\$\d+\$\d+\$\d+\$[A-Za-z0-9_-]+\$[A-Za-z0-9_-]+$/u).parse(env.KNOWLEDGE_OPS_ADMIN_PASSWORD_HASH);
+  const sessionTtlSeconds=z.coerce.number().int().min(300).max(86_400).parse(env.KNOWLEDGE_OPS_ADMIN_SESSION_TTL_SECONDS??"43200");
+  return{username,passwordHash,sessionTtlMs:sessionTtlSeconds*1000};
 }
 
 export function loadContentCipher(env:NodeJS.ProcessEnv):ContentCipher{

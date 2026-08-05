@@ -12,5 +12,5 @@ describe("管理台中文状态词典",()=>{
     ["answer_card","答案卡"],["colloquial","口语问法"],["follow_up","上下文追问"],["negative","边界负例"],
   ])("将 %s 显示为中文",(value,expected)=>{expect(label(value)).toBe(expected);expect(isKnownLabel(value)).toBe(true);});
   it("保留未知技术值以便审计排查",()=>expect(label("future_status")).toBe("future_status"));
-  it("把业务错误翻译成可行动提示",()=>{expect(errorMessage("invalid_issue_transition")).toContain("状态由生成、验证和发布动作自动推进");expect(errorMessage("future_error")).toBe("操作失败（future_error）");});
+  it("把业务错误翻译成可行动提示",()=>{expect(errorMessage("invalid_issue_transition")).toContain("状态由生成、验证和发布动作自动推进");expect(errorMessage("invalid_credentials")).toBe("账号或密码错误，请检查后重试");expect(errorMessage("authentication_required")).toBe("登录已失效，请重新登录");expect(errorMessage("future_error")).toBe("操作失败（future_error）");});
 });

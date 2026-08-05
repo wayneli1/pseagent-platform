@@ -21,7 +21,8 @@ const LABELS: Readonly<Record<string,string>>={
 const ERROR_MESSAGES:Readonly<Record<string,string>>={
   invalid_issue_transition:"问题状态由生成、验证和发布动作自动推进；管理员只能标记无需处理或重新打开",
   permission_denied:"当前账号没有执行此操作的权限",
-  authentication_required:"登录已失效，请重新输入访问令牌",
+  authentication_required:"登录已失效，请重新登录",
+  invalid_credentials:"账号或密码错误，请检查后重试",
   model_unavailable:"模型服务暂时不可用，请稍后重新生成",
   knowledge_revision_changed:"知识库在验证后发生了变化，请重新生成并验证草稿",
   knowledge_repository_dirty:"知识库存在未提交修改，系统为避免覆盖已停止发布",

@@ -1,15 +1,16 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 import {
   ContentCipher,
   InMemoryKnowledgeOpsStore,
   KnowledgeOpsApi,
+  KnowledgeOpsAuthorizer,
   KnowledgeOpsService,
-  StaticTokenAuthorizer,
+  createAdminPasswordHash,
   createKnowledgeOpsHttpServer,
 } from "../services/knowledge-ops/src/index.ts";
 
-const token = "local-preview-token-for-knowledge-ops";
+const previewUsername="admin",previewPassword=randomBytes(9).toString("base64url");
 const store = new InMemoryKnowledgeOpsStore();
 const cipher = new ContentCipher(randomBytes(32));
 const service = new KnowledgeOpsService(store, cipher);
@@ -125,18 +126,13 @@ await store.appendAudit({
   createdAt: now,
 });
 
-const authorizer = new StaticTokenAuthorizer([
-  {
-    tokenHash: createHash("sha256").update(token).digest("hex"),
-    actor: { actorId: "preview-admin", roles: ["admin"] },
-  },
-]);
+const authorizer = new KnowledgeOpsAuthorizer([],{username:previewUsername,passwordHash:await createAdminPasswordHash(previewPassword),sessionTtlMs:3_600_000});
 const server = createKnowledgeOpsHttpServer(new KnowledgeOpsApi(service, authorizer), {
   staticRoot: path.resolve(import.meta.dirname, "../apps/knowledge-ops-admin/dist"),
 });
 
 server.listen(19832, "127.0.0.1", () => {
-  process.stdout.write(`preview.ready http://127.0.0.1:19832 token=${token}\n`);
+  process.stdout.write(`preview.ready http://127.0.0.1:19832 username=${previewUsername} password=${previewPassword}\n`);
 });
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => server.close());

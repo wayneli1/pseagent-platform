@@ -6,6 +6,11 @@ import {
   knowledgeDomainSchema,
 } from "@pseagent/knowledge-governance-contracts";
 
+export const adminLoginSchema=z.object({
+  username:z.string().trim().min(1).max(64),
+  password:z.string().min(1).max(256),
+}).strict();
+
 const isoTimestamp = z.string().datetime({ offset: true });
 
 export const feedbackIntakeSchema = z.object({

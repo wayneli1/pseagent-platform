@@ -1,19 +1,26 @@
 import { ZodError } from "zod";
 import { knowledgeDomainSchema } from "@pseagent/knowledge-governance-contracts";
-import { OpsAuthorizationError, StaticTokenAuthorizer } from "./rbac.js";
-import { answerReviewWorkflowPatchSchema, emptyActionSchema, feedbackPatchSchema, issueListQuerySchema, issuePatchSchema, repairDraftUpdateSchema, reviewInputSchema } from "./schemas.js";
+import { OpsAuthorizationError } from "./rbac.js";
+import type { OpsAuthenticator } from "./rbac.js";
+import { adminLoginSchema, answerReviewWorkflowPatchSchema, emptyActionSchema, feedbackPatchSchema, issueListQuerySchema, issuePatchSchema, repairDraftUpdateSchema, reviewInputSchema } from "./schemas.js";
 import { KnowledgeOpsService, OpsNotFoundError } from "./service.js";
 
 export interface OpsApiRequest { readonly method:string; readonly path:string; readonly authorization?:string; readonly body?:unknown; }
 export interface OpsApiResponse { readonly status:number; readonly body:unknown; }
 
 export class KnowledgeOpsApi {
-  constructor(private readonly service:KnowledgeOpsService,private readonly authorizer:StaticTokenAuthorizer){}
+  constructor(private readonly service:KnowledgeOpsService,private readonly authorizer:OpsAuthenticator){}
   async handle(request:OpsApiRequest):Promise<OpsApiResponse>{
-    const actor=this.authorizer.authenticate(bearer(request.authorization));
-    if(!actor)return {status:401,body:{error:"authentication_required"}};
     const url=new URL(request.path,"http://knowledge-ops.local");const pathname=url.pathname;const segments=pathname.split("/").filter(Boolean);
     try{
+      if(request.method==="POST"&&pathname==="/v1/auth/login"){
+        const input=adminLoginSchema.parse(request.body),session=await this.authorizer.login?.(input.username,input.password);
+        if(session===undefined)return{status:401,body:{error:"invalid_credentials"}};
+        return ok({sessionToken:session.sessionToken,expiresAt:session.expiresAt,user:{username:session.actor.actorId}});
+      }
+      const credential=bearer(request.authorization),actor=this.authorizer.authenticate(credential);
+      if(!actor)return {status:401,body:{error:"authentication_required"}};
+      if(request.method==="POST"&&pathname==="/v1/auth/logout"){this.authorizer.logout?.(credential);return ok({status:"logged_out"});}
       if(request.method==="GET"&&pathname==="/v1/dashboard")return ok(await this.service.dashboard(actor));
       if(request.method==="POST"&&pathname==="/v1/answer-reviews")return created(await this.service.ingestAnswerReview(actor,request.body));
       if(request.method==="GET"&&pathname==="/v1/answer-reviews")return ok(await this.service.listAnswerReviews(actor));

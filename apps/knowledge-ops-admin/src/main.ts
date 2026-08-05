@@ -37,9 +37,10 @@ const nav: { id: ViewName; label: string; icon: string }[] = [
   { id: "releases", label: "发布与回滚", icon: "↗" },
   { id: "audit", label: "审计日志", icon: "≡" },
 ];
-const TOKEN_KEY = "pse-knowledge-ops-token";
-let token = sessionStorage.getItem(TOKEN_KEY) ?? "";
-const api = new OpsApiClient(token);
+const SESSION_KEY = "pse-knowledge-ops-session";
+let sessionToken = sessionStorage.getItem(SESSION_KEY) ?? "";
+sessionStorage.removeItem("pse-knowledge-ops-token");
+const api = new OpsApiClient(sessionToken);
 let current: ViewName = viewFromHash();
 let repairIssueId=repairIdFromHash();
 let activeRepairDraft:RepairDraft|undefined;
@@ -48,12 +49,12 @@ let repairRefreshTimer:ReturnType<typeof setTimeout>|undefined;
 const ISSUE_PAGE_SIZE=25;
 let issueFilters:{status:"actionable"|"all"|IssueStatus;priority:"all"|IssuePriority;offset:number}={status:"actionable",priority:"all",offset:0};
 
-if (token) void showApp();
+if (sessionToken) void showApp();
 else showLogin();
 window.addEventListener("hashchange", () => {
   current = viewFromHash();
   repairIssueId=repairIdFromHash();
-  if (token) void showApp();
+  if (sessionToken) void showApp();
 });
 document.addEventListener("click", (event) => void handleClick(event));
 document.addEventListener("submit", (event) => void handleSubmit(event));
@@ -63,8 +64,9 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeOverlay();
 });
 
-function showLogin(error = "") {
-  root.innerHTML = `<main class="login"><form class="login-card" id="login-form"><div class="brand-mark">P</div><h1>PSE 知识运营台</h1><p>集中处理用户反馈、答案卡审核、回归评测和知识发布。访问令牌仅保存在当前浏览器标签会话中。</p>${error ? `<div class="notice error" role="alert">${h(error)}</div>` : ""}<div class="field"><label for="token">访问令牌</label><input id="token" name="token" type="password" minlength="24" required autocomplete="current-password" placeholder="输入管理员或运营令牌"></div><button class="button primary" type="submit">进入运营台</button></form></main>`;
+function showLogin(error = "",username="admin",busy=false) {
+  root.innerHTML = `<main class="login"><form class="login-card" id="login-form"><div class="brand-mark">P</div><h1>PSE 知识运营台</h1><p id="login-help">登录后集中处理异常问题、知识修订、回归验证和安全发布。</p><div class="field"><label for="username">账号</label><input id="username" name="username" type="text" value="${h(username)}" maxlength="64" required autocomplete="username" spellcheck="false" aria-describedby="login-help" placeholder="输入管理员账号"${busy?" disabled":""}></div><div class="field"><label for="password">密码</label><div class="password-control"><input id="password" name="password" type="password" maxlength="256" required autocomplete="current-password" placeholder="输入管理员密码"${busy?" disabled":""}><button class="password-toggle" type="button" data-action="toggle-password" aria-controls="password" aria-pressed="false"${busy?" disabled":""}>显示</button></div>${error ? `<div class="field-error" role="alert">${h(error)}</div>` : ""}</div><button id="login-submit" class="button primary login-submit" type="submit"${busy?" disabled aria-busy=\"true\"":""}>${busy?"正在登录…":"登录"}</button></form></main>`;
+  if(error)queueMicrotask(()=>document.querySelector<HTMLInputElement>("#password")?.focus());
 }
 async function showApp() {
   if(repairRefreshTimer!==undefined)clearTimeout(repairRefreshTimer);
@@ -308,10 +310,14 @@ async function handleClick(event: MouseEvent) {
   }
   switch (target.dataset.action) {
     case "logout":
-      sessionStorage.removeItem(TOKEN_KEY);
-      token = "";
-      showLogin();
+      try{await api.logout();}catch{/* 会话已失效时仍完成本地退出。 */}
+      clearSession();showLogin();
       break;
+    case "toggle-password": {
+      const input=document.querySelector<HTMLInputElement>("#password");if(!input)return;
+      const visible=input.type==="text";input.type=visible?"password":"text";target.textContent=visible?"显示":"隐藏";target.setAttribute("aria-pressed",String(!visible));input.focus();
+      break;
+    }
     case "refresh":
       await showApp();
       break;
@@ -383,10 +389,11 @@ async function handleSubmit(event: SubmitEvent) {
   const data = new FormData(form);
   try {
     if (form.id === "login-form") {
-      token = String(data.get("token") ?? "").trim();
-      api.setToken(token);
-      await api.get("/v1/dashboard");
-      sessionStorage.setItem(TOKEN_KEY, token);
+      const username=String(data.get("username")??"").trim(),password=String(data.get("password")??"");
+      showLogin("",username,true);
+      const session=await api.login(username,password);
+      sessionToken=session.sessionToken;api.setSessionToken(sessionToken);
+      sessionStorage.setItem(SESSION_KEY,sessionToken);
       await showApp();
     } else if (form.id === "triage-form") {
       await api.patch(`/v1/feedback/${form.dataset.id}`, {
@@ -431,8 +438,7 @@ async function handleSubmit(event: SubmitEvent) {
     }
   } catch (error) {
     if (form.id === "login-form") {
-      token = "";
-      showLogin(message(error));
+      const username=String(data.get("username")??"admin").trim();clearSession();showLogin(message(error),username);
     } else toast(message(error), true);
   }
 }
@@ -704,10 +710,9 @@ function message(error: unknown) {
 }
 function handleApiError(error: unknown) {
   if (error instanceof ApiError && error.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY);
-    token = "";
-    showLogin("访问令牌无效或已失效");
+    clearSession();showLogin("登录已失效，请重新登录");
     return;
   }
   content(`<div class="notice error">加载失败：${h(message(error))}</div>`);
 }
+function clearSession(){sessionStorage.removeItem(SESSION_KEY);sessionToken="";api.setSessionToken("");}

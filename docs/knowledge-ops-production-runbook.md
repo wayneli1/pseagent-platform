@@ -80,25 +80,17 @@ npm.cmd run build
 
 禁止把 `.env.local`、模型密钥、Bearer token、数据库备份或明文反馈放进制品。
 
-## 5. 密钥、令牌与角色
+## 5. 密钥、令牌、登录与角色
 
-### 5.1 API Bearer token
+### 5.1 服务 API Bearer token
 
-为每个人或服务生成独立的至少 32 字节随机 token。明文只存入调用方的秘密管理系统；Knowledge Ops API 只配置其小写 SHA-256：
+为论客 Bridge、Worker 和自动化探针等非交互服务生成独立的至少 32 字节随机 token。明文只存入调用方的秘密管理系统；Knowledge Ops API 只配置其小写 SHA-256：
 
 ```json
 [
   {
     "tokenHash": "<64位小写SHA-256>",
     "actor": { "actorId": "lunkr-feedback", "roles": ["service"] }
-  },
-  {
-    "tokenHash": "<64位小写SHA-256>",
-    "actor": { "actorId": "ops-operator", "roles": ["operator"] }
-  },
-  {
-    "tokenHash": "<64位小写SHA-256>",
-    "actor": { "actorId": "release-manager", "roles": ["release_manager"] }
   }
 ]
 ```
@@ -109,9 +101,21 @@ npm.cmd run build
 KNOWLEDGE_OPS_ALLOW_PLAINTEXT_TOKENS=false
 ```
 
-编辑者与评审者必须使用不同 `actorId`。专业库和通用库分别分配 `professional_editor` / `professional_reviewer`、`general_editor` / `general_reviewer`。
+服务 Token 不能用于管理后台登录，也不能与管理员密码或管理会话复用。
 
-### 5.2 反馈加密密钥环
+### 5.2 管理员账号密码与会话
+
+管理后台使用一个管理员账号。服务端只配置账号和 scrypt 密码哈希：
+
+```text
+KNOWLEDGE_OPS_ADMIN_USERNAME=<管理员账号>
+KNOWLEDGE_OPS_ADMIN_PASSWORD_HASH=scrypt$16384$8$1$<salt-base64url>$<digest-base64url>
+KNOWLEDGE_OPS_ADMIN_SESSION_TTL_SECONDS=43200
+```
+
+密码哈希应在受控终端生成并写入秘密管理系统，密码明文不得进入 `.env.example`、Git、数据库、日志或审计。登录成功后服务端签发内存会话；退出、过期或 API 重启后会话失效。浏览器只在当前标签页保存会话令牌，不保存密码。
+
+### 5.3 反馈加密密钥环
 
 每把密钥必须是 32 字节随机值的 Base64。配置示例：
 
@@ -157,6 +161,9 @@ PSE_ANSWER_REVIEW_MAX_TOKENS=4096
 KNOWLEDGE_OPS_HOST=127.0.0.1
 KNOWLEDGE_OPS_PORT=19830
 KNOWLEDGE_OPS_ALLOW_REMOTE=false
+KNOWLEDGE_OPS_ADMIN_USERNAME=<secret-managed-username>
+KNOWLEDGE_OPS_ADMIN_PASSWORD_HASH=<secret-managed-scrypt-hash>
+KNOWLEDGE_OPS_ADMIN_SESSION_TTL_SECONDS=43200
 ```
 
 如果必须绑定非回环地址，需显式设置 `KNOWLEDGE_OPS_ALLOW_REMOTE=true`，并在服务前强制 TLS、来源限制和企业身份网关。
@@ -310,7 +317,8 @@ npm.cmd run probe:release-quality
 - [ ] 答案卡目录与两个 revision 完全一致。
 - [ ] 20/20 真实门禁通过，报告已导入后台并关联 release。
 - [ ] 作者与评审者职责分离。
-- [ ] API 令牌只以 hash 配置；调用方明文在秘密管理系统。
+- [ ] 服务 API 令牌只以 hash 配置；调用方明文在秘密管理系统。
+- [ ] 管理员密码只以 scrypt hash 配置；登录、退出和过期会话已验收。
 - [ ] AES 密钥环包含当前和必要历史版本。
 - [ ] `/healthz`、`/readyz`、Knowledge Engine `/health` 正常。
 - [ ] PostgreSQL、Git 和快照备份已完成且可恢复。

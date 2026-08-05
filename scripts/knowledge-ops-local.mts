@@ -5,9 +5,10 @@ import {
   ContentCipher,
   InMemoryKnowledgeOpsStore,
   KnowledgeOpsApi,
+  KnowledgeOpsAuthorizer,
   KnowledgeOpsService,
-  StaticTokenAuthorizer,
   createKnowledgeOpsHttpServer,
+  loadAdminLoginConfig,
 } from "../services/knowledge-ops/src/index.ts";
 import {
   IndependentAnswerReviewer,
@@ -18,7 +19,6 @@ import {
 } from "../services/knowledge-ops-worker/src/index.ts";
 import { OpenAiCompatibleModelClient } from "../apps/pseagent/src/embedded.ts";
 
-const adminToken = required("KNOWLEDGE_OPS_LOCAL_ADMIN_TOKEN");
 const serviceToken = required("KNOWLEDGE_OPS_SERVICE_TOKEN");
 const professional = required("PROFESSIONAL_KB_ROOT");
 const general = required("GENERAL_KB_ROOT");
@@ -27,10 +27,9 @@ const runtimeRoot = path.join(tmpdir(), "pseagent-knowledge-ops-local");
 const store = new InMemoryKnowledgeOpsStore();
 const cipher = new ContentCipher(randomBytes(32));
 const service = new KnowledgeOpsService(store, cipher);
-const authorizer = new StaticTokenAuthorizer([
-  tokenEntry(adminToken, "local-admin", ["admin"]),
+const authorizer = new KnowledgeOpsAuthorizer([
   tokenEntry(serviceToken, "lunkr-local", ["service"]),
-]);
+],loadAdminLoginConfig(process.env));
 const sources = [
   { domain: "coremail-professional" as const, root: professional },
   { domain: "presales-general" as const, root: general },

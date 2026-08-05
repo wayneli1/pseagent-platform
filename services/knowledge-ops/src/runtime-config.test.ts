@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe,expect,it } from "vitest";
-import { loadContentCipher,loadListenConfig,loadTokenActorEntries } from "./runtime-config.js";
+import { loadAdminLoginConfig,loadContentCipher,loadListenConfig,loadTokenActorEntries } from "./runtime-config.js";
 
 describe("knowledge ops runtime configuration",()=>{
   it("loads pre-hashed bearer tokens without retaining plaintext",()=>{
@@ -29,6 +29,7 @@ describe("knowledge ops runtime configuration",()=>{
     expect(loadListenConfig({KNOWLEDGE_OPS_HOST:"0.0.0.0",KNOWLEDGE_OPS_ALLOW_REMOTE:"true"}))
       .toMatchObject({host:"0.0.0.0",port:19830});
   });
+  it("loads only a hashed administrator password and bounds the session lifetime",()=>{const passwordHash=`scrypt$16384$8$1$${Buffer.alloc(16,1).toString("base64url")}$${Buffer.alloc(32,2).toString("base64url")}`;expect(loadAdminLoginConfig({KNOWLEDGE_OPS_ADMIN_USERNAME:" admin ",KNOWLEDGE_OPS_ADMIN_PASSWORD_HASH:passwordHash,KNOWLEDGE_OPS_ADMIN_SESSION_TTL_SECONDS:"3600"})).toEqual({username:"admin",passwordHash,sessionTtlMs:3_600_000});expect(()=>loadAdminLoginConfig({KNOWLEDGE_OPS_ADMIN_USERNAME:"admin",KNOWLEDGE_OPS_ADMIN_PASSWORD_HASH:"plain-password"})).toThrow();expect(()=>loadAdminLoginConfig({KNOWLEDGE_OPS_ADMIN_USERNAME:"admin",KNOWLEDGE_OPS_ADMIN_PASSWORD_HASH:passwordHash,KNOWLEDGE_OPS_ADMIN_SESSION_TTL_SECONDS:"60"})).toThrow();});
   it("keeps historical decryption keys while encrypting with the current version",()=>{
     const first=Buffer.alloc(32,1).toString("base64"),second=Buffer.alloc(32,2).toString("base64");
     const old=loadContentCipher({KNOWLEDGE_OPS_ENCRYPTION_KEYS_JSON:JSON.stringify({1:first}),KNOWLEDGE_OPS_KEY_VERSION:"1"});
