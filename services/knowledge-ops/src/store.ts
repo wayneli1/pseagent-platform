@@ -124,7 +124,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     if(!this.issueOccurrences.has(occurrenceKey))this.issueOccurrences.set(occurrenceKey,{occurrenceId:randomUUID(),issueId:issue.issueId,...copy(value.occurrence),createdAt:value.occurredAt});
     return this.issueSummary(issue);
   }
-  async listIssues(query:IssueListQuery):Promise<IssuePage>{const filtered=[...this.issues.values()].filter((item)=>(query.status===undefined||item.status===query.status)&&(query.priority===undefined||item.priority===query.priority)).sort((left,right)=>priorityRank(left.priority)-priorityRank(right.priority)||right.lastSeenAt.localeCompare(left.lastSeenAt));return{items:filtered.slice(query.offset,query.offset+query.limit).map((item)=>this.issueSummary(item)),total:filtered.length};}
+  async listIssues(query:IssueListQuery):Promise<IssuePage>{const filtered=[...this.issues.values()].filter((item)=>(query.status===undefined||item.status===query.status)&&(query.priority===undefined||item.priority===query.priority)&&(!query.actionableOnly||isActionableIssue(item))).sort((left,right)=>priorityRank(left.priority)-priorityRank(right.priority)||right.lastSeenAt.localeCompare(left.lastSeenAt));return{items:filtered.slice(query.offset,query.offset+query.limit).map((item)=>this.issueSummary(item)),total:filtered.length};}
   async getIssue(id:string){const issue=this.issues.get(id);return issue===undefined?undefined:this.issueSummary(issue);}
   async listIssueOccurrences(id:string){return newest([...this.issueOccurrences.values()].filter((item)=>item.issueId===id).map(copy));}
   async updateIssue(id:string,patch:Pick<Partial<IssueCase>,"status"|"ownerId">){const issue=this.issues.get(id);if(issue===undefined)return undefined;const next={...issue,...patch,updatedAt:now()};this.issues.set(id,next);return this.issueSummary(next);}
@@ -201,6 +201,8 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async appendAudit(value: AuditEvent) { this.audit.push(copy(value)); return copy(value); }
   async listAudit() { return newest(this.audit.map(copy)); }
   async dashboard(): Promise<DashboardSummary> {
+    const byPriority={p0:0,p1:0,p2:0,p3:0};let actionable=0,urgent=0,overdue=0,unassigned=0;const timestamp=Date.now();
+    for(const issue of this.issues.values())if(isActionableIssue(issue)){actionable++;byPriority[issue.priority]++;if(issue.priority==="p0"||issue.priority==="p1")urgent++;if(new Date(issue.slaDueAt).valueOf()<timestamp)overdue++;if(issue.ownerId===undefined)unassigned++;}
     const feedback = { new: 0, triaged: 0, in_review: 0, resolved: 0, rejected: 0 };
     for (const item of this.feedback.values()) feedback[item.status]++;
     const jobs = { queued: 0, running: 0, completed: 0, failed: 0 };
@@ -214,7 +216,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
       if(review.processingStatus==="errored")answerReviews.errored++;
       if(review.workflowStatus==="open"&&(review.verdict==="needs_review"||review.verdict==="fail"||review.processingStatus==="errored"))answerReviews.pendingHuman++;
     }
-    return { feedback, answerReviews, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
+    return { issues:{actionable,urgent,overdue,unassigned,byPriority},feedback, answerReviews, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
   }
   private finishJob(id: string, patch: Partial<OpsJob>) {
     const old = this.jobs.get(id); if (!old) throw new Error("job_not_found");
@@ -239,3 +241,4 @@ const ISSUE_PRIORITY_ORDER={p0:0,p1:1,p2:2,p3:3} as const;
 function priorityRank(value:IssueCase["priority"]):number{return ISSUE_PRIORITY_ORDER[value];}
 function isHigherPriority(candidate:IssueCase["priority"],current:IssueCase["priority"]):boolean{return priorityRank(candidate)<priorityRank(current);}
 function slaDeadline(occurredAt:string,priority:IssueCase["priority"]):string{const hours={p0:2,p1:8,p2:24,p3:72}[priority];return new Date(new Date(occurredAt).valueOf()+hours*60*60_000).toISOString();}
+function isActionableIssue(issue:IssueCase):boolean{return issue.status!=="resolved"&&issue.status!=="dismissed";}

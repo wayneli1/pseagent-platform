@@ -128,13 +128,13 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     const result=issueId===undefined?undefined:await this.getIssue(issueId);if(result===undefined)throw new Error("database_write_failed");return result;
   }
   async listIssues(query:IssueListQuery):Promise<IssuePage>{
-    const values=[query.status??null,query.priority??null,query.limit,query.offset];
-    const where="WHERE ($1::text IS NULL OR c.status=$1) AND ($2::text IS NULL OR c.priority=$2)";
+    const values=[query.status??null,query.priority??null,query.actionableOnly??false,query.limit,query.offset];
+    const where="WHERE ($1::text IS NULL OR c.status=$1) AND ($2::text IS NULL OR c.priority=$2) AND (NOT $3::boolean OR c.status NOT IN ('resolved','dismissed'))";
     const [items,total]=await Promise.all([
       this.pool.query(`SELECT c.*,COUNT(DISTINCT o.request_id)::int AS occurrence_count,COUNT(DISTINCT o.pseudonymous_user_id)::int AS affected_user_count
         FROM issue_cases c LEFT JOIN issue_occurrences o ON o.issue_id=c.issue_id ${where}
-        GROUP BY c.issue_id ORDER BY CASE c.priority WHEN 'p0' THEN 0 WHEN 'p1' THEN 1 WHEN 'p2' THEN 2 ELSE 3 END,c.last_seen_at DESC LIMIT $3 OFFSET $4`,values),
-      this.pool.query(`SELECT COUNT(*)::int AS count FROM issue_cases c ${where}`,[values[0],values[1]]),
+        GROUP BY c.issue_id ORDER BY CASE c.priority WHEN 'p0' THEN 0 WHEN 'p1' THEN 1 WHEN 'p2' THEN 2 ELSE 3 END,c.last_seen_at DESC LIMIT $4 OFFSET $5`,values),
+      this.pool.query(`SELECT COUNT(*)::int AS count FROM issue_cases c ${where}`,[values[0],values[1],values[2]]),
     ]);
     return{items:rows<IssueCaseSummary>(items),total:Number(total.rows[0]?.count??0)};
   }
@@ -247,13 +247,19 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listAudit() { return rows<AuditEvent>(await this.pool.query("SELECT * FROM audit_events ORDER BY created_at DESC")); }
   async dashboard(): Promise<DashboardSummary> {
-    const [feedback,reviews,cards,jobs,release] = await Promise.all([
+    const [issueRows,feedback,reviews,cards,jobs,release] = await Promise.all([
+      this.pool.query(`SELECT priority,count(*)::int AS count,
+        count(*) FILTER (WHERE sla_due_at<now())::int AS overdue,
+        count(*) FILTER (WHERE owner_id IS NULL)::int AS unassigned
+        FROM issue_cases WHERE status NOT IN ('resolved','dismissed') GROUP BY priority`),
       this.pool.query("SELECT status,count(*)::int AS count FROM feedback_cases GROUP BY status"),
       this.pool.query("SELECT processing_status,verdict,workflow_status,count(*)::int AS count FROM answer_review_cases GROUP BY processing_status,verdict,workflow_status"),
       this.pool.query("SELECT status,count(*)::int AS count FROM card_revisions GROUP BY status"),
       this.pool.query("SELECT status,count(*)::int AS count FROM ops_jobs GROUP BY status"),
       this.pool.query("SELECT release_id FROM releases WHERE status='active' LIMIT 1"),
     ]);
+    const byPriority={p0:0,p1:0,p2:0,p3:0};let actionable=0,overdue=0,unassigned=0;
+    for(const row of issueRows.rows){const priority=row.priority as keyof typeof byPriority,count=Number(row.count);byPriority[priority]=count;actionable+=count;overdue+=Number(row.overdue);unassigned+=Number(row.unassigned);}
     const feedbackCounts = { new:0,triaged:0,in_review:0,resolved:0,rejected:0 };
     for (const row of feedback.rows) feedbackCounts[row.status as keyof typeof feedbackCounts] = row.count as number;
     const jobCounts = { queued:0,running:0,completed:0,failed:0 };
@@ -263,7 +269,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     const activeReleaseId = release.rows[0]?.release_id as string|undefined;
     const answerReviews={pendingHuman:0,passed:0,errored:0,total:0};
     for(const row of reviews.rows){const count=row.count as number;answerReviews.total+=count;if(row.verdict==="pass")answerReviews.passed+=count;if(row.processing_status==="errored")answerReviews.errored+=count;if(row.workflow_status==="open"&&(row.verdict==="needs_review"||row.verdict==="fail"||row.processing_status==="errored"))answerReviews.pendingHuman+=count;}
-    return { feedback:feedbackCounts,answerReviews,cardsByStatus,jobs:jobCounts,...(activeReleaseId?{activeReleaseId}:{}) };
+    return { issues:{actionable,urgent:byPriority.p0+byPriority.p1,overdue,unassigned,byPriority},feedback:feedbackCounts,answerReviews,cardsByStatus,jobs:jobCounts,...(activeReleaseId?{activeReleaseId}:{}) };
   }
   private async changeActiveRelease(id: string,previousStatus:"superseded"|"rolled_back") {
     const client=await this.pool.connect();

@@ -1,8 +1,7 @@
 import "./styles.css";
 import { ApiError, OpsApiClient } from "./api.js";
 import { badge, h, json, shortId, time } from "./format.js";
-import {label,option} from "./labels.js";
-import {deriveOperationsOverview} from "./operations-overview.js";
+import {issueStatusHelp,label,option} from "./labels.js";
 import type {
   Audit,
   AnswerReviewDetail,
@@ -11,6 +10,10 @@ import type {
   Dashboard,
   FeedbackDetail,
   FeedbackMeta,
+  IssueDetail,
+  IssuePage,
+  IssuePriority,
+  IssueStatus,
   OpsJob,
   RegressionRun,
   Release,
@@ -22,7 +25,8 @@ if (!rootElement) throw new Error("app_root_missing");
 const root: HTMLDivElement = rootElement;
 const nav: { id: ViewName; label: string; icon: string }[] = [
   { id: "dashboard", label: "总览", icon: "⌂" },
-  { id: "feedback", label: "反馈与复查", icon: "◎" },
+  { id: "issues", label: "问题中心", icon: "!" },
+  { id: "feedback", label: "原始记录", icon: "◎" },
   { id: "cards", label: "答案卡", icon: "▤" },
   { id: "regressions", label: "回归评测", icon: "✓" },
   { id: "releases", label: "发布与回滚", icon: "↗" },
@@ -32,6 +36,8 @@ const TOKEN_KEY = "pse-knowledge-ops-token";
 let token = sessionStorage.getItem(TOKEN_KEY) ?? "";
 const api = new OpsApiClient(token);
 let current: ViewName = viewFromHash();
+const ISSUE_PAGE_SIZE=25;
+let issueFilters:{status:"actionable"|"all"|IssueStatus;priority:"all"|IssuePriority;offset:number}={status:"actionable",priority:"all",offset:0};
 
 if (token) void showApp();
 else showLogin();
@@ -41,7 +47,7 @@ window.addEventListener("hashchange", () => {
 });
 document.addEventListener("click", (event) => void handleClick(event));
 document.addEventListener("submit", (event) => void handleSubmit(event));
-document.addEventListener("change", handleChange);
+document.addEventListener("change", (event)=>void handleChange(event));
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeOverlay();
 });
@@ -58,6 +64,9 @@ async function loadCurrent() {
     switch (current) {
       case "dashboard":
         await renderDashboard();
+        break;
+      case "issues":
+        await renderIssues();
         break;
       case "feedback":
         await renderFeedback();
@@ -81,24 +90,37 @@ async function loadCurrent() {
 }
 
 async function renderDashboard() {
-  const [summary, feedback, reviews, releases, jobs] = await Promise.all([
+  const [summary, issues, releases, jobs] = await Promise.all([
     api.get<Dashboard>("/v1/dashboard"),
-    api.get<FeedbackMeta[]>("/v1/feedback"),
-    api.get<AnswerReviewMeta[]>("/v1/answer-reviews"),
+    api.get<IssuePage>("/v1/issues?actionable=true&limit=12&offset=0"),
     api.get<Release[]>("/v1/releases"),
     api.get<OpsJob[]>("/v1/jobs"),
   ]);
-  const overview=deriveOperationsOverview(feedback,reviews);
-  const automated=reviews.length===0?0:Math.round((overview.automaticPasses/reviews.length)*100);
-  const actionRows=overview.actions.slice(0,12).map((item)=>`<tr data-action="${item.feedbackId?"feedback-detail":"answer-review-detail"}" data-id="${h(item.feedbackId??item.reviewId)}"><td>${badge(item.priority)}</td><td><strong>${h(item.reason)}</strong><br><span class="muted">${h(item.questionPreview)}</span></td><td>${h(item.userDisplayName)}</td><td>${time(item.createdAt)}</td><td><span class="action-link">查看并处理</span></td></tr>`);
+  const automated=summary.answerReviews.total===0?0:Math.round((summary.answerReviews.passed/summary.answerReviews.total)*100);
+  const actionRows=issues.items.map((item)=>issueRow(item,true));
   content(
-    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>系统已自动收敛正常回答；下面只突出需要人工介入的异常和判断冲突。</p></div><button class="button primary" data-nav="feedback">进入处理工作台</button></div><div class="grid metrics operations-metrics">${metric("严重错误",overview.criticalFailures,"必须优先核对","danger")}${metric("需要人工复核",overview.needsHuman,"回答可能有遗漏","warning")}${metric("判断冲突",overview.judgementConflicts,"用户与系统结论不一致","warning")}${metric("复查异常",overview.reviewErrors,overview.reviewErrors?"需要排查服务":"运行正常",overview.reviewErrors?"danger":"neutral")}${metric("自动通过",overview.automaticPasses,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${overview.actions.length} 项待办，按风险与时间排序</span></div><button class="button small" data-nav="feedback">查看全部</button></div>${actionRows.length?table(["优先级","需要处理的问题","用户","发生时间","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>用户反馈概况</h2><span class="muted">用于观察体验，不要求逐条处理正常反馈</span></div></div><div class="panel-body stack">${bars(summary.feedback)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
+    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>正常回答由系统收敛；管理员只关注高风险、超时和无人负责的问题组。</p></div><button class="button primary" data-nav="issues">进入问题中心</button></div><div class="grid metrics operations-metrics">${metric("紧急问题",summary.issues.urgent,"P0 / P1 优先处理",summary.issues.urgent?"danger":"neutral")}${metric("已经超时",summary.issues.overdue,"超过处理时限",summary.issues.overdue?"danger":"neutral")}${metric("无人负责",summary.issues.unassigned,"需要分派负责人",summary.issues.unassigned?"warning":"neutral")}${metric("待处理问题",summary.issues.actionable,"已合并重复反馈","warning")}${metric("自动复查通过",summary.answerReviews.passed,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${issues.total} 个问题组，已按风险和最近发生时间排序</span></div><button class="button small" data-nav="issues">查看全部</button></div>${actionRows.length?table(["优先级","问题类型","状态","影响","负责人","处理时限","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>问题优先级</h2><span class="muted">一个问题组可包含多位用户的重复反馈</span></div></div><div class="panel-body stack">${bars(summary.issues.byPriority)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
       jobs
         .slice(0, 3)
         .map((x) => `${badge(x.status)} ${h(label(x.type))}`)
         .join("<br>") || "—"
     }</div></div></div></section></div>`,
   );
+}
+
+async function renderIssues(){
+  const parameters=new URLSearchParams({limit:String(ISSUE_PAGE_SIZE),offset:String(issueFilters.offset)});
+  if(issueFilters.status==="actionable")parameters.set("actionable","true");
+  else if(issueFilters.status!=="all")parameters.set("status",issueFilters.status);
+  if(issueFilters.priority!=="all")parameters.set("priority",issueFilters.priority);
+  const page=await api.get<IssuePage>(`/v1/issues?${parameters}`);
+  const start=page.total===0?0:issueFilters.offset+1,end=Math.min(page.total,issueFilters.offset+page.items.length);
+  content(`<div class="page-intro"><div><h2>只管理需要行动的问题</h2><p>系统自动合并重复反馈和复查异常；原始问答仅在证据记录中按需查看。</p></div></div>
+    <div class="notice workflow-note"><strong>管理员负责：</strong>确认优先级与问题类型、分派负责人、跟踪修订和回归验证。系统不会因为用户点了“答案错误”就直接改写线上知识。</div>
+    <section class="panel mt-16"><div class="panel-head"><div><h2>问题队列</h2><span class="muted">共 ${page.total} 个问题组</span></div></div>
+    <div class="toolbar issue-toolbar"><select id="issue-status" class="button" aria-label="按处理阶段筛选"><option value="actionable"${issueFilters.status==="actionable"?" selected":""}>只看待处理</option><option value="all"${issueFilters.status==="all"?" selected":""}>全部阶段</option>${(["open","assigned","in_progress","validating","resolved","dismissed"] as IssueStatus[]).map((value)=>option(value,issueFilters.status)).join("")}</select><select id="issue-priority" class="button" aria-label="按优先级筛选"><option value="all"${issueFilters.priority==="all"?" selected":""}>全部优先级</option>${(["p0","p1","p2","p3"] as IssuePriority[]).map((value)=>option(value,issueFilters.priority)).join("")}</select><span class="muted">P0 2小时 · P1 8小时 · P2 24小时 · P3 72小时</span></div>
+    ${page.items.length?table(["优先级","问题类型","状态","影响","负责人","处理时限","最近发生","下一步"],page.items.map((item)=>issueRow(item,false))):empty("当前筛选条件下没有问题")}
+    <div class="pagination"><span class="muted">显示 ${start}–${end} / ${page.total}</span><div><button class="button small" data-action="issue-page-prev"${issueFilters.offset===0?" disabled":""}>上一页</button> <button class="button small" data-action="issue-page-next"${issueFilters.offset+ISSUE_PAGE_SIZE>=page.total?" disabled":""}>下一页</button></div></div></section>`);
 }
 async function renderFeedback() {
   const [values,reviews] = await Promise.all([api.get<FeedbackMeta[]>("/v1/feedback"),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
@@ -259,6 +281,17 @@ async function handleClick(event: MouseEvent) {
     case "answer-review-detail":
       await answerReviewDrawer(target.dataset.id!);
       break;
+    case "issue-detail":
+      await issueDrawer(target.dataset.id!);
+      break;
+    case "issue-page-prev":
+      issueFilters={...issueFilters,offset:Math.max(0,issueFilters.offset-ISSUE_PAGE_SIZE)};
+      await renderIssues();
+      break;
+    case "issue-page-next":
+      issueFilters={...issueFilters,offset:issueFilters.offset+ISSUE_PAGE_SIZE};
+      await renderIssues();
+      break;
     case "card-detail":
       await cardDrawer(target.dataset.id!);
       break;
@@ -312,6 +345,12 @@ async function handleSubmit(event: SubmitEvent) {
       toast("复查处理状态已更新");
       closeOverlay();
       await loadCurrent();
+    } else if(form.id==="issue-form"){
+      const ownerId=String(data.get("ownerId")??"").trim();
+      await api.patch(`/v1/issues/${form.dataset.id}`,{status:data.get("status"),...(ownerId?{ownerId}:{})});
+      toast("问题处理进度已更新");
+      closeOverlay();
+      await loadCurrent();
     } else if (form.id === "review-form") {
       await api.post(`/v1/revisions/${form.dataset.id}/reviews`, {
         decision: data.get("decision"),
@@ -346,7 +385,7 @@ async function handleSubmit(event: SubmitEvent) {
   }
 }
 
-function handleChange(event: Event) {
+async function handleChange(event: Event) {
   const select = event.target;
   if (!(select instanceof HTMLSelectElement)) return;
   if(select.id==="feedback-status"){
@@ -355,6 +394,26 @@ function handleChange(event: Event) {
   if(select.id==="review-verdict"){
     for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="answer-review-detail"]')) row.hidden=select.value==="actionable"?row.dataset.actionable!=="true":select.value!=="all"&&row.dataset.verdict!==select.value;
   }
+  if(select.id==="issue-status"){
+    issueFilters={...issueFilters,status:select.value as typeof issueFilters.status,offset:0};
+    await renderIssues();
+  }
+  if(select.id==="issue-priority"){
+    issueFilters={...issueFilters,priority:select.value as typeof issueFilters.priority,offset:0};
+    await renderIssues();
+  }
+}
+
+async function issueDrawer(id:string){
+  const item=await api.get<IssueDetail>(`/v1/issues/${id}`);
+  const occurrenceRows=item.occurrences.map((occurrence)=>`<tr><td>${badge(occurrence.sourceType)}</td><td>${time(occurrence.createdAt)}</td><td class="mono">${shortId(occurrence.requestId,16)}</td><td><button class="button small" data-action="${occurrence.sourceType==="feedback"?"feedback-detail":"answer-review-detail"}" data-id="${h(occurrence.sourceId)}">查看原始记录</button></td></tr>`);
+  const allowed=nextIssueStatuses(item.status);
+  overlay(`<div class="drawer-head"><div><strong>${h(label(item.category))}</strong> ${badge(item.priority)} ${badge(item.status)}</div><button class="button" data-action="close-overlay">关闭</button></div>
+    <div class="drawer-body"><div class="notice"><strong>当前下一步：</strong>${h(nextIssueAction(item))}。关闭问题不会自动修改答案；只有审核、回归并发布后的答案卡或知识修订才会影响用户。</div>
+    <div class="issue-facts"><div><span>影响用户</span><strong>${item.affectedUserCount}</strong></div><div><span>重复发生</span><strong>${item.occurrenceCount}</strong></div><div><span>处理时限</span><strong class="${isOverdue(item.slaDueAt)&&isActionableStatus(item.status)?"danger-text":""}">${h(slaText(item.slaDueAt,item.status))}</strong></div></div>
+    <div class="detail-section"><h3>问题范围</h3><div class="content-box">${h(label(item.scope??"未分类"))}${item.answerCardKey?`<br><span class="muted">关联答案卡标识：</span><span class="mono">${shortId(item.answerCardKey,16)}</span>`:""}</div></div>
+    <form id="issue-form" data-id="${h(id)}"><div class="field"><label for="issue-owner">负责人</label><input id="issue-owner" name="ownerId" maxlength="128" value="${h(item.ownerId??"")}" placeholder="填写知识负责人账号"><div class="field-help">进入“已分派、修订中、待验证、已解决”前必须有负责人。</div></div><div class="field"><label for="issue-workflow-status">处理阶段</label><select id="issue-workflow-status" name="status">${allowed.map((value)=>option(value,item.status)).join("")}</select><div class="field-help">${h(issueStatusHelp(item.status))}。修订后必须进入“待验证”，通过回归验证后才能标记“已解决”。</div></div><button class="button primary" type="submit">保存处理进度</button></form>
+    <div class="detail-section mt-16"><h3>合并的证据记录</h3>${occurrenceRows.length?table(["来源","发生时间","请求标识","操作"],occurrenceRows):empty("暂无关联记录")}</div></div>`);
 }
 
 async function answerReviewDrawer(id:string){
@@ -507,6 +566,17 @@ function jsonDrawer(value: unknown) {
     `<div class="drawer-head"><strong>审计元数据</strong><button class="button" data-action="close-overlay">关闭</button></div><div class="drawer-body"><pre class="content-box mono">${json(value)}</pre></div>`,
   );
 }
+
+function issueRow(item:IssuePage["items"][number],compact:boolean){
+  const impact=`${item.affectedUserCount} 位用户 · ${item.occurrenceCount} 次`;
+  const deadline=slaText(item.slaDueAt,item.status),overdue=isOverdue(item.slaDueAt)&&isActionableStatus(item.status);
+  return `<tr data-action="issue-detail" data-id="${h(item.issueId)}"><td>${badge(item.priority)}</td><td><strong>${h(label(item.category))}</strong>${item.answerCardKey?`<br><span class="muted">答案卡 ${shortId(item.answerCardKey,10)}</span>`:""}</td><td>${badge(item.status)}${compact?"":`<br><span class="muted">${h(issueStatusHelp(item.status))}</span>`}</td><td>${h(impact)}</td><td>${h(item.ownerId??"待分派")}</td><td><span class="${overdue?"danger-text":""}">${h(deadline)}</span></td>${compact?"":`<td>${time(item.lastSeenAt)}</td>`}<td><span class="action-link">${h(nextIssueAction(item))}</span></td></tr>`;
+}
+function isActionableStatus(value:IssueStatus){return value!=="resolved"&&value!=="dismissed";}
+function isOverdue(value:string){return new Date(value).valueOf()<Date.now();}
+function slaText(value:string,status:IssueStatus){if(!isActionableStatus(status))return"已结束";const milliseconds=new Date(value).valueOf()-Date.now(),absolute=Math.abs(milliseconds),hours=Math.max(1,Math.ceil(absolute/3_600_000));return milliseconds<0?`已超时 ${hours} 小时`:`剩余 ${hours} 小时`;}
+function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open")return"分派负责人";if(item.status==="assigned")return"开始修订";if(item.status==="in_progress")return"提交验证";if(item.status==="validating")return"完成回归验证";return"查看记录";}
+function nextIssueStatuses(currentStatus:IssueStatus):IssueStatus[]{const next:Record<IssueStatus,IssueStatus[]>={open:["open","assigned","dismissed"],assigned:["assigned","in_progress","open","dismissed"],in_progress:["in_progress","validating","assigned","dismissed"],validating:["validating","resolved","in_progress","dismissed"],resolved:["resolved","open"],dismissed:["dismissed","open"]};return next[currentStatus];}
 
 function content(value: string) {
   const element = document.querySelector("#content");

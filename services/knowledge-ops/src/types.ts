@@ -324,6 +324,7 @@ export interface IssueRecordInput {
 export interface IssueListQuery {
   readonly status?: IssueStatus;
   readonly priority?: IssuePriority;
+  readonly actionableOnly?: boolean;
   readonly limit: number;
   readonly offset: number;
 }
@@ -334,6 +335,13 @@ export interface IssuePage {
 }
 
 export interface DashboardSummary {
+  readonly issues: {
+    readonly actionable: number;
+    readonly urgent: number;
+    readonly overdue: number;
+    readonly unassigned: number;
+    readonly byPriority: Record<IssuePriority,number>;
+  };
   readonly feedback: Record<StoredFeedbackCase["status"], number>;
   readonly answerReviews: {
     readonly pendingHuman: number;
