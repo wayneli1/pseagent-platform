@@ -6,3 +6,8 @@ export {
 export { formatMcpText } from "./mcp-server.js";
 export type { PseAnswerExecution } from "./answer-service.js";
 export type { AnswerResult } from "./contracts.js";
+export {
+  OpenAiCompatibleModelClient,
+  type ModelClient,
+  type ModelMessage,
+} from "./model-client.js";

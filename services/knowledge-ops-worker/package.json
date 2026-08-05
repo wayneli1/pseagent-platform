@@ -12,6 +12,7 @@
     "test": "vitest run src"
   },
   "dependencies": {
+    "@pseagent/app": "0.0.0",
     "@pseagent/knowledge-governance-contracts": "0.0.0",
     "@pseagent/knowledge-ops": "0.0.0",
     "yaml": "2.9.0",

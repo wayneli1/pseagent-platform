@@ -109,6 +109,18 @@ export interface AnswerReviewIntake {
   readonly answerCardActivation?: Record<string, unknown>;
 }
 
+export interface AnswerReviewEncryptedPayload {
+  readonly userDisplayName?: string;
+  readonly questionId: number;
+  readonly question: string;
+  readonly answer: string;
+  readonly references: readonly AnswerReviewReference[];
+  readonly answeredAt: string;
+  readonly answerCardMatch?: Record<string, unknown>;
+  readonly answerCardActivation?: Record<string, unknown>;
+  readonly result?: AnswerReviewResult;
+}
+
 export interface StoredAnswerReviewCase {
   readonly reviewId: string;
   readonly requestId: string;
@@ -135,15 +147,15 @@ export interface AnswerReviewCaseListView extends Omit<StoredAnswerReviewCase, "
 }
 
 export interface AnswerReviewCaseView extends Omit<StoredAnswerReviewCase, "encryptedPayload"> {
-  readonly userDisplayName?: string;
-  readonly questionId: number;
-  readonly question: string;
-  readonly answer: string;
-  readonly references: readonly AnswerReviewReference[];
-  readonly answeredAt: string;
-  readonly answerCardMatch?: Record<string, unknown>;
-  readonly answerCardActivation?: Record<string, unknown>;
-  readonly result?: AnswerReviewResult;
+  readonly userDisplayName?: AnswerReviewEncryptedPayload["userDisplayName"];
+  readonly questionId: AnswerReviewEncryptedPayload["questionId"];
+  readonly question: AnswerReviewEncryptedPayload["question"];
+  readonly answer: AnswerReviewEncryptedPayload["answer"];
+  readonly references: AnswerReviewEncryptedPayload["references"];
+  readonly answeredAt: AnswerReviewEncryptedPayload["answeredAt"];
+  readonly answerCardMatch?: AnswerReviewEncryptedPayload["answerCardMatch"];
+  readonly answerCardActivation?: AnswerReviewEncryptedPayload["answerCardActivation"];
+  readonly result?: AnswerReviewEncryptedPayload["result"];
 }
 
 export interface CardRevision {

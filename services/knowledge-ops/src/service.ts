@@ -5,7 +5,7 @@ import { assertAuthorized, assertSeparationOfDuties } from "./rbac.js";
 import { answerReviewIntakeSchema, feedbackIntakeSchema, releaseQualityReportImportSchema } from "./schemas.js";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  AnswerReviewCaseListView, AnswerReviewCaseView, CardRevision,
+  AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision,
   FeedbackCaseListView, FeedbackCaseView, OpsActor, RegressionCaseRecord,
   ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
 } from "./types.js";
@@ -41,7 +41,7 @@ export class KnowledgeOpsService {
   }
   async answerReviewDetail(actor:OpsActor,reviewId:string):Promise<AnswerReviewCaseView|undefined>{
     assertAuthorized(actor,"answer_review:read");const stored=await this.store.getAnswerReview(reviewId);if(stored===undefined)return undefined;
-    const content=this.cipher.decrypt<Omit<AnswerReviewCaseView,keyof Omit<StoredAnswerReviewCase,"encryptedPayload">>>(stored.encryptedPayload);const{encryptedPayload:_secret,...metadata}=stored;return{...metadata,...content};
+    const content=this.cipher.decrypt<AnswerReviewEncryptedPayload>(stored.encryptedPayload);const{encryptedPayload:_secret,...metadata}=stored;return{...metadata,...content};
   }
   async triageAnswerReview(actor:OpsActor,reviewId:string,workflowStatus:StoredAnswerReviewCase["workflowStatus"]){
     assertAuthorized(actor,"answer_review:triage");const before=await this.store.getAnswerReview(reviewId);const value=await this.store.updateAnswerReviewWorkflow(reviewId,workflowStatus);
