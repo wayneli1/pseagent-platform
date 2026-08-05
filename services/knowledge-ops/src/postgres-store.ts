@@ -17,7 +17,11 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
 
   async migrate(): Promise<void> {
-    for (const fileName of ["001_initial.sql", "002_feedback_correction.sql"]) {
+    for (const fileName of [
+      "001_initial.sql",
+      "002_feedback_correction.sql",
+      "003_feedback_identity_review_request.sql",
+    ]) {
       const migration = await readFile(fileURLToPath(
         new URL(`../migrations/${fileName}`, import.meta.url),
       ), "utf8");
@@ -39,7 +43,13 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listFeedback() { return rows<StoredFeedbackCase>(await this.pool.query("SELECT * FROM feedback_cases ORDER BY created_at DESC")); }
   async getFeedback(id: string) { return optional<StoredFeedbackCase>(await this.pool.query("SELECT * FROM feedback_cases WHERE case_id=$1",[id])); }
-  async updateFeedbackStatus(id: string,status: StoredFeedbackCase["status"]) { return optional<StoredFeedbackCase>(await this.pool.query("UPDATE feedback_cases SET status=$2,updated_at=now() WHERE case_id=$1 RETURNING *",[id,status])); }
+  async updateFeedback(id: string,patch: Pick<Partial<StoredFeedbackCase>,"status"|"classification">) {
+    const current=await this.getFeedback(id);if(current===undefined)return undefined;
+    return optional<StoredFeedbackCase>(await this.pool.query(
+      "UPDATE feedback_cases SET status=$2,classification=$3,updated_at=now() WHERE case_id=$1 RETURNING *",
+      [id,patch.status??current.status,patch.classification??current.classification],
+    ));
+  }
 
   async createCardRevision(v: CardRevision) {
     const row = await one(this.pool, `INSERT INTO card_revisions

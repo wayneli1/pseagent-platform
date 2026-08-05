@@ -17,7 +17,7 @@ export interface KnowledgeOpsStore {
   insertFeedback(value: StoredFeedbackCase): Promise<StoredFeedbackCase>;
   listFeedback(): Promise<readonly StoredFeedbackCase[]>;
   getFeedback(caseId: string): Promise<StoredFeedbackCase | undefined>;
-  updateFeedbackStatus(caseId: string, status: StoredFeedbackCase["status"]): Promise<StoredFeedbackCase | undefined>;
+  updateFeedback(caseId: string, patch: Pick<Partial<StoredFeedbackCase>, "status" | "classification">): Promise<StoredFeedbackCase | undefined>;
   createCardRevision(value: CardRevision): Promise<CardRevision>;
   listCardRevisions(): Promise<readonly CardRevision[]>;
   getCardRevision(revisionId: string): Promise<CardRevision | undefined>;
@@ -64,9 +64,9 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listFeedback() { return newest([...this.feedback.values()].map(copy)); }
   async getFeedback(id: string) { return maybeCopy(this.feedback.get(id)); }
-  async updateFeedbackStatus(id: string, status: StoredFeedbackCase["status"]) {
+  async updateFeedback(id: string, patch: Pick<Partial<StoredFeedbackCase>, "status" | "classification">) {
     const old = this.feedback.get(id); if (!old) return undefined;
-    const next = { ...old, status, updatedAt: now() }; this.feedback.set(id, next); return copy(next);
+    const next = { ...old, ...patch, updatedAt: now() }; this.feedback.set(id, next); return copy(next);
   }
   async createCardRevision(value: CardRevision) { this.revisions.set(value.revisionId, copy(value)); return copy(value); }
   async listCardRevisions() { return newest([...this.revisions.values()].map(copy)); }

@@ -14,6 +14,7 @@ export interface FeedbackReceipt {
   readonly referenceCount: number;
   readonly answeredAt: string;
   readonly answerCardMatch?: FeedbackAnswerCardSummary;
+  readonly userDisplayName?: string;
 }
 
 export interface FeedbackAnswerCardSummary {
@@ -29,6 +30,7 @@ export interface BridgeFeedbackSubmission {
   readonly caseId: string;
   readonly requestId: string;
   readonly pseudonymousUserId: string;
+  readonly userDisplayName?: string;
   readonly questionId: number;
   readonly classification: FeedbackClassification;
   readonly comment: string;

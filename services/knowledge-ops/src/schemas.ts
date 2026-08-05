@@ -11,6 +11,7 @@ export const feedbackIntakeSchema = z.object({
   caseId: z.string().uuid(),
   requestId: z.string().uuid(),
   pseudonymousUserId: z.string().regex(/^[a-f0-9]{64}$/u),
+  userDisplayName: z.string().trim().min(1).max(128).optional(),
   questionId: z.number().int().positive(),
   classification: feedbackClassificationSchema,
   comment: z.string().trim().max(4_000),
@@ -54,6 +55,19 @@ export const reviewInputSchema = z.object({
 }).strict();
 
 export const feedbackStatusSchema = z.enum(["new", "triaged", "in_review", "resolved", "rejected"]);
+export const feedbackPatchSchema = z.object({
+  status: feedbackStatusSchema.optional(),
+  classification: z.enum([
+    "useful",
+    "incorrect",
+    "missing",
+    "review_requested",
+    "evidence",
+    "correction",
+  ]).optional(),
+}).strict().refine((value) => value.status !== undefined || value.classification !== undefined, {
+  message: "feedback_patch_empty",
+});
 export const cardStatusSchema = governanceReviewStatusSchema;
 
 const qualityBucketSchema = z.object({

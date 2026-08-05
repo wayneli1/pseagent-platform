@@ -109,6 +109,7 @@ export const feedbackClassificationSchema = z.enum([
   "useful",
   "incorrect",
   "missing",
+  "review_requested",
   "evidence",
   "correction",
 ]);

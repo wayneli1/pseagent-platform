@@ -40,6 +40,7 @@ export interface LunkrDirectMessage {
   readonly id: string;
   readonly peerUid: string;
   readonly senderUid: string;
+  readonly userDisplayName?: string;
   readonly timestamp: number;
   readonly text: string;
   readonly hasAttachments: boolean;

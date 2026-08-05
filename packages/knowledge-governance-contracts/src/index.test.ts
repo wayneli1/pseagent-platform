@@ -100,6 +100,8 @@ describe("knowledge governance contracts", () => {
     }).success).toBe(true);
     expect(feedbackClassificationSchema.safeParse("correction").success)
       .toBe(true);
+    expect(feedbackClassificationSchema.safeParse("review_requested").success)
+      .toBe(true);
     expect(releaseManifestSchema.safeParse({
       schemaVersion: 1,
       releaseId: "KR-2026-08-001",

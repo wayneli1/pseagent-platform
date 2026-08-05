@@ -26,7 +26,7 @@ const HELP_TEXT = [
   "直接发送文字即可提问；我会检索并核对相关资料后回答。",
   "发送 /new 可取消当前题和排队题，并清空连续对话上下文。",
   "发送 /status 可查看正在处理和排队的问题。",
-  "回答后发送 /q 1-4 可快捷反馈；/feedback 仍可用于带题号的专业反馈。",
+  "回答后发送 /q 1-4 可快捷反馈；不确定时可用 /q 4 请求人工复查。",
   "当前暂不支持群聊、图片、文件或语音。",
 ].join("\n");
 
@@ -41,13 +41,15 @@ const PROCESSING_COMMAND_GUIDE = [
 
 const FEEDBACK_MENU = [
   "—",
-  "这次回答对你有帮助吗？",
+  "这次回答怎么样？回复一条命令就可以：",
   "",
-  "/q 1  回答有用",
-  "/q 2  答案错误",
-  "/q 3  缺少关键信息",
-  "/q 4 正确答案是……",
-  "选项 2、3 可补充说明；选项 4 请直接写出答案。",
+  "/q 1  有帮助",
+  "/q 2  有错误",
+  "/q 3  没讲全",
+  "/q 4  我不确定，请人工复查",
+  "",
+  "愿意补充时，直接写在命令后面，例如：",
+  "/q 3 没提到客户端专用密码",
 ].join("\n");
 
 export type BridgeCoverage = "complete" | "partial" | "none";
@@ -440,6 +442,9 @@ export class LunkrPseBridge<Result> {
       ...(metadata.answerCardMatch === undefined
         ? {}
         : { answerCardMatch: metadata.answerCardMatch }),
+      ...(message.userDisplayName === undefined
+        ? {}
+        : { userDisplayName: message.userDisplayName }),
     });
     if (feedbackReady && this.dependencies.feedback !== undefined) {
       await this.sendBestEffort(message.peerUid, FEEDBACK_MENU);
@@ -511,7 +516,7 @@ export class LunkrPseBridge<Result> {
     if (message.feedback === undefined) {
       await this.sendWithRetry(
         message.peerUid,
-        "反馈格式无效。可发送 /q 1、/q 2 <原因>、/q 3 <缺失内容>，或 /q 4 <你认为的正确答案>。",
+        "反馈格式无效。请发送 /q 1、/q 2、/q 3 或 /q 4；愿意补充时可直接写在后面，例如：/q 3 没提到客户端专用密码。",
       );
       return;
     }
@@ -558,6 +563,9 @@ export class LunkrPseBridge<Result> {
         caseId: claim.caseId,
         requestId: claim.receipt.requestId,
         pseudonymousUserId,
+        ...(claim.receipt.userDisplayName === undefined
+          ? {}
+          : { userDisplayName: claim.receipt.userDisplayName }),
         questionId: claim.receipt.questionId,
         classification: message.feedback.classification,
         comment: message.feedback.comment,
@@ -593,8 +601,10 @@ export class LunkrPseBridge<Result> {
     claim.settle(true);
     await this.sendBestEffort(
       message.peerUid,
-      message.feedback.classification === "correction"
-        ? `已保存你为问题 #${questionId} 提交的候选答案。运营人员审核前，它不会直接影响线上回答。`
+      message.feedback.classification === "review_requested"
+        ? `已将问题 #${questionId} 标记为需要人工复查。我们会核对正式知识依据，不需要你补写正确答案。`
+        : message.feedback.classification === "correction"
+          ? `已保存你为问题 #${questionId} 提交的候选答案。运营人员审核前，它不会直接影响线上回答。`
         : `已记录问题 #${questionId} 的反馈，感谢你的帮助。`,
     );
   }

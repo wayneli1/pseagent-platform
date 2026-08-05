@@ -32,6 +32,7 @@ export interface FeedbackIntake {
   readonly caseId: string;
   readonly requestId: string;
   readonly pseudonymousUserId: string;
+  readonly userDisplayName?: string;
   readonly questionId: number;
   readonly classification: FeedbackClassification;
   readonly comment: string;
@@ -63,6 +64,7 @@ export interface StoredFeedbackCase {
 }
 
 export interface FeedbackCaseView extends Omit<StoredFeedbackCase, "encryptedPayload"> {
+  readonly userDisplayName?: string;
   readonly question: string;
   readonly answer: string;
   readonly comment: string;
@@ -70,6 +72,10 @@ export interface FeedbackCaseView extends Omit<StoredFeedbackCase, "encryptedPay
   readonly questionId: number;
   readonly answeredAt: string;
   readonly answerCardMatch?: Record<string, unknown>;
+}
+
+export interface FeedbackCaseListView extends Omit<StoredFeedbackCase, "encryptedPayload"> {
+  readonly userDisplayName?: string;
 }
 
 export interface CardRevision {

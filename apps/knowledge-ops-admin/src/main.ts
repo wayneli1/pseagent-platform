@@ -18,7 +18,7 @@ if (!rootElement) throw new Error("app_root_missing");
 const root: HTMLDivElement = rootElement;
 const nav: { id: ViewName; label: string; icon: string }[] = [
   { id: "dashboard", label: "总览", icon: "⌂" },
-  { id: "feedback", label: "反馈工作台", icon: "◎" },
+  { id: "feedback", label: "反馈与复查", icon: "◎" },
   { id: "cards", label: "答案卡", icon: "▤" },
   { id: "regressions", label: "回归评测", icon: "✓" },
   { id: "releases", label: "发布与回滚", icon: "↗" },
@@ -123,12 +123,12 @@ async function renderFeedback() {
               "回答状态",
               "范围",
               "引用",
-              "用户（匿名）",
+              "论客聊天名",
               "提交时间",
             ],
             values.map(
               (x) =>
-                `<tr data-action="feedback-detail" data-id="${h(x.caseId)}" data-status="${h(x.status)}"><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${h(x.answerStatus)}</td><td>${h(x.scope ?? "—")}</td><td>${x.referenceCount}</td><td class="mono">${shortId(x.pseudonymousUserId, 12)}</td><td>${time(x.createdAt)}</td></tr>`,
+                `<tr data-action="feedback-detail" data-id="${h(x.caseId)}" data-status="${h(x.status)}"><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${h(x.answerStatus)}</td><td>${h(x.scope ?? "—")}</td><td>${x.referenceCount}</td><td>${h(x.userDisplayName ?? "未获取到聊天名")}</td><td>${time(x.createdAt)}</td></tr>`,
             ),
           )
         : empty("尚未收到用户反馈")
@@ -295,6 +295,7 @@ async function handleSubmit(event: SubmitEvent) {
     } else if (form.id === "triage-form") {
       await api.patch(`/v1/feedback/${form.dataset.id}`, {
         status: data.get("status"),
+        classification: data.get("classification"),
       });
       toast("反馈状态已更新");
       closeOverlay();
@@ -346,8 +347,30 @@ function handleChange(event: Event) {
 
 async function feedbackDrawer(id: string) {
   const item = await api.get<FeedbackDetail>(`/v1/feedback/${id}`);
+  const classifications = [
+    "useful",
+    "incorrect",
+    "missing",
+    "review_requested",
+    "evidence",
+    "correction",
+  ];
   overlay(
-    `<div class="drawer-head"><div><strong>反馈 #${item.questionId}</strong> ${badge(item.classification)} ${badge(item.status)}</div><button class="button" data-action="close-overlay">关闭</button></div><div class="drawer-body">${item.proposedAnswer ? `<div class="detail-section"><h3>用户提交的候选答案</h3><div class="notice">该内容仅供人工审核，不会自动进入线上知识。</div><div class="content-box mt-6">${h(item.proposedAnswer)}</div></div>` : ""}<div class="detail-section"><h3>用户评论</h3><div class="content-box">${h(item.comment || "（未填写）")}</div></div><div class="detail-section"><h3>原始问题</h3><div class="content-box">${h(item.question)}</div></div><div class="detail-section"><h3>原始回答</h3><div class="content-box">${h(item.answer)}</div></div><div class="detail-section"><h3>答案卡匹配摘要</h3><pre class="content-box mono">${json(item.answerCardMatch ?? {})}</pre></div><form id="triage-form" data-id="${h(id)}"><div class="field"><label>处理状态</label><select name="status" aria-label="处理状态">${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => `<option ${x === item.status ? "selected" : ""}>${x}</option>`).join("")}</select></div><button class="button primary" type="submit">保存状态</button></form></div>`,
+    `<div class="drawer-head"><div><strong>反馈 #${item.questionId}</strong> ${badge(item.classification)} ${badge(item.status)}</div><button class="button" data-action="close-overlay">关闭</button></div>
+    <div class="drawer-body">
+      <div class="detail-section"><h3>反馈用户</h3><div class="content-box">${h(item.userDisplayName ?? "未获取到聊天名")}</div><div class="muted mt-6">技术关联标识：<span class="mono">${shortId(item.pseudonymousUserId, 16)}</span></div></div>
+      ${item.proposedAnswer ? `<div class="detail-section"><h3>用户提交的候选答案</h3><div class="notice">该内容仅供人工审核，不会自动进入线上知识。</div><div class="content-box mt-6">${h(item.proposedAnswer)}</div></div>` : ""}
+      <div class="detail-section"><h3>用户补充</h3><div class="content-box">${h(item.comment || "（未填写补充说明）")}</div></div>
+      <div class="detail-section"><h3>原始问题</h3><div class="content-box">${h(item.question)}</div></div>
+      <div class="detail-section"><h3>原始回答</h3><div class="content-box">${h(item.answer)}</div></div>
+      <div class="detail-section"><h3>答案卡匹配摘要</h3><pre class="content-box mono">${json(item.answerCardMatch ?? {})}</pre></div>
+      <form id="triage-form" data-id="${h(id)}">
+        <div class="notice">如果用户误点了反馈类型，可在这里纠正。修改只影响工单分类，不会直接改写线上答案。</div>
+        <div class="field"><label for="feedback-classification">反馈类型</label><select id="feedback-classification" name="classification">${classifications.map((x) => `<option ${x === item.classification ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+        <div class="field"><label for="feedback-workflow-status">处理状态</label><select id="feedback-workflow-status" name="status">${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => `<option ${x === item.status ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+        <button class="button primary" type="submit">保存反馈处理结果</button>
+      </form>
+    </div>`,
   );
 }
 async function cardDrawer(id: string) {

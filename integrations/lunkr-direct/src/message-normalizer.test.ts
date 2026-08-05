@@ -302,13 +302,16 @@ describe("normalizeDirectMessage", () => {
       classification: "missing",
       comment: "",
     });
-    expect(parseFeedbackCommand("/q #12 4 正确答案应以正式文档为准"))
+    expect(parseFeedbackCommand("/q #12 4 请帮我核对正式文档"))
       .toEqual({
         questionId: 12,
-        classification: "correction",
-        comment: "",
-        proposedAnswer: "正确答案应以正式文档为准",
+        classification: "review_requested",
+        comment: "请帮我核对正式文档",
       });
+    expect(parseFeedbackCommand("/q 4")).toEqual({
+      classification: "review_requested",
+      comment: "",
+    });
 
     const malformed = normalizeDirectMessage({
       topic: "inbox",
@@ -329,10 +332,24 @@ describe("normalizeDirectMessage", () => {
     `/feedback #1 incorrect ${"x".repeat(4_001)}`,
     "/q 0",
     "/q #0 1",
-    "/q 4",
     `/q 2 ${"x".repeat(4_001)}`,
   ])("rejects unsafe feedback payload %j", (text) => {
     expect(parseFeedbackCommand(text)).toBeUndefined();
+  });
+
+  it("normalizes the visible Lunkr chat name without exposing control text", () => {
+    expect(normalizeDirectMessage({
+      topic: "inbox",
+      payload: {
+        msgId: "named-message",
+        sourceId: "#peer#U",
+        from: { uid: "#peer#U", displayName: "  Wayne\u0000  黎政良  " },
+        to: { uid: "#bot#U" },
+        subject: "测试问题",
+      },
+    }, "#bot#U")).toMatchObject({
+      userDisplayName: "Wayne 黎政良",
+    });
   });
 
   it.each(["/new 请继续", "前缀/new", "/newer", "```/new```", "/feedbacker", "/query"])(

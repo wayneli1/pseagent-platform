@@ -41,6 +41,26 @@ export function normalizeDirectMessage(
       ? payload.from
       : undefined);
   if (senderUid === undefined || senderUid === selfUid) return undefined;
+  const userDisplayName = normalizeDisplayName(
+    firstString(from, [
+      "displayName",
+      "display_name",
+      "nickName",
+      "nick_name",
+      "nickname",
+      "trueName",
+      "true_name",
+      "name",
+      "alias",
+    ]) ?? firstString(payload, [
+      "senderName",
+      "sender_name",
+      "fromName",
+      "from_name",
+      "displayName",
+      "display_name",
+    ]),
+  );
   if (sourceUid !== undefined && !sourceUid.endsWith("#U")) return undefined;
   const peerUid =
     sourceUid?.endsWith("#U") === true
@@ -72,6 +92,7 @@ export function normalizeDirectMessage(
     id,
     peerUid,
     senderUid,
+    ...(userDisplayName === undefined ? {} : { userDisplayName }),
     timestamp,
     text: text.trim(),
     hasAttachments,
@@ -103,8 +124,7 @@ export function parseFeedbackCommand(text: string): FeedbackCommand | undefined 
     if (
       (explicitQuestionId !== undefined &&
         (!Number.isSafeInteger(explicitQuestionId) || explicitQuestionId <= 0)) ||
-      detail.length > 4_000 ||
-      (option === 4 && detail === "")
+      detail.length > 4_000
     ) {
       return undefined;
     }
@@ -112,7 +132,7 @@ export function parseFeedbackCommand(text: string): FeedbackCommand | undefined 
       "useful",
       "incorrect",
       "missing",
-      "correction",
+      "review_requested",
     ] as const)[option - 1];
     if (classification === undefined) return undefined;
     return {
@@ -120,10 +140,7 @@ export function parseFeedbackCommand(text: string): FeedbackCommand | undefined 
         ? {}
         : { questionId: explicitQuestionId }),
       classification,
-      comment: classification === "correction" ? "" : detail,
-      ...(classification === "correction"
-        ? { proposedAnswer: detail }
-        : {}),
+      comment: detail,
     };
   }
   const match = /^\/feedback\s+#([1-9]\d*)\s+(useful|incorrect|missing|evidence)(?:\s+([\s\S]*))?$/iu
@@ -142,6 +159,16 @@ export function parseFeedbackCommand(text: string): FeedbackCommand | undefined 
     return undefined;
   }
   return { questionId, classification, comment };
+}
+
+function normalizeDisplayName(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (normalized === "") return undefined;
+  return [...normalized].slice(0, 128).join("");
 }
 
 function normalizeCommandText(text: string): string {

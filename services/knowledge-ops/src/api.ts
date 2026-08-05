@@ -1,7 +1,7 @@
 import { ZodError } from "zod";
 import { knowledgeDomainSchema } from "@pseagent/knowledge-governance-contracts";
 import { OpsAuthorizationError, StaticTokenAuthorizer } from "./rbac.js";
-import { feedbackStatusSchema, reviewInputSchema } from "./schemas.js";
+import { feedbackPatchSchema, reviewInputSchema } from "./schemas.js";
 import { KnowledgeOpsService, OpsNotFoundError } from "./service.js";
 
 export interface OpsApiRequest { readonly method:string; readonly path:string; readonly authorization?:string; readonly body?:unknown; }
@@ -19,7 +19,7 @@ export class KnowledgeOpsApi {
       if(request.method==="GET"&&pathname==="/v1/feedback")return ok(await this.service.listFeedback(actor));
       if(segments[0]==="v1"&&segments[1]==="feedback"&&segments[2]){
         if(request.method==="GET"){const value=await this.service.feedbackDetail(actor,segments[2]);return value?ok(value):notFound();}
-        if(request.method==="PATCH"){const input=feedbackStatusSchema.parse((request.body as {status?:unknown}|undefined)?.status);const value=await this.service.triageFeedback(actor,segments[2],input);return value?ok(value):notFound();}
+        if(request.method==="PATCH"){const input=feedbackPatchSchema.parse(request.body);const patch={...(input.status===undefined?{}:{status:input.status}),...(input.classification===undefined?{}:{classification:input.classification})};const value=await this.service.triageFeedback(actor,segments[2],patch);return value?ok(value):notFound();}
       }
       if(request.method==="GET"&&pathname==="/v1/cards")return ok(await this.service.listCards(actor));
       if(segments[0]==="v1"&&segments[1]==="cards"&&segments[2]&&segments[3]==="revisions"&&request.method==="POST"){

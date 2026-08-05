@@ -5,7 +5,7 @@ import { assertAuthorized, assertSeparationOfDuties } from "./rbac.js";
 import { feedbackIntakeSchema, releaseQualityReportImportSchema } from "./schemas.js";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  CardRevision, FeedbackCaseView, OpsActor,
+  CardRevision, FeedbackCaseListView, FeedbackCaseView, OpsActor,
   RegressionCaseRecord, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
 } from "./types.js";
 
@@ -27,6 +27,7 @@ export class KnowledgeOpsService {
       caseId:intake.caseId,requestId:intake.requestId,pseudonymousUserId:intake.pseudonymousUserId,
       classification:intake.classification,status:"new",
       encryptedPayload:this.cipher.encrypt({question:intake.question,answer:intake.answer,comment:intake.comment,
+        ...(intake.userDisplayName?{userDisplayName:intake.userDisplayName}:{}),
         ...(intake.proposedAnswer?{proposedAnswer:intake.proposedAnswer}:{}),
         questionId:intake.questionId,answeredAt:intake.answeredAt,answerCardMatch:intake.answerCardMatch}),
       answerStatus:intake.answerStatus,...(intake.scope?{scope:intake.scope}:{}),referenceCount:intake.referenceCount,
@@ -37,16 +38,27 @@ export class KnowledgeOpsService {
     return result;
   }
 
-  async listFeedback(actor: OpsActor) { assertAuthorized(actor,"feedback:read"); return (await this.store.listFeedback()).map(({encryptedPayload:_secret,...metadata})=>metadata); }
+  async listFeedback(actor: OpsActor): Promise<readonly FeedbackCaseListView[]> {
+    assertAuthorized(actor,"feedback:read");
+    return (await this.store.listFeedback()).map((stored) => {
+      const content=this.cipher.decrypt<{userDisplayName?:string}>(stored.encryptedPayload);
+      const {encryptedPayload:_secret,...metadata}=stored;
+      return {...metadata,...(content.userDisplayName?{userDisplayName:content.userDisplayName}:{})};
+    });
+  }
   async feedbackDetail(actor: OpsActor, caseId: string): Promise<FeedbackCaseView|undefined> {
     assertAuthorized(actor,"feedback:read"); const stored=await this.store.getFeedback(caseId); if(!stored)return undefined;
-    const content=this.cipher.decrypt<{question:string;answer:string;comment:string;proposedAnswer?:string;questionId:number;answeredAt:string;answerCardMatch?:Record<string,unknown>}>(stored.encryptedPayload);
+    const content=this.cipher.decrypt<{question:string;answer:string;comment:string;proposedAnswer?:string;userDisplayName?:string;questionId:number;answeredAt:string;answerCardMatch?:Record<string,unknown>}>(stored.encryptedPayload);
     const {encryptedPayload:_secret,...metadata}=stored;
     return {...metadata,...content};
   }
-  async triageFeedback(actor: OpsActor,caseId:string,status:StoredFeedbackCase["status"]) {
-    assertAuthorized(actor,"feedback:triage"); const value=await this.store.updateFeedbackStatus(caseId,status);
-    if(value)await this.audit(actor,"feedback.triage","feedback_case",caseId,{status}); return value;
+  async triageFeedback(actor: OpsActor,caseId:string,patch:Pick<Partial<StoredFeedbackCase>,"status"|"classification">) {
+    assertAuthorized(actor,"feedback:triage");const before=await this.store.getFeedback(caseId);
+    const value=await this.store.updateFeedback(caseId,patch);
+    if(value)await this.audit(actor,"feedback.triage","feedback_case",caseId,{
+      ...(patch.status===undefined?{}:{previousStatus:before?.status,status:patch.status}),
+      ...(patch.classification===undefined?{}:{previousClassification:before?.classification,classification:patch.classification}),
+    });return value;
   }
 
   async listCards(actor: OpsActor){assertAuthorized(actor,"card:read");return this.store.listCardRevisions();}

@@ -295,7 +295,10 @@ describe("LunkrPseBridge", () => {
       }),
     });
 
-    await bridge.handle(message("q1", "#private-user#U", "原始问题"));
+    await bridge.handle({
+      ...message("q1", "#private-user#U", "原始问题"),
+      userDisplayName: "Wayne 黎政良",
+    });
     expect(submissions).toEqual([]);
     await bridge.handle(feedbackMessage(
       "f1",
@@ -320,12 +323,13 @@ describe("LunkrPseBridge", () => {
       answer: "完整回答",
       source: "lunkr_direct",
       audit: { event: "feedback_submitted" },
+      userDisplayName: "Wayne 黎政良",
     });
     expect(submissions[0]?.pseudonymousUserId).toMatch(/^[a-f0-9]{64}$/u);
     expect(JSON.stringify(submissions[0])).not.toContain("private-user");
   });
 
-  it("accepts quick feedback for the latest answer and isolates a proposed answer", async () => {
+  it("accepts quick feedback and lets a user request review without writing an answer", async () => {
     const submissions: BridgeFeedbackSubmission[] = [];
     const sendText = vi.fn(async () => undefined);
     const bridge = createBridge({
@@ -337,7 +341,7 @@ describe("LunkrPseBridge", () => {
     });
 
     await bridge.handle(message("q1", "#a#U", "第一问"));
-    expect(sentTexts(sendText).at(-1)).toContain("/q 1  回答有用");
+    expect(sentTexts(sendText).at(-1)).toContain("/q 1  有帮助");
     await bridge.handle(quickFeedbackMessage(
       "f1",
       "#a#U",
@@ -348,9 +352,8 @@ describe("LunkrPseBridge", () => {
     await bridge.handle(quickFeedbackMessage(
       "f2",
       "#a#U",
-      "correction",
+      "review_requested",
       "",
-      "正确答案应以当前发布版本为准",
     ));
 
     expect(submissions).toHaveLength(2);
@@ -361,12 +364,11 @@ describe("LunkrPseBridge", () => {
     });
     expect(submissions[1]).toMatchObject({
       questionId: 2,
-      classification: "correction",
+      classification: "review_requested",
       comment: "",
-      proposedAnswer: "正确答案应以当前发布版本为准",
     });
     expect(sentTexts(sendText).at(-1)).toContain(
-      "运营人员审核前，它不会直接影响线上回答",
+      "不需要你补写正确答案",
     );
   });
 
@@ -1261,17 +1263,16 @@ function feedbackMessage(
 function quickFeedbackMessage(
   id: string,
   peerUid: string,
-  classification: "useful" | "incorrect" | "missing" | "correction",
+  classification: "useful" | "incorrect" | "missing" | "review_requested",
   comment: string,
-  proposedAnswer?: string,
 ): LunkrDirectMessage {
   const option = {
     useful: 1,
     incorrect: 2,
     missing: 3,
-    correction: 4,
+    review_requested: 4,
   }[classification];
-  const detail = proposedAnswer ?? comment;
+  const detail = comment;
   return {
     ...message(
       id,
@@ -1282,7 +1283,6 @@ function quickFeedbackMessage(
     feedback: {
       classification,
       comment,
-      ...(proposedAnswer === undefined ? {} : { proposedAnswer }),
     },
   };
 }
