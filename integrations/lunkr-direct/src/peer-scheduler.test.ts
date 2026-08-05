@@ -118,6 +118,57 @@ describe("PeerScheduler", () => {
     ]);
   });
 
+  it("reports only reliable processing and per-peer queue state", async () => {
+    const scheduler = new PeerScheduler(1, 5);
+    const activeGate = deferred<void>();
+    const accept = async () => undefined;
+    const active = scheduler.submit("a", {
+      accept,
+      work: async () => activeGate.promise,
+    });
+    const queued = scheduler.submit("a", {
+      accept,
+      work: async () => undefined,
+    });
+    const globallyQueued = scheduler.submit("b", {
+      accept,
+      work: async () => undefined,
+    });
+
+    expect(scheduler.status("missing")).toEqual([]);
+    expect(scheduler.status("a")).toEqual([
+      {
+        questionId: 1,
+        state: "processing",
+        ahead: 0,
+        waitingForCapacity: false,
+      },
+      {
+        questionId: 2,
+        state: "queued",
+        ahead: 1,
+        waitingForCapacity: false,
+      },
+    ]);
+    expect(scheduler.status("b")).toEqual([
+      {
+        questionId: 1,
+        state: "queued",
+        ahead: 0,
+        waitingForCapacity: true,
+      },
+    ]);
+
+    activeGate.resolve();
+    await Promise.all([
+      active.completion,
+      queued.completion,
+      globallyQueued.completion,
+    ]);
+    expect(scheduler.status("a")).toEqual([]);
+    expect(scheduler.status("b")).toEqual([]);
+  });
+
   it("releases the peer slot when work rejects", async () => {
     const scheduler = new PeerScheduler(1, 5);
     const started: string[] = [];

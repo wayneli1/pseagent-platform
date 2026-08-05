@@ -27,12 +27,13 @@ export interface StoredLunkrSession {
 
 import type { FeedbackClassification } from "@pseagent/knowledge-governance-contracts";
 
-export type DirectCommand = "help" | "new" | "feedback";
+export type DirectCommand = "help" | "new" | "status" | "feedback";
 
 export interface FeedbackCommand {
-  readonly questionId: number;
+  readonly questionId?: number;
   readonly classification: FeedbackClassification;
   readonly comment: string;
+  readonly proposedAnswer?: string;
 }
 
 export interface LunkrDirectMessage {

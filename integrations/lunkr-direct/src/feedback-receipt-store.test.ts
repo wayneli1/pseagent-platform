@@ -56,6 +56,19 @@ describe("FeedbackReceiptStore", () => {
     expect(() => pseudonymizeFeedbackUser("#private-user#U", "weak"))
       .toThrow("feedback_pseudonymization_input_invalid");
   });
+
+  it("finds the latest unexpired question for shorthand feedback", () => {
+    let now = 1_000;
+    const store = new FeedbackReceiptStore(100, 10, () => now);
+    expect(store.latestQuestionId("#a#U")).toBeUndefined();
+    expect(store.remember("#a#U", receipt(1))).toBe(true);
+    now = 1_010;
+    expect(store.remember("#a#U", receipt(2))).toBe(true);
+    expect(store.remember("#b#U", receipt(9))).toBe(true);
+    expect(store.latestQuestionId("#a#U")).toBe(2);
+    now = 1_110;
+    expect(store.latestQuestionId("#a#U")).toBeUndefined();
+  });
 });
 
 function receipt(questionId: number): FeedbackReceipt {

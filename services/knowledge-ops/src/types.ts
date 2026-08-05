@@ -35,6 +35,7 @@ export interface FeedbackIntake {
   readonly questionId: number;
   readonly classification: FeedbackClassification;
   readonly comment: string;
+  readonly proposedAnswer?: string;
   readonly question: string;
   readonly answer: string;
   readonly answerStatus: string;
@@ -65,6 +66,7 @@ export interface FeedbackCaseView extends Omit<StoredFeedbackCase, "encryptedPay
   readonly question: string;
   readonly answer: string;
   readonly comment: string;
+  readonly proposedAnswer?: string;
   readonly questionId: number;
   readonly answeredAt: string;
   readonly answerCardMatch?: Record<string, unknown>;

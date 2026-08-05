@@ -266,7 +266,9 @@ describe("normalizeDirectMessage", () => {
     ["/\u200Bnew", "new"],
     ["／new", "new"],
     ["/help", "help"],
+    ["/status", "status"],
     ["/feedback #12 useful", "feedback"],
+    ["/q 1", "feedback"],
   ] as const)("recognizes exact normalized command %j", (subject, command) => {
     expect(normalizeDirectMessage({
       topic: "inbox",
@@ -292,6 +294,21 @@ describe("normalizeDirectMessage", () => {
       comment: "",
     });
     expect(parseFeedbackCommand("/feedback #2 missing")).toBeUndefined();
+    expect(parseFeedbackCommand("／q ２  版本判断错误 ")).toEqual({
+      classification: "incorrect",
+      comment: "版本判断错误",
+    });
+    expect(parseFeedbackCommand("/q 3")).toEqual({
+      classification: "missing",
+      comment: "",
+    });
+    expect(parseFeedbackCommand("/q #12 4 正确答案应以正式文档为准"))
+      .toEqual({
+        questionId: 12,
+        classification: "correction",
+        comment: "",
+        proposedAnswer: "正确答案应以正式文档为准",
+      });
 
     const malformed = normalizeDirectMessage({
       topic: "inbox",
@@ -310,11 +327,15 @@ describe("normalizeDirectMessage", () => {
     "/feedback #0 useful",
     "/feedback #999999999999999999999 useful",
     `/feedback #1 incorrect ${"x".repeat(4_001)}`,
+    "/q 0",
+    "/q #0 1",
+    "/q 4",
+    `/q 2 ${"x".repeat(4_001)}`,
   ])("rejects unsafe feedback payload %j", (text) => {
     expect(parseFeedbackCommand(text)).toBeUndefined();
   });
 
-  it.each(["/new 请继续", "前缀/new", "/newer", "```/new```", "/feedbacker"])(
+  it.each(["/new 请继续", "前缀/new", "/newer", "```/new```", "/feedbacker", "/query"])(
     "does not widen command matching for %j",
     (subject) => {
       expect(normalizeDirectMessage({

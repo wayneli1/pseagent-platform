@@ -17,8 +17,12 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
 
   async migrate(): Promise<void> {
-    const migration = await readFile(fileURLToPath(new URL("../migrations/001_initial.sql", import.meta.url)), "utf8");
-    await this.pool.query(migration);
+    for (const fileName of ["001_initial.sql", "002_feedback_correction.sql"]) {
+      const migration = await readFile(fileURLToPath(
+        new URL(`../migrations/${fileName}`, import.meta.url),
+      ), "utf8");
+      await this.pool.query(migration);
+    }
   }
   async ping(): Promise<boolean> {
     try { await this.pool.query("SELECT 1"); return true; } catch { return false; }

@@ -81,9 +81,9 @@ describe("LunkrPseBridge", () => {
     expect(answer.mock.calls[1]?.[1]).not.toContain("第一问:empty");
     expect(answer.mock.calls[1]?.[1]).not.toContain("已收到问题");
     expect(sentTexts(sendText)).toEqual([
-      "已收到问题 #1，正在处理。",
+      startedNotice(1),
       "问题 #1 的回答：\n\n第一问:empty",
-      "已收到问题 #2，正在处理。",
+      startedNotice(2),
       expect.stringContaining("问题 #2 的回答：\n\n第二问:"),
     ]);
   });
@@ -149,7 +149,7 @@ describe("LunkrPseBridge", () => {
 
     expect(answer).toHaveBeenCalledOnce();
     expect(sentTexts(sendText)).toEqual([
-      "已收到问题 #1，正在处理。",
+      startedNotice(1),
       "问题 #1 的回答：\n\n回答",
     ]);
   });
@@ -165,7 +165,7 @@ describe("LunkrPseBridge", () => {
     await vi.waitFor(() => expect(answer).toHaveBeenCalledOnce());
     const a2 = bridge.handle(message("a2", "#a#U", "A2"));
     await vi.waitFor(() => expect(sentTexts(sendText)).toContain(
-      "已收到问题 #2，前面还有 1 个问题，已加入队列。",
+      withProcessingGuide("已收到问题 #2，前面还有 1 个问题，已加入队列。"),
     ));
     expect(answer).toHaveBeenCalledOnce();
 
@@ -194,7 +194,7 @@ describe("LunkrPseBridge", () => {
     await vi.waitFor(() => expect(answer).toHaveBeenCalledTimes(4));
     const fifth = bridge.handle(message("m5", "#E#U", "E"));
     await vi.waitFor(() => expect(sentTexts(sendText)).toContain(
-      "已收到问题 #1，当前服务繁忙，已进入等待队列。",
+      withProcessingGuide("已收到问题 #1，当前服务繁忙，已进入等待队列。"),
     ));
     expect(answer).toHaveBeenCalledTimes(4);
 
@@ -245,7 +245,42 @@ describe("LunkrPseBridge", () => {
     expect(sentTexts(sendText)).toContain(
       "已开始新会话，之前处理中和排队的问题已取消。",
     );
-    expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
+    expect(sentTexts(sendText)).toContain(
+      startedNotice(1),
+    );
+  });
+
+  it("reports reliable processing and queue status without allocating a question id", async () => {
+    const first = deferred<TestResult>();
+    const answer = vi.fn<Answer>(async (question) =>
+      question === "第一问" ? first.promise : answered("第二问回答"));
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    await bridge.handle(message("empty-status", "#a#U", "/status", "status"));
+    expect(sentTexts(sendText).at(-1)).toBe(
+      "当前没有正在处理或排队的问题。直接发送文字即可提问。",
+    );
+
+    const active = bridge.handle(message("q1", "#a#U", "第一问"));
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledOnce());
+    const queued = bridge.handle(message("q2", "#a#U", "第二问"));
+    await vi.waitFor(() => expect(sentTexts(sendText)).toContain(
+      withProcessingGuide("已收到问题 #2，前面还有 1 个问题，已加入队列。"),
+    ));
+    await bridge.handle(message("status", "#a#U", "/status", "status"));
+    expect(sentTexts(sendText).at(-1)).toBe([
+      "当前问题状态：",
+      "问题 #1：处理中",
+      "问题 #2：排队中，前面还有 1 个问题",
+    ].join("\n"));
+
+    first.resolve(answered("第一问回答"));
+    await Promise.all([active, queued]);
+    await bridge.handle(message("done-status", "#a#U", "/status", "status"));
+    expect(sentTexts(sendText).at(-1)).toBe(
+      "当前没有正在处理或排队的问题。直接发送文字即可提问。",
+    );
   });
 
   it("persists original question and answer only after explicit pseudonymous feedback", async () => {
@@ -272,7 +307,9 @@ describe("LunkrPseBridge", () => {
     await bridge.handle(message("q2", "#private-user#U", "第二问"));
 
     expect(answer).toHaveBeenCalledTimes(2);
-    expect(sentTexts(sendText)).toContain("已收到问题 #2，正在处理。");
+    expect(sentTexts(sendText)).toContain(
+      startedNotice(2),
+    );
     expect(submissions).toHaveLength(1);
     expect(submissions[0]).toMatchObject({
       requestId: "019fcd9f-cfb9-7c62-93a9-39b84c7e00f9",
@@ -288,6 +325,51 @@ describe("LunkrPseBridge", () => {
     expect(JSON.stringify(submissions[0])).not.toContain("private-user");
   });
 
+  it("accepts quick feedback for the latest answer and isolates a proposed answer", async () => {
+    const submissions: BridgeFeedbackSubmission[] = [];
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({
+      answer: async (question) => answered(`${question}的回答`),
+      sendText,
+      feedback: feedbackDependencies(async (submission) => {
+        submissions.push(submission);
+      }),
+    });
+
+    await bridge.handle(message("q1", "#a#U", "第一问"));
+    expect(sentTexts(sendText).at(-1)).toContain("/q 1  回答有用");
+    await bridge.handle(quickFeedbackMessage(
+      "f1",
+      "#a#U",
+      "incorrect",
+      "版本判断错误",
+    ));
+    await bridge.handle(message("q2", "#a#U", "第二问"));
+    await bridge.handle(quickFeedbackMessage(
+      "f2",
+      "#a#U",
+      "correction",
+      "",
+      "正确答案应以当前发布版本为准",
+    ));
+
+    expect(submissions).toHaveLength(2);
+    expect(submissions[0]).toMatchObject({
+      questionId: 1,
+      classification: "incorrect",
+      comment: "版本判断错误",
+    });
+    expect(submissions[1]).toMatchObject({
+      questionId: 2,
+      classification: "correction",
+      comment: "",
+      proposedAnswer: "正确答案应以当前发布版本为准",
+    });
+    expect(sentTexts(sendText).at(-1)).toContain(
+      "运营人员审核前，它不会直接影响线上回答",
+    );
+  });
+
   it("handles malformed or unavailable feedback without allocating a question id", async () => {
     const answer = vi.fn<Answer>(async () => answered("回答"));
     const sendText = vi.fn(async () => undefined);
@@ -300,7 +382,9 @@ describe("LunkrPseBridge", () => {
     await bridge.handle(message("q1", "#a#U", "问题"));
 
     expect(answer).toHaveBeenCalledOnce();
-    expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
+    expect(sentTexts(sendText)).toContain(
+      startedNotice(1),
+    );
     expect(sentTexts(sendText)).toContain(
       "反馈服务暂时不可用，本次未保存任何内容。",
     );
@@ -384,8 +468,12 @@ describe("LunkrPseBridge", () => {
     now = 2_999;
     await bridge.handle(message("m3", "#a#U", "第三问"));
 
-    expect(sentTexts(sendText)).toContain("已收到问题 #2，正在处理。");
-    expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
+    expect(sentTexts(sendText)).toContain(
+      startedNotice(2),
+    );
+    expect(sentTexts(sendText)).toContain(
+      startedNotice(1),
+    );
     expect(sentTexts(sendText)).not.toContain(
       "已开始新会话，之前处理中和排队的问题已取消。",
     );
@@ -416,10 +504,10 @@ describe("LunkrPseBridge", () => {
     await bridge.handle(message("q2", "#a#U", "第二问"));
 
     const receipts = sentTexts(sendText).filter((text) =>
-      text.startsWith("已收到问题"));
+      text.includes("已收到，正在检索并核对相关资料"));
     expect(receipts).toEqual([
-      "已收到问题 #1，正在处理。",
-      "已收到问题 #1，正在处理。",
+      startedNotice(1),
+      startedNotice(1),
     ]);
     expect(answer.mock.calls[1]?.[1]).toBeUndefined();
   });
@@ -444,12 +532,12 @@ describe("LunkrPseBridge", () => {
     await bridge.handle(message("b2", "#b#U", "B2"));
 
     const receipts = sentTexts(sendText).filter((text) =>
-      text.startsWith("已收到问题"));
+      text.includes("已收到，正在检索并核对相关资料"));
     expect(receipts).toEqual([
-      "已收到问题 #1，正在处理。",
-      "已收到问题 #1，正在处理。",
-      "已收到问题 #1，正在处理。",
-      "已收到问题 #2，正在处理。",
+      startedNotice(1),
+      startedNotice(1),
+      startedNotice(1),
+      startedNotice(2),
     ]);
   });
 
@@ -482,7 +570,7 @@ describe("LunkrPseBridge", () => {
     first.resolve(answered("Q1"));
     await Promise.all([...handles, fresh]);
     expect(sentTexts(sendText)).toContain(
-      "已收到问题 #1，前面还有 1 个问题，已加入队列。",
+      withProcessingGuide("已收到问题 #1，前面还有 1 个问题，已加入队列。"),
     );
     expect(answer.mock.calls.some((call) => call[0] === "Q7")).toBe(false);
     expect(answer.mock.calls.some((call) => call[0] === "Q8")).toBe(true);
@@ -787,7 +875,7 @@ describe("LunkrPseBridge", () => {
 
     await bridge.handle(message("fresh", "#a#U", "新问题"));
     expect(answer.mock.calls.at(-1)?.[1]).toBeUndefined();
-    expect(sentTexts(sendText)).toContain("已收到问题 #1，正在处理。");
+    expect(sentTexts(sendText)).toContain(startedNotice(1));
   });
 
   it("retries one explicitly retryable result inside the shared budget", async () => {
@@ -900,7 +988,7 @@ describe("LunkrPseBridge", () => {
     await bridge.handle(message("m1", "#a#U", "问题"));
 
     expect(sentTexts(sendText)).toEqual([
-      "已收到问题 #1，正在处理。",
+      startedNotice(1),
       "问题 #1 的回答：\n\n简短回答",
     ]);
     expect(sendPost).not.toHaveBeenCalled();
@@ -929,7 +1017,7 @@ describe("LunkrPseBridge", () => {
 
     await bridge.handle(message("m1", "#a#U", "问题"));
 
-    expect(sentTexts(sendText)).toEqual(["已收到问题 #1，正在处理。"]);
+    expect(sentTexts(sendText)).toEqual([startedNotice(1)]);
     expect(sendTextFile).toHaveBeenCalledOnce();
     expect(sendTextFile).toHaveBeenCalledWith(
       "#a#U",
@@ -964,7 +1052,7 @@ describe("LunkrPseBridge", () => {
 
     await bridge.handle(message("m1", "#a#U", "问题"));
 
-    expect(sentTexts(sendText)).toEqual(["已收到问题 #1，正在处理。"]);
+    expect(sentTexts(sendText)).toEqual([startedNotice(1)]);
     expect(sendTextFile).toHaveBeenCalledOnce();
     expect(sendPost).toHaveBeenCalledWith(
       "#a#U",
@@ -1118,6 +1206,23 @@ function sentTexts(sendText: ReturnType<typeof vi.fn>): string[] {
   return sendText.mock.calls.map((call) => String(call[1]));
 }
 
+function withProcessingGuide(message: string): string {
+  return [
+    message,
+    "",
+    "处理期间可以：",
+    "/status  查看问题状态",
+    "/new     取消当前及排队问题，开始新会话",
+    "/help    查看全部使用说明",
+  ].join("\n");
+}
+
+function startedNotice(questionId: number): string {
+  return withProcessingGuide(
+    `问题 #${questionId} 已收到，正在检索并核对相关资料。`,
+  );
+}
+
 function message(
   id: string,
   peerUid: string,
@@ -1150,6 +1255,35 @@ function feedbackMessage(
       "feedback",
     ),
     feedback: { questionId, classification, comment },
+  };
+}
+
+function quickFeedbackMessage(
+  id: string,
+  peerUid: string,
+  classification: "useful" | "incorrect" | "missing" | "correction",
+  comment: string,
+  proposedAnswer?: string,
+): LunkrDirectMessage {
+  const option = {
+    useful: 1,
+    incorrect: 2,
+    missing: 3,
+    correction: 4,
+  }[classification];
+  const detail = proposedAnswer ?? comment;
+  return {
+    ...message(
+      id,
+      peerUid,
+      `/q ${option}${detail === "" ? "" : ` ${detail}`}`,
+      "feedback",
+    ),
+    feedback: {
+      classification,
+      comment,
+      ...(proposedAnswer === undefined ? {} : { proposedAnswer }),
+    },
   };
 }
 

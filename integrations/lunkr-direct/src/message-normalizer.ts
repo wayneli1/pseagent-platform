@@ -84,12 +84,48 @@ export function recognizeDirectCommand(text: string): DirectCommand | undefined 
   const normalized = normalizeCommandText(text);
   if (normalized === "/new") return "new";
   if (normalized === "/help") return "help";
+  if (normalized === "/status") return "status";
   if (/^\/feedback(?:\s|$)/iu.test(normalized)) return "feedback";
+  if (/^\/q(?:\s|$)/iu.test(normalized)) return "feedback";
   return undefined;
 }
 
 export function parseFeedbackCommand(text: string): FeedbackCommand | undefined {
   const normalized = normalizeCommandText(text);
+  const quick = /^\/q(?:\s+#([1-9]\d*))?\s+([1-4])(?:\s+([\s\S]*))?$/iu
+    .exec(normalized);
+  if (quick !== null) {
+    const explicitQuestionId = quick[1] === undefined
+      ? undefined
+      : Number(quick[1]);
+    const option = Number(quick[2]);
+    const detail = (quick[3] ?? "").trim();
+    if (
+      (explicitQuestionId !== undefined &&
+        (!Number.isSafeInteger(explicitQuestionId) || explicitQuestionId <= 0)) ||
+      detail.length > 4_000 ||
+      (option === 4 && detail === "")
+    ) {
+      return undefined;
+    }
+    const classification = ([
+      "useful",
+      "incorrect",
+      "missing",
+      "correction",
+    ] as const)[option - 1];
+    if (classification === undefined) return undefined;
+    return {
+      ...(explicitQuestionId === undefined
+        ? {}
+        : { questionId: explicitQuestionId }),
+      classification,
+      comment: classification === "correction" ? "" : detail,
+      ...(classification === "correction"
+        ? { proposedAnswer: detail }
+        : {}),
+    };
+  }
   const match = /^\/feedback\s+#([1-9]\d*)\s+(useful|incorrect|missing|evidence)(?:\s+([\s\S]*))?$/iu
     .exec(normalized);
   if (match === null) return undefined;

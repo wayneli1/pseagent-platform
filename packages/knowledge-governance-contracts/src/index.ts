@@ -110,6 +110,7 @@ export const feedbackClassificationSchema = z.enum([
   "incorrect",
   "missing",
   "evidence",
+  "correction",
 ]);
 
 export const feedbackCaseSchema = z.object({

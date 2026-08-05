@@ -27,6 +27,7 @@ export class KnowledgeOpsService {
       caseId:intake.caseId,requestId:intake.requestId,pseudonymousUserId:intake.pseudonymousUserId,
       classification:intake.classification,status:"new",
       encryptedPayload:this.cipher.encrypt({question:intake.question,answer:intake.answer,comment:intake.comment,
+        ...(intake.proposedAnswer?{proposedAnswer:intake.proposedAnswer}:{}),
         questionId:intake.questionId,answeredAt:intake.answeredAt,answerCardMatch:intake.answerCardMatch}),
       answerStatus:intake.answerStatus,...(intake.scope?{scope:intake.scope}:{}),referenceCount:intake.referenceCount,
       source:intake.source,createdAt:timestamp,updatedAt:timestamp,
@@ -39,7 +40,7 @@ export class KnowledgeOpsService {
   async listFeedback(actor: OpsActor) { assertAuthorized(actor,"feedback:read"); return (await this.store.listFeedback()).map(({encryptedPayload:_secret,...metadata})=>metadata); }
   async feedbackDetail(actor: OpsActor, caseId: string): Promise<FeedbackCaseView|undefined> {
     assertAuthorized(actor,"feedback:read"); const stored=await this.store.getFeedback(caseId); if(!stored)return undefined;
-    const content=this.cipher.decrypt<{question:string;answer:string;comment:string;questionId:number;answeredAt:string;answerCardMatch?:Record<string,unknown>}>(stored.encryptedPayload);
+    const content=this.cipher.decrypt<{question:string;answer:string;comment:string;proposedAnswer?:string;questionId:number;answeredAt:string;answerCardMatch?:Record<string,unknown>}>(stored.encryptedPayload);
     const {encryptedPayload:_secret,...metadata}=stored;
     return {...metadata,...content};
   }

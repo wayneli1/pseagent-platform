@@ -22,11 +22,32 @@ import {
 const FAILURE_TEXT = "知识问答服务暂时不可用，请稍后重试。";
 
 const HELP_TEXT = [
-  "我是 PSEAgent 论客私聊机器人。",
-  "直接发送文字即可提问，不需要 /bot。",
+  "我是 PSEAgent 企业知识助手。",
+  "直接发送文字即可提问；我会检索并核对相关资料后回答。",
   "发送 /new 可取消当前题和排队题，并清空连续对话上下文。",
-  "发送 /feedback #题号 useful 可标记有用；incorrect、missing、evidence 后需填写说明。",
+  "发送 /status 可查看正在处理和排队的问题。",
+  "回答后发送 /q 1-4 可快捷反馈；/feedback 仍可用于带题号的专业反馈。",
   "当前暂不支持群聊、图片、文件或语音。",
+].join("\n");
+
+const PROCESSING_COMMAND_GUIDE = [
+  "",
+  "",
+  "处理期间可以：",
+  "/status  查看问题状态",
+  "/new     取消当前及排队问题，开始新会话",
+  "/help    查看全部使用说明",
+].join("\n");
+
+const FEEDBACK_MENU = [
+  "—",
+  "这次回答对你有帮助吗？",
+  "",
+  "/q 1  回答有用",
+  "/q 2  答案错误",
+  "/q 3  缺少关键信息",
+  "/q 4 正确答案是……",
+  "选项 2、3 可补充说明；选项 4 请直接写出答案。",
 ].join("\n");
 
 export type BridgeCoverage = "complete" | "partial" | "none";
@@ -168,6 +189,7 @@ export class LunkrPseBridge<Result> {
     if (message.command === "help") {
       return this.sendWithRetry(message.peerUid, HELP_TEXT);
     }
+    if (message.command === "status") return this.sendStatus(message.peerUid);
     if (message.command === "feedback") return this.handleFeedback(message);
     if (message.hasAttachments) {
       return this.sendWithRetry(message.peerUid, "当前仅支持文字私聊。");
@@ -208,21 +230,45 @@ export class LunkrPseBridge<Result> {
     let text: string;
     switch (admission.kind) {
       case "started":
-        text = `已收到问题 #${admission.questionId}，正在处理。`;
+        text = `问题 #${admission.questionId} 已收到，正在检索并核对相关资料。${PROCESSING_COMMAND_GUIDE}`;
         break;
       case "peer_queued":
         text =
-          `已收到问题 #${admission.questionId}，前面还有 ${admission.ahead} 个问题，已加入队列。`;
+          `已收到问题 #${admission.questionId}，前面还有 ${admission.ahead} 个问题，已加入队列。${PROCESSING_COMMAND_GUIDE}`;
         break;
       case "global_queued":
         text =
-          `已收到问题 #${admission.questionId}，当前服务繁忙，已进入等待队列。`;
+          `已收到问题 #${admission.questionId}，当前服务繁忙，已进入等待队列。${PROCESSING_COMMAND_GUIDE}`;
         break;
       case "peer_full":
         text = "当前已有较多问题等待处理，请稍后再发送。";
         break;
     }
     await this.sendWithRetry(peerUid, text);
+  }
+
+  private async sendStatus(peerUid: string): Promise<void> {
+    const statuses = this.scheduler.status(peerUid);
+    if (statuses.length === 0) {
+      await this.sendWithRetry(
+        peerUid,
+        "当前没有正在处理或排队的问题。直接发送文字即可提问。",
+      );
+      return;
+    }
+    const lines = statuses.map((status) => {
+      if (status.state === "processing") {
+        return `问题 #${status.questionId}：处理中`;
+      }
+      if (status.waitingForCapacity) {
+        return `问题 #${status.questionId}：排队中，正在等待可用处理位`;
+      }
+      return `问题 #${status.questionId}：排队中，前面还有 ${status.ahead} 个问题`;
+    });
+    await this.sendWithRetry(
+      peerUid,
+      ["当前问题状态：", ...lines].join("\n"),
+    );
   }
 
   private emitAdmission(peerUid: string, admission: AdmissionNotice): void {
@@ -382,7 +428,7 @@ export class LunkrPseBridge<Result> {
         question,
       });
     }
-    this.feedbackReceipts.remember(message.peerUid, {
+    const feedbackReady = this.feedbackReceipts.remember(message.peerUid, {
       questionId: start.questionId,
       requestId: metadata.requestId ?? "",
       question,
@@ -395,6 +441,9 @@ export class LunkrPseBridge<Result> {
         ? {}
         : { answerCardMatch: metadata.answerCardMatch }),
     });
+    if (feedbackReady && this.dependencies.feedback !== undefined) {
+      await this.sendBestEffort(message.peerUid, FEEDBACK_MENU);
+    }
     this.emit({
       type: "answered",
       peerUid: message.peerUid,
@@ -462,7 +511,7 @@ export class LunkrPseBridge<Result> {
     if (message.feedback === undefined) {
       await this.sendWithRetry(
         message.peerUid,
-        "反馈格式无效。示例：/feedback #12 useful；或 /feedback #12 incorrect <说明>。",
+        "反馈格式无效。可发送 /q 1、/q 2 <原因>、/q 3 <缺失内容>，或 /q 4 <你认为的正确答案>。",
       );
       return;
     }
@@ -474,21 +523,27 @@ export class LunkrPseBridge<Result> {
       );
       return;
     }
-    const claimResult = this.feedbackReceipts.claim(
-      message.peerUid,
-      message.feedback.questionId,
-    );
+    const questionId = message.feedback.questionId ??
+      this.feedbackReceipts.latestQuestionId(message.peerUid);
+    if (questionId === undefined) {
+      await this.sendWithRetry(
+        message.peerUid,
+        "暂时没有可评价的回答。请先提问，收到回答后再发送 /q 1-4。",
+      );
+      return;
+    }
+    const claimResult = this.feedbackReceipts.claim(message.peerUid, questionId);
     if (claimResult.kind === "missing") {
       await this.sendWithRetry(
         message.peerUid,
-        `未找到问题 #${message.feedback.questionId} 的可反馈回答，可能已过期或会话已重置。`,
+        `未找到问题 #${questionId} 的可反馈回答，可能已过期或会话已重置。`,
       );
       return;
     }
     if (claimResult.kind === "duplicate") {
       await this.sendWithRetry(
         message.peerUid,
-        `问题 #${message.feedback.questionId} 已提交过反馈，请勿重复提交。`,
+        `问题 #${questionId} 已提交过反馈，请勿重复提交。`,
       );
       return;
     }
@@ -506,6 +561,9 @@ export class LunkrPseBridge<Result> {
         questionId: claim.receipt.questionId,
         classification: message.feedback.classification,
         comment: message.feedback.comment,
+        ...(message.feedback.proposedAnswer === undefined
+          ? {}
+          : { proposedAnswer: message.feedback.proposedAnswer }),
         question: claim.receipt.question,
         answer: claim.receipt.answer,
         answerStatus: claim.receipt.answerStatus,
@@ -524,18 +582,21 @@ export class LunkrPseBridge<Result> {
           occurredAt: submittedAt,
         },
       });
-      claim.settle(true);
-      await this.sendWithRetry(
-        message.peerUid,
-        `已记录问题 #${message.feedback.questionId} 的反馈，感谢你的帮助。`,
-      );
     } catch {
       claim.settle(false);
       await this.sendWithRetry(
         message.peerUid,
         "反馈服务暂时不可用，本次未保存，可稍后重试。",
       );
+      return;
     }
+    claim.settle(true);
+    await this.sendBestEffort(
+      message.peerUid,
+      message.feedback.classification === "correction"
+        ? `已保存你为问题 #${questionId} 提交的候选答案。运营人员审核前，它不会直接影响线上回答。`
+        : `已记录问题 #${questionId} 的反馈，感谢你的帮助。`,
+    );
   }
 
   private resetPeerState(

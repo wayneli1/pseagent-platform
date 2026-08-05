@@ -32,6 +32,7 @@ export interface BridgeFeedbackSubmission {
   readonly questionId: number;
   readonly classification: FeedbackClassification;
   readonly comment: string;
+  readonly proposedAnswer?: string;
   readonly question: string;
   readonly answer: string;
   readonly answerStatus: string;
@@ -145,6 +146,23 @@ export class FeedbackReceiptStore {
         current.state = success ? "submitted" : "available";
       }),
     };
+  }
+
+  latestQuestionId(peerUid: string): number | undefined {
+    this.removeExpired();
+    let latest: StoredReceipt | undefined;
+    for (const stored of this.receipts.values()) {
+      if (stored.peerUid !== peerUid) continue;
+      if (
+        latest === undefined ||
+        stored.expiresAt > latest.expiresAt ||
+        (stored.expiresAt === latest.expiresAt &&
+          stored.receipt.questionId > latest.receipt.questionId)
+      ) {
+        latest = stored;
+      }
+    }
+    return latest?.receipt.questionId;
   }
 
   clearPeer(peerUid: string): void {

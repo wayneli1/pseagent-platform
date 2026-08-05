@@ -34,6 +34,13 @@ export interface PeerResetResult {
   readonly pendingCancelled: number;
 }
 
+export interface PeerQuestionStatus {
+  readonly questionId: number;
+  readonly state: "processing" | "queued";
+  readonly ahead: number;
+  readonly waitingForCapacity: boolean;
+}
+
 interface ScheduledQuestion {
   readonly questionId: number;
   readonly epoch: number;
@@ -72,6 +79,32 @@ export class PeerScheduler {
 
   get activePeerCount(): number {
     return this.activePeers.size;
+  }
+
+  status(peerUid: string): readonly PeerQuestionStatus[] {
+    const state = this.peers.get(peerUid);
+    if (state === undefined) return [];
+    const result: PeerQuestionStatus[] = [];
+    if (state.active !== undefined && !state.active.cancelled) {
+      result.push({
+        questionId: state.active.questionId,
+        state: "processing",
+        ahead: 0,
+        waitingForCapacity: false,
+      });
+    }
+    const activeAhead = result.length;
+    for (const [index, question] of state.pending.entries()) {
+      if (question.cancelled) continue;
+      const ahead = activeAhead + index;
+      result.push({
+        questionId: question.questionId,
+        state: "queued",
+        ahead,
+        waitingForCapacity: ahead === 0,
+      });
+    }
+    return result;
   }
 
   submit(peerUid: string, callbacks: QuestionCallbacks): AdmissionReceipt {

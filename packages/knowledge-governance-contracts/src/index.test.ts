@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   answerCardSchema,
   feedbackCaseSchema,
+  feedbackClassificationSchema,
   questionFamilySchema,
   releaseManifestSchema,
 } from "./index.js";
@@ -97,6 +98,8 @@ describe("knowledge governance contracts", () => {
       status: "new",
       createdAt: "2026-08-05T00:00:00+08:00",
     }).success).toBe(true);
+    expect(feedbackClassificationSchema.safeParse("correction").success)
+      .toBe(true);
     expect(releaseManifestSchema.safeParse({
       schemaVersion: 1,
       releaseId: "KR-2026-08-001",

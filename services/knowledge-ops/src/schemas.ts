@@ -14,6 +14,7 @@ export const feedbackIntakeSchema = z.object({
   questionId: z.number().int().positive(),
   classification: feedbackClassificationSchema,
   comment: z.string().trim().max(4_000),
+  proposedAnswer: z.string().trim().min(1).max(20_000).optional(),
   question: z.string().trim().min(1).max(20_000),
   answer: z.string().trim().min(1).max(100_000),
   answerStatus: z.string().trim().min(1).max(100),
@@ -24,7 +25,22 @@ export const feedbackIntakeSchema = z.object({
   source: z.literal("lunkr_direct"),
   answerCardMatch: z.record(z.string(), z.unknown()).optional(),
   audit: z.object({ event: z.literal("feedback_submitted") }).optional(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.classification === "correction" && value.proposedAnswer === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["proposedAnswer"],
+      message: "correction_requires_proposed_answer",
+    });
+  }
+  if (value.classification !== "correction" && value.proposedAnswer !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["proposedAnswer"],
+      message: "proposed_answer_requires_correction",
+    });
+  }
+});
 
 export const cardRevisionInputSchema = z.object({
   domain: knowledgeDomainSchema,
