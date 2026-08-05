@@ -1,7 +1,7 @@
 import { ZodError } from "zod";
 import { knowledgeDomainSchema } from "@pseagent/knowledge-governance-contracts";
 import { OpsAuthorizationError, StaticTokenAuthorizer } from "./rbac.js";
-import { feedbackPatchSchema, reviewInputSchema } from "./schemas.js";
+import { answerReviewWorkflowPatchSchema, feedbackPatchSchema, reviewInputSchema } from "./schemas.js";
 import { KnowledgeOpsService, OpsNotFoundError } from "./service.js";
 
 export interface OpsApiRequest { readonly method:string; readonly path:string; readonly authorization?:string; readonly body?:unknown; }
@@ -15,6 +15,12 @@ export class KnowledgeOpsApi {
     const pathname=request.path.split("?",1)[0]??"/";const segments=pathname.split("/").filter(Boolean);
     try{
       if(request.method==="GET"&&pathname==="/v1/dashboard")return ok(await this.service.dashboard(actor));
+      if(request.method==="POST"&&pathname==="/v1/answer-reviews")return created(await this.service.ingestAnswerReview(actor,request.body));
+      if(request.method==="GET"&&pathname==="/v1/answer-reviews")return ok(await this.service.listAnswerReviews(actor));
+      if(segments[0]==="v1"&&segments[1]==="answer-reviews"&&segments[2]){
+        if(request.method==="GET"){const value=await this.service.answerReviewDetail(actor,segments[2]);return value?ok(value):notFound();}
+        if(request.method==="PATCH"){const input=answerReviewWorkflowPatchSchema.parse(request.body);const value=await this.service.triageAnswerReview(actor,segments[2],input.workflowStatus);return value?ok(value):notFound();}
+      }
       if(request.method==="POST"&&pathname==="/v1/feedback")return created(await this.service.ingestFeedback(actor,request.body));
       if(request.method==="GET"&&pathname==="/v1/feedback")return ok(await this.service.listFeedback(actor));
       if(segments[0]==="v1"&&segments[1]==="feedback"&&segments[2]){

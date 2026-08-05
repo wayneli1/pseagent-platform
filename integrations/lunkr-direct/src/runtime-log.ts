@@ -31,6 +31,7 @@ export interface LunkrRuntimeLogRecord {
   readonly removedSegmentCount?: number | undefined;
   readonly historicalGateReason?: BridgeHistoricalGateReason | undefined;
   readonly deliveryMode?: BridgeDeliveryMode | undefined;
+  readonly answerReviewQueued?: boolean | undefined;
 }
 
 export function createRuntimeLogger(
@@ -67,6 +68,7 @@ export function createRuntimeLogger(
       removedSegmentCount: event.removedSegmentCount,
       historicalGateReason: event.historicalGateReason,
       deliveryMode: event.deliveryMode,
+      answerReviewQueued: event.answerReviewQueued,
     };
     write(`${JSON.stringify(record)}\n`);
   };

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  answerReviewWorkflowStatusSchema,
   feedbackClassificationSchema,
   governanceReviewStatusSchema,
   knowledgeDomainSchema,
@@ -42,6 +43,45 @@ export const feedbackIntakeSchema = z.object({
     });
   }
 });
+
+const answerReviewReferenceSchema = z.object({
+  index: z.number().int().positive().max(10_000),
+  project: knowledgeDomainSchema,
+  title: z.string().trim().min(1).max(500),
+  path: z.string().trim().min(1).max(1_000).refine((value) =>
+    value.startsWith("wiki/") &&
+    value.endsWith(".md") &&
+    !value.includes("\\") &&
+    !value.split("/").includes(".."), "invalid_review_reference_path"),
+  revision: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+}).strict();
+
+export const answerReviewIntakeSchema = z.object({
+  reviewId: z.string().uuid(),
+  requestId: z.string().uuid(),
+  pseudonymousUserId: z.string().regex(/^[a-f0-9]{64}$/u),
+  userDisplayName: z.string().trim().min(1).max(128).optional(),
+  questionId: z.number().int().positive(),
+  question: z.string().trim().min(1).max(20_000),
+  answer: z.string().trim().min(1).max(100_000),
+  answerStatus: z.string().trim().min(1).max(100),
+  scope: z.string().trim().max(500).optional(),
+  references: z.array(answerReviewReferenceSchema).max(20),
+  answeredAt: isoTimestamp,
+  submittedAt: isoTimestamp,
+  source: z.literal("lunkr_direct"),
+  answerCardMatch: z.record(z.string(), z.unknown()).optional(),
+  answerCardActivation: z.record(z.string(), z.unknown()).optional(),
+}).strict().superRefine((value, context) => {
+  if (new Set(value.references.map((reference) => reference.index)).size !== value.references.length) {
+    context.addIssue({ code: "custom", path: ["references"], message: "duplicate_review_reference_index" });
+  }
+});
+
+export const answerReviewWorkflowPatchSchema = z.object({
+  workflowStatus: answerReviewWorkflowStatusSchema,
+}).strict();
 
 export const cardRevisionInputSchema = z.object({
   domain: knowledgeDomainSchema,

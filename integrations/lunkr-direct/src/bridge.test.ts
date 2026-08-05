@@ -3,9 +3,11 @@ import type { LunkrDirectConfig } from "./config.js";
 import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
 import {
   LunkrPseBridge,
+  type BridgeAnswerReviewDependencies,
   type BridgeFeedbackDependencies,
   type BridgeQuestionEvent,
 } from "./bridge.js";
+import type { BridgeAnswerReviewSubmission, BridgeReviewReference } from "./answer-review-submission.js";
 import type { BridgeFeedbackSubmission } from "./feedback-receipt-store.js";
 
 const config: LunkrDirectConfig = {
@@ -54,6 +56,7 @@ type TestResult = {
     | "formal_verification_incomplete"
     | "formal_support_present"
     | "structural_fallback";
+  readonly references?: readonly BridgeReviewReference[];
 };
 
 type Answer = (
@@ -328,6 +331,16 @@ describe("LunkrPseBridge", () => {
     expect(submissions[0]?.pseudonymousUserId).toMatch(/^[a-f0-9]{64}$/u);
     expect(JSON.stringify(submissions[0])).not.toContain("private-user");
   });
+
+  it("submits every delivered knowledge answer for independent review without user feedback",async()=>{
+    const submissions:BridgeAnswerReviewSubmission[]=[];const events:BridgeQuestionEvent[]=[];const sendText=vi.fn(async()=>undefined);
+    const reference={index:1,project:"coremail-professional" as const,title:"正式页面",path:"wiki/concepts/正式页面.md",revision:"a".repeat(40),contentHash:"b".repeat(64)};
+    const bridge=createBridge({sendText,onEvent:(event)=>events.push(event),answer:async()=>({...answered("完整回答"),scope:"professional",references:[reference]}),answerReview:{pseudonymizationKey:"r".repeat(32),submit:async(submission)=>{submissions.push(submission);}}});
+    await bridge.handle({...message("auto-review","#private-user#U","原始问题"),userDisplayName:"Wayne 黎政良"});
+    expect(submissions).toHaveLength(1);expect(submissions[0]).toMatchObject({question:"原始问题",answer:"完整回答",scope:"professional",userDisplayName:"Wayne 黎政良",references:[reference],source:"lunkr_direct"});expect(submissions[0]?.pseudonymousUserId).toMatch(/^[a-f0-9]{64}$/u);expect(events.at(-1)?.answerReviewQueued).toBe(true);
+  });
+
+  it("keeps a delivered answer available when automatic review intake fails",async()=>{const events:BridgeQuestionEvent[]=[];const sendText=vi.fn(async()=>undefined);const bridge=createBridge({sendText,onEvent:(event)=>events.push(event),answer:async()=>({...answered("仍然交付"),scope:"general"}),answerReview:{pseudonymizationKey:"r".repeat(32),submit:async()=>{throw new Error("offline");}}});await bridge.handle(message("review-failure","#a#U","问题"));expect(sentTexts(sendText).some((text)=>text.includes("仍然交付"))).toBe(true);expect(events.at(-1)?.answerReviewQueued).toBe(false);});
 
   it("accepts quick feedback and lets a user request review without writing an answer", async () => {
     const submissions: BridgeFeedbackSubmission[] = [];
@@ -1150,6 +1163,7 @@ function createBridge(options: {
   readonly now?: () => number;
   readonly onEvent?: (event: BridgeQuestionEvent) => void;
   readonly feedback?: BridgeFeedbackDependencies;
+  readonly answerReview?: BridgeAnswerReviewDependencies;
 }) {
   return new LunkrPseBridge(
     { ...config, ...options.config },
@@ -1174,12 +1188,14 @@ function createBridge(options: {
           result.retainedSynthesizedSegmentCount,
         removedSegmentCount: result.removedSegmentCount,
         historicalGateReason: result.historicalGateReason,
+        references: result.references,
       }),
       sendText: options.sendText,
       sendTextFile: options.sendTextFile ?? (async () => undefined),
       sendPost: options.sendPost ?? (async () => undefined),
       onEvent: options.onEvent,
       feedback: options.feedback,
+      answerReview: options.answerReview,
     },
     options.now,
   );

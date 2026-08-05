@@ -4,6 +4,9 @@ import type { OpsActor, OpsRole } from "./types.js";
 
 export type OpsAction =
   | "dashboard:read"
+  | "answer_review:ingest"
+  | "answer_review:read"
+  | "answer_review:triage"
   | "feedback:ingest"
   | "feedback:read"
   | "feedback:triage"
@@ -19,11 +22,11 @@ export type OpsAction =
   | "job:read";
 
 const GLOBAL_ACTIONS: Partial<Record<OpsRole, readonly OpsAction[]>> = {
-  viewer: ["dashboard:read", "feedback:read", "card:read", "regression:read", "release:read"],
-  operator: ["dashboard:read", "feedback:read", "feedback:triage", "card:read", "regression:read", "job:read"],
+  viewer: ["dashboard:read", "answer_review:read", "feedback:read", "card:read", "regression:read", "release:read"],
+  operator: ["dashboard:read", "answer_review:read", "answer_review:triage", "feedback:read", "feedback:triage", "card:read", "regression:read", "job:read"],
   release_manager: ["dashboard:read", "card:read", "regression:read", "regression:run", "release:read", "release:publish", "release:rollback", "job:read", "audit:read"],
-  admin: ["dashboard:read", "feedback:read", "feedback:triage", "card:read", "card:edit", "card:review", "regression:read", "regression:run", "release:read", "release:publish", "release:rollback", "audit:read", "job:read"],
-  service: ["feedback:ingest"],
+  admin: ["dashboard:read", "answer_review:read", "answer_review:triage", "feedback:read", "feedback:triage", "card:read", "card:edit", "card:review", "regression:read", "regression:run", "release:read", "release:publish", "release:rollback", "audit:read", "job:read"],
+  service: ["answer_review:ingest", "feedback:ingest"],
 };
 
 export function assertAuthorized(

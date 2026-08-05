@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  StoredAnswerReviewCase,
   AuditEvent,
   ApprovalRecord,
   CardRevision,
@@ -14,6 +15,11 @@ import type {
 } from "./types.js";
 
 export interface KnowledgeOpsStore {
+  insertAnswerReviewAndEnqueue(value: StoredAnswerReviewCase): Promise<{ readonly review: StoredAnswerReviewCase; readonly enqueued: boolean }>;
+  listAnswerReviews(): Promise<readonly StoredAnswerReviewCase[]>;
+  getAnswerReview(reviewId: string): Promise<StoredAnswerReviewCase | undefined>;
+  updateAnswerReviewWorkflow(reviewId: string, workflowStatus: StoredAnswerReviewCase["workflowStatus"]): Promise<StoredAnswerReviewCase | undefined>;
+  updateAnswerReviewMachine(reviewId: string, patch: Partial<Pick<StoredAnswerReviewCase,"processingStatus"|"verdict"|"workflowStatus"|"encryptedPayload"|"score"|"defectCount"|"errorCode">>): Promise<StoredAnswerReviewCase | undefined>;
   insertFeedback(value: StoredFeedbackCase): Promise<StoredFeedbackCase>;
   listFeedback(): Promise<readonly StoredFeedbackCase[]>;
   getFeedback(caseId: string): Promise<StoredFeedbackCase | undefined>;
@@ -47,6 +53,7 @@ export interface KnowledgeOpsStore {
 }
 
 export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
+  private readonly answerReviews = new Map<string, StoredAnswerReviewCase>();
   private readonly feedback = new Map<string, StoredFeedbackCase>();
   private readonly revisions = new Map<string, CardRevision>();
   private readonly reviews = new Map<string, ReviewRecord>();
@@ -56,6 +63,23 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   private readonly jobs = new Map<string, OpsJob>();
   private readonly releases = new Map<string, ReleaseRecord>();
   private readonly audit: AuditEvent[] = [];
+
+  async insertAnswerReviewAndEnqueue(value: StoredAnswerReviewCase) {
+    const duplicate=[...this.answerReviews.values()].find((item)=>item.requestId===value.requestId);
+    if(duplicate!==undefined)return{review:copy(duplicate),enqueued:false};
+    this.answerReviews.set(value.reviewId,copy(value));
+    await this.enqueueJob("answer_review",{reviewId:value.reviewId});
+    return{review:copy(value),enqueued:true};
+  }
+  async listAnswerReviews(){return newest([...this.answerReviews.values()].map(copy));}
+  async getAnswerReview(id:string){return maybeCopy(this.answerReviews.get(id));}
+  async updateAnswerReviewWorkflow(id:string,workflowStatus:StoredAnswerReviewCase["workflowStatus"]){
+    return this.updateAnswerReviewMachine(id,{workflowStatus});
+  }
+  async updateAnswerReviewMachine(id:string,patch:Partial<Pick<StoredAnswerReviewCase,"processingStatus"|"verdict"|"workflowStatus"|"encryptedPayload"|"score"|"defectCount"|"errorCode">>){
+    const old=this.answerReviews.get(id);if(old===undefined)return undefined;
+    const next={...old,...patch,updatedAt:now()};this.answerReviews.set(id,next);return copy(next);
+  }
 
   async insertFeedback(value: StoredFeedbackCase) {
     const duplicate = [...this.feedback.values()].find((item) => item.requestId === value.requestId);
@@ -126,7 +150,13 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     const cardsByStatus: DashboardSummary["cardsByStatus"] = {};
     for (const item of this.revisions.values()) cardsByStatus[item.status] = (cardsByStatus[item.status] ?? 0) + 1;
     const activeReleaseId = [...this.releases.values()].find((x) => x.status === "active")?.releaseId;
-    return { feedback, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
+    const answerReviews={pendingHuman:0,passed:0,errored:0,total:this.answerReviews.size};
+    for(const review of this.answerReviews.values()){
+      if(review.verdict==="pass")answerReviews.passed++;
+      if(review.processingStatus==="errored")answerReviews.errored++;
+      if(review.workflowStatus==="open"&&(review.verdict==="needs_review"||review.verdict==="fail"||review.processingStatus==="errored"))answerReviews.pendingHuman++;
+    }
+    return { feedback, answerReviews, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
   }
   private finishJob(id: string, patch: Partial<OpsJob>) {
     const old = this.jobs.get(id); if (!old) throw new Error("job_not_found");

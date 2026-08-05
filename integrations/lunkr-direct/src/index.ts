@@ -1,5 +1,6 @@
 export * from "./auth.js";
 export * from "./answer-presenter.js";
+export * from "./answer-review-submission.js";
 export * from "./bridge.js";
 export * from "./cli-input.js";
 export * from "./config.js";

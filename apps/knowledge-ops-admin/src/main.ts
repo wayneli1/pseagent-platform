@@ -3,6 +3,8 @@ import { ApiError, OpsApiClient } from "./api.js";
 import { badge, h, json, shortId, time } from "./format.js";
 import type {
   Audit,
+  AnswerReviewDetail,
+  AnswerReviewMeta,
   CardRevision,
   Dashboard,
   FeedbackDetail,
@@ -77,10 +79,10 @@ async function loadCurrent() {
 }
 
 async function renderDashboard() {
-  const [summary, feedback, cards, releases, jobs] = await Promise.all([
+  const [summary, feedback, reviews, releases, jobs] = await Promise.all([
     api.get<Dashboard>("/v1/dashboard"),
     api.get<FeedbackMeta[]>("/v1/feedback"),
-    api.get<CardRevision[]>("/v1/cards"),
+    api.get<AnswerReviewMeta[]>("/v1/answer-reviews"),
     api.get<Release[]>("/v1/releases"),
     api.get<OpsJob[]>("/v1/jobs"),
   ]);
@@ -88,33 +90,30 @@ async function renderDashboard() {
       (summary.feedback.new ?? 0) +
       (summary.feedback.triaged ?? 0) +
       (summary.feedback.in_review ?? 0),
-    approved = summary.cardsByStatus.approved ?? 0,
-    failed = summary.jobs.failed ?? 0;
+    latestRows=[
+      ...reviews.slice(0,5).map((x)=>({createdAt:x.createdAt,html:`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}"><td>自动复查</td><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${badge(x.verdict)}</td><td>${badge(x.workflowStatus)}</td><td>${time(x.createdAt)}</td></tr>`})),
+      ...feedback.slice(0,5).map((x)=>({createdAt:x.createdAt,html:`<tr data-action="feedback-detail" data-id="${h(x.caseId)}"><td>用户反馈</td><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${time(x.createdAt)}</td></tr>`})),
+    ].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,8).map((item)=>item.html);
   content(
-    `<div class="grid metrics">${metric("待处理反馈", pending, "需人工判断")}${metric("已批准答案卡", approved, "可进入发布候选")}${metric("活动知识版本", summary.activeReleaseId ? shortId(summary.activeReleaseId, 18) : "未发布", "只读快照")}${metric("失败作业", failed, failed ? "需要排查" : "队列健康")}</div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>反馈分类分布</h2><button class="button small" data-nav="feedback">进入工作台</button></div><div class="panel-body stack">${bars(summary.feedback)}</div></section><section class="panel"><div class="panel-head"><h2>发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
+    `<div class="grid metrics">${metric("待处理反馈", pending, "用户主动反馈")}${metric("待人工复查", summary.answerReviews.pendingHuman, "自动复查发现")}${metric("自动复查通过", summary.answerReviews.passed, `共 ${summary.answerReviews.total} 条`)}${metric("复查执行异常", summary.answerReviews.errored, summary.answerReviews.errored ? "需要排查" : "运行正常")}</div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>反馈分类分布</h2><button class="button small" data-nav="feedback">进入工作台</button></div><div class="panel-body stack">${bars(summary.feedback)}</div></section><section class="panel"><div class="panel-head"><h2>发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
       jobs
         .slice(0, 3)
         .map((x) => `${badge(x.status)} ${h(x.type)}`)
         .join("<br>") || "—"
     }</div></div></div></section></div><section class="panel mt-16"><div class="panel-head"><h2>最新待办</h2></div>${
-      feedback.length
+      reviews.length || feedback.length
         ? table(
-            ["类型", "状态", "回答状态", "引用", "时间"],
-            feedback
-              .slice(0, 8)
-              .map(
-                (x) =>
-                  `<tr data-action="feedback-detail" data-id="${h(x.caseId)}"><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${h(x.answerStatus)}</td><td>${x.referenceCount}</td><td>${time(x.createdAt)}</td></tr>`,
-              ),
+            ["来源", "用户", "结论/类型", "状态", "时间"],
+            latestRows,
           )
         : empty("暂无反馈")
     }</section>`,
   );
 }
 async function renderFeedback() {
-  const values = await api.get<FeedbackMeta[]>("/v1/feedback");
+  const [values,reviews] = await Promise.all([api.get<FeedbackMeta[]>("/v1/feedback"),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
   content(
-    `<div class="toolbar"><select id="feedback-status" class="button" aria-label="按状态筛选"><option value="">全部状态</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => `<option>${x}</option>`).join("")}</select><span class="muted">共 ${values.length} 条；原问与原答仅在打开详情时解密</span></div>${
+    `<section class="panel"><div class="panel-head"><div><h2>自动复查</h2><span class="muted">每条知识回答自动进入；默认优先处理未通过和执行异常</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="">全部结论</option>${["pending","pass","needs_review","fail"].map((x)=>`<option>${x}</option>`).join("")}</select><span class="muted">共 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","处理状态","复查结论","分数","缺陷","时间"],reviews.map((x)=>`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}"><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${h(x.questionPreview)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`)):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户反馈</h2><span class="muted">用户只表达体验；可在详情中纠正误点分类</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按状态筛选"><option value="">全部状态</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => `<option>${x}</option>`).join("")}</select><span class="muted">共 ${values.length} 条；原问与原答仅在打开详情时解密</span></div>${
       values.length
         ? table(
             [
@@ -132,7 +131,7 @@ async function renderFeedback() {
             ),
           )
         : empty("尚未收到用户反馈")
-    }`,
+    }</section>`,
   );
 }
 async function renderCards() {
@@ -257,6 +256,9 @@ async function handleClick(event: MouseEvent) {
     case "feedback-detail":
       await feedbackDrawer(target.dataset.id!);
       break;
+    case "answer-review-detail":
+      await answerReviewDrawer(target.dataset.id!);
+      break;
     case "card-detail":
       await cardDrawer(target.dataset.id!);
       break;
@@ -300,6 +302,13 @@ async function handleSubmit(event: SubmitEvent) {
       toast("反馈状态已更新");
       closeOverlay();
       await loadCurrent();
+    } else if (form.id === "answer-review-triage-form") {
+      await api.patch(`/v1/answer-reviews/${form.dataset.id}`, {
+        workflowStatus: data.get("workflowStatus"),
+      });
+      toast("复查处理状态已更新");
+      closeOverlay();
+      await loadCurrent();
     } else if (form.id === "review-form") {
       await api.post(`/v1/revisions/${form.dataset.id}/reviews`, {
         decision: data.get("decision"),
@@ -336,13 +345,34 @@ async function handleSubmit(event: SubmitEvent) {
 
 function handleChange(event: Event) {
   const select = event.target;
-  if (!(select instanceof HTMLSelectElement) || select.id !== "feedback-status")
-    return;
-  for (const row of document.querySelectorAll<HTMLTableRowElement>(
-    'tr[data-action="feedback-detail"]',
-  )) {
-    row.hidden = select.value !== "" && row.dataset.status !== select.value;
+  if (!(select instanceof HTMLSelectElement)) return;
+  if(select.id==="feedback-status"){
+    for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="feedback-detail"]')) row.hidden=select.value!==""&&row.dataset.status!==select.value;
   }
+  if(select.id==="review-verdict"){
+    for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="answer-review-detail"]')) row.hidden=select.value!==""&&row.dataset.verdict!==select.value;
+  }
+}
+
+async function answerReviewDrawer(id:string){
+  const item=await api.get<AnswerReviewDetail>(`/v1/answer-reviews/${id}`);
+  const defects=item.result?.defects??[];
+  const obligations=item.result?.obligationChecks??[];
+  overlay(
+    `<div class="drawer-head"><div><strong>自动复查 #${item.questionId}</strong> ${badge(item.processingStatus)} ${badge(item.verdict)}</div><button class="button" data-action="close-overlay">关闭</button></div>
+    <div class="drawer-body">
+      <div class="detail-section"><h3>用户与复查状态</h3><div class="content-box">${h(item.userDisplayName??"未获取到聊天名")}</div><div class="muted mt-6">模型：${h(item.model)} · 分数：${h(item.score??"—")} · 缺陷：${item.defectCount}</div></div>
+      ${item.errorCode?`<div class="notice error">复查执行异常：${h(item.errorCode)}。该记录不会被当作通过，请安排人工检查或重试。</div>`:""}
+      <div class="detail-section"><h3>复查结论</h3><div class="content-box">${h(item.result?.summary??"复查尚未完成")}</div></div>
+      ${obligations.length?`<div class="detail-section"><h3>必答项检查</h3>${table(["必答项","覆盖","说明"],obligations.map((x)=>`<tr><td class="mono">${h(x.obligationId)}</td><td>${badge(x.covered?"covered":"missing")}</td><td>${h(x.explanation)}</td></tr>`))}</div>`:""}
+      ${defects.length?`<div class="detail-section"><h3>发现的问题</h3>${table(["严重度","分类","问题","依据"],defects.map((x)=>`<tr><td>${badge(x.severity)}</td><td>${h(x.category)}</td><td>${h(x.summary)}</td><td>${h(x.evidence||"—")}</td></tr>`))}</div>`:""}
+      <div class="detail-section"><h3>原始问题</h3><div class="content-box">${h(item.question)}</div></div>
+      <div class="detail-section"><h3>原始回答</h3><div class="content-box">${h(item.answer)}</div></div>
+      <div class="detail-section"><h3>正式引用</h3><pre class="content-box mono">${json(item.references)}</pre></div>
+      <div class="detail-section"><h3>答案卡激活摘要</h3><pre class="content-box mono">${json({match:item.answerCardMatch??{},activation:item.answerCardActivation??{}})}</pre></div>
+      <form id="answer-review-triage-form" data-id="${h(id)}"><div class="field"><label for="answer-review-workflow-status">人工处理状态</label><select id="answer-review-workflow-status" name="workflowStatus">${["open","in_review","resolved","dismissed"].map((x)=>`<option ${x===item.workflowStatus?"selected":""}>${x}</option>`).join("")}</select><div class="field-help">只有人工确认后再标记 resolved；dismissed 表示确认无需处理。</div></div><button class="button primary" type="submit">保存人工处理状态</button></form>
+    </div>`,
+  );
 }
 
 async function feedbackDrawer(id: string) {

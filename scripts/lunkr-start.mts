@@ -90,6 +90,8 @@ const bridge = new LunkrPseBridge(config, {
     removedSegmentCount: execution.removedSegmentCount,
     historicalGateReason: execution.historicalGateReason,
     answerCardMatch: execution.answerCardMatch,
+    answerCardActivation: execution.answerCardActivation,
+    references: execution.result.references,
   }),
   sendText: (peerUid, text) => api.sendText(peerUid, text),
   sendTextFile: (peerUid, title, content, caption) =>
@@ -101,6 +103,10 @@ const bridge = new LunkrPseBridge(config, {
     feedback: {
       pseudonymizationKey: feedbackValues[2]!,
       submit: (submission) => feedbackClient.submit(submission),
+    },
+    answerReview: {
+      pseudonymizationKey: feedbackValues[2]!,
+      submit: (submission) => feedbackClient.submitReview(submission),
     },
   }),
 });

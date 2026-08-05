@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { answerCardSchema, releaseManifestSchema, type KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import { ContentCipher } from "./crypto.js";
 import { assertAuthorized, assertSeparationOfDuties } from "./rbac.js";
-import { feedbackIntakeSchema, releaseQualityReportImportSchema } from "./schemas.js";
+import { answerReviewIntakeSchema, feedbackIntakeSchema, releaseQualityReportImportSchema } from "./schemas.js";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  CardRevision, FeedbackCaseListView, FeedbackCaseView, OpsActor,
-  RegressionCaseRecord, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
+  AnswerReviewCaseListView, AnswerReviewCaseView, CardRevision,
+  FeedbackCaseListView, FeedbackCaseView, OpsActor, RegressionCaseRecord,
+  ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
 } from "./types.js";
 
 export class KnowledgeOpsService {
@@ -17,6 +18,35 @@ export class KnowledgeOpsService {
   ) {}
 
   async dashboard(actor: OpsActor) { assertAuthorized(actor,"dashboard:read"); return this.store.dashboard(); }
+
+  async ingestAnswerReview(actor:OpsActor,source:unknown){
+    assertAuthorized(actor,"answer_review:ingest");const intake=answerReviewIntakeSchema.parse(source);const timestamp=this.timestamp();
+    const stored:StoredAnswerReviewCase={reviewId:intake.reviewId,requestId:intake.requestId,pseudonymousUserId:intake.pseudonymousUserId,
+      processingStatus:"queued",verdict:"pending",workflowStatus:"open",
+      encryptedPayload:this.cipher.encrypt({question:intake.question,answer:intake.answer,references:intake.references,
+        ...(intake.userDisplayName?{userDisplayName:intake.userDisplayName}:{}),questionId:intake.questionId,answeredAt:intake.answeredAt,
+        ...(intake.answerCardMatch?{answerCardMatch:intake.answerCardMatch}:{}),
+        ...(intake.answerCardActivation?{answerCardActivation:intake.answerCardActivation}:{})}),
+      answerStatus:intake.answerStatus,...(intake.scope?{scope:intake.scope}:{}),referenceCount:intake.references.length,
+      source:intake.source,model:"deepseek_v4_flash",defectCount:0,createdAt:timestamp,updatedAt:timestamp};
+    const result=await this.store.insertAnswerReviewAndEnqueue(stored);
+    if(result.enqueued)await this.audit(actor,"answer_review.ingest","answer_review",result.review.reviewId,{source:result.review.source,model:result.review.model});
+    return{reviewId:result.review.reviewId,processingStatus:result.review.processingStatus,enqueued:result.enqueued};
+  }
+  async listAnswerReviews(actor:OpsActor):Promise<readonly AnswerReviewCaseListView[]>{
+    assertAuthorized(actor,"answer_review:read");return(await this.store.listAnswerReviews()).map((stored)=>{
+      const content=this.cipher.decrypt<{question:string;userDisplayName?:string}>(stored.encryptedPayload);const{encryptedPayload:_secret,...metadata}=stored;
+      return{...metadata,questionPreview:[...content.question].slice(0,160).join(""),...(content.userDisplayName?{userDisplayName:content.userDisplayName}:{})};
+    });
+  }
+  async answerReviewDetail(actor:OpsActor,reviewId:string):Promise<AnswerReviewCaseView|undefined>{
+    assertAuthorized(actor,"answer_review:read");const stored=await this.store.getAnswerReview(reviewId);if(stored===undefined)return undefined;
+    const content=this.cipher.decrypt<Omit<AnswerReviewCaseView,keyof Omit<StoredAnswerReviewCase,"encryptedPayload">>>(stored.encryptedPayload);const{encryptedPayload:_secret,...metadata}=stored;return{...metadata,...content};
+  }
+  async triageAnswerReview(actor:OpsActor,reviewId:string,workflowStatus:StoredAnswerReviewCase["workflowStatus"]){
+    assertAuthorized(actor,"answer_review:triage");const before=await this.store.getAnswerReview(reviewId);const value=await this.store.updateAnswerReviewWorkflow(reviewId,workflowStatus);
+    if(value)await this.audit(actor,"answer_review.triage","answer_review",reviewId,{previousWorkflowStatus:before?.workflowStatus,workflowStatus});return value;
+  }
 
   async ingestFeedback(actor: OpsActor, source: unknown): Promise<StoredFeedbackCase> {
     assertAuthorized(actor,"feedback:ingest");

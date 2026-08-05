@@ -124,6 +124,56 @@ export const feedbackCaseSchema = z.object({
   createdAt: z.string().datetime({ offset: true }),
 }).strict();
 
+export const answerReviewProcessingStatusSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "errored",
+]);
+
+export const answerReviewVerdictSchema = z.enum([
+  "pending",
+  "pass",
+  "needs_review",
+  "fail",
+]);
+
+export const answerReviewWorkflowStatusSchema = z.enum([
+  "open",
+  "in_review",
+  "resolved",
+  "dismissed",
+]);
+
+export const answerReviewDefectCategorySchema = z.enum([
+  "knowledge_gap",
+  "retrieval_gap",
+  "planning_gap",
+  "coverage_gap",
+  "logic_gap",
+  "citation_gap",
+  "expression_gap",
+]);
+
+export const answerReviewDefectSchema = z.object({
+  category: answerReviewDefectCategorySchema,
+  severity: z.enum(["critical", "major", "minor"]),
+  summary: z.string().trim().min(1).max(500),
+  evidence: z.string().trim().max(1_000).default(""),
+}).strict();
+
+export const answerReviewResultSchema = z.object({
+  verdict: z.enum(["pass", "needs_review", "fail"]),
+  score: z.number().int().min(0).max(100),
+  summary: z.string().trim().min(1).max(1_000),
+  defects: z.array(answerReviewDefectSchema).max(20),
+  obligationChecks: z.array(z.object({
+    obligationId: z.string().regex(/^O\d+$/u),
+    covered: z.boolean(),
+    explanation: z.string().trim().min(1).max(500),
+  }).strict()).max(12),
+}).strict();
+
 export const approvalSchema = z.object({
   approvalId: z.string().uuid(),
   cardId: z.string().regex(/^[A-Z][A-Z0-9-]{2,63}$/u),
@@ -166,6 +216,11 @@ export type CatalogDomainSnapshot = z.infer<typeof catalogDomainSnapshotSchema>;
 export type AnswerCardCatalog = z.infer<typeof answerCardCatalogSchema>;
 export type FeedbackClassification = z.infer<typeof feedbackClassificationSchema>;
 export type FeedbackCase = z.infer<typeof feedbackCaseSchema>;
+export type AnswerReviewProcessingStatus = z.infer<typeof answerReviewProcessingStatusSchema>;
+export type AnswerReviewVerdict = z.infer<typeof answerReviewVerdictSchema>;
+export type AnswerReviewWorkflowStatus = z.infer<typeof answerReviewWorkflowStatusSchema>;
+export type AnswerReviewDefectCategory = z.infer<typeof answerReviewDefectCategorySchema>;
+export type AnswerReviewResult = z.infer<typeof answerReviewResultSchema>;
 export type Approval = z.infer<typeof approvalSchema>;
 export type RegressionCase = z.infer<typeof regressionCaseSchema>;
 export type ReleaseManifest = z.infer<typeof releaseManifestSchema>;

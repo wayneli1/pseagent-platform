@@ -382,6 +382,7 @@ tr[data-action]:hover {
   font-size: 13px;
   font-weight: 600;
 }
+.field-help{color:var(--muted);font-size:13px;line-height:1.5;}
 .field input,
 .field select,
 .field textarea {

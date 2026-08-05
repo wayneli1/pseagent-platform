@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  answerReviewResultSchema,
   answerCardSchema,
   feedbackCaseSchema,
   feedbackClassificationSchema,
@@ -113,5 +114,10 @@ describe("knowledge governance contracts", () => {
       approvedBy: ["release-manager"],
       createdAt: "2026-08-05T00:00:00+08:00",
     }).success).toBe(true);
+  });
+
+  it("keeps independent answer-review results strict and obligation-based",()=>{
+    expect(answerReviewResultSchema.safeParse({verdict:"needs_review",score:55,summary:"缺少迁移认证准备",defects:[{category:"coverage_gap",severity:"major",summary:"未说明客户端专用密码",evidence:"答案卡 O1"}],obligationChecks:[{obligationId:"O1",covered:false,explanation:"必答项未覆盖"}]}).success).toBe(true);
+    expect(answerReviewResultSchema.safeParse({verdict:"pass",score:101,summary:"越界",defects:[],obligationChecks:[]}).success).toBe(false);
   });
 });

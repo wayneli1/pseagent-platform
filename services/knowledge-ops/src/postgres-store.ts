@@ -6,6 +6,7 @@ import type { KnowledgeOpsStore } from "./store.js";
 import type {
   ApprovalRecord, AuditEvent, CardRevision, DashboardSummary, OpsJob, OpsJobType,
   RegressionCaseRecord, RegressionRun, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
+  StoredAnswerReviewCase,
 } from "./types.js";
 
 export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
@@ -21,6 +22,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       "001_initial.sql",
       "002_feedback_correction.sql",
       "003_feedback_identity_review_request.sql",
+      "004_answer_reviews.sql",
     ]) {
       const migration = await readFile(fileURLToPath(
         new URL(`../migrations/${fileName}`, import.meta.url),
@@ -32,6 +34,32 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     try { await this.pool.query("SELECT 1"); return true; } catch { return false; }
   }
   async close(): Promise<void> { await this.pool.end(); }
+
+  async insertAnswerReviewAndEnqueue(v:StoredAnswerReviewCase):Promise<{readonly review:StoredAnswerReviewCase;readonly enqueued:boolean}>{
+    const client=await this.pool.connect();
+    try{
+      await client.query("BEGIN");
+      const inserted=await client.query(`INSERT INTO answer_review_cases
+        (review_id,request_id,pseudonymous_user_id,processing_status,verdict,workflow_status,encrypted_payload,answer_status,scope,reference_count,source,model,score,defect_count,error_code,created_at,updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        ON CONFLICT (request_id) DO NOTHING RETURNING *`,
+        [v.reviewId,v.requestId,v.pseudonymousUserId,v.processingStatus,v.verdict,v.workflowStatus,v.encryptedPayload,v.answerStatus,v.scope??null,v.referenceCount,v.source,v.model,v.score??null,v.defectCount,v.errorCode??null,v.createdAt,v.updatedAt]);
+      if(inserted.rows[0]===undefined){const existing=await client.query("SELECT * FROM answer_review_cases WHERE request_id=$1",[v.requestId]);await client.query("COMMIT");if(existing.rows[0]===undefined)throw new Error("database_write_failed");return{review:map<StoredAnswerReviewCase>(existing.rows[0]),enqueued:false};}
+      await client.query(`INSERT INTO ops_jobs
+        (job_id,type,payload,status,attempts,available_at,created_at,updated_at)
+        VALUES ($1,'answer_review',$2,'queued',0,now(),now(),now())`,[randomUUID(),{reviewId:v.reviewId}]);
+      await client.query("COMMIT");return{review:map<StoredAnswerReviewCase>(inserted.rows[0]),enqueued:true};
+    }catch(error){await safeRollback(client);throw error;}finally{client.release();}
+  }
+  async listAnswerReviews(){return rows<StoredAnswerReviewCase>(await this.pool.query("SELECT * FROM answer_review_cases ORDER BY created_at DESC"));}
+  async getAnswerReview(id:string){return optional<StoredAnswerReviewCase>(await this.pool.query("SELECT * FROM answer_review_cases WHERE review_id=$1",[id]));}
+  async updateAnswerReviewWorkflow(id:string,workflowStatus:StoredAnswerReviewCase["workflowStatus"]){return optional<StoredAnswerReviewCase>(await this.pool.query("UPDATE answer_review_cases SET workflow_status=$2,updated_at=now() WHERE review_id=$1 RETURNING *",[id,workflowStatus]));}
+  async updateAnswerReviewMachine(id:string,patch:Partial<Pick<StoredAnswerReviewCase,"processingStatus"|"verdict"|"workflowStatus"|"encryptedPayload"|"score"|"defectCount"|"errorCode">>){
+    const current=await this.getAnswerReview(id);if(current===undefined)return undefined;
+    return optional<StoredAnswerReviewCase>(await this.pool.query(`UPDATE answer_review_cases SET
+      processing_status=$2,verdict=$3,workflow_status=$4,encrypted_payload=$5,score=$6,defect_count=$7,error_code=$8,updated_at=now()
+      WHERE review_id=$1 RETURNING *`,[id,patch.processingStatus??current.processingStatus,patch.verdict??current.verdict,patch.workflowStatus??current.workflowStatus,patch.encryptedPayload??current.encryptedPayload,patch.score??current.score??null,patch.defectCount??current.defectCount,patch.errorCode??current.errorCode??null]));
+  }
 
   async insertFeedback(v: StoredFeedbackCase): Promise<StoredFeedbackCase> {
     const row = await one(this.pool, `INSERT INTO feedback_cases
@@ -126,8 +154,9 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listAudit() { return rows<AuditEvent>(await this.pool.query("SELECT * FROM audit_events ORDER BY created_at DESC")); }
   async dashboard(): Promise<DashboardSummary> {
-    const [feedback,cards,jobs,release] = await Promise.all([
+    const [feedback,reviews,cards,jobs,release] = await Promise.all([
       this.pool.query("SELECT status,count(*)::int AS count FROM feedback_cases GROUP BY status"),
+      this.pool.query("SELECT processing_status,verdict,workflow_status,count(*)::int AS count FROM answer_review_cases GROUP BY processing_status,verdict,workflow_status"),
       this.pool.query("SELECT status,count(*)::int AS count FROM card_revisions GROUP BY status"),
       this.pool.query("SELECT status,count(*)::int AS count FROM ops_jobs GROUP BY status"),
       this.pool.query("SELECT release_id FROM releases WHERE status='active' LIMIT 1"),
@@ -139,7 +168,9 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     const cardsByStatus: DashboardSummary["cardsByStatus"] = {};
     for (const row of cards.rows) cardsByStatus[row.status as keyof typeof cardsByStatus] = row.count as number;
     const activeReleaseId = release.rows[0]?.release_id as string|undefined;
-    return { feedback:feedbackCounts,cardsByStatus,jobs:jobCounts,...(activeReleaseId?{activeReleaseId}:{}) };
+    const answerReviews={pendingHuman:0,passed:0,errored:0,total:0};
+    for(const row of reviews.rows){const count=row.count as number;answerReviews.total+=count;if(row.verdict==="pass")answerReviews.passed+=count;if(row.processing_status==="errored")answerReviews.errored+=count;if(row.workflow_status==="open"&&(row.verdict==="needs_review"||row.verdict==="fail"||row.processing_status==="errored"))answerReviews.pendingHuman+=count;}
+    return { feedback:feedbackCounts,answerReviews,cardsByStatus,jobs:jobCounts,...(activeReleaseId?{activeReleaseId}:{}) };
   }
   private async changeActiveRelease(id: string,previousStatus:"superseded"|"rolled_back") {
     const client=await this.pool.connect();

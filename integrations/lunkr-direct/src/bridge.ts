@@ -1,8 +1,14 @@
+import { randomUUID } from "node:crypto";
 import {
   normalizeAnswerText,
   presentAnswer,
   presentLongAnswerNotice,
 } from "./answer-presenter.js";
+import type {
+  BridgeAnswerCardActivationSummary,
+  BridgeAnswerReviewSubmission,
+  BridgeReviewReference,
+} from "./answer-review-submission.js";
 import type { LunkrDirectConfig } from "./config.js";
 import { ConversationStore } from "./conversation-store.js";
 import type { LunkrDirectMessage } from "./contracts.js";
@@ -88,6 +94,8 @@ export interface BridgeAnswerMetadata {
   readonly removedSegmentCount?: number | undefined;
   readonly historicalGateReason?: BridgeHistoricalGateReason | undefined;
   readonly answerCardMatch?: FeedbackAnswerCardSummary | undefined;
+  readonly answerCardActivation?: BridgeAnswerCardActivationSummary | undefined;
+  readonly references?: readonly BridgeReviewReference[] | undefined;
 }
 
 export interface BridgeQuestionEvent {
@@ -120,6 +128,7 @@ export interface BridgeQuestionEvent {
   readonly removedSegmentCount?: number | undefined;
   readonly historicalGateReason?: BridgeHistoricalGateReason | undefined;
   readonly deliveryMode?: BridgeDeliveryMode | undefined;
+  readonly answerReviewQueued?: boolean | undefined;
 }
 
 export interface LunkrBridgeDependencies<Result> {
@@ -146,11 +155,17 @@ export interface LunkrBridgeDependencies<Result> {
   ) => Promise<void>;
   readonly onEvent?: ((event: BridgeQuestionEvent) => void) | undefined;
   readonly feedback?: BridgeFeedbackDependencies | undefined;
+  readonly answerReview?: BridgeAnswerReviewDependencies | undefined;
 }
 
 export interface BridgeFeedbackDependencies {
   readonly pseudonymizationKey: string;
   readonly submit: (submission: BridgeFeedbackSubmission) => Promise<void>;
+}
+
+export interface BridgeAnswerReviewDependencies {
+  readonly pseudonymizationKey: string;
+  readonly submit: (submission: BridgeAnswerReviewSubmission) => Promise<void>;
 }
 
 export class LunkrPseBridge<Result> {
@@ -449,6 +464,13 @@ export class LunkrPseBridge<Result> {
     if (feedbackReady && this.dependencies.feedback !== undefined) {
       await this.sendBestEffort(message.peerUid, FEEDBACK_MENU);
     }
+    const answerReviewQueued=await this.submitAnswerReview({
+      message,
+      questionId:start.questionId,
+      question,
+      answer:normalizedAnswer,
+      metadata,
+    });
     this.emit({
       type: "answered",
       peerUid: message.peerUid,
@@ -464,9 +486,35 @@ export class LunkrPseBridge<Result> {
       historicalAttempted: metadata.historicalAttempted,
       historicalUsed: metadata.historicalUsed,
       deliveryMode,
+      ...(answerReviewQueued===undefined?{}:{answerReviewQueued}),
       ...historicalNoticeMetadata(metadata),
       ...layeredEvidenceMetadata(metadata),
     });
+  }
+
+  private async submitAnswerReview(input:{
+    readonly message:LunkrDirectMessage;
+    readonly questionId:number;
+    readonly question:string;
+    readonly answer:string;
+    readonly metadata:BridgeAnswerMetadata;
+  }):Promise<boolean|undefined>{
+    const dependency=this.dependencies.answerReview;
+    if(dependency===undefined||!(["professional","general"] as const).includes(input.metadata.scope as "professional"|"general"))return undefined;
+    const submittedAt=new Date(this.now()).toISOString();
+    try{
+      await dependency.submit({
+        reviewId:randomUUID(),requestId:input.metadata.requestId??"",
+        pseudonymousUserId:pseudonymizeFeedbackUser(input.message.peerUid,dependency.pseudonymizationKey),
+        ...(input.message.userDisplayName===undefined?{}:{userDisplayName:input.message.userDisplayName}),
+        questionId:input.questionId,question:input.question,answer:input.answer,
+        answerStatus:input.metadata.status??"unknown",...(input.metadata.scope===undefined?{}:{scope:input.metadata.scope}),
+        references:input.metadata.references??[],answeredAt:submittedAt,submittedAt,source:"lunkr_direct",
+        ...(input.metadata.answerCardMatch===undefined?{}:{answerCardMatch:input.metadata.answerCardMatch}),
+        ...(input.metadata.answerCardActivation===undefined?{}:{answerCardActivation:input.metadata.answerCardActivation}),
+      });
+      return true;
+    }catch{return false;}
   }
 
   private async sendFailure(
