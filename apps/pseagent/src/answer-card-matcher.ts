@@ -9,6 +9,8 @@ import type { ModelClient } from "./model-client.js";
 import {
   AnswerCardRegistry,
   hashAnswerCardIdentifier,
+  loadAnswerCardRegistry,
+  resolveActiveAnswerCardCatalog,
 } from "./answer-card-registry.js";
 
 export interface AnswerCardMatchBinding {
@@ -247,6 +249,50 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
       catalogHash: this.registry.catalogHash,
       candidateCount,
     };
+  }
+}
+
+export class ReloadingAnswerCardMatcher implements AnswerCardMatcher {
+  private sourceKey:string;
+  private current:DefaultAnswerCardMatcher;
+
+  constructor(
+    private readonly catalogPath:string,
+    private readonly snapshotRoot:string|undefined,
+    private readonly model:ModelClient,
+    private readonly required=false,
+  ){
+    const source=resolveActiveAnswerCardCatalog(catalogPath,snapshotRoot);
+    this.sourceKey=source.key;
+    this.current=this.create(source.catalogPath);
+  }
+
+  routeExact(question:string):AnswerCardRouteHint|undefined {
+    return this.matcher().routeExact(question);
+  }
+
+  match(input:AnswerCardMatcherInput):Promise<AnswerCardMatch> {
+    return this.matcher().match(input);
+  }
+
+  private matcher():DefaultAnswerCardMatcher {
+    try{
+      const source=resolveActiveAnswerCardCatalog(this.catalogPath,this.snapshotRoot);
+      if(source.key!==this.sourceKey){
+        const next=this.create(source.catalogPath);
+        this.current=next;
+        this.sourceKey=source.key;
+      }
+    }catch{
+      // Keep serving the last validated immutable catalog when a new pointer is incomplete.
+    }
+    return this.current;
+  }
+
+  private create(catalogPath:string):DefaultAnswerCardMatcher {
+    const registry=loadAnswerCardRegistry(catalogPath);
+    if(this.required)registry.assertHasActiveCards();
+    return new DefaultAnswerCardMatcher(registry,this.model);
   }
 }
 

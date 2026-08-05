@@ -142,6 +142,9 @@ export const repairProposalSchema=z.object({
   regressionQuestions:z.array(z.object({kind:repairRegressionKindSchema,question:z.string().trim().min(1).max(2_000)}).strict()).max(5),
   generationSummary:z.string().trim().min(1).max(4_000),publishable:z.boolean(),blockingReason:z.string().trim().min(1).max(4_000).optional(),
 }).strict().superRefine((value,context)=>{
+  const humanText=[value.title,value.canonicalQuestion,...value.aliases,value.answerTemplate,value.generationSummary,value.blockingReason??"",
+    ...value.obligations.flatMap((item)=>[item.label,...item.requiredConcepts,...item.forbiddenClaims]),...value.regressionQuestions.map((item)=>item.question)];
+  if(humanText.some((item)=>/\uFFFD|\?{3,}/u.test(item)))context.addIssue({code:"custom",path:["title"],message:"repair_text_encoding_corrupt"});
   if(value.publishable){
     if(value.targetKind==="system_fix")context.addIssue({code:"custom",path:["targetKind"],message:"system_fix_cannot_be_published_as_knowledge"});
     if(value.targetDomain===undefined)context.addIssue({code:"custom",path:["targetDomain"],message:"publishable_repair_requires_target_domain"});

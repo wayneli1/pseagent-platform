@@ -17,21 +17,20 @@ const obligationSchema=z.object({
   forbiddenClaims:z.array(z.string().trim().min(1).max(500)).max(50),
   preferredEvidencePaths:z.array(z.string().trim().min(1).max(1_000)).max(20),
 }).strict();
+const looseRegressionQuestionSchema=z.object({
+  kind:z.string().trim().max(100).optional(),type:z.string().trim().max(100).optional(),
+  question:z.string().trim().min(1).max(2_000).optional(),query:z.string().trim().min(1).max(2_000).optional(),
+}).passthrough();
 const repairCandidateSchema=z.object({
   title:z.string().trim().min(1).max(500),canonicalQuestion:z.string().trim().min(1).max(1_000),
   aliases:z.array(z.string().trim().min(1).max(1_000)).max(100),answerTemplate:z.string().trim().max(100_000),
   obligations:z.array(obligationSchema).min(1).max(12),
-  regressionQuestions:z.array(z.object({kind:regressionKindSchema,question:z.string().trim().min(1).max(2_000)}).strict()).length(5),
-  generationSummary:z.string().trim().min(1).max(4_000),publishable:z.boolean(),blockingReason:z.string().trim().min(1).max(4_000).optional(),
-}).strict().superRefine((value,context)=>{
-  const kinds=new Set(value.regressionQuestions.map((item)=>item.kind));
-  if(regressionKindSchema.options.some((kind)=>!kinds.has(kind)))context.addIssue({code:"custom",path:["regressionQuestions"],message:"repair_requires_five_regression_kinds"});
+  regressionQuestions:z.unknown().optional(),
+  generationSummary:z.unknown().optional(),publishable:z.boolean(),blockingReason:z.unknown().optional(),
+}).passthrough().superRefine((value,context)=>{
   if(value.publishable&&value.answerTemplate==="")context.addIssue({code:"custom",path:["answerTemplate"],message:"publishable_repair_requires_answer_template"});
-  if(!value.publishable&&value.blockingReason===undefined)context.addIssue({code:"custom",path:["blockingReason"],message:"non_publishable_repair_requires_reason"});
 });
-const caseAssessmentSchema=z.object({cases:z.array(z.object({kind:regressionKindSchema,passed:z.boolean(),explanation:z.string().trim().min(1).max(1_000)}).strict()).length(5)}).strict().superRefine((value,context)=>{
-  const kinds=new Set(value.cases.map((item)=>item.kind));if(regressionKindSchema.options.some((kind)=>!kinds.has(kind)))context.addIssue({code:"custom",path:["cases"],message:"repair_assessment_requires_five_kinds"});
-});
+const caseAssessmentSchema=z.object({cases:z.unknown().optional()}).passthrough();
 
 export interface RepairRecord {
   readonly question: string;
@@ -120,21 +119,25 @@ export class KnowledgeRepairAgent {
     ].join("\n")},{role:"user" as const,content:JSON.stringify({proposal:input.proposal,evidence:input.evidence})}];
     let result:z.infer<typeof caseAssessmentSchema>|undefined;let firstError:unknown;
     for(let attempt=1;attempt<=2;attempt+=1){try{result=await this.model.completeJson({messages:attempt===1?messages:[...messages,{role:"user",content:"上一次输出未通过 Schema。请按五类各一项重新输出，不要增加其他字段。"}],schema:caseAssessmentSchema,schemaDescription:"five knowledge repair validation case assessments",...(input.signal===undefined?{}:{signal:input.signal})});break;}catch(error){firstError??=error;if(attempt===2)throw firstError;}}
-    if(result===undefined)throw firstError;return result.cases;
+    if(result===undefined)throw firstError;return normalizeAssessments(result.cases??result);
   }
 }
 
 function enforceRepairCandidate(input:RepairGenerationInput,candidate:z.infer<typeof repairCandidateSchema>):RepairDraftProposal{
   const evidencePaths=new Set(input.evidence.map((item)=>item.path));
   const {obligations,unsupportedEvidence}=mergeObligations(candidate.obligations,input.route.existingCard,evidencePaths);
-  const regressionAliases=candidate.regressionQuestions.filter((item)=>item.kind==="alias"||item.kind==="colloquial").map((item)=>item.question);
-  const aliases=unique([...(input.route.existingCard?.aliases??[]),...candidate.aliases,...regressionAliases]).filter((value)=>normalize(value)!==normalize(candidate.canonicalQuestion));
+  const regressionQuestions=normalizeRegressionQuestions(input,candidate);
+  const regressionAliases=regressionQuestions.filter((item)=>item.kind==="alias"||item.kind==="colloquial"||item.kind==="follow_up").map((item)=>item.question);
+  const recordAliases=input.records.map((item)=>item.question.trim()).filter((question)=>question!==""&&!(input.sensitiveTerms??[]).some((term)=>term.trim().length>=2&&normalize(question).includes(normalize(term))));
+  const aliases=unique([...(input.route.existingCard?.aliases??[]),...recordAliases,...candidate.aliases,...regressionAliases]).filter((value)=>normalize(value)!==normalize(candidate.canonicalQuestion));
   const protectedText=[candidate.title,candidate.canonicalQuestion,...aliases,candidate.answerTemplate,...obligations.flatMap((item)=>[item.label,...item.requiredConcepts,...item.forbiddenClaims])].join("\n");
   const leakedSensitive=(input.sensitiveTerms??[]).find((term)=>term.trim().length>=2&&normalize(protectedText).includes(normalize(term)));
   const forbiddenClaim=obligations.flatMap((item)=>item.forbiddenClaims).find((claim)=>claim!==""&&normalize(candidate.answerTemplate).includes(normalize(claim)));
   const missingEvidence=obligations.some((item)=>item.evidencePolicy!=="customer_input"&&item.preferredEvidencePaths.length===0);
+  const modelBlockingReason=textValue(candidate.blockingReason);
+  const contradictedIdentityBlock=!candidate.publishable&&modelBlockingReason!==undefined&&/(?:身份|姓名|客户名称|敏感)/u.test(modelBlockingReason)&&leakedSensitive===undefined;
   const reasons=[
-    ...(candidate.publishable?[]:[candidate.blockingReason??"模型认为当前证据不足。"]),
+    ...(candidate.publishable||contradictedIdentityBlock?[]:[modelBlockingReason??"模型认为当前证据不足。"]),
     ...(unsupportedEvidence?["草稿引用了未校验或不在当前知识版本中的资料。"]:[]),
     ...(missingEvidence?["至少一个必答项没有已校验的正式证据路径。"]:[]),
     ...(forbiddenClaim===undefined?[]:["候选答案命中了答案卡禁答主张。"]),
@@ -148,9 +151,73 @@ function enforceRepairCandidate(input:RepairGenerationInput,candidate:z.infer<ty
   return repairProposalSchema.parse({
     rootCause:input.rootCause,targetKind:input.route.targetKind,targetDomain:input.route.targetDomain,targetPath,cardId,
     title,canonicalQuestion,aliases,answerTemplate:candidate.answerTemplate,obligations,
-    regressionQuestions:candidate.regressionQuestions,generationSummary:candidate.generationSummary,publishable,
+    regressionQuestions,generationSummary:textValue(candidate.generationSummary)??"依据已校验正式资料生成知识修订草稿。",publishable,
     ...(publishable?{}:{blockingReason:unique(reasons).join(" ")}),
   }) as RepairDraftProposal;
+}
+
+function normalizeRegressionQuestions(
+  input:RepairGenerationInput,
+  candidate:z.infer<typeof repairCandidateSchema>,
+):readonly {readonly kind:z.infer<typeof regressionKindSchema>;readonly question:string}[]{
+  const expected=regressionKindSchema.options,recognized=new Map<string,string>(),rawQuestions=rawRegressionQuestions(candidate.regressionQuestions);
+  for(const item of rawQuestions){
+    const question=(item.question??item.query)?.trim();if(!question)continue;
+    const kind=normalizeRegressionKind(item.kind??item.type??"");if(kind!==undefined&&!recognized.has(kind))recognized.set(kind,question);
+  }
+  const canonical=input.route.existingCard?.canonicalQuestion??candidate.canonicalQuestion;
+  const original=input.records.map((item)=>item.question.trim()).find((item)=>item!==""&&normalize(item)!==normalize(canonical));
+  const alias=original??candidate.aliases.find((item)=>normalize(item)!==normalize(canonical))??`关于“${candidate.title}”需要确认哪些内容？`;
+  const fallback:Record<z.infer<typeof regressionKindSchema>,string>={
+    canonical,
+    alias,
+    colloquial:candidate.aliases.find((item)=>normalize(item)!==normalize(canonical)&&normalize(item)!==normalize(alias))??`“${candidate.title}”这件事通常要先准备什么？`,
+    follow_up:`完成这些准备后，下一步还需要确认什么？`,
+    negative:"今天天气怎么样？",
+  };
+  return expected.map((kind,index)=>{
+    const question=recognized.get(kind)??rawQuestions[index]?.question??rawQuestions[index]?.query??fallback[kind];
+    return{kind,question:kind==="follow_up"?`关于“${input.route.existingCard?.title??candidate.title}”，${question}`:question};
+  });
+}
+
+function rawRegressionQuestions(value:unknown):readonly z.infer<typeof looseRegressionQuestionSchema>[] {
+  const direct=Array.isArray(value)?value:typeof value==="object"&&value!==null&&Array.isArray((value as{cases?:unknown}).cases)?(value as{cases:unknown[]}).cases:undefined;
+  if(direct!==undefined)return direct.map((item)=>looseRegressionQuestionSchema.safeParse(item)).filter((item)=>item.success).map((item)=>item.data);
+  if(typeof value!=="object"||value===null)return[];
+  return Object.entries(value).flatMap(([kind,question])=>{
+    const text=textValue(question);return text===undefined?[]:[{kind,question:text}];
+  });
+}
+
+function textValue(value:unknown):string|undefined {
+  if(typeof value==="string"){const result=value.trim();return result===""?undefined:result.slice(0,4_000);}
+  if(Array.isArray(value)){const parts=value.map(textValue).filter((item):item is string=>item!==undefined);return parts.length===0?undefined:parts.join(" ").slice(0,4_000);}
+  if(typeof value==="object"&&value!==null){
+    const record=value as Record<string,unknown>;for(const key of ["summary","reason","text","description","question","query"]){const result=textValue(record[key]);if(result!==undefined)return result;}
+  }
+  return undefined;
+}
+
+function normalizeRegressionKind(value:string):z.infer<typeof regressionKindSchema>|undefined{
+  const key=value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu,"");
+  const aliases:Record<string,z.infer<typeof regressionKindSchema>>={
+    canonical:"canonical",standard:"canonical",original:"canonical",标准:"canonical",标准问法:"canonical",原始:"canonical",
+    alias:"alias",synonym:"alias",同义:"alias",同义问法:"alias",改写:"alias",
+    colloquial:"colloquial",spoken:"colloquial",口语:"colloquial",口语问法:"colloquial",
+    followup:"follow_up",context:"follow_up",contextual:"follow_up",追问:"follow_up",上下文追问:"follow_up",
+    negative:"negative",boundary:"negative",outofscope:"negative",负例:"negative",边界负例:"negative",
+  };
+  return aliases[key];
+}
+
+function normalizeAssessments(value:unknown):readonly {readonly kind:z.infer<typeof regressionKindSchema>;readonly passed:boolean;readonly explanation:string}[]{
+  const entries:Array<{kind?:unknown;passed?:unknown;explanation?:unknown}>=[];
+  if(Array.isArray(value)){for(const item of value)if(typeof item==="object"&&item!==null)entries.push(item as typeof entries[number]);}
+  else if(typeof value==="object"&&value!==null){for(const [kind,result] of Object.entries(value)){if(typeof result==="object"&&result!==null)entries.push({kind,...result as Record<string,unknown>});else entries.push({kind,passed:result});}}
+  const recognized=new Map<z.infer<typeof regressionKindSchema>,{passed:boolean;explanation:string}>();
+  for(const item of entries){const kind=normalizeRegressionKind(typeof item.kind==="string"?item.kind:"");if(kind===undefined||recognized.has(kind))continue;const passed=item.passed===true||item.passed==="true"||item.passed==="通过";recognized.set(kind,{passed,explanation:textValue(item.explanation)??(passed?"模型判定通过。":"模型未提供可验证的通过说明。")});}
+  return regressionKindSchema.options.map((kind)=>({kind,...(recognized.get(kind)??{passed:false,explanation:"模型未返回这一类验证结果，按不通过处理。"})}));
 }
 
 function mergeObligations(

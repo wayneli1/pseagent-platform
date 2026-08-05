@@ -211,6 +211,40 @@ export function loadAnswerCardRegistry(catalogPath: string): AnswerCardRegistry 
   return new AnswerCardRegistry(source);
 }
 
+export interface ActiveAnswerCardCatalogSource {
+  readonly key: string;
+  readonly catalogPath: string;
+}
+
+export function resolveActiveAnswerCardCatalog(
+  catalogPath: string,
+  snapshotRoot?: string,
+): ActiveAnswerCardCatalogSource {
+  const basePath = validatedCatalogPath(catalogPath);
+  if (snapshotRoot === undefined) return { key: `base:${basePath}`, catalogPath: basePath };
+  const normalizedRoot = path.resolve(snapshotRoot);
+  let pointer: unknown;
+  try {
+    pointer = JSON.parse(readFileSync(path.join(normalizedRoot, "active.json"), "utf8"));
+  } catch (error) {
+    if (isMissingFile(error)) return { key: `base:${basePath}`, catalogPath: basePath };
+    throw new AnswerCardRegistryError("answer_card_snapshot_pointer_unreadable");
+  }
+  const releaseId = typeof pointer === "object" && pointer !== null &&
+    typeof (pointer as { releaseId?: unknown }).releaseId === "string"
+    ? (pointer as { releaseId: string }).releaseId
+    : "";
+  if (!/^KR-\d{4}-\d{2}-[A-Z0-9-]{3,40}$/u.test(releaseId)) {
+    throw new AnswerCardRegistryError("answer_card_snapshot_pointer_invalid");
+  }
+  const activePath = path.resolve(normalizedRoot, "releases", releaseId, "answer-card-catalog.json");
+  const relative = path.relative(normalizedRoot, activePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new AnswerCardRegistryError("answer_card_snapshot_path_escape");
+  }
+  return { key: `snapshot:${releaseId}`, catalogPath: activePath };
+}
+
 export function hashAnswerCardIdentifier(identifier: string): string {
   return createHash("sha256").update(identifier, "utf8").digest("hex");
 }
@@ -274,4 +308,16 @@ function stableJson(value: unknown): string {
       `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function validatedCatalogPath(catalogPath:string):string {
+  const normalized=path.normalize(catalogPath);
+  if(!path.isAbsolute(normalized)||path.extname(normalized).toLowerCase()!==".json"){
+    throw new AnswerCardRegistryError("answer_card_catalog_path_invalid");
+  }
+  return normalized;
+}
+
+function isMissingFile(error:unknown):boolean {
+  return typeof error==="object"&&error!==null&&"code" in error&&(error as{code?:unknown}).code==="ENOENT";
 }

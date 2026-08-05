@@ -37,10 +37,9 @@ import {
   ModelTaskCompiler,
 } from "./task-spec.js";
 import {
-  DefaultAnswerCardMatcher,
+  ReloadingAnswerCardMatcher,
   type AnswerCardMatcher,
 } from "./answer-card-matcher.js";
-import { loadAnswerCardRegistry } from "./answer-card-registry.js";
 
 export interface PseRuntimeDependencies {
   readonly createModel?: (config: AppConfig) => ModelClient;
@@ -177,11 +176,11 @@ function defaultCreateAnswerCardMatcher(
   model: ModelClient,
   config: Extract<AppConfig["answerCards"], { enabled: true }>,
 ): AnswerCardMatcher {
-  const registry = loadAnswerCardRegistry(config.catalogPath);
-  if (config.required) registry.assertHasActiveCards();
-  return new DefaultAnswerCardMatcher(
-    registry,
+  return new ReloadingAnswerCardMatcher(
+    config.catalogPath,
+    config.snapshotRoot,
     model,
+    config.required,
   );
 }
 

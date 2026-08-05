@@ -228,7 +228,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(case_id) DO UPDATE SET domain=EXCLUDED.domain,question=EXCLUDED.question,
       expected_card_id=EXCLUDED.expected_card_id,required_obligation_ids=EXCLUDED.required_obligation_ids,
       forbidden_claims=EXCLUDED.forbidden_claims,kind=EXCLUDED.kind,enabled=EXCLUDED.enabled RETURNING *`,
-      [v.caseId,v.domain,v.question,v.expectedCardId ?? null,v.requiredObligationIds,v.forbiddenClaims,v.kind,v.enabled]));
+      [v.caseId,v.domain,v.question,v.expectedCardId ?? null,JSON.stringify(v.requiredObligationIds),JSON.stringify(v.forbiddenClaims),v.kind,v.enabled]));
   }
   async listRegressionCases() { return rows<RegressionCaseRecord>(await this.pool.query("SELECT * FROM regression_cases ORDER BY case_id")); }
   async createRegressionRun(v: RegressionRun) {
@@ -265,7 +265,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     return map<ReleaseRecord>(await one(this.pool, `INSERT INTO releases
       (release_id,professional_revision,general_revision,answer_contract_revision,card_catalog_hash,regression_run_id,manifest,status,created_by,approved_by,created_at,activated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [v.releaseId,v.professionalRevision,v.generalRevision,v.answerContractRevision,v.cardCatalogHash,v.regressionRunId,v.manifest,v.status,v.createdBy,v.approvedBy,v.createdAt,v.activatedAt ?? null]));
+      [v.releaseId,v.professionalRevision,v.generalRevision,v.answerContractRevision,v.cardCatalogHash,v.regressionRunId,v.manifest,v.status,v.createdBy,JSON.stringify(v.approvedBy),v.createdAt,v.activatedAt ?? null]));
   }
   async listReleases() { return rows<ReleaseRecord>(await this.pool.query("SELECT * FROM releases ORDER BY created_at DESC")); }
   async activateRelease(id: string) { return this.changeActiveRelease(id,"superseded"); }

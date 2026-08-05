@@ -186,6 +186,17 @@ describe("loadConfig", () => {
     }).answerCards).toMatchObject({ familyActiveEnabled: true });
   });
 
+  it("accepts only an absolute answer-card snapshot directory",()=>{
+    const catalogPath="C:\\pseagent\\answer-card-catalog.json";
+    const snapshotRoot="C:\\pseagent\\knowledge-ops\\snapshots";
+    expect(loadConfig({...baseEnv,PSE_ANSWER_CARD_SHADOW_ENABLED:"true",PSE_ANSWER_CARD_CATALOG_PATH:catalogPath,PSE_ANSWER_CARD_SNAPSHOT_ROOT:snapshotRoot}).answerCards)
+      .toMatchObject({snapshotRoot});
+    expect(()=>loadConfig({...baseEnv,PSE_ANSWER_CARD_SHADOW_ENABLED:"true",PSE_ANSWER_CARD_CATALOG_PATH:catalogPath,PSE_ANSWER_CARD_SNAPSHOT_ROOT:"relative/snapshots"}))
+      .toThrow("PSE_ANSWER_CARD_SNAPSHOT_ROOT must be an absolute directory");
+    expect(loadConfig({...baseEnv,PSE_ANSWER_CARD_SHADOW_ENABLED:"true",PSE_ANSWER_CARD_CATALOG_PATH:catalogPath,KNOWLEDGE_OPS_SNAPSHOT_ROOT:snapshotRoot}).answerCards)
+      .toMatchObject({snapshotRoot});
+  });
+
   it("fails startup configuration when governed answer cards are required but not active", () => {
     const catalogPath = "C:\\pseagent\\answer-card-catalog.json";
     expect(() => loadConfig({

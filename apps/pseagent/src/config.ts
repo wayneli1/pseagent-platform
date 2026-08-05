@@ -55,6 +55,7 @@ export type AppConfig = BaseConfig & {
         readonly enabled: true;
         readonly required: boolean;
         readonly catalogPath: string;
+        readonly snapshotRoot?: string;
         readonly exactActiveEnabled: boolean;
         readonly familyActiveEnabled: boolean;
       };
@@ -213,10 +214,20 @@ function loadAnswerCardConfig(
   ) {
     throw new Error("PSE_ANSWER_CARD_CATALOG_PATH must be an absolute JSON path.");
   }
+  const configuredSnapshotRoot = (
+    env.PSE_ANSWER_CARD_SNAPSHOT_ROOT ?? env.KNOWLEDGE_OPS_SNAPSHOT_ROOT
+  )?.trim();
+  const snapshotRoot = configuredSnapshotRoot === undefined || configuredSnapshotRoot === ""
+    ? undefined
+    : path.normalize(configuredSnapshotRoot);
+  if (snapshotRoot !== undefined && !path.isAbsolute(snapshotRoot)) {
+    throw new Error("PSE_ANSWER_CARD_SNAPSHOT_ROOT must be an absolute directory.");
+  }
   return {
     enabled: true,
     required,
     catalogPath,
+    ...(snapshotRoot === undefined ? {} : { snapshotRoot }),
     exactActiveEnabled,
     familyActiveEnabled,
   };
