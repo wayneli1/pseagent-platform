@@ -5,8 +5,12 @@ const LABELS: Readonly<Record<string,string>>={
   answered:"已完整回答",partially_answered:"部分回答",failed:"处理失败",
   draft:"草稿",approved:"已批准",changes_requested:"需要修改",deprecated:"已停用",release_ready:"待发布",released:"已发布",
   active:"当前生效",superseded:"已被替代",rolled_back:"已回滚",passed:"已通过",
+  generating:"正在生成草稿",draft_ready:"草稿待确认",validation_failed:"验证未通过",ready_to_publish:"验证通过，待发布",publishing:"正在发布",published:"已发布生效",
+  answer_card:"答案卡",knowledge_page:"知识页面",retrieval_rule:"检索规则",system_fix:"系统修复",
+  canonical:"标准问法",alias:"同义问法",colloquial:"口语问法",follow_up:"上下文追问",negative:"边界负例",
+  direct:"直接证据",synthesis:"多证据综合",customer_input:"需客户确认",feedback_case:"用户反馈",answer_review:"自动复查",
   enabled:"已启用",disabled:"已停用",covered:"已覆盖",
-  compile_catalog:"同步答案卡",answer_review:"自动复查",regression_run:"运行回归",publish_release:"发布知识",rollback_release:"回滚发布",git_writeback:"写回知识库",
+  compile_catalog:"同步答案卡",regression_run:"运行回归",publish_release:"发布知识",rollback_release:"回滚发布",git_writeback:"写回知识库",generate_repair_draft:"生成修订草稿",validate_repair_draft:"验证修订",publish_repair:"发布修订",rollback_repair:"回滚修订",
   knowledge_gap:"知识缺口",retrieval_gap:"检索缺口",planning_gap:"回答规划问题",coverage_gap:"关键信息遗漏",logic_gap:"逻辑或事实冲突",citation_gap:"引用问题",expression_gap:"表达问题",
   user_incorrect:"用户报告答案错误",user_missing:"用户报告信息不完整",judgement_conflict:"用户与系统判断冲突",review_error:"自动复查异常",
   feedback:"用户反馈",
@@ -15,10 +19,17 @@ const LABELS: Readonly<Record<string,string>>={
   p0:"紧急",p1:"高",p2:"普通",p3:"低",
 };
 const ERROR_MESSAGES:Readonly<Record<string,string>>={
-  invalid_issue_transition:"请按“待处理 → 修订中 → 待验证 → 已解决”的顺序推进",
+  invalid_issue_transition:"问题状态由生成、验证和发布动作自动推进；管理员只能标记无需处理或重新打开",
   permission_denied:"当前账号没有执行此操作的权限",
   authentication_required:"登录已失效，请重新输入访问令牌",
-  creator_cannot_self_approve:"创建人不能审核自己创建的修订",
+  model_unavailable:"模型服务暂时不可用，请稍后重新生成",
+  knowledge_revision_changed:"知识库在验证后发生了变化，请重新生成并验证草稿",
+  knowledge_repository_dirty:"知识库存在未提交修改，系统为避免覆盖已停止发布",
+  repair_draft_not_publishable:"当前草稿缺少正式证据或属于系统问题，不能发布为知识",
+  passing_repair_validation_required:"必须先完成并通过自动验证",
+  full_regression_failed_after_publish:"现有回归用例未全部通过，系统已自动恢复上一版本",
+  repair_publication_not_current:"只能回滚当前正在生效的最近一次修订",
+  rolled_back:"本次修订已回滚，可以重新生成草稿",
 };
 
 export function label(value:string):string{return LABELS[value]??value;}

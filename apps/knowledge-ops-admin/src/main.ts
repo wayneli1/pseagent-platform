@@ -2,6 +2,7 @@ import "./styles.css";
 import { ApiError, OpsApiClient } from "./api.js";
 import { badge, h, json, shortId, time } from "./format.js";
 import {errorMessage,issueStatusHelp,label,option} from "./labels.js";
+import {isRepairEditable,repairPrimaryAction,repairStep} from "./repair-workflow.js";
 import type {
   Audit,
   AnswerReviewDetail,
@@ -16,6 +17,10 @@ import type {
   IssueStatus,
   OpsJob,
   RegressionRun,
+  RepairDraft,
+  RepairProposal,
+  RepairPublication,
+  RepairValidation,
   Release,
   ViewName,
 } from "./types.js";
@@ -36,6 +41,10 @@ const TOKEN_KEY = "pse-knowledge-ops-token";
 let token = sessionStorage.getItem(TOKEN_KEY) ?? "";
 const api = new OpsApiClient(token);
 let current: ViewName = viewFromHash();
+let repairIssueId=repairIdFromHash();
+let activeRepairDraft:RepairDraft|undefined;
+let repairSaveTimer:ReturnType<typeof setTimeout>|undefined;
+let repairRefreshTimer:ReturnType<typeof setTimeout>|undefined;
 const ISSUE_PAGE_SIZE=25;
 let issueFilters:{status:"actionable"|"all"|IssueStatus;priority:"all"|IssuePriority;offset:number}={status:"actionable",priority:"all",offset:0};
 
@@ -43,11 +52,13 @@ if (token) void showApp();
 else showLogin();
 window.addEventListener("hashchange", () => {
   current = viewFromHash();
+  repairIssueId=repairIdFromHash();
   if (token) void showApp();
 });
 document.addEventListener("click", (event) => void handleClick(event));
 document.addEventListener("submit", (event) => void handleSubmit(event));
 document.addEventListener("change", (event)=>void handleChange(event));
+document.addEventListener("input", handleInput);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeOverlay();
 });
@@ -56,7 +67,9 @@ function showLogin(error = "") {
   root.innerHTML = `<main class="login"><form class="login-card" id="login-form"><div class="brand-mark">P</div><h1>PSE 知识运营台</h1><p>集中处理用户反馈、答案卡审核、回归评测和知识发布。访问令牌仅保存在当前浏览器标签会话中。</p>${error ? `<div class="notice error" role="alert">${h(error)}</div>` : ""}<div class="field"><label for="token">访问令牌</label><input id="token" name="token" type="password" minlength="24" required autocomplete="current-password" placeholder="输入管理员或运营令牌"></div><button class="button primary" type="submit">进入运营台</button></form></main>`;
 }
 async function showApp() {
-  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">P</div><div><strong>PSE 知识运营</strong><small>Knowledge Ops</small></div></div><nav class="nav" aria-label="主导航">${nav.map((item) => `<button data-nav="${item.id}" class="${item.id === current ? "active" : ""}" aria-current="${item.id === current ? "page" : "false"}"><span aria-hidden="true">${item.icon}</span><span class="label">${item.label}</span></button>`).join("")}</nav><div class="sidebar-foot"><div class="connection"><i class="dot"></i><span>管理服务已连接</span></div><button class="button small" data-action="logout">退出会话</button></div></aside><main class="main"><header class="topbar"><h1>${h(nav.find((x) => x.id === current)?.label)}</h1><div class="top-actions"><button class="button" data-action="refresh">刷新</button>${current === "cards" ? '<button class="button" data-action="sync-cards">同步知识库答案卡</button><button class="button primary" data-action="new-card">新建修订</button>' : ""}</div></header><section id="content" class="content" aria-live="polite">${loading()}</section></main></div><div id="overlay"></div><div id="toast" aria-live="assertive"></div>`;
+  if(repairRefreshTimer!==undefined)clearTimeout(repairRefreshTimer);
+  const pageTitle=current==="repair"?"知识修订工作台":nav.find((x) => x.id === current)?.label;
+  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">P</div><div><strong>PSE 知识运营</strong><small>Knowledge Ops</small></div></div><nav class="nav" aria-label="主导航">${nav.map((item) => `<button data-nav="${item.id}" class="${item.id === current ? "active" : ""}" aria-current="${item.id === current ? "page" : "false"}"><span aria-hidden="true">${item.icon}</span><span class="label">${item.label}</span></button>`).join("")}</nav><div class="sidebar-foot"><div class="connection"><i class="dot"></i><span>管理服务已连接</span></div><button class="button small" data-action="logout">退出会话</button></div></aside><main class="main"><header class="topbar"><h1>${h(pageTitle)}</h1><div class="top-actions">${current==="repair"?'<button class="button" data-nav="issues">返回问题中心</button>':""}<button class="button" data-action="refresh">刷新</button>${current === "cards" ? '<button class="button" data-action="sync-cards">同步知识库答案卡</button><button class="button primary" data-action="new-card">新建修订</button>' : ""}</div></header><section id="content" class="content" aria-live="polite">${loading()}</section></main></div><div id="overlay"></div><div id="toast" aria-live="assertive"></div>`;
   await loadCurrent();
 }
 async function loadCurrent() {
@@ -67,6 +80,9 @@ async function loadCurrent() {
         break;
       case "issues":
         await renderIssues();
+        break;
+      case "repair":
+        await renderRepairWorkbench();
         break;
       case "feedback":
         await renderFeedback();
@@ -122,6 +138,33 @@ async function renderIssues(){
     ${page.items.length?table(["优先级","问题类型","状态","影响","处理时限","最近发生","下一步"],page.items.map((item)=>issueRow(item,false))):empty("当前筛选条件下没有问题")}
     <div class="pagination"><span class="muted">显示 ${start}–${end} / ${page.total}</span><div><button class="button small" data-action="issue-page-prev"${issueFilters.offset===0?" disabled":""}>上一页</button> <button class="button small" data-action="issue-page-next"${issueFilters.offset+ISSUE_PAGE_SIZE>=page.total?" disabled":""}>下一页</button></div></div></section>`);
 }
+async function renderRepairWorkbench(){
+  if(!repairIssueId){location.hash="issues";return;}
+  const issue=await api.get<IssueDetail>(`/v1/issues/${encodeURIComponent(repairIssueId)}`),drafts=await api.get<RepairDraft[]>(`/v1/issues/${encodeURIComponent(repairIssueId)}/repair-drafts`),draft=drafts[0];activeRepairDraft=draft;
+  const [validations,publications,evidenceRecords]=await Promise.all([
+    draft?api.get<RepairValidation[]>(`/v1/repair-drafts/${encodeURIComponent(draft.draftId)}/validations`):Promise.resolve([]),
+    draft?api.get<RepairPublication[]>(`/v1/repair-drafts/${encodeURIComponent(draft.draftId)}/publications`):Promise.resolve([]),
+    Promise.all(issue.occurrences.slice(0,8).map(async(occurrence)=>occurrence.sourceType==="feedback"?{kind:"feedback" as const,value:await api.get<FeedbackDetail>(`/v1/feedback/${encodeURIComponent(occurrence.sourceId)}`)}:{kind:"answer_review" as const,value:await api.get<AnswerReviewDetail>(`/v1/answer-reviews/${encodeURIComponent(occurrence.sourceId)}`)})),
+  ]);
+  const latestValidation=validations[0],latestPublication=publications[0],action=repairPrimaryAction(draft),step=repairStep(draft?.status),published=draft?.status==="published";
+  const primaryAction=action.id==="generate"||action.id==="retry"?"repair-generate":action.id==="validate"?"repair-validate":action.id==="publish"?"repair-publish":"";
+  const evidenceHtml=evidenceRecords.map((record)=>{const value=record.value,user=value.userDisplayName??"未获取到聊天名";if(record.kind==="feedback"){const feedback=value as FeedbackDetail;return`<article class="evidence-card"><div class="evidence-head"><strong>${h(user)}</strong>${badge(feedback.classification)}</div><h4>原始问题</h4><div class="content-box">${h(feedback.question)}</div><h4>原始回答</h4><div class="content-box">${h(feedback.answer)}</div>${feedback.comment?`<h4>用户补充</h4><div class="content-box">${h(feedback.comment)}</div>`:""}</article>`;}const review=value as AnswerReviewDetail;return`<article class="evidence-card"><div class="evidence-head"><strong>${h(user)}</strong>${badge(review.verdict)}</div><h4>自动复查结论</h4><div class="content-box">${h(review.result?.summary??"复查尚未完成")}</div>${review.result?.defects.length?table(["程度","问题","依据"],review.result.defects.map((item)=>`<tr><td>${badge(item.severity)}</td><td>${h(item.summary)}</td><td>${h(item.evidence)}</td></tr>`)):""}</article>`;}).join("");
+  const validationHtml=renderRepairValidation(latestValidation),proposalHtml=draft?.proposal?renderRepairProposalForm(draft):renderRepairState(draft),diffHtml=draft?.proposal?`<div class="repair-diff"><div><span>用户当时收到的回答</span><div class="content-box">${h(evidenceRecords[0]?.value.answer??"暂无原回答")}</div></div><div><span>修订后标准答案</span><div class="content-box repair-answer-preview">${h(draft.proposal.answerTemplate||"等待补充")}</div></div></div>`:empty("草稿生成后显示前后对比");
+  content(`<div class="repair-header"><div><h2>${h(label(issue.category))}</h2><p>${badge(issue.priority)} ${badge(issue.status)} · ${issue.affectedUserCount} 位用户 · ${issue.occurrenceCount} 次重复</p></div><div class="repair-header-status"><span>当前下一步</span><strong>${h(action.label)}</strong></div></div>
+    ${repairStepper(step,published)}
+    ${draft?.errorCode?`<div class="notice error mt-16"><strong>执行未完成：</strong>${h(errorMessage(draft.errorCode))}<br>你可以按当前主要操作重新生成或修改后再验证。</div>`:""}
+    ${draft?.proposal?.blockingReason?`<div class="notice warning mt-16"><strong>当前不能发布：</strong>${h(draft.proposal.blockingReason)}</div>`:""}
+    <div class="repair-layout mt-16"><aside class="repair-evidence"><section class="panel"><div class="panel-head"><div><h2>问题与证据</h2><span class="muted">最多显示最近 8 条合并记录</span></div></div><div class="panel-body stack">${evidenceHtml||empty("暂无可读取的证据记录")}</div></section><section class="panel mt-16"><div class="panel-head"><h2>验证结果</h2></div><div class="panel-body">${validationHtml}</div></section></aside><section class="repair-editor"><section class="panel"><div class="panel-head"><div><h2>修订草稿</h2><span id="repair-save-state" class="muted">${draft&&isRepairEditable(draft.status)?"修改后自动保存":"由流程锁定"}</span></div>${draft?badge(draft.status):""}</div><div class="panel-body">${proposalHtml}</div></section><section class="panel mt-16"><div class="panel-head"><h2>回答变化预览</h2></div><div class="panel-body">${diffHtml}</div></section>${renderRepairTechnicalDetails(draft,latestValidation,latestPublication)}</section></div>
+    <div class="repair-actionbar"><div><strong>${h(action.label)}</strong><span>${h(repairActionHelp(draft))}</span></div><div>${issue.status!=="resolved"&&issue.status!=="dismissed"?'<button class="button" data-action="repair-dismiss">无需处理</button>':""}${latestPublication?.status==="published"?`<button class="button danger" data-action="repair-rollback" data-id="${h(latestPublication.publicationId)}">回滚本次修订</button>`:""}${primaryAction?`<button class="button primary" data-action="${primaryAction}"${action.disabled?" disabled":""}>${h(action.label)}</button>`:`<button class="button primary" disabled>${h(action.label)}</button>`}</div></div>`);
+  if(draft&&["generating","validating","publishing"].includes(draft.status))scheduleRepairRefresh();
+}
+
+function repairStepper(currentStep:number,published:boolean){const steps=["确认问题","编辑修订","自动验证","发布生效"];return`<ol class="repair-stepper" aria-label="知识修订进度">${steps.map((title,index)=>{const number=index+1,state=published||number<currentStep?"done":number===currentStep?"active":"pending";return`<li class="${state}"${state==="active"?' aria-current="step"':""}><i>${state==="done"?"✓":number}</i><span>${h(title)}</span></li>`;}).join("")}</ol>`;}
+function renderRepairState(draft:RepairDraft|undefined){if(draft===undefined)return`<div class="empty action-empty"><strong>尚未生成修订草稿</strong><span>Agent 将只使用已校验正式资料，生成客户中立的答案卡建议。</span></div>`;if(draft.status==="generating")return`<div class="repair-progress"><div class="spinner" aria-hidden="true"></div><strong>正在读取问题、复查缺陷和正式证据</strong><span>模型固定为 ${h(draft.model)}，草稿不会影响线上回答。</span></div>`;return`<div class="empty action-empty"><strong>${h(label(draft.status))}</strong><span>${h(errorMessage(draft.errorCode??"repair_draft_unavailable"))}</span></div>`;}
+function renderRepairProposalForm(draft:RepairDraft){const proposal=draft.proposal!,editable=isRepairEditable(draft.status),disabled=editable?"":" disabled";return`<form id="repair-proposal-form" data-id="${h(draft.draftId)}"><div class="repair-target"><div><span>根因</span><strong>${h(label(proposal.rootCause))}</strong></div><div><span>修订对象</span><strong>${h(label(proposal.targetKind))}</strong></div><div><span>写入位置</span><strong>${h(domainName(proposal.targetDomain??"—"))}</strong></div></div><div class="field"><label for="repair-title">答案卡标题</label><input id="repair-title" name="title" value="${h(proposal.title)}" maxlength="500" required${disabled}></div><div class="field"><label for="repair-question">标准问题</label><textarea id="repair-question" name="canonicalQuestion" required${disabled}>${h(proposal.canonicalQuestion)}</textarea></div><div class="field"><label for="repair-aliases">同义问法与口语问法</label><textarea id="repair-aliases" name="aliases"${disabled}>${h(proposal.aliases.join("\n"))}</textarea><div class="field-help">每行一个问法；系统会用它们提升相同问题和口语表达的命中率。</div></div><div class="field"><label for="repair-answer">修订后的标准答案</label><textarea id="repair-answer" class="repair-answer" name="answerTemplate" required${disabled}>${h(proposal.answerTemplate)}</textarea></div><div class="repair-section-title"><h3>必答项和证据边界</h3><span>不能删除正式答案卡已有的安全约束</span></div>${proposal.obligations.map((item)=>`<fieldset class="obligation-card" data-obligation data-id="${h(item.id)}"><legend>${h(item.id)} · ${h(item.label)}</legend><div class="field"><label>必答项名称</label><input aria-label="${h(item.id)} 必答项名称" data-field="label" value="${h(item.label)}" required${disabled}></div><div class="grid two-col"><div class="field"><label>必须覆盖的概念</label><textarea aria-label="${h(item.id)} 必须覆盖的概念" data-field="requiredConcepts"${disabled}>${h(item.requiredConcepts.join("\n"))}</textarea></div><div class="field"><label>禁止出现的承诺</label><textarea aria-label="${h(item.id)} 禁止出现的承诺" data-field="forbiddenClaims"${disabled}>${h(item.forbiddenClaims.join("\n"))}</textarea></div></div><div class="field"><label>正式证据路径</label><textarea aria-label="${h(item.id)} 正式证据路径" data-field="preferredEvidencePaths"${disabled}>${h(item.preferredEvidencePaths.join("\n"))}</textarea></div><input type="hidden" data-field="evidencePolicy" value="${h(item.evidencePolicy)}"></fieldset>`).join("")}<div class="repair-section-title"><h3>五类验证问题</h3><span>标准、同义、口语、追问和边界负例各一条</span></div><div class="regression-grid">${proposal.regressionQuestions.map((item)=>`<label><span>${h(label(item.kind))}</span><textarea data-regression-kind="${h(item.kind)}" required${disabled}>${h(item.question)}</textarea></label>`).join("")}</div><div class="field"><label for="repair-summary">修订说明</label><textarea id="repair-summary" name="generationSummary"${disabled}>${h(proposal.generationSummary)}</textarea></div></form>`;}
+function renderRepairValidation(validation:RepairValidation|undefined){if(validation===undefined)return empty("提交草稿后，系统会在隔离环境执行五类验证");if(validation.status==="queued"||validation.status==="running")return`<div class="repair-progress compact"><div class="spinner" aria-hidden="true"></div><strong>${h(label(validation.status))}</strong><span>正在检查 Schema、证据、命中、必答项和禁答主张。</span></div>`;const rows=validation.result?.targeted??[];return`<div class="validation-summary ${validation.status}"><strong>${validation.status==="passed"?"五类问题全部通过":"验证未通过，已退回修订"}</strong><span>${validation.passedCases} / ${validation.totalCases} 项通过</span></div>${rows.length?table(["问题类型","验证问题","结论","说明"],rows.map((item)=>`<tr><td>${badge(item.kind)}</td><td>${h(item.question)}</td><td>${badge(item.passed?"passed":"failed")}</td><td>${h(item.assessment?.explanation??item.review?.summary??"确定性检查未通过")}</td></tr>`)):""}${validation.errorCode?`<div class="notice error mt-16">${h(errorMessage(validation.errorCode))}</div>`:""}`;}
+function renderRepairTechnicalDetails(draft:RepairDraft|undefined,validation:RepairValidation|undefined,publication:RepairPublication|undefined){if(!draft)return"";return`<details class="panel technical-details mt-16"><summary>高级技术详情</summary><div class="panel-body repair-target"><div><span>目标路径</span><strong class="mono">${h(draft.targetPath??"—")}</strong></div><div><span>验证记录</span><strong class="mono">${h(validation?.validationId??"—")}</strong></div><div><span>发布提交</span><strong class="mono">${h(publication?.resultingGitRevision??"—")}</strong></div><div><span>目录哈希</span><strong class="mono">${h(publication?.catalogHash??"—")}</strong></div><div><span>活动快照</span><strong class="mono">${h(publication?.snapshotReleaseId??"—")}</strong></div><div><span>可回滚版本</span><strong class="mono">${h(publication?.previousReleaseId??"—")}</strong></div></div></details>`;}
+function repairActionHelp(draft:RepairDraft|undefined){if(!draft)return"只生成运营草稿，不会直接改写知识库";if(draft.status==="draft_ready"||draft.status==="validation_failed")return"修改会自动保存；验证期间正式知识库保持不变";if(draft.status==="ready_to_publish")return"发布成功后，相同问法和同义问法会使用新答案卡";if(draft.status==="published")return"本次修订已写入正式知识库并切换活动快照";return"后台作业执行中，可离开页面后再回来查看";}
 async function renderFeedback() {
   const [values,reviews] = await Promise.all([api.get<FeedbackMeta[]>("/v1/feedback"),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
   const reviewByRequest=new Map(reviews.map((review)=>[review.requestId,review]));
@@ -217,7 +260,7 @@ async function renderRegressions() {
 async function renderReleases() {
   const releases = await api.get<Release[]>("/v1/releases");
   content(
-    `<div class="notice">发布前必须绑定一次通过的回归运行，并由非发起人完成批准。发布生成不可变目录快照；回滚只切换活动指针。</div><div class="toolbar mt-14"><button class="button primary" data-action="new-release">创建发布</button></div>${
+    `<div class="notice">管理员确认后仍必须通过自动回归。发布会生成不可变目录快照，所有写入和回滚都有审计记录。</div><div class="toolbar mt-14"><button class="button primary" data-action="new-release">创建发布</button></div>${
       releases.length
         ? table(
             [
@@ -282,7 +325,22 @@ async function handleClick(event: MouseEvent) {
       await answerReviewDrawer(target.dataset.id!);
       break;
     case "issue-detail":
-      await issueDrawer(target.dataset.id!);
+      location.hash=`repair/${encodeURIComponent(target.dataset.id!)}`;
+      break;
+    case "repair-generate":
+      await runRepairAction(target,()=>api.post(`/v1/issues/${encodeURIComponent(repairIssueId!)}/repair-drafts`,{}),"修订 Agent 已开始生成草稿");
+      break;
+    case "repair-validate":
+      try{await saveRepairDraftNow();await runRepairAction(target,()=>api.post(`/v1/repair-drafts/${encodeURIComponent(activeRepairDraft!.draftId)}/validate`,{}),"自动验证已开始");}catch(error){toast(message(error),true);}
+      break;
+    case "repair-publish":
+      if(window.confirm("确认发布这份修订？验证通过后，系统会写入正式知识库并应用到后续回答。"))await runRepairAction(target,()=>api.post(`/v1/repair-drafts/${encodeURIComponent(activeRepairDraft!.draftId)}/publish`,{}),"正在发布并切换线上知识版本");
+      break;
+    case "repair-dismiss":
+      if(window.confirm("确认该问题无需处理？这不会修改线上知识。")){await api.patch(`/v1/issues/${encodeURIComponent(repairIssueId!)}`,{status:"dismissed"});toast("问题已标记为无需处理");location.hash="issues";}
+      break;
+    case "repair-rollback":
+      if(window.confirm("确认回滚本次知识修订？系统会恢复上一活动版本并重新打开问题。"))await runRepairAction(target,()=>api.post(`/v1/repair-publications/${encodeURIComponent(target.dataset.id!)}/rollback`,{}),"回滚作业已开始");
       break;
     case "issue-page-prev":
       issueFilters={...issueFilters,offset:Math.max(0,issueFilters.offset-ISSUE_PAGE_SIZE)};
@@ -345,11 +403,6 @@ async function handleSubmit(event: SubmitEvent) {
       toast("复查处理状态已更新");
       closeOverlay();
       await loadCurrent();
-    } else if(form.id==="issue-form"){
-      await api.patch(`/v1/issues/${form.dataset.id}`,{status:data.get("status")});
-      toast("问题处理进度已更新");
-      closeOverlay();
-      await loadCurrent();
     } else if (form.id === "review-form") {
       await api.post(`/v1/revisions/${form.dataset.id}/reviews`, {
         decision: data.get("decision"),
@@ -403,17 +456,21 @@ async function handleChange(event: Event) {
   }
 }
 
-async function issueDrawer(id:string){
-  const item=await api.get<IssueDetail>(`/v1/issues/${id}`);
-  const occurrenceRows=item.occurrences.map((occurrence)=>`<tr><td>${badge(occurrence.sourceType)}</td><td>${time(occurrence.createdAt)}</td><td class="mono">${shortId(occurrence.requestId,16)}</td><td><button class="button small" data-action="${occurrence.sourceType==="feedback"?"feedback-detail":"answer-review-detail"}" data-id="${h(occurrence.sourceId)}">查看原始记录</button></td></tr>`);
-  const allowed=nextIssueStatuses(item.status);
-  overlay(`<div class="drawer-head"><div><strong>${h(label(item.category))}</strong> ${badge(item.priority)} ${badge(item.status)}</div><button class="button" data-action="close-overlay">关闭</button></div>
-    <div class="drawer-body"><div class="notice"><strong>当前下一步：</strong>${h(nextIssueAction(item))}。关闭问题不会自动修改答案；只有审核、回归并发布后的答案卡或知识修订才会影响用户。</div>
-    <div class="issue-facts"><div><span>影响用户</span><strong>${item.affectedUserCount}</strong></div><div><span>重复发生</span><strong>${item.occurrenceCount}</strong></div><div><span>处理时限</span><strong class="${isOverdue(item.slaDueAt)&&isActionableStatus(item.status)?"danger-text":""}">${h(slaText(item.slaDueAt,item.status))}</strong></div></div>
-    <div class="detail-section"><h3>问题范围</h3><div class="content-box">${h(label(item.scope??"未分类"))}${item.answerCardKey?`<br><span class="muted">关联答案卡标识：</span><span class="mono">${shortId(item.answerCardKey,16)}</span>`:""}</div></div>
-    <form id="issue-form" data-id="${h(id)}"><div class="field"><label for="issue-workflow-status">处理阶段</label><select id="issue-workflow-status" name="status">${allowed.map((value)=>option(value,item.status)).join("")}</select><div class="field-help">${h(issueStatusHelp(item.status))}。后台管理员开始处理后进入“修订中”，修订完成后必须经过“待验证”才能标记“已解决”。</div></div><button class="button primary" type="submit">保存处理进度</button></form>
-    <div class="detail-section mt-16"><h3>合并的证据记录</h3>${occurrenceRows.length?table(["来源","发生时间","请求标识","操作"],occurrenceRows):empty("暂无关联记录")}</div></div>`);
+function handleInput(event:Event){const target=event.target;if(!(target instanceof HTMLElement)||target.closest("#repair-proposal-form")===null||activeRepairDraft===undefined||!isRepairEditable(activeRepairDraft.status))return;const state=document.querySelector("#repair-save-state");if(state)state.textContent="有修改，正在等待自动保存…";if(repairSaveTimer!==undefined)clearTimeout(repairSaveTimer);repairSaveTimer=setTimeout(()=>void saveRepairDraftNow().catch((error)=>toast(message(error),true)),700);}
+async function saveRepairDraftNow(){
+  if(repairSaveTimer!==undefined){clearTimeout(repairSaveTimer);repairSaveTimer=undefined;}const draft=activeRepairDraft,form=document.querySelector<HTMLFormElement>("#repair-proposal-form");if(draft===undefined||draft.proposal===undefined||form===null||!isRepairEditable(draft.status))return;
+  const proposal=collectRepairProposal(form,draft.proposal),state=document.querySelector("#repair-save-state");if(state)state.textContent="正在保存…";
+  try{activeRepairDraft=await api.patch<RepairDraft>(`/v1/repair-drafts/${encodeURIComponent(draft.draftId)}`,{proposal});if(state)state.textContent=`已自动保存 ${new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"})}`;}
+  catch(error){if(state){state.textContent="自动保存失败，请检查内容";state.classList.add("danger-text");}throw error;}
 }
+function collectRepairProposal(form:HTMLFormElement,base:RepairProposal):RepairProposal{
+  const value=(name:string)=>String(new FormData(form).get(name)??"").trim(),lines=(source:string)=>source.split(/\r?\n/gu).map((item)=>item.trim()).filter(Boolean);
+  const obligations=[...form.querySelectorAll<HTMLElement>("[data-obligation]")].map((element)=>{const get=(field:string)=>String(element.querySelector<HTMLInputElement|HTMLTextAreaElement>(`[data-field="${field}"]`)?.value??"");return{id:element.dataset.id!,label:get("label").trim(),evidencePolicy:get("evidencePolicy") as "direct"|"synthesis"|"customer_input",requiredConcepts:lines(get("requiredConcepts")),forbiddenClaims:lines(get("forbiddenClaims")),preferredEvidencePaths:lines(get("preferredEvidencePaths"))};});
+  const regressionByKind=new Map([...form.querySelectorAll<HTMLTextAreaElement>("[data-regression-kind]")].map((element)=>[element.dataset.regressionKind!,element.value.trim()] as const));
+  return{...base,title:value("title"),canonicalQuestion:value("canonicalQuestion"),aliases:lines(value("aliases")),answerTemplate:value("answerTemplate"),obligations,regressionQuestions:base.regressionQuestions.map((item)=>({...item,question:regressionByKind.get(item.kind)??item.question})),generationSummary:value("generationSummary")};
+}
+async function runRepairAction(button:HTMLElement,operation:()=>Promise<unknown>,notice:string){const control=button instanceof HTMLButtonElement?button:undefined;if(control){control.disabled=true;control.setAttribute("aria-busy","true");}try{await operation();toast(notice);await renderRepairWorkbench();scheduleRepairRefresh(true);}catch(error){toast(message(error),true);}finally{if(control){control.disabled=false;control.removeAttribute("aria-busy");}}}
+function scheduleRepairRefresh(force=false){if(repairRefreshTimer!==undefined)clearTimeout(repairRefreshTimer);repairRefreshTimer=setTimeout(()=>{if(current==="repair"&&(force||activeRepairDraft&&["generating","validating","publishing"].includes(activeRepairDraft.status)))void renderRepairWorkbench().catch(handleApiError);},1_800);}
 
 async function answerReviewDrawer(id:string){
   const item=await api.get<AnswerReviewDetail>(`/v1/answer-reviews/${id}`);
@@ -476,7 +533,7 @@ async function cardDrawer(id: string) {
 }
 function reviewDrawer(id: string) {
   overlay(
-    `<div class="drawer-head"><strong>审核答案卡修订</strong><button class="button" data-action="close-overlay">关闭</button></div><form class="drawer-body" id="review-form" data-id="${h(id)}"><div class="notice">创建人不能审核自己创建的修订。批准后会生成独立批准记录。</div><div class="field"><label>审核结论</label><select name="decision" aria-label="审核结论"><option value="approved">批准</option><option value="changes_requested">要求修改</option><option value="rejected">拒绝</option></select></div><div class="field"><label>审核意见</label><textarea name="comment" aria-label="审核意见" maxlength="4000" required></textarea></div><button class="button primary" type="submit">提交审核</button></form>`,
+    `<div class="drawer-head"><strong>审核答案卡修订</strong><button class="button" data-action="close-overlay">关闭</button></div><form class="drawer-body" id="review-form" data-id="${h(id)}"><div class="notice">当前后台管理员可以完成确认；批准仍会生成独立审计记录，并且不能跳过自动回归直接发布。</div><div class="field"><label>审核结论</label><select name="decision" aria-label="审核结论"><option value="approved">批准</option><option value="changes_requested">要求修改</option><option value="rejected">拒绝</option></select></div><div class="field"><label>审核意见</label><textarea name="comment" aria-label="审核意见" maxlength="4000" required></textarea></div><button class="button primary" type="submit">提交审核</button></form>`,
   );
 }
 function newCardDrawer() {
@@ -514,7 +571,7 @@ function newCardDrawer() {
   );
 }
 function releaseDrawer() {
-  overlay(`<div class="drawer-head"><strong>创建知识发布</strong><button class="button" data-action="close-overlay">关闭</button></div><form class="drawer-body" id="release-form"><div class="notice">请粘贴通过 Schema 校验的发布清单。系统还会校验回归运行必须通过、双知识库提交未漂移、发起人与批准人分离。</div><div class="field"><label>发布清单 JSON</label><textarea name="manifest" aria-label="发布清单 JSON" class="textarea-tall" required>{
+  overlay(`<div class="drawer-head"><strong>创建知识发布</strong><button class="button" data-action="close-overlay">关闭</button></div><form class="drawer-body" id="release-form"><div class="notice">请粘贴通过 Schema 校验的发布清单。系统会校验回归运行和双知识库版本，当前后台管理员可以完成确认。</div><div class="field"><label>发布清单 JSON</label><textarea name="manifest" aria-label="发布清单 JSON" class="textarea-tall" required>{
   "schemaVersion": 1,
   "releaseId": "KR-2026-08-001",
   "professionalRevision": "",
@@ -574,8 +631,7 @@ function issueRow(item:IssuePage["items"][number],compact:boolean){
 function isActionableStatus(value:IssueStatus){return value!=="resolved"&&value!=="dismissed";}
 function isOverdue(value:string){return new Date(value).valueOf()<Date.now();}
 function slaText(value:string,status:IssueStatus){if(!isActionableStatus(status))return"已结束";const milliseconds=new Date(value).valueOf()-Date.now(),absolute=Math.abs(milliseconds),hours=Math.max(1,Math.ceil(absolute/3_600_000));return milliseconds<0?`已超时 ${hours} 小时`:`剩余 ${hours} 小时`;}
-function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open")return"开始修订";if(item.status==="in_progress")return"提交验证";if(item.status==="validating")return"完成回归验证";return"查看记录";}
-function nextIssueStatuses(currentStatus:IssueStatus):IssueStatus[]{const next:Record<IssueStatus,IssueStatus[]>={open:["open","in_progress","dismissed"],in_progress:["in_progress","validating","open","dismissed"],validating:["validating","resolved","in_progress","dismissed"],resolved:["resolved","open"],dismissed:["dismissed","open"]};return next[currentStatus];}
+function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open")return"打开修订工作台";if(item.status==="in_progress")return"继续修订";if(item.status==="validating")return"查看验证或发布";if(item.status==="resolved")return"查看已发布记录";return"查看记录";}
 
 function content(value: string) {
   const element = document.querySelector("#content");
@@ -634,9 +690,11 @@ function domainName(value: string) {
       : value;
 }
 function viewFromHash(): ViewName {
+  if(location.hash.startsWith("#repair/"))return"repair";
   const value = location.hash.slice(1) as ViewName;
   return nav.some((x) => x.id === value) ? value : "dashboard";
 }
+function repairIdFromHash():string|undefined{if(!location.hash.startsWith("#repair/"))return undefined;const value=decodeURIComponent(location.hash.slice("#repair/".length));return value||undefined;}
 function message(error: unknown) {
   return error instanceof ApiError
     ? errorMessage(error.code)

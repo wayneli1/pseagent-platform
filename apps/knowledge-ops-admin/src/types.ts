@@ -1,4 +1,4 @@
-export type ViewName="dashboard"|"issues"|"feedback"|"cards"|"regressions"|"releases"|"audit";
+export type ViewName="dashboard"|"issues"|"repair"|"feedback"|"cards"|"regressions"|"releases"|"audit";
 export type FeedbackClassification="useful"|"incorrect"|"missing"|"review_requested"|"evidence"|"correction";
 export type FeedbackStatus="new"|"triaged"|"in_review"|"resolved"|"rejected";
 export type ReviewProcessingStatus="queued"|"running"|"completed"|"errored";
@@ -16,6 +16,14 @@ export interface IssueSummary {issueId:string;fingerprint:string;title:string;pr
 export interface IssueOccurrence {occurrenceId:string;issueId:string;sourceType:"answer_review"|"feedback";sourceId:string;requestId:string;pseudonymousUserId:string;createdAt:string;}
 export interface IssueDetail extends IssueSummary {occurrences:IssueOccurrence[];}
 export interface IssuePage {items:IssueSummary[];total:number;}
+export type RepairTargetKind="answer_card"|"knowledge_page"|"retrieval_rule"|"system_fix";
+export type RepairDraftStatus="generating"|"draft_ready"|"validating"|"validation_failed"|"ready_to_publish"|"publishing"|"published"|"failed";
+export type RepairRegressionKind="canonical"|"alias"|"colloquial"|"follow_up"|"negative";
+export interface RepairObligation {id:string;label:string;evidencePolicy:"direct"|"synthesis"|"customer_input";requiredConcepts:string[];forbiddenClaims:string[];preferredEvidencePaths:string[];}
+export interface RepairProposal {rootCause:IssueCategory;targetKind:RepairTargetKind;targetDomain?:string;targetPath?:string;cardId?:string;title:string;canonicalQuestion:string;aliases:string[];answerTemplate:string;obligations:RepairObligation[];regressionQuestions:Array<{kind:RepairRegressionKind;question:string}>;generationSummary:string;publishable:boolean;blockingReason?:string;}
+export interface RepairDraft {draftId:string;issueId:string;status:RepairDraftStatus;targetKind?:RepairTargetKind;targetDomain?:string;targetPath?:string;baseGitRevision?:string;model:"deepseek_v4_flash";createdBy:string;errorCode?:string;createdAt:string;updatedAt:string;proposal?:RepairProposal;}
+export interface RepairValidation {validationId:string;draftId:string;issueId:string;status:"queued"|"running"|"passed"|"failed";totalCases:number;passedCases:number;model:"deepseek_v4_flash";errorCode?:string;createdAt:string;completedAt?:string;result?:{passed?:boolean;targeted?:Array<{kind:RepairRegressionKind;question:string;passed:boolean;exactMatch:boolean;assessment?:{passed:boolean;explanation:string}|null;review?:{verdict:string;summary:string}|null}>;fullRegression?:Array<{caseId:string;passed:boolean}>;evidenceIssues?:string[];};}
+export interface RepairPublication {publicationId:string;draftId:string;issueId:string;status:"pending"|"publishing"|"published"|"failed"|"rolled_back";targetDomain:string;targetPath:string;baseGitRevision:string;resultingGitRevision?:string;catalogHash?:string;snapshotReleaseId?:string;previousReleaseId?:string;createdBy:string;errorCode?:string;createdAt:string;publishedAt?:string;rolledBackAt?:string;}
 export interface CardRevision {revisionId:string;cardId:string;domain:string;revision:number;status:string;content:Record<string,unknown>;createdBy:string;baseGitRevision:string;createdAt:string;updatedAt:string;}
 export interface OpsJob {jobId:string;type:string;status:string;attempts:number;lockedBy?:string;errorCode?:string;createdAt:string;updatedAt:string;}
 export interface RegressionRun {runId:string;status:string;totalCases:number;passedCases:number;report?:{model?:string;passed?:boolean;summary?:{averageScore?:number;p95LatencyMs?:number;safetyFailures?:number};suites?:unknown[];kinds?:unknown[]};createdAt:string;completedAt?:string;}

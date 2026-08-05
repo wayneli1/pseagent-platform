@@ -488,6 +488,70 @@ tr[data-action]:hover {
   background: #fef2f2;
   color: #991b1b;
 }
+.warning {
+  background: #fff7ed;
+  color: #9a3412;
+}
+.repair-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.repair-header h2 { margin: 8px 0 5px; font-size: 24px; }
+.repair-header p { margin: 0; color: var(--muted); }
+.text-button { padding: 0; border: 0; background: transparent; color: var(--blue); font-weight: 600; }
+.repair-header-status { display: grid; gap: 4px; min-width: 250px; padding: 12px 14px; border: 1px solid #bfdbfe; border-radius: 9px; background: #eff6ff; }
+.repair-header-status span { color: #1d4ed8; font-size: 12px; }
+.repair-header-status strong { color: #1e3a8a; }
+.repair-stepper { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 0; margin: 22px 0 0; padding: 0; list-style: none; }
+.repair-stepper li { position: relative; display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.repair-stepper li:not(:last-child)::after { content: ""; position: absolute; left: 34px; right: 8px; top: 15px; height: 2px; background: #e2e8f0; z-index: 0; }
+.repair-stepper i { position: relative; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; border: 2px solid #cbd5e1; border-radius: 50%; background: #fff; font-style: normal; }
+.repair-stepper .active { color: #1d4ed8; }
+.repair-stepper .active i { border-color: var(--blue); color: var(--blue); background: #eff6ff; }
+.repair-stepper .done { color: #166534; }
+.repair-stepper .done i { border-color: #16a34a; color: #fff; background: #16a34a; }
+.repair-stepper .done:not(:last-child)::after { background: #86efac; }
+.repair-layout { display: grid; grid-template-columns: minmax(360px,.82fr) minmax(520px,1.18fr); gap: 16px; align-items: start; }
+.repair-evidence { min-width: 0; }
+.repair-editor { min-width: 0; }
+.evidence-card { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.evidence-card h4 { margin: 6px 0 0; color: var(--slate); font-size: 12px; }
+.evidence-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.repair-target { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-bottom: 16px; }
+.repair-target > div { display: grid; gap: 5px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
+.repair-target span { color: var(--muted); font-size: 11px; }
+.repair-target strong { overflow-wrap: anywhere; font-size: 13px; }
+.repair-section-title { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin: 24px 0 10px; }
+.repair-section-title h3 { margin: 0; font-size: 15px; }
+.repair-section-title span { color: var(--muted); font-size: 12px; }
+.obligation-card { margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; }
+.obligation-card legend { padding: 0 6px; font-size: 13px; font-weight: 700; }
+.repair-answer { min-height: 260px !important; font-family: inherit !important; font-size: 14px !important; line-height: 1.7; }
+.regression-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.regression-grid label { display: grid; gap: 6px; color: var(--slate); font-size: 12px; font-weight: 600; }
+.regression-grid label:last-child { grid-column: 1 / -1; }
+.regression-grid textarea { width: 100%; min-height: 74px; padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 7px; resize: vertical; font: inherit; font-weight: 400; }
+.repair-diff { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.repair-diff > div { display: grid; gap: 7px; }
+.repair-diff span { color: var(--muted); font-size: 12px; font-weight: 600; }
+.repair-answer-preview { border-color: #bbf7d0; background: #f0fdf4; }
+.repair-progress { display: grid; justify-items: center; gap: 10px; padding: 34px 20px; text-align: center; color: var(--muted); }
+.repair-progress strong { color: #1e293b; }
+.repair-progress.compact { padding: 18px 10px; }
+.spinner { width: 28px; height: 28px; border: 3px solid #dbeafe; border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.validation-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: #fef2f2; color: #991b1b; }
+.validation-summary.passed { background: #f0fdf4; color: #166534; }
+.validation-summary span { font-size: 12px; }
+.technical-details { overflow: hidden; }
+.technical-details summary { cursor: pointer; padding: 14px 18px; font-size: 13px; font-weight: 600; }
+.repair-actionbar { position: sticky; bottom: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 22px -8px -28px; padding: 14px 16px; border: 1px solid #cbd5e1; border-radius: 10px; background: rgba(255,255,255,.96); box-shadow: 0 -8px 28px rgba(15,23,42,.1); backdrop-filter: blur(8px); }
+.repair-actionbar > div { display: flex; align-items: center; gap: 8px; }
+.repair-actionbar > div:first-child { display: grid; gap: 3px; }
+.repair-actionbar span { color: var(--muted); font-size: 12px; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid #bfdbfe; outline-offset: 2px; }
 .drawer-backdrop {
   position: fixed;
   inset: 0;
@@ -604,6 +668,8 @@ tr[data-action]:hover {
   .two-col {
     grid-template-columns: 1fr;
   }
+  .repair-layout { grid-template-columns: 1fr; }
+  .repair-target { grid-template-columns: 1fr; }
 }
 @media (max-width: 600px) {
   .topbar {
@@ -625,4 +691,12 @@ tr[data-action]:hover {
     display: none;
   }
   .page-intro { align-items: flex-start; flex-direction: column; }
+  .repair-header { align-items: stretch; flex-direction: column; }
+  .repair-header-status { min-width: 0; }
+  .repair-stepper span { display: none; }
+  .repair-stepper li:not(:last-child)::after { left: 30px; right: 4px; }
+  .regression-grid, .repair-diff { grid-template-columns: 1fr; }
+  .regression-grid label:last-child { grid-column: auto; }
+  .repair-actionbar { align-items: stretch; flex-direction: column; margin-inline: 0; }
+  .repair-actionbar > div:last-child { display: grid; grid-template-columns: 1fr; }
 }
