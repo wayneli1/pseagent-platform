@@ -14,8 +14,11 @@ import type {
   IssuePage,
   IssueRecordInput,
   IssueStatus,
+  KnowledgeRepairDraft,
   OpsJob,
   OpsJobType,
+  RepairPublication,
+  RepairValidationRun,
   RegressionCaseRecord,
   RegressionRun,
   ReleaseRecord,
@@ -40,6 +43,18 @@ export interface KnowledgeOpsStore {
   getIssue(issueId: string): Promise<IssueCaseSummary | undefined>;
   listIssueOccurrences(issueId: string): Promise<readonly IssueOccurrence[]>;
   updateIssue(issueId: string, status: IssueStatus): Promise<IssueCaseSummary | undefined>;
+  createRepairDraft(value: KnowledgeRepairDraft): Promise<KnowledgeRepairDraft>;
+  getRepairDraft(draftId: string): Promise<KnowledgeRepairDraft | undefined>;
+  listRepairDrafts(issueId: string): Promise<readonly KnowledgeRepairDraft[]>;
+  updateRepairDraft(draftId: string, patch: Partial<Pick<KnowledgeRepairDraft,"status"|"targetKind"|"targetDomain"|"targetPath"|"baseGitRevision"|"encryptedPayload"|"errorCode">>): Promise<KnowledgeRepairDraft | undefined>;
+  createRepairValidation(value: RepairValidationRun): Promise<RepairValidationRun>;
+  getRepairValidation(validationId: string): Promise<RepairValidationRun | undefined>;
+  listRepairValidations(draftId: string): Promise<readonly RepairValidationRun[]>;
+  updateRepairValidation(validationId: string, patch: Partial<Pick<RepairValidationRun,"status"|"totalCases"|"passedCases"|"encryptedPayload"|"errorCode"|"completedAt">>): Promise<RepairValidationRun | undefined>;
+  createRepairPublication(value: RepairPublication): Promise<RepairPublication>;
+  getRepairPublication(publicationId: string): Promise<RepairPublication | undefined>;
+  listRepairPublications(draftId: string): Promise<readonly RepairPublication[]>;
+  updateRepairPublication(publicationId: string, patch: Partial<Pick<RepairPublication,"status"|"resultingGitRevision"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>): Promise<RepairPublication | undefined>;
   createCardRevision(value: CardRevision): Promise<CardRevision>;
   syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult>;
   listCardRevisions(): Promise<readonly CardRevision[]>;
@@ -74,6 +89,9 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   private readonly feedback = new Map<string, StoredFeedbackCase>();
   private readonly issues = new Map<string, IssueCase>();
   private readonly issueOccurrences = new Map<string, IssueOccurrence>();
+  private readonly repairDrafts = new Map<string,KnowledgeRepairDraft>();
+  private readonly repairValidations = new Map<string,RepairValidationRun>();
+  private readonly repairPublications = new Map<string,RepairPublication>();
   private readonly revisions = new Map<string, CardRevision>();
   private readonly reviews = new Map<string, ReviewRecord>();
   private readonly approvals = new Map<string, ApprovalRecord>();
@@ -130,6 +148,18 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async getIssue(id:string){const issue=this.issues.get(id);return issue===undefined?undefined:this.issueSummary(issue);}
   async listIssueOccurrences(id:string){return newest([...this.issueOccurrences.values()].filter((item)=>item.issueId===id).map(copy));}
   async updateIssue(id:string,status:IssueStatus){const issue=this.issues.get(id);if(issue===undefined)return undefined;const next={...issue,status,updatedAt:now()};this.issues.set(id,next);return this.issueSummary(next);}
+  async createRepairDraft(value:KnowledgeRepairDraft){const active=[...this.repairDrafts.values()].find((item)=>item.issueId===value.issueId&&item.status!=="published"&&item.status!=="failed");if(active!==undefined)throw new Error("active_repair_draft_already_exists");this.repairDrafts.set(value.draftId,copy(value));return copy(value);}
+  async getRepairDraft(id:string){return maybeCopy(this.repairDrafts.get(id));}
+  async listRepairDrafts(issueId:string){return newest([...this.repairDrafts.values()].filter((item)=>item.issueId===issueId).map(copy));}
+  async updateRepairDraft(id:string,patch:Partial<Pick<KnowledgeRepairDraft,"status"|"targetKind"|"targetDomain"|"targetPath"|"baseGitRevision"|"encryptedPayload"|"errorCode">>){const old=this.repairDrafts.get(id);if(old===undefined)return undefined;const next={...old,...patch,updatedAt:now()};this.repairDrafts.set(id,next);return copy(next);}
+  async createRepairValidation(value:RepairValidationRun){this.repairValidations.set(value.validationId,copy(value));return copy(value);}
+  async getRepairValidation(id:string){return maybeCopy(this.repairValidations.get(id));}
+  async listRepairValidations(draftId:string){return newest([...this.repairValidations.values()].filter((item)=>item.draftId===draftId).map(copy));}
+  async updateRepairValidation(id:string,patch:Partial<Pick<RepairValidationRun,"status"|"totalCases"|"passedCases"|"encryptedPayload"|"errorCode"|"completedAt">>){const old=this.repairValidations.get(id);if(old===undefined)return undefined;const next={...old,...patch};this.repairValidations.set(id,next);return copy(next);}
+  async createRepairPublication(value:RepairPublication){this.repairPublications.set(value.publicationId,copy(value));return copy(value);}
+  async getRepairPublication(id:string){return maybeCopy(this.repairPublications.get(id));}
+  async listRepairPublications(draftId:string){return newest([...this.repairPublications.values()].filter((item)=>item.draftId===draftId).map(copy));}
+  async updateRepairPublication(id:string,patch:Partial<Pick<RepairPublication,"status"|"resultingGitRevision"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const old=this.repairPublications.get(id);if(old===undefined)return undefined;const next={...old,...patch};this.repairPublications.set(id,next);return copy(next);}
   async createCardRevision(value: CardRevision) { this.revisions.set(value.revisionId, copy(value)); return copy(value); }
   async syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult> {
     const existing = [...this.revisions.values()].find((revision) =>

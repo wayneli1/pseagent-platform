@@ -1,13 +1,14 @@
 import { createHash,randomUUID } from "node:crypto";
 import { answerCardSchema, releaseManifestSchema, type KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import { ContentCipher } from "./crypto.js";
-import { assertAuthorized, assertSeparationOfDuties } from "./rbac.js";
-import { answerReviewIntakeSchema, feedbackIntakeSchema, releaseQualityReportImportSchema } from "./schemas.js";
+import { assertAuthorized } from "./rbac.js";
+import { answerReviewIntakeSchema, feedbackIntakeSchema, releaseQualityReportImportSchema, repairProposalSchema } from "./schemas.js";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
   AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision,
   FeedbackCaseListView, FeedbackCaseView, IssueCategory, IssueListQuery, IssuePriority, IssueStatus, OpsActor, RegressionCaseRecord,
-  ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
+  KnowledgeRepairDraft, KnowledgeRepairDraftSummary, KnowledgeRepairDraftView, RepairDraftProposal, RepairPublication,
+  RepairValidationRun, RepairValidationRunView, ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
 } from "./types.js";
 
 export class KnowledgeOpsService {
@@ -98,7 +99,42 @@ export class KnowledgeOpsService {
   async listIssues(actor:OpsActor,query:IssueListQuery){assertAuthorized(actor,"issue:read");return this.store.listIssues(query);}
   async issueDetail(actor:OpsActor,issueId:string){assertAuthorized(actor,"issue:read");const issue=await this.store.getIssue(issueId);if(issue===undefined)return undefined;return{...issue,occurrences:await this.store.listIssueOccurrences(issueId)};}
   async rebuildIssues(actor:OpsActor){assertAuthorized(actor,"issue:rebuild");let feedbackCount=0,reviewCount=0;for(const stored of await this.store.listFeedback()){if(stored.classification==="useful"||stored.status==="resolved"||stored.status==="rejected")continue;const payload=this.cipher.decrypt<FeedbackIssuePayload>(stored.encryptedPayload);await this.recordFeedbackIssue(stored,payload,await this.store.getAnswerReviewByRequestId(stored.requestId));feedbackCount++;}for(const stored of await this.store.listAnswerReviews()){if(stored.workflowStatus==="resolved"||stored.workflowStatus==="dismissed"||stored.verdict==="pass"||stored.verdict==="pending"&&stored.processingStatus!=="errored")continue;const payload=this.cipher.decrypt<AnswerReviewEncryptedPayload>(stored.encryptedPayload);const priority=stored.processingStatus==="errored"?"p3":stored.verdict==="fail"?"p0":"p1";const category=stored.processingStatus==="errored"?"review_error":primaryReviewIssueCategory(payload);await this.recordReviewIssue(stored,payload,priority,category);reviewCount++;}await this.audit(actor,"issue.rebuild","issue_case","all",{feedbackCount,reviewCount});return{feedbackCount,reviewCount};}
-  async triageIssue(actor:OpsActor,issueId:string,status:IssueStatus){assertAuthorized(actor,"issue:triage");const before=await this.store.getIssue(issueId);if(before===undefined)return undefined;if(!validIssueTransition(before.status,status))throw new Error("invalid_issue_transition");const value=await this.store.updateIssue(issueId,status);if(value)await this.audit(actor,"issue.triage","issue_case",issueId,{previousStatus:before.status,status});return value;}
+  async triageIssue(actor:OpsActor,issueId:string,status:"open"|"dismissed"){assertAuthorized(actor,"issue:triage");const before=await this.store.getIssue(issueId);if(before===undefined)return undefined;if(!validManualIssueTransition(before.status,status))throw new Error("invalid_issue_transition");const value=await this.store.updateIssue(issueId,status);if(value)await this.audit(actor,"issue.triage","issue_case",issueId,{previousStatus:before.status,status});return value;}
+
+  async listRepairDrafts(actor:OpsActor,issueId:string):Promise<readonly KnowledgeRepairDraftView[]>{assertAuthorized(actor,"repair:read");if(await this.store.getIssue(issueId)===undefined)throw new OpsNotFoundError("issue_not_found");return Promise.all((await this.store.listRepairDrafts(issueId)).map((draft)=>this.repairDraftView(draft)));}
+  async repairDraftDetail(actor:OpsActor,draftId:string):Promise<KnowledgeRepairDraftView|undefined>{assertAuthorized(actor,"repair:read");const draft=await this.store.getRepairDraft(draftId);return draft===undefined?undefined:this.repairDraftView(draft);}
+  async requestRepairDraft(actor:OpsActor,issueId:string){
+    assertAuthorized(actor,"repair:edit");const issue=await this.store.getIssue(issueId);if(issue===undefined)throw new OpsNotFoundError("issue_not_found");
+    if(issue.status==="resolved"||issue.status==="dismissed")throw new Error("issue_not_open_for_repair");
+    const existing=(await this.store.listRepairDrafts(issueId)).find((draft)=>draft.status!=="published"&&draft.status!=="failed");
+    if(existing!==undefined)return{draft:repairSummary(existing),enqueued:false};
+    const timestamp=this.timestamp(),draft:KnowledgeRepairDraft={draftId:randomUUID(),issueId,status:"generating",model:"deepseek_v4_flash",encryptedPayload:this.cipher.encrypt({}),createdBy:actor.actorId,createdAt:timestamp,updatedAt:timestamp};
+    const created=await this.store.createRepairDraft(draft);await this.store.updateIssue(issueId,"in_progress");const job=await this.store.enqueueJob("generate_repair_draft",{draftId:created.draftId});
+    await this.audit(actor,"repair.draft.request","repair_draft",created.draftId,{issueId,jobId:job.jobId});return{draft:repairSummary(created),job,enqueued:true};
+  }
+  async saveRepairDraft(actor:OpsActor,draftId:string,proposalSource:unknown){
+    assertAuthorized(actor,"repair:edit");const draft=await this.store.getRepairDraft(draftId);if(draft===undefined)throw new OpsNotFoundError("repair_draft_not_found");
+    if(!["draft_ready","validation_failed"].includes(draft.status))throw new Error("repair_draft_not_editable");const proposal=repairProposalSchema.parse(proposalSource);
+    const updated=await this.store.updateRepairDraft(draftId,{status:"draft_ready",targetKind:proposal.targetKind,...(proposal.targetDomain?{targetDomain:proposal.targetDomain}:{}),...(proposal.targetPath?{targetPath:proposal.targetPath}:{}),encryptedPayload:this.cipher.encrypt({proposal})});
+    await this.store.updateIssue(draft.issueId,"in_progress");await this.audit(actor,"repair.draft.update","repair_draft",draftId,{issueId:draft.issueId,targetKind:proposal.targetKind,targetDomain:proposal.targetDomain,publishable:proposal.publishable});return updated===undefined?undefined:this.repairDraftView(updated);
+  }
+  async requestRepairValidation(actor:OpsActor,draftId:string){
+    assertAuthorized(actor,"repair:validate");const draft=await this.store.getRepairDraft(draftId);if(draft===undefined)throw new OpsNotFoundError("repair_draft_not_found");
+    if(!["draft_ready","validation_failed"].includes(draft.status))throw new Error("repair_draft_not_ready_for_validation");const proposal=this.cipher.decrypt<{proposal?:RepairDraftProposal}>(draft.encryptedPayload).proposal;if(proposal===undefined||!proposal.publishable)throw new Error("repair_draft_not_publishable");
+    const timestamp=this.timestamp(),validation:RepairValidationRun={validationId:randomUUID(),draftId,issueId:draft.issueId,status:"queued",totalCases:proposal.regressionQuestions.length,passedCases:0,model:"deepseek_v4_flash",encryptedPayload:this.cipher.encrypt({}),createdAt:timestamp};
+    const created=await this.store.createRepairValidation(validation);await this.store.updateRepairDraft(draftId,{status:"validating"});await this.store.updateIssue(draft.issueId,"validating");const job=await this.store.enqueueJob("validate_repair_draft",{draftId,validationId:created.validationId});
+    await this.audit(actor,"repair.validation.request","repair_validation",created.validationId,{draftId,issueId:draft.issueId,jobId:job.jobId,totalCases:validation.totalCases});return{validation:validationSummary(created),job};
+  }
+  async listRepairValidations(actor:OpsActor,draftId:string):Promise<readonly RepairValidationRunView[]>{assertAuthorized(actor,"repair:read");return Promise.all((await this.store.listRepairValidations(draftId)).map((run)=>this.repairValidationView(run)));}
+  async requestRepairPublication(actor:OpsActor,draftId:string){
+    assertAuthorized(actor,"repair:publish");const draft=await this.store.getRepairDraft(draftId);if(draft===undefined)throw new OpsNotFoundError("repair_draft_not_found");
+    if(draft.status!=="ready_to_publish"||draft.targetDomain===undefined||draft.targetPath===undefined||draft.baseGitRevision===undefined)throw new Error("repair_draft_not_ready_for_publish");const latest=(await this.store.listRepairValidations(draftId))[0];if(latest?.status!=="passed")throw new Error("passing_repair_validation_required");
+    const timestamp=this.timestamp(),publication:RepairPublication={publicationId:randomUUID(),draftId,issueId:draft.issueId,status:"pending",targetDomain:draft.targetDomain,targetPath:draft.targetPath,baseGitRevision:draft.baseGitRevision,createdBy:actor.actorId,createdAt:timestamp};
+    const created=await this.store.createRepairPublication(publication);await this.store.updateRepairDraft(draftId,{status:"publishing"});await this.store.updateIssue(draft.issueId,"validating");const job=await this.store.enqueueJob("publish_repair",{publicationId:created.publicationId});
+    await this.audit(actor,"repair.publication.request","repair_publication",created.publicationId,{draftId,issueId:draft.issueId,jobId:job.jobId,targetDomain:draft.targetDomain,targetPath:draft.targetPath});return{publication:created,job};
+  }
+  async listRepairPublications(actor:OpsActor,draftId:string){assertAuthorized(actor,"repair:read");return this.store.listRepairPublications(draftId);}
+  async requestRepairRollback(actor:OpsActor,publicationId:string){assertAuthorized(actor,"repair:rollback");const publication=await this.store.getRepairPublication(publicationId);if(publication===undefined)throw new OpsNotFoundError("repair_publication_not_found");if(publication.status!=="published")throw new Error("repair_publication_not_rollbackable");const job=await this.store.enqueueJob("rollback_repair",{publicationId});await this.audit(actor,"repair.rollback.request","repair_publication",publicationId,{draftId:publication.draftId,issueId:publication.issueId,jobId:job.jobId});return job;}
 
   async listCards(actor: OpsActor){assertAuthorized(actor,"card:read");return this.store.listCardRevisions();}
   async enqueueCatalogSync(actor:OpsActor){
@@ -118,7 +154,7 @@ export class KnowledgeOpsService {
   }
   async reviewRevision(actor:OpsActor,revisionId:string,decision:ReviewRecord["decision"],comment:string){
     const revision=await this.store.getCardRevision(revisionId);if(!revision)throw new OpsNotFoundError("revision_not_found");
-    assertAuthorized(actor,"card:review",revision.domain); assertSeparationOfDuties(actor,revision.createdBy);
+    assertAuthorized(actor,"card:review",revision.domain);
     const review:ReviewRecord={reviewId:randomUUID(),revisionId,reviewerId:actor.actorId,decision,comment,createdAt:this.timestamp()};
     await this.store.addReview(review);
     const status=decision==="approved"?"approved":decision==="changes_requested"?"changes_requested":"deprecated";
@@ -140,7 +176,6 @@ export class KnowledgeOpsService {
   async listReleases(actor:OpsActor){assertAuthorized(actor,"release:read");return this.store.listReleases();}
   async requestRelease(actor:OpsActor,manifestSource:unknown){
     assertAuthorized(actor,"release:publish");const manifest=releaseManifestSchema.parse(manifestSource);
-    if(manifest.approvedBy.includes(actor.actorId)) throw new Error("release_requester_cannot_be_sole_approver");
     const run=await this.store.getRegressionRun(manifest.regressionRunId);const qualityGate=releaseQualityReportImportSchema.safeParse(run?.report);
     if(!run||run.status!=="passed"||!qualityGate.success||!qualityGate.data.passed)throw new Error("passing_release_quality_gate_required");
     const release:ReleaseRecord={...manifest,manifest,status:"pending",createdBy:actor.actorId};
@@ -152,6 +187,8 @@ export class KnowledgeOpsService {
   async auditEvents(actor:OpsActor){assertAuthorized(actor,"audit:read");return this.store.listAudit();}
 
   private timestamp(){return this.clock().toISOString();}
+  private repairDraftView(draft:KnowledgeRepairDraft):KnowledgeRepairDraftView{const payload=this.cipher.decrypt<{proposal?:RepairDraftProposal}>(draft.encryptedPayload);return{...repairSummary(draft),...(payload.proposal?{proposal:payload.proposal}:{})};}
+  private repairValidationView(run:RepairValidationRun):RepairValidationRunView{const payload=this.cipher.decrypt<{result?:Record<string,unknown>}>(run.encryptedPayload);return{...validationSummary(run),...(payload.result?{result:payload.result}:{})};}
   private recordFeedbackIssue(stored:StoredFeedbackCase,payload:FeedbackIssuePayload,linkedReview:StoredAnswerReviewCase|undefined){const conflict=linkedReview?.verdict==="pass";const category=conflict?"judgement_conflict" as const:feedbackIssueCategory(stored.classification as Exclude<StoredFeedbackCase["classification"],"useful">);const priority=conflict||stored.classification==="incorrect"?"p1" as const:"p2" as const;const cardKey=answerCardKey(payload.answerCardMatch),questionKey=hash(normalizeQuestion(payload.question)),groupKey=cardKey??questionKey;return this.store.recordIssue({fingerprint:hash(`${stored.scope??"unknown"}\0${groupKey}\0${category}`),title:`feedback:${category}:${groupKey.slice(0,12)}`,priority,category,...(stored.scope?{scope:stored.scope}:{}),...(cardKey?{answerCardKey:cardKey}:{}),occurredAt:stored.createdAt,occurrence:{sourceType:"feedback",sourceId:stored.caseId,requestId:stored.requestId,pseudonymousUserId:stored.pseudonymousUserId}});}
   private recordReviewIssue(stored:StoredAnswerReviewCase,payload:AnswerReviewEncryptedPayload,priority:IssuePriority,category:IssueCategory){const questionKey=hash(normalizeQuestion(payload.question)),cardKey=answerCardKey(payload.answerCardMatch),groupKey=cardKey??questionKey;return this.store.recordIssue({fingerprint:hash(`${stored.scope??"unknown"}\0${groupKey}\0${category}`),title:`review:${category}:${groupKey.slice(0,12)}`,priority,category,...(stored.scope?{scope:stored.scope}:{}),...(cardKey?{answerCardKey:cardKey}:{}),occurredAt:stored.createdAt,occurrence:{sourceType:"answer_review",sourceId:stored.reviewId,requestId:stored.requestId,pseudonymousUserId:stored.pseudonymousUserId}});}
   private async audit(actor:OpsActor,action:string,resourceType:string,resourceId:string,metadata:Record<string,unknown>){
@@ -168,5 +205,6 @@ function answerCardKey(match:Record<string,unknown>|undefined):string|undefined{
 function normalizeQuestion(value:string):string{return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu,"");}
 function hash(value:string):string{return createHash("sha256").update(value,"utf8").digest("hex");}
 function primaryReviewIssueCategory(payload:AnswerReviewEncryptedPayload):IssueCategory{return payload.result?.defects.find((item)=>item.severity==="critical")?.category??payload.result?.defects.find((item)=>item.severity==="major")?.category??payload.result?.defects[0]?.category??"coverage_gap";}
-const ISSUE_TRANSITIONS:Readonly<Record<IssueStatus,readonly IssueStatus[]>>={open:["open","in_progress","dismissed"],in_progress:["in_progress","validating","open","dismissed"],validating:["validating","resolved","in_progress","dismissed"],resolved:["resolved","open"],dismissed:["dismissed","open"]};
-function validIssueTransition(current:IssueStatus,next:IssueStatus):boolean{return ISSUE_TRANSITIONS[current].includes(next);}
+function validManualIssueTransition(current:IssueStatus,next:"open"|"dismissed"):boolean{return current===next||next==="dismissed"&&current!=="resolved"||next==="open"&&(current==="dismissed"||current==="resolved");}
+function repairSummary(draft:KnowledgeRepairDraft):KnowledgeRepairDraftSummary{const{encryptedPayload:_secret,...summary}=draft;return summary;}
+function validationSummary(run:RepairValidationRun):Omit<RepairValidationRun,"encryptedPayload">{const{encryptedPayload:_secret,...summary}=run;return summary;}

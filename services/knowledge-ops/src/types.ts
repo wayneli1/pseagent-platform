@@ -229,7 +229,11 @@ export type OpsJobType =
   | "regression_run"
   | "publish_release"
   | "rollback_release"
-  | "git_writeback";
+  | "git_writeback"
+  | "generate_repair_draft"
+  | "validate_repair_draft"
+  | "publish_repair"
+  | "rollback_repair";
 
 export interface OpsJob {
   readonly jobId: string;
@@ -331,6 +335,96 @@ export interface IssueListQuery {
 export interface IssuePage {
   readonly items: readonly IssueCaseSummary[];
   readonly total: number;
+}
+
+export type RepairTargetKind = "answer_card" | "knowledge_page" | "retrieval_rule" | "system_fix";
+export type RepairDraftStatus =
+  | "generating" | "draft_ready" | "validating" | "validation_failed"
+  | "ready_to_publish" | "publishing" | "published" | "failed";
+export type RepairValidationStatus = "queued" | "running" | "passed" | "failed";
+export type RepairPublicationStatus = "pending" | "publishing" | "published" | "failed" | "rolled_back";
+export type RepairRegressionKind = "canonical" | "alias" | "typo" | "follow_up" | "negative";
+
+export interface RepairObligation {
+  readonly id: string;
+  readonly label: string;
+  readonly evidencePolicy: "direct" | "synthesis" | "customer_input";
+  readonly requiredConcepts: readonly string[];
+  readonly forbiddenClaims: readonly string[];
+  readonly preferredEvidencePaths: readonly string[];
+}
+
+export interface RepairDraftProposal {
+  readonly rootCause: IssueCategory;
+  readonly targetKind: RepairTargetKind;
+  readonly targetDomain?: KnowledgeDomain;
+  readonly targetPath?: string;
+  readonly cardId?: string;
+  readonly title: string;
+  readonly canonicalQuestion: string;
+  readonly aliases: readonly string[];
+  readonly answerTemplate: string;
+  readonly obligations: readonly RepairObligation[];
+  readonly regressionQuestions: readonly { readonly kind: RepairRegressionKind; readonly question: string }[];
+  readonly generationSummary: string;
+  readonly publishable: boolean;
+  readonly blockingReason?: string;
+}
+
+export interface KnowledgeRepairDraft {
+  readonly draftId: string;
+  readonly issueId: string;
+  readonly status: RepairDraftStatus;
+  readonly targetKind?: RepairTargetKind;
+  readonly targetDomain?: KnowledgeDomain;
+  readonly targetPath?: string;
+  readonly baseGitRevision?: string;
+  readonly model: "deepseek_v4_flash";
+  readonly encryptedPayload: EncryptedPayload;
+  readonly createdBy: string;
+  readonly errorCode?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface KnowledgeRepairDraftSummary extends Omit<KnowledgeRepairDraft,"encryptedPayload"> {}
+export interface KnowledgeRepairDraftView extends KnowledgeRepairDraftSummary { readonly proposal?: RepairDraftProposal; }
+
+export interface RepairValidationRun {
+  readonly validationId: string;
+  readonly draftId: string;
+  readonly issueId: string;
+  readonly status: RepairValidationStatus;
+  readonly totalCases: number;
+  readonly passedCases: number;
+  readonly model: "deepseek_v4_flash";
+  readonly encryptedPayload: EncryptedPayload;
+  readonly errorCode?: string;
+  readonly createdAt: string;
+  readonly completedAt?: string;
+}
+
+export interface RepairValidationRunView extends Omit<RepairValidationRun,"encryptedPayload"> {
+  readonly result?: Record<string,unknown>;
+}
+
+export interface RepairPublication {
+  readonly publicationId: string;
+  readonly draftId: string;
+  readonly issueId: string;
+  readonly status: RepairPublicationStatus;
+  readonly targetDomain: KnowledgeDomain;
+  readonly targetPath: string;
+  readonly baseGitRevision: string;
+  readonly resultingGitRevision?: string;
+  readonly catalogHash?: string;
+  readonly snapshotReleaseId?: string;
+  readonly previousReleaseId?: string;
+  readonly createdBy: string;
+  readonly errorCode?: string;
+  readonly createdAt: string;
+  readonly publishedAt?: string;
+  readonly rolledBackAt?: string;
 }
 
 export interface DashboardSummary {

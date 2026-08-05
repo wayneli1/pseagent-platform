@@ -13,6 +13,11 @@ export type OpsAction =
   | "issue:read"
   | "issue:triage"
   | "issue:rebuild"
+  | "repair:read"
+  | "repair:edit"
+  | "repair:validate"
+  | "repair:publish"
+  | "repair:rollback"
   | "card:read"
   | "card:edit"
   | "card:review"
@@ -28,7 +33,7 @@ const GLOBAL_ACTIONS: Partial<Record<OpsRole, readonly OpsAction[]>> = {
   viewer: ["dashboard:read", "answer_review:read", "feedback:read", "issue:read", "card:read", "regression:read", "release:read"],
   operator: ["dashboard:read", "answer_review:read", "answer_review:triage", "feedback:read", "feedback:triage", "issue:read", "issue:triage", "card:read", "regression:read", "job:read"],
   release_manager: ["dashboard:read", "card:read", "regression:read", "regression:run", "release:read", "release:publish", "release:rollback", "job:read", "audit:read"],
-  admin: ["dashboard:read", "answer_review:read", "answer_review:triage", "feedback:read", "feedback:triage", "issue:read", "issue:triage", "issue:rebuild", "card:read", "card:edit", "card:review", "regression:read", "regression:run", "release:read", "release:publish", "release:rollback", "audit:read", "job:read"],
+  admin: ["dashboard:read", "answer_review:read", "answer_review:triage", "feedback:read", "feedback:triage", "issue:read", "issue:triage", "issue:rebuild", "repair:read", "repair:edit", "repair:validate", "repair:publish", "repair:rollback", "card:read", "card:edit", "card:review", "regression:read", "regression:run", "release:read", "release:publish", "release:rollback", "audit:read", "job:read"],
   service: ["answer_review:ingest", "feedback:ingest"],
 };
 
@@ -45,17 +50,8 @@ export function assertAuthorized(
   throw new OpsAuthorizationError("permission_denied");
 }
 
-export function assertSeparationOfDuties(
-  actor: OpsActor,
-  createdBy: string,
-): void {
-  if (actor.actorId === createdBy) {
-    throw new OpsAuthorizationError("creator_cannot_self_approve");
-  }
-}
-
 export class OpsAuthorizationError extends Error {
-  constructor(readonly code: "authentication_required" | "permission_denied" | "creator_cannot_self_approve") {
+  constructor(readonly code: "authentication_required" | "permission_denied") {
     super(code);
     this.name = "OpsAuthorizationError";
   }

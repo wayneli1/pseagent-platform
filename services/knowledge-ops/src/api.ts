@@ -1,7 +1,7 @@
 import { ZodError } from "zod";
 import { knowledgeDomainSchema } from "@pseagent/knowledge-governance-contracts";
 import { OpsAuthorizationError, StaticTokenAuthorizer } from "./rbac.js";
-import { answerReviewWorkflowPatchSchema, feedbackPatchSchema, issueListQuerySchema, issuePatchSchema, reviewInputSchema } from "./schemas.js";
+import { answerReviewWorkflowPatchSchema, emptyActionSchema, feedbackPatchSchema, issueListQuerySchema, issuePatchSchema, repairDraftUpdateSchema, reviewInputSchema } from "./schemas.js";
 import { KnowledgeOpsService, OpsNotFoundError } from "./service.js";
 
 export interface OpsApiRequest { readonly method:string; readonly path:string; readonly authorization?:string; readonly body?:unknown; }
@@ -29,10 +29,23 @@ export class KnowledgeOpsApi {
       }
       if(request.method==="GET"&&pathname==="/v1/issues"){const input=issueListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listIssues(actor,{limit:input.limit,offset:input.offset,...(input.status?{status:input.status}:{}),...(input.priority?{priority:input.priority}:{}),...(input.actionable===undefined?{}:{actionableOnly:input.actionable})}));}
       if(request.method==="POST"&&pathname==="/v1/issues/rebuild")return ok(await this.service.rebuildIssues(actor));
+      if(segments[0]==="v1"&&segments[1]==="issues"&&segments[2]&&segments[3]==="repair-drafts"){
+        if(request.method==="GET")return ok(await this.service.listRepairDrafts(actor,segments[2]));
+        if(request.method==="POST"){emptyActionSchema.parse(request.body??{});return created(await this.service.requestRepairDraft(actor,segments[2]));}
+      }
       if(segments[0]==="v1"&&segments[1]==="issues"&&segments[2]){
         if(request.method==="GET"){const value=await this.service.issueDetail(actor,segments[2]);return value?ok(value):notFound();}
         if(request.method==="PATCH"){const input=issuePatchSchema.parse(request.body);const value=await this.service.triageIssue(actor,segments[2],input.status);return value?ok(value):notFound();}
       }
+      if(segments[0]==="v1"&&segments[1]==="repair-drafts"&&segments[2]){
+        if(request.method==="GET"&&segments.length===3){const value=await this.service.repairDraftDetail(actor,segments[2]);return value?ok(value):notFound();}
+        if(request.method==="PATCH"&&segments.length===3){const input=repairDraftUpdateSchema.parse(request.body);const value=await this.service.saveRepairDraft(actor,segments[2],input.proposal);return value?ok(value):notFound();}
+        if(request.method==="POST"&&segments[3]==="validate"){emptyActionSchema.parse(request.body??{});return created(await this.service.requestRepairValidation(actor,segments[2]));}
+        if(request.method==="GET"&&segments[3]==="validations")return ok(await this.service.listRepairValidations(actor,segments[2]));
+        if(request.method==="POST"&&segments[3]==="publish"){emptyActionSchema.parse(request.body??{});return created(await this.service.requestRepairPublication(actor,segments[2]));}
+        if(request.method==="GET"&&segments[3]==="publications")return ok(await this.service.listRepairPublications(actor,segments[2]));
+      }
+      if(segments[0]==="v1"&&segments[1]==="repair-publications"&&segments[2]&&segments[3]==="rollback"&&request.method==="POST"){emptyActionSchema.parse(request.body??{});return created(await this.service.requestRepairRollback(actor,segments[2]));}
       if(request.method==="GET"&&pathname==="/v1/cards")return ok(await this.service.listCards(actor));
       if(request.method==="POST"&&pathname==="/v1/cards/sync")return created(await this.service.enqueueCatalogSync(actor));
       if(segments[0]==="v1"&&segments[1]==="cards"&&segments[2]&&segments[3]==="revisions"&&request.method==="POST"){
