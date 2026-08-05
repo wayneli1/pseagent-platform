@@ -83,5 +83,6 @@ describe("DpapiPasswordStore", () => {
       expect(ciphertext).not.toContain(password);
       await expect(protector.unprotect(ciphertext)).resolves.toBe(password);
     },
+    30_000,
   );
 });

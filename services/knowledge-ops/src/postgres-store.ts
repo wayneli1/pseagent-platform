@@ -20,6 +20,9 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     const migration = await readFile(fileURLToPath(new URL("../migrations/001_initial.sql", import.meta.url)), "utf8");
     await this.pool.query(migration);
   }
+  async ping(): Promise<boolean> {
+    try { await this.pool.query("SELECT 1"); return true; } catch { return false; }
+  }
   async close(): Promise<void> { await this.pool.end(); }
 
   async insertFeedback(v: StoredFeedbackCase): Promise<StoredFeedbackCase> {
