@@ -288,7 +288,7 @@ async function safeRollback(client: PoolClient) { try { await client.query("ROLL
 async function one(client:{query:(sql:string,values?:unknown[])=>Promise<{rows:QueryResultRow[]}>},sql:string,values:unknown[]) { const result=await client.query(sql,values); if(!result.rows[0]) throw new Error("database_write_failed"); return result.rows[0]; }
 function rows<T>(result:{rows:QueryResultRow[]}):T[]{return result.rows.map((row)=>map<T>(row));}
 function optional<T>(result:{rows:QueryResultRow[]}):T|undefined{return result.rows[0]===undefined?undefined:map<T>(result.rows[0]);}
-function map<T>(row:QueryResultRow):T { const output:Record<string,unknown>={}; for(const [key,value] of Object.entries(row)) output[key.replace(/_([a-z])/gu,(_,letter:string)=>letter.toUpperCase())]=value instanceof Date?value.toISOString():value; return output as T; }
+function map<T>(row:QueryResultRow):T { const output:Record<string,unknown>={}; for(const [key,value] of Object.entries(row)){if(value===null)continue;output[key.replace(/_([a-z])/gu,(_,letter:string)=>letter.toUpperCase())]=value instanceof Date?value.toISOString():value;} return output as T; }
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value !== null && typeof value === "object") {
