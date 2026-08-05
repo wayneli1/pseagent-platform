@@ -4,15 +4,15 @@ export type FeedbackStatus="new"|"triaged"|"in_review"|"resolved"|"rejected";
 export type ReviewProcessingStatus="queued"|"running"|"completed"|"errored";
 export type ReviewVerdict="pending"|"pass"|"needs_review"|"fail";
 export type ReviewWorkflowStatus="open"|"in_review"|"resolved"|"dismissed";
-export interface Dashboard {issues:{actionable:number;urgent:number;overdue:number;unassigned:number;byPriority:Record<IssuePriority,number>};feedback:Record<string,number>;answerReviews:{pendingHuman:number;passed:number;errored:number;total:number};cardsByStatus:Record<string,number>;jobs:Record<string,number>;activeReleaseId?:string;}
+export interface Dashboard {issues:{actionable:number;urgent:number;overdue:number;validating:number;byPriority:Record<IssuePriority,number>};feedback:Record<string,number>;answerReviews:{pendingHuman:number;passed:number;errored:number;total:number};cardsByStatus:Record<string,number>;jobs:Record<string,number>;activeReleaseId?:string;}
 export interface FeedbackMeta {caseId:string;requestId:string;pseudonymousUserId:string;userDisplayName?:string;classification:FeedbackClassification;status:FeedbackStatus;answerStatus:string;scope?:string;referenceCount:number;source:string;createdAt:string;updatedAt:string;}
 export interface FeedbackDetail extends FeedbackMeta {question:string;answer:string;comment:string;proposedAnswer?:string;questionId:number;answeredAt:string;answerCardMatch?:Record<string,unknown>;}
 export interface AnswerReviewMeta {reviewId:string;requestId:string;pseudonymousUserId:string;userDisplayName?:string;questionPreview:string;processingStatus:ReviewProcessingStatus;verdict:ReviewVerdict;workflowStatus:ReviewWorkflowStatus;answerStatus:string;scope?:string;referenceCount:number;source:string;model:string;score?:number;defectCount:number;errorCode?:string;createdAt:string;updatedAt:string;}
 export interface AnswerReviewDetail extends AnswerReviewMeta {questionId:number;question:string;answer:string;references:Array<Record<string,unknown>>;answeredAt:string;answerCardMatch?:Record<string,unknown>;answerCardActivation?:Record<string,unknown>;result?:{summary:string;defects:Array<{category:string;severity:string;summary:string;evidence:string}>;obligationChecks:Array<{obligationId:string;covered:boolean;explanation:string}>};}
 export type IssuePriority="p0"|"p1"|"p2"|"p3";
-export type IssueStatus="open"|"assigned"|"in_progress"|"validating"|"resolved"|"dismissed";
+export type IssueStatus="open"|"in_progress"|"validating"|"resolved"|"dismissed";
 export type IssueCategory="knowledge_gap"|"retrieval_gap"|"planning_gap"|"coverage_gap"|"logic_gap"|"citation_gap"|"expression_gap"|"user_incorrect"|"user_missing"|"review_requested"|"evidence"|"correction"|"judgement_conflict"|"review_error";
-export interface IssueSummary {issueId:string;fingerprint:string;title:string;priority:IssuePriority;status:IssueStatus;category:IssueCategory;scope?:string;answerCardKey?:string;ownerId?:string;slaDueAt:string;firstSeenAt:string;lastSeenAt:string;createdAt:string;updatedAt:string;occurrenceCount:number;affectedUserCount:number;}
+export interface IssueSummary {issueId:string;fingerprint:string;title:string;priority:IssuePriority;status:IssueStatus;category:IssueCategory;scope?:string;answerCardKey?:string;slaDueAt:string;firstSeenAt:string;lastSeenAt:string;createdAt:string;updatedAt:string;occurrenceCount:number;affectedUserCount:number;}
 export interface IssueOccurrence {occurrenceId:string;issueId:string;sourceType:"answer_review"|"feedback";sourceId:string;requestId:string;pseudonymousUserId:string;createdAt:string;}
 export interface IssueDetail extends IssueSummary {occurrences:IssueOccurrence[];}
 export interface IssuePage {items:IssueSummary[];total:number;}

@@ -99,7 +99,7 @@ async function renderDashboard() {
   const automated=summary.answerReviews.total===0?0:Math.round((summary.answerReviews.passed/summary.answerReviews.total)*100);
   const actionRows=issues.items.map((item)=>issueRow(item,true));
   content(
-    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>正常回答由系统收敛；管理员只关注高风险、超时和无人负责的问题组。</p></div><button class="button primary" data-nav="issues">进入问题中心</button></div><div class="grid metrics operations-metrics">${metric("紧急问题",summary.issues.urgent,"P0 / P1 优先处理",summary.issues.urgent?"danger":"neutral")}${metric("已经超时",summary.issues.overdue,"超过处理时限",summary.issues.overdue?"danger":"neutral")}${metric("无人负责",summary.issues.unassigned,"需要分派负责人",summary.issues.unassigned?"warning":"neutral")}${metric("待处理问题",summary.issues.actionable,"已合并重复反馈","warning")}${metric("自动复查通过",summary.answerReviews.passed,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${issues.total} 个问题组，已按风险和最近发生时间排序</span></div><button class="button small" data-nav="issues">查看全部</button></div>${actionRows.length?table(["优先级","问题类型","状态","影响","负责人","处理时限","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>问题优先级</h2><span class="muted">一个问题组可包含多位用户的重复反馈</span></div></div><div class="panel-body stack">${bars(summary.issues.byPriority)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
+    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>正常回答由系统收敛；后台管理员只关注高风险、超时和等待验证的问题组。</p></div><button class="button primary" data-nav="issues">进入问题中心</button></div><div class="grid metrics operations-metrics">${metric("紧急问题",summary.issues.urgent,"P0 / P1 优先处理",summary.issues.urgent?"danger":"neutral")}${metric("已经超时",summary.issues.overdue,"超过处理时限",summary.issues.overdue?"danger":"neutral")}${metric("等待验证",summary.issues.validating,"修订后需要回归验证",summary.issues.validating?"warning":"neutral")}${metric("待处理问题",summary.issues.actionable,"已合并重复反馈","warning")}${metric("自动复查通过",summary.answerReviews.passed,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${issues.total} 个问题组，已按风险和最近发生时间排序</span></div><button class="button small" data-nav="issues">查看全部</button></div>${actionRows.length?table(["优先级","问题类型","状态","影响","处理时限","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>问题优先级</h2><span class="muted">一个问题组可包含多位用户的重复反馈</span></div></div><div class="panel-body stack">${bars(summary.issues.byPriority)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
       jobs
         .slice(0, 3)
         .map((x) => `${badge(x.status)} ${h(label(x.type))}`)
@@ -116,10 +116,10 @@ async function renderIssues(){
   const page=await api.get<IssuePage>(`/v1/issues?${parameters}`);
   const start=page.total===0?0:issueFilters.offset+1,end=Math.min(page.total,issueFilters.offset+page.items.length);
   content(`<div class="page-intro"><div><h2>只管理需要行动的问题</h2><p>系统自动合并重复反馈和复查异常；原始问答仅在证据记录中按需查看。</p></div></div>
-    <div class="notice workflow-note"><strong>管理员负责：</strong>确认优先级与问题类型、分派负责人、跟踪修订和回归验证。系统不会因为用户点了“答案错误”就直接改写线上知识。</div>
+    <div class="notice workflow-note"><strong>后台管理员负责：</strong>确认问题类型、完成修订、执行回归验证并关闭问题。系统不会因为用户点了“答案错误”就直接改写线上知识。</div>
     <section class="panel mt-16"><div class="panel-head"><div><h2>问题队列</h2><span class="muted">共 ${page.total} 个问题组</span></div></div>
-    <div class="toolbar issue-toolbar"><select id="issue-status" class="button" aria-label="按处理阶段筛选"><option value="actionable"${issueFilters.status==="actionable"?" selected":""}>只看待处理</option><option value="all"${issueFilters.status==="all"?" selected":""}>全部阶段</option>${(["open","assigned","in_progress","validating","resolved","dismissed"] as IssueStatus[]).map((value)=>option(value,issueFilters.status)).join("")}</select><select id="issue-priority" class="button" aria-label="按优先级筛选"><option value="all"${issueFilters.priority==="all"?" selected":""}>全部优先级</option>${(["p0","p1","p2","p3"] as IssuePriority[]).map((value)=>option(value,issueFilters.priority)).join("")}</select><span class="muted">P0 2小时 · P1 8小时 · P2 24小时 · P3 72小时</span></div>
-    ${page.items.length?table(["优先级","问题类型","状态","影响","负责人","处理时限","最近发生","下一步"],page.items.map((item)=>issueRow(item,false))):empty("当前筛选条件下没有问题")}
+    <div class="toolbar issue-toolbar"><select id="issue-status" class="button" aria-label="按处理阶段筛选"><option value="actionable"${issueFilters.status==="actionable"?" selected":""}>只看待处理</option><option value="all"${issueFilters.status==="all"?" selected":""}>全部阶段</option>${(["open","in_progress","validating","resolved","dismissed"] as IssueStatus[]).map((value)=>option(value,issueFilters.status)).join("")}</select><select id="issue-priority" class="button" aria-label="按优先级筛选"><option value="all"${issueFilters.priority==="all"?" selected":""}>全部优先级</option>${(["p0","p1","p2","p3"] as IssuePriority[]).map((value)=>option(value,issueFilters.priority)).join("")}</select><span class="muted">P0 2小时 · P1 8小时 · P2 24小时 · P3 72小时</span></div>
+    ${page.items.length?table(["优先级","问题类型","状态","影响","处理时限","最近发生","下一步"],page.items.map((item)=>issueRow(item,false))):empty("当前筛选条件下没有问题")}
     <div class="pagination"><span class="muted">显示 ${start}–${end} / ${page.total}</span><div><button class="button small" data-action="issue-page-prev"${issueFilters.offset===0?" disabled":""}>上一页</button> <button class="button small" data-action="issue-page-next"${issueFilters.offset+ISSUE_PAGE_SIZE>=page.total?" disabled":""}>下一页</button></div></div></section>`);
 }
 async function renderFeedback() {
@@ -346,8 +346,7 @@ async function handleSubmit(event: SubmitEvent) {
       closeOverlay();
       await loadCurrent();
     } else if(form.id==="issue-form"){
-      const ownerId=String(data.get("ownerId")??"").trim();
-      await api.patch(`/v1/issues/${form.dataset.id}`,{status:data.get("status"),...(ownerId?{ownerId}:{})});
+      await api.patch(`/v1/issues/${form.dataset.id}`,{status:data.get("status")});
       toast("问题处理进度已更新");
       closeOverlay();
       await loadCurrent();
@@ -412,7 +411,7 @@ async function issueDrawer(id:string){
     <div class="drawer-body"><div class="notice"><strong>当前下一步：</strong>${h(nextIssueAction(item))}。关闭问题不会自动修改答案；只有审核、回归并发布后的答案卡或知识修订才会影响用户。</div>
     <div class="issue-facts"><div><span>影响用户</span><strong>${item.affectedUserCount}</strong></div><div><span>重复发生</span><strong>${item.occurrenceCount}</strong></div><div><span>处理时限</span><strong class="${isOverdue(item.slaDueAt)&&isActionableStatus(item.status)?"danger-text":""}">${h(slaText(item.slaDueAt,item.status))}</strong></div></div>
     <div class="detail-section"><h3>问题范围</h3><div class="content-box">${h(label(item.scope??"未分类"))}${item.answerCardKey?`<br><span class="muted">关联答案卡标识：</span><span class="mono">${shortId(item.answerCardKey,16)}</span>`:""}</div></div>
-    <form id="issue-form" data-id="${h(id)}"><div class="field"><label for="issue-owner">负责人</label><input id="issue-owner" name="ownerId" maxlength="128" value="${h(item.ownerId??"")}" placeholder="填写知识负责人账号"><div class="field-help">进入“已分派、修订中、待验证、已解决”前必须有负责人。</div></div><div class="field"><label for="issue-workflow-status">处理阶段</label><select id="issue-workflow-status" name="status">${allowed.map((value)=>option(value,item.status)).join("")}</select><div class="field-help">${h(issueStatusHelp(item.status))}。修订后必须进入“待验证”，通过回归验证后才能标记“已解决”。</div></div><button class="button primary" type="submit">保存处理进度</button></form>
+    <form id="issue-form" data-id="${h(id)}"><div class="field"><label for="issue-workflow-status">处理阶段</label><select id="issue-workflow-status" name="status">${allowed.map((value)=>option(value,item.status)).join("")}</select><div class="field-help">${h(issueStatusHelp(item.status))}。后台管理员开始处理后进入“修订中”，修订完成后必须经过“待验证”才能标记“已解决”。</div></div><button class="button primary" type="submit">保存处理进度</button></form>
     <div class="detail-section mt-16"><h3>合并的证据记录</h3>${occurrenceRows.length?table(["来源","发生时间","请求标识","操作"],occurrenceRows):empty("暂无关联记录")}</div></div>`);
 }
 
@@ -461,7 +460,7 @@ async function feedbackDrawer(id: string) {
       <form id="triage-form" data-id="${h(id)}">
         <div class="notice">如果用户误点了反馈类型，可在这里纠正。修改只影响工单分类，不会直接改写线上答案。</div>
         <div class="field"><label for="feedback-classification">反馈类型</label><select id="feedback-classification" name="classification">${classifications.map((x) => option(x,item.classification)).join("")}</select></div>
-        <div class="field"><label for="feedback-workflow-status">处理状态</label><select id="feedback-workflow-status" name="status">${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x,item.status)).join("")}</select><div class="field-help">待处理：尚未判断；已分类：已确认问题类型；处理中：已有负责人；已解决：修复并验证完成；已关闭：无效或重复反馈。</div></div>
+        <div class="field"><label for="feedback-workflow-status">处理状态</label><select id="feedback-workflow-status" name="status">${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x,item.status)).join("")}</select><div class="field-help">待处理：尚未判断；已分类：已确认问题类型；处理中：后台管理员正在核查；已解决：修复并验证完成；已关闭：无效或重复反馈。</div></div>
         <button class="button primary" type="submit">保存反馈处理结果</button>
       </form>
     </div>`,
@@ -570,13 +569,13 @@ function jsonDrawer(value: unknown) {
 function issueRow(item:IssuePage["items"][number],compact:boolean){
   const impact=`${item.affectedUserCount} 位用户 · ${item.occurrenceCount} 次`;
   const deadline=slaText(item.slaDueAt,item.status),overdue=isOverdue(item.slaDueAt)&&isActionableStatus(item.status);
-  return `<tr data-action="issue-detail" data-id="${h(item.issueId)}"><td>${badge(item.priority)}</td><td><strong>${h(label(item.category))}</strong>${item.answerCardKey?`<br><span class="muted">答案卡 ${shortId(item.answerCardKey,10)}</span>`:""}</td><td>${badge(item.status)}${compact?"":`<br><span class="muted">${h(issueStatusHelp(item.status))}</span>`}</td><td>${h(impact)}</td><td>${h(item.ownerId??"待分派")}</td><td><span class="${overdue?"danger-text":""}">${h(deadline)}</span></td>${compact?"":`<td>${time(item.lastSeenAt)}</td>`}<td><span class="action-link">${h(nextIssueAction(item))}</span></td></tr>`;
+  return `<tr data-action="issue-detail" data-id="${h(item.issueId)}"><td>${badge(item.priority)}</td><td><strong>${h(label(item.category))}</strong>${item.answerCardKey?`<br><span class="muted">答案卡 ${shortId(item.answerCardKey,10)}</span>`:""}</td><td>${badge(item.status)}${compact?"":`<br><span class="muted">${h(issueStatusHelp(item.status))}</span>`}</td><td>${h(impact)}</td><td><span class="${overdue?"danger-text":""}">${h(deadline)}</span></td>${compact?"":`<td>${time(item.lastSeenAt)}</td>`}<td><span class="action-link">${h(nextIssueAction(item))}</span></td></tr>`;
 }
 function isActionableStatus(value:IssueStatus){return value!=="resolved"&&value!=="dismissed";}
 function isOverdue(value:string){return new Date(value).valueOf()<Date.now();}
 function slaText(value:string,status:IssueStatus){if(!isActionableStatus(status))return"已结束";const milliseconds=new Date(value).valueOf()-Date.now(),absolute=Math.abs(milliseconds),hours=Math.max(1,Math.ceil(absolute/3_600_000));return milliseconds<0?`已超时 ${hours} 小时`:`剩余 ${hours} 小时`;}
-function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open")return"分派负责人";if(item.status==="assigned")return"开始修订";if(item.status==="in_progress")return"提交验证";if(item.status==="validating")return"完成回归验证";return"查看记录";}
-function nextIssueStatuses(currentStatus:IssueStatus):IssueStatus[]{const next:Record<IssueStatus,IssueStatus[]>={open:["open","assigned","dismissed"],assigned:["assigned","in_progress","open","dismissed"],in_progress:["in_progress","validating","assigned","dismissed"],validating:["validating","resolved","in_progress","dismissed"],resolved:["resolved","open"],dismissed:["dismissed","open"]};return next[currentStatus];}
+function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open")return"开始修订";if(item.status==="in_progress")return"提交验证";if(item.status==="validating")return"完成回归验证";return"查看记录";}
+function nextIssueStatuses(currentStatus:IssueStatus):IssueStatus[]{const next:Record<IssueStatus,IssueStatus[]>={open:["open","in_progress","dismissed"],in_progress:["in_progress","validating","open","dismissed"],validating:["validating","resolved","in_progress","dismissed"],resolved:["resolved","open"],dismissed:["dismissed","open"]};return next[currentStatus];}
 
 function content(value: string) {
   const element = document.querySelector("#content");

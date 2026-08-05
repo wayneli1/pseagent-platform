@@ -272,7 +272,7 @@ export interface AuditEvent {
 }
 
 export type IssuePriority = "p0" | "p1" | "p2" | "p3";
-export type IssueStatus = "open" | "assigned" | "in_progress" | "validating" | "resolved" | "dismissed";
+export type IssueStatus = "open" | "in_progress" | "validating" | "resolved" | "dismissed";
 export type IssueCategory =
   | "knowledge_gap" | "retrieval_gap" | "planning_gap" | "coverage_gap" | "logic_gap" | "citation_gap" | "expression_gap"
   | "user_incorrect" | "user_missing" | "review_requested" | "evidence" | "correction" | "judgement_conflict" | "review_error";
@@ -287,7 +287,6 @@ export interface IssueCase {
   readonly category: IssueCategory;
   readonly scope?: string;
   readonly answerCardKey?: string;
-  readonly ownerId?: string;
   readonly slaDueAt: string;
   readonly firstSeenAt: string;
   readonly lastSeenAt: string;
@@ -339,7 +338,7 @@ export interface DashboardSummary {
     readonly actionable: number;
     readonly urgent: number;
     readonly overdue: number;
-    readonly unassigned: number;
+    readonly validating: number;
     readonly byPriority: Record<IssuePriority,number>;
   };
   readonly feedback: Record<StoredFeedbackCase["status"], number>;

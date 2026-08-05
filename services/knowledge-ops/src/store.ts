@@ -13,6 +13,7 @@ import type {
   IssueOccurrence,
   IssuePage,
   IssueRecordInput,
+  IssueStatus,
   OpsJob,
   OpsJobType,
   RegressionCaseRecord,
@@ -38,7 +39,7 @@ export interface KnowledgeOpsStore {
   listIssues(query: IssueListQuery): Promise<IssuePage>;
   getIssue(issueId: string): Promise<IssueCaseSummary | undefined>;
   listIssueOccurrences(issueId: string): Promise<readonly IssueOccurrence[]>;
-  updateIssue(issueId: string, patch: Pick<Partial<IssueCase>,"status"|"ownerId">): Promise<IssueCaseSummary | undefined>;
+  updateIssue(issueId: string, status: IssueStatus): Promise<IssueCaseSummary | undefined>;
   createCardRevision(value: CardRevision): Promise<CardRevision>;
   syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult>;
   listCardRevisions(): Promise<readonly CardRevision[]>;
@@ -128,7 +129,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async listIssues(query:IssueListQuery):Promise<IssuePage>{const filtered=[...this.issues.values()].filter((item)=>(query.status===undefined||item.status===query.status)&&(query.priority===undefined||item.priority===query.priority)&&(!query.actionableOnly||isActionableIssue(item))).sort((left,right)=>priorityRank(left.priority)-priorityRank(right.priority)||right.lastSeenAt.localeCompare(left.lastSeenAt));return{items:filtered.slice(query.offset,query.offset+query.limit).map((item)=>this.issueSummary(item)),total:filtered.length};}
   async getIssue(id:string){const issue=this.issues.get(id);return issue===undefined?undefined:this.issueSummary(issue);}
   async listIssueOccurrences(id:string){return newest([...this.issueOccurrences.values()].filter((item)=>item.issueId===id).map(copy));}
-  async updateIssue(id:string,patch:Pick<Partial<IssueCase>,"status"|"ownerId">){const issue=this.issues.get(id);if(issue===undefined)return undefined;const next={...issue,...patch,updatedAt:now()};this.issues.set(id,next);return this.issueSummary(next);}
+  async updateIssue(id:string,status:IssueStatus){const issue=this.issues.get(id);if(issue===undefined)return undefined;const next={...issue,status,updatedAt:now()};this.issues.set(id,next);return this.issueSummary(next);}
   async createCardRevision(value: CardRevision) { this.revisions.set(value.revisionId, copy(value)); return copy(value); }
   async syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult> {
     const existing = [...this.revisions.values()].find((revision) =>
@@ -202,8 +203,8 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async appendAudit(value: AuditEvent) { this.audit.push(copy(value)); return copy(value); }
   async listAudit() { return newest(this.audit.map(copy)); }
   async dashboard(): Promise<DashboardSummary> {
-    const byPriority={p0:0,p1:0,p2:0,p3:0};let actionable=0,urgent=0,overdue=0,unassigned=0;const timestamp=Date.now();
-    for(const issue of this.issues.values())if(isActionableIssue(issue)){actionable++;byPriority[issue.priority]++;if(issue.priority==="p0"||issue.priority==="p1")urgent++;if(new Date(issue.slaDueAt).valueOf()<timestamp)overdue++;if(issue.ownerId===undefined)unassigned++;}
+    const byPriority={p0:0,p1:0,p2:0,p3:0};let actionable=0,urgent=0,overdue=0,validating=0;const timestamp=Date.now();
+    for(const issue of this.issues.values())if(isActionableIssue(issue)){actionable++;byPriority[issue.priority]++;if(issue.priority==="p0"||issue.priority==="p1")urgent++;if(new Date(issue.slaDueAt).valueOf()<timestamp)overdue++;if(issue.status==="validating")validating++;}
     const feedback = { new: 0, triaged: 0, in_review: 0, resolved: 0, rejected: 0 };
     for (const item of this.feedback.values()) feedback[item.status]++;
     const jobs = { queued: 0, running: 0, completed: 0, failed: 0 };
@@ -217,7 +218,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
       if(review.processingStatus==="errored")answerReviews.errored++;
       if(review.workflowStatus==="open"&&(review.verdict==="needs_review"||review.verdict==="fail"||review.processingStatus==="errored"))answerReviews.pendingHuman++;
     }
-    return { issues:{actionable,urgent,overdue,unassigned,byPriority},feedback, answerReviews, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
+    return { issues:{actionable,urgent,overdue,validating,byPriority},feedback, answerReviews, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
   }
   private finishJob(id: string, patch: Partial<OpsJob>) {
     const old = this.jobs.get(id); if (!old) throw new Error("job_not_found");

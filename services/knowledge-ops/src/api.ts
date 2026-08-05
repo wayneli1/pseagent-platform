@@ -31,7 +31,7 @@ export class KnowledgeOpsApi {
       if(request.method==="POST"&&pathname==="/v1/issues/rebuild")return ok(await this.service.rebuildIssues(actor));
       if(segments[0]==="v1"&&segments[1]==="issues"&&segments[2]){
         if(request.method==="GET"){const value=await this.service.issueDetail(actor,segments[2]);return value?ok(value):notFound();}
-        if(request.method==="PATCH"){const input=issuePatchSchema.parse(request.body);const value=await this.service.triageIssue(actor,segments[2],{...(input.status?{status:input.status}:{}),...(input.ownerId?{ownerId:input.ownerId}:{})});return value?ok(value):notFound();}
+        if(request.method==="PATCH"){const input=issuePatchSchema.parse(request.body);const value=await this.service.triageIssue(actor,segments[2],input.status);return value?ok(value):notFound();}
       }
       if(request.method==="GET"&&pathname==="/v1/cards")return ok(await this.service.listCards(actor));
       if(request.method==="POST"&&pathname==="/v1/cards/sync")return created(await this.service.enqueueCatalogSync(actor));
