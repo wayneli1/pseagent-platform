@@ -66,7 +66,7 @@ type Answer = (
 ) => Promise<TestResult>;
 
 describe("LunkrPseBridge", () => {
-  it("sends an immediate numbered acknowledgment and stores only structured user-question context", async () => {
+  it("sends an immediate numbered acknowledgment and stores structured bounded turn context", async () => {
     const answer = vi.fn<Answer>(async (question, context, signal) => {
       expect(signal).toBeInstanceOf(AbortSignal);
       return answered(`${question}:${context ?? "empty"}`);
@@ -80,8 +80,8 @@ describe("LunkrPseBridge", () => {
     expect(answer).toHaveBeenCalledTimes(2);
     expect(answer.mock.calls[0]?.[1]).toBeUndefined();
     expect(answer.mock.calls[1]?.[1]).toContain("第一问");
-    expect(answer.mock.calls[1]?.[1]).toContain('"version":2');
-    expect(answer.mock.calls[1]?.[1]).not.toContain("第一问:empty");
+    expect(answer.mock.calls[1]?.[1]).toContain('"version":3');
+    expect(answer.mock.calls[1]?.[1]).toContain('"answerOutline":"第一问:empty"');
     expect(answer.mock.calls[1]?.[1]).not.toContain("已收到问题");
     expect(sentTexts(sendText)).toEqual([
       startedNotice(1),
@@ -1077,7 +1077,7 @@ describe("LunkrPseBridge", () => {
     expect(events.at(-1)?.deliveryMode).toBe("standalone_post");
   });
 
-  it("never stores the long-answer body after combined attachment delivery", async () => {
+  it("stores only a clipped outline after combined attachment delivery", async () => {
     const longAnswer = "甲".repeat(200);
     const answer = vi.fn<Answer>(async (question, context) =>
       answered(question === "第一问" ? longAnswer : context ?? "无上下文"));
@@ -1095,8 +1095,21 @@ describe("LunkrPseBridge", () => {
 
     expect(answer.mock.calls[1]?.[1]).toContain("第一问");
     expect(answer.mock.calls[1]?.[1]).not.toContain(longAnswer);
+    expect(answer.mock.calls[1]?.[1]).toContain("甲".repeat(80));
     expect(answer.mock.calls[1]?.[1]).not.toContain("完整回答.txt");
     expect(answer.mock.calls[1]?.[1]).not.toContain("问题 #1");
+  });
+
+  it("carries numbered answer points into a dependent follow-up without source paths", async () => {
+    const firstAnswer="1. 确认迁移范围\n2. 获取客户端专用密码\n3. 检查 IMAP/SMTP\n\n资料来源：\nwiki/concepts/迁移.md";
+    const answer=vi.fn<Answer>(async(question,context)=>answered(question==="第一问"?firstAnswer:context??"无上下文"));
+    const sendText=vi.fn(async()=>undefined);
+    const bridge=createBridge({answer,sendText});
+    await bridge.handle(message("m1","#a#U","第一问"));
+    await bridge.handle(message("m2","#a#U","把第二点展开说说"));
+    expect(answer.mock.calls[1]?.[1]).toContain("2. 获取客户端专用密码");
+    expect(answer.mock.calls[1]?.[1]).not.toContain("资料来源");
+    expect(answer.mock.calls[1]?.[1]).not.toContain("wiki/");
   });
 
   it("falls back to numbered chunks when native text post delivery fails", async () => {

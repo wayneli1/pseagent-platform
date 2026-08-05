@@ -443,6 +443,7 @@ export class LunkrPseBridge<Result> {
     ) {
       this.conversations.append(message.peerUid, {
         question,
+        answer: normalizedAnswer,
       });
     }
     const feedbackReady = this.feedbackReceipts.remember(message.peerUid, {

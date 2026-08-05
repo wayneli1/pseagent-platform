@@ -45,8 +45,8 @@ try {
         };
         observations.push(observation);
         records.push({ suiteId: suite.suiteId, testCase, contextUsed: context !== undefined, observation, execution });
-        if (execution.result.status !== "unavailable") {
-          conversation.append(suite.suiteId, { question: testCase.question });
+        if (execution.result.status === "answered" || execution.result.status === "partially_answered") {
+          conversation.append(suite.suiteId, { question: testCase.question, answer: execution.result.answer });
         }
         process.stdout.write(`${JSON.stringify({
           type: "progress",

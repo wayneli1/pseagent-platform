@@ -1,14 +1,26 @@
 export interface ConversationTurn {
   readonly question: string;
+  readonly answer?: string;
+}
+
+interface StoredConversationTurn {
+  readonly question: string;
+  readonly answerOutline?: string;
 }
 
 interface SerializedConversationContext {
-  readonly version: 2;
-  readonly recentUserQuestions: readonly string[];
+  readonly version: 3;
+  readonly recentTurns: readonly StoredConversationTurn[];
 }
 
+const OUTLINE_MAX_LINES = 8;
+const OUTLINE_MAX_LINE_CHARS = 180;
+const OUTLINE_MAX_CHARS = 1_200;
+const SOURCES_HEADING = /^\s*(?:#{1,6}\s*)?(?:资料来源|参考资料|参考来源|references?)\s*[:：]?\s*$/iu;
+const SOURCE_PATH = /(?:\bwiki\/|[a-z]:\\|file:\/\/)/iu;
+
 export class ConversationStore {
-  private readonly conversations = new Map<string, ConversationTurn[]>();
+  private readonly conversations = new Map<string, StoredConversationTurn[]>();
 
   constructor(
     private readonly maxTurns: number,
@@ -26,30 +38,28 @@ export class ConversationStore {
     ) {
       return undefined;
     }
-    const selected: string[] = [];
+    const selected: StoredConversationTurn[] = [];
     for (let index = turns.length - 1; index >= 0; index -= 1) {
-      const turn = turns[index]!;
-      const candidate = [turn.question.trim(), ...selected];
+      const candidate = [turns[index]!, ...selected];
       if (serializeContext(candidate).length > this.maxChars) break;
-      selected.unshift(turn.question.trim());
+      selected.unshift(turns[index]!);
     }
     if (selected.length > 0) return serializeContext(selected);
 
-    const latest = turns.at(-1)?.question.trim();
-    if (!latest) return undefined;
-    const characters = [...latest];
-    while (characters.length > 0) {
-      const serialized = serializeContext([characters.join("")]);
-      if (serialized.length <= this.maxChars) return serialized;
-      characters.pop();
-    }
-    return serializeContext([]).length <= this.maxChars
-      ? serializeContext([])
-      : undefined;
+    const latest = turns.at(-1);
+    if (latest === undefined) return undefined;
+    return fitLatestTurn(latest, this.maxChars);
   }
 
   append(peerUid: string, turn: ConversationTurn): void {
-    const turns = [...(this.conversations.get(peerUid) ?? []), turn];
+    const question = turn.question.trim();
+    if (question === "") return;
+    const answerOutline = buildAnswerOutline(turn.answer);
+    const stored: StoredConversationTurn = {
+      question,
+      ...(answerOutline === undefined ? {} : { answerOutline }),
+    };
+    const turns = [...(this.conversations.get(peerUid) ?? []), stored];
     if (turns.length > this.maxTurns) {
       turns.splice(0, turns.length - this.maxTurns);
     }
@@ -61,12 +71,47 @@ export class ConversationStore {
   }
 }
 
-function serializeContext(questions: readonly string[]): string {
+export function buildAnswerOutline(answer: string | undefined): string | undefined {
+  if (answer === undefined) return undefined;
+  const normalized = answer.normalize("NFKC").replace(/\r\n?/gu, "\n").trim();
+  if (normalized === "") return undefined;
+  const selected: string[] = [];
+  for (const rawLine of normalized.split("\n")) {
+    const line = rawLine.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, "").trim();
+    if (SOURCES_HEADING.test(line) || /^资料来源\s*[:：]/u.test(line)) break;
+    if (line === "" || line === "```" || SOURCE_PATH.test(line)) continue;
+    const clipped = [...line].slice(0, OUTLINE_MAX_LINE_CHARS).join("");
+    selected.push(clipped.length < [...line].length ? `${clipped}…` : clipped);
+    if (selected.length >= OUTLINE_MAX_LINES) break;
+  }
+  if (selected.length === 0) return undefined;
+  const outline = [...selected.join("\n")].slice(0, OUTLINE_MAX_CHARS).join("");
+  return outline.length < selected.join("\n").length ? `${outline}…` : outline;
+}
+
+function serializeContext(turns: readonly StoredConversationTurn[]): string {
   const payload: SerializedConversationContext = {
-    version: 2,
-    recentUserQuestions: questions,
+    version: 3,
+    recentTurns: turns,
   };
   return JSON.stringify(payload);
+}
+
+function fitLatestTurn(turn: StoredConversationTurn, maxChars: number): string | undefined {
+  const question = [...turn.question];
+  const outline = [...(turn.answerOutline ?? "")];
+  while (question.length > 0 || outline.length > 0) {
+    const candidate: StoredConversationTurn = {
+      question: question.join(""),
+      ...(outline.length === 0 ? {} : { answerOutline: outline.join("") }),
+    };
+    const serialized = serializeContext([candidate]);
+    if (serialized.length <= maxChars) return serialized;
+    if (outline.length > question.length / 2) outline.pop();
+    else question.pop();
+  }
+  const empty = serializeContext([]);
+  return empty.length <= maxChars ? empty : undefined;
 }
 
 function normalizeQuestion(question: string): string {

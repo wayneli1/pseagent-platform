@@ -60,7 +60,7 @@ try {
           evaluation,
         });
         if (execution.result.status === "answered" || execution.result.status === "partially_answered") {
-          store.append(userId, { question: scenario.question });
+          store.append(userId, { question: scenario.question, answer: execution.result.answer });
         }
         process.stdout.write(`${JSON.stringify({
           type: "progress",

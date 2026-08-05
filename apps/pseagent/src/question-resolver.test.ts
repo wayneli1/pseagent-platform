@@ -53,6 +53,12 @@ describe("ModelQuestionResolver", () => {
     });
   });
 
+  it("uses the numbered item in a recent answer outline", async () => {
+    const context=JSON.stringify({version:3,recentTurns:[{question:"迁移前要做什么？",answerOutline:"1. 确认迁移范围\n2. 获取客户端专用密码\n3. 检查 IMAP/SMTP"}]});
+    const model={completeJson:vi.fn(async()=>({action:"resolve",standaloneQuestion:"请详细说明迁移前如何获取并使用客户端专用密码。",contextUsed:true,inheritedSubjects:["客户端专用密码"],corrections:[]})),completeText:vi.fn()} as unknown as ModelClient;
+    await expect(new ModelQuestionResolver(model).resolve({question:"把刚才第二点展开说说",conversationContext:context})).resolves.toMatchObject({standaloneQuestion:"请详细说明迁移前如何获取并使用客户端专用密码。",contextUsed:true,inheritedSubjects:["客户端专用密码"]});
+  });
+
   it("rejects corrections that cannot be traced to the current question", async () => {
     const model = {
       completeJson: vi.fn(async () => ({
@@ -91,4 +97,3 @@ describe("ModelQuestionResolver", () => {
     expect(completeJson).toHaveBeenCalledTimes(3);
   });
 });
-
