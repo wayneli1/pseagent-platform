@@ -79,7 +79,8 @@ export interface KnowledgeOpsStore {
   listRegressionRuns(): Promise<readonly RegressionRun[]>;
   updateRegressionRun(value: RegressionRun): Promise<RegressionRun>;
   enqueueJob(type: OpsJobType, payload: Record<string, unknown>, availableAt?: string): Promise<OpsJob>;
-  claimJob(workerId: string): Promise<OpsJob | undefined>;
+  claimJob(workerId: string, types?: readonly OpsJobType[]): Promise<OpsJob | undefined>;
+  withResourceLock<T>(key: string, operation: () => Promise<T>): Promise<T>;
   completeJob(jobId: string, result: Record<string, unknown>): Promise<void>;
   failJob(jobId: string, errorCode: string): Promise<void>;
   listJobs(): Promise<readonly OpsJob[]>;
@@ -109,6 +110,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   private readonly jobs = new Map<string, OpsJob>();
   private readonly releases = new Map<string, ReleaseRecord>();
   private readonly audit: AuditEvent[] = [];
+  private readonly resourceLocks = new Map<string,Promise<void>>();
 
   async insertAnswerReviewAndEnqueue(value: StoredAnswerReviewCase) {
     const duplicate=[...this.answerReviews.values()].find((item)=>item.requestId===value.requestId);
@@ -230,12 +232,17 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     const job: OpsJob = { jobId: randomUUID(), type, payload: copy(payload), status: "queued", attempts: 0, availableAt, createdAt: timestamp, updatedAt: timestamp };
     this.jobs.set(job.jobId, job); return copy(job);
   }
-  async claimJob(workerId: string) {
-    const job = [...this.jobs.values()].filter((x) => x.status === "queued" && x.availableAt <= now()).sort((a,b) => a.createdAt.localeCompare(b.createdAt))[0];
+  async claimJob(workerId: string,types?:readonly OpsJobType[]) {
+    const job = [...this.jobs.values()].filter((x) => x.status === "queued" && x.availableAt <= now() && (types===undefined||types.includes(x.type))).sort((a,b) => a.createdAt.localeCompare(b.createdAt))[0];
     if (!job) return undefined;
     const timestamp = now();
     const claimed: OpsJob = { ...job, status: "running", attempts: job.attempts + 1, lockedBy: workerId, lockedAt: timestamp, updatedAt: timestamp };
     this.jobs.set(job.jobId, claimed); return copy(claimed);
+  }
+  async withResourceLock<T>(key:string,operation:()=>Promise<T>):Promise<T>{
+    const previous=this.resourceLocks.get(key)??Promise.resolve();let release!:()=>void;
+    const current=new Promise<void>((resolve)=>{release=resolve;}),tail=previous.then(()=>current);this.resourceLocks.set(key,tail);await previous;
+    try{return await operation();}finally{release();if(this.resourceLocks.get(key)===tail)this.resourceLocks.delete(key);}
   }
   async completeJob(id: string, result: Record<string, unknown>) { this.finishJob(id, { status: "completed", result: copy(result) }); }
   async failJob(id: string, errorCode: string) { this.finishJob(id, { status: "failed", errorCode }); }

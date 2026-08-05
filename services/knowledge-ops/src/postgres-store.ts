@@ -15,7 +15,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
 
   static connect(connectionString: string): PostgresKnowledgeOpsStore {
     if (connectionString.trim() === "") throw new Error("database_url_required");
-    return new PostgresKnowledgeOpsStore(new Pool({ connectionString, max: 10 }));
+    return new PostgresKnowledgeOpsStore(new Pool({ connectionString, max: 20 }));
   }
 
   async migrate(): Promise<void> {
@@ -270,18 +270,24 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     return map<OpsJob>(await one(this.pool, `INSERT INTO ops_jobs
       (job_id,type,payload,status,attempts,available_at,created_at,updated_at) VALUES ($1,$2,$3,'queued',0,$4,now(),now()) RETURNING *`,[randomUUID(),type,payload,availableAt]));
   }
-  async claimJob(workerId: string): Promise<OpsJob|undefined> {
+  async claimJob(workerId: string,types?:readonly OpsJobType[]): Promise<OpsJob|undefined> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const result = await client.query(`WITH candidate AS (
         SELECT job_id FROM ops_jobs WHERE status='queued' AND available_at<=now()
+          AND ($2::text[] IS NULL OR type=ANY($2::text[]))
         ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
       ) UPDATE ops_jobs j SET status='running',attempts=j.attempts+1,locked_by=$1,locked_at=now(),updated_at=now()
-        FROM candidate WHERE j.job_id=candidate.job_id RETURNING j.*`,[workerId]);
+        FROM candidate WHERE j.job_id=candidate.job_id RETURNING j.*`,[workerId,types===undefined?null:[...types]]);
       await client.query("COMMIT");
       return result.rows[0] === undefined ? undefined : map<OpsJob>(result.rows[0]);
     } catch (error) { await safeRollback(client); throw error; } finally { client.release(); }
+  }
+  async withResourceLock<T>(key:string,operation:()=>Promise<T>):Promise<T>{
+    const client=await this.pool.connect();let locked=false;
+    try{await client.query("SELECT pg_advisory_lock(hashtext($1))",[key]);locked=true;return await operation();}
+    finally{try{if(locked)await client.query("SELECT pg_advisory_unlock(hashtext($1))",[key]);}finally{client.release();}}
   }
   async completeJob(id: string,result: Record<string,unknown>) { await this.pool.query("UPDATE ops_jobs SET status='completed',result=$2,updated_at=now() WHERE job_id=$1",[id,result]); }
   async failJob(id: string,errorCode: string) { await this.pool.query("UPDATE ops_jobs SET status='failed',error_code=$2,updated_at=now() WHERE job_id=$1",[id,errorCode]); }

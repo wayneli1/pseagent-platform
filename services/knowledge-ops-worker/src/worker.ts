@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AnswerReviewEncryptedPayload, AnswerReviewReference, IssueCategory, IssuePriority, KnowledgeOpsStore, OpsJob, RegressionCaseRecord, RegressionRun, RepairDraftProposal, RepairPublication, ReleaseRecord, StoredAnswerReviewCase } from "@pseagent/knowledge-ops";
+import type { AnswerReviewEncryptedPayload, AnswerReviewReference, IssueCategory, IssuePriority, KnowledgeOpsStore, OpsJob, OpsJobType, RegressionCaseRecord, RegressionRun, RepairDraftProposal, RepairPublication, ReleaseRecord, StoredAnswerReviewCase } from "@pseagent/knowledge-ops";
 import { ContentCipher, repairProposalSchema } from "@pseagent/knowledge-ops";
 import type { AnswerCard, AnswerCardCatalog, KnowledgeDomain, ReleaseManifest } from "@pseagent/knowledge-governance-contracts";
 import { CatalogCompiler, type KnowledgeSource } from "./catalog-compiler.js";
@@ -16,16 +16,16 @@ export interface WorkerDependencies { readonly store:KnowledgeOpsStore; readonly
 export class KnowledgeOpsWorker {
   private readonly compiler=new CatalogCompiler();
   constructor(private readonly workerId:string,private readonly dependencies:WorkerDependencies){}
-  async runOnce():Promise<boolean>{const job=await this.dependencies.store.claimJob(this.workerId);if(!job)return false;try{const result=await this.execute(job);await this.dependencies.store.completeJob(job.jobId,result);return true;}catch(error){await this.dependencies.store.failJob(job.jobId,safeCode(error));return true;}}
+  async runOnce(types?:readonly OpsJobType[]):Promise<boolean>{const job=await this.dependencies.store.claimJob(this.workerId,types);if(!job)return false;try{const result=await this.execute(job);await this.dependencies.store.completeJob(job.jobId,result);return true;}catch(error){await this.dependencies.store.failJob(job.jobId,safeCode(error));return true;}}
   private async execute(job:OpsJob):Promise<Record<string,unknown>>{
     switch(job.type){
       case "answer_review":return this.reviewAnswer(requireString(job.payload,"reviewId"));
       case "generate_repair_draft":return this.generateRepairDraft(requireString(job.payload,"draftId"));
       case "validate_repair_draft":return this.validateRepairDraft(requireString(job.payload,"draftId"),requireString(job.payload,"validationId"));
-      case "publish_repair":return this.publishRepair(requireString(job.payload,"publicationId"));
-      case "publish_repair_batch":return this.publishRepairBatch(requireString(job.payload,"batchId"));
-      case "rollback_repair":return this.rollbackRepair(requireString(job.payload,"publicationId"));
-      case "rollback_repair_batch":return this.rollbackRepairBatch(requireString(job.payload,"batchId"));
+      case "publish_repair":{const id=requireString(job.payload,"publicationId");return this.withPublicationRepositoryLock(id,()=>this.publishRepair(id));}
+      case "publish_repair_batch":{const id=requireString(job.payload,"batchId");return this.withBatchRepositoryLocks(id,()=>this.publishRepairBatch(id));}
+      case "rollback_repair":{const id=requireString(job.payload,"publicationId");return this.withPublicationRepositoryLock(id,()=>this.rollbackRepair(id));}
+      case "rollback_repair_batch":{const id=requireString(job.payload,"batchId");return this.withBatchRepositoryLocks(id,()=>this.rollbackRepairBatch(id));}
       case "compile_catalog":{
         const catalog=await this.compile();
         const synced=await this.syncCatalog(catalog);
@@ -39,6 +39,9 @@ export class KnowledgeOpsWorker {
     throw new Error("unsupported_job_type");
   }
   private compile(){return this.compiler.compile(this.dependencies.sources);}
+  private async withPublicationRepositoryLock<T>(publicationId:string,operation:()=>Promise<T>):Promise<T>{const publication=await this.dependencies.store.getRepairPublication(publicationId);if(publication===undefined)throw new Error("repair_publication_not_found");return this.withRepositoryLocks([publication.targetDomain],operation);}
+  private async withBatchRepositoryLocks<T>(batchId:string,operation:()=>Promise<T>):Promise<T>{const batch=await this.dependencies.store.getRepairBatch(batchId);if(batch===undefined)throw new Error("repair_batch_not_found");return this.withRepositoryLocks(batch.domains,operation);}
+  private async withRepositoryLocks<T>(domains:readonly KnowledgeDomain[],operation:()=>Promise<T>):Promise<T>{const ordered=[...new Set(domains)].sort();const visit=(index:number):Promise<T>=>index===ordered.length?operation():this.dependencies.store.withResourceLock(`knowledge-repository:${ordered[index]!}`,()=>visit(index+1));return visit(0);}
   private async syncCatalog(catalog:AnswerCardCatalog):Promise<{created:number;existing:number}>{
     const revisions=new Map(catalog.domains.map((domain)=>[domain.domain,domain.revision]));
     let created=0,existing=0;
