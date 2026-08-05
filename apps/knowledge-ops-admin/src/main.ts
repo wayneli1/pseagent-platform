@@ -1,6 +1,8 @@
 import "./styles.css";
 import { ApiError, OpsApiClient } from "./api.js";
 import { badge, h, json, shortId, time } from "./format.js";
+import {label,option} from "./labels.js";
+import {deriveOperationsOverview} from "./operations-overview.js";
 import type {
   Audit,
   AnswerReviewDetail,
@@ -86,35 +88,25 @@ async function renderDashboard() {
     api.get<Release[]>("/v1/releases"),
     api.get<OpsJob[]>("/v1/jobs"),
   ]);
-  const pending =
-      (summary.feedback.new ?? 0) +
-      (summary.feedback.triaged ?? 0) +
-      (summary.feedback.in_review ?? 0),
-    latestRows=[
-      ...reviews.slice(0,5).map((x)=>({createdAt:x.createdAt,html:`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}"><td>自动复查</td><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${badge(x.verdict)}</td><td>${badge(x.workflowStatus)}</td><td>${time(x.createdAt)}</td></tr>`})),
-      ...feedback.slice(0,5).map((x)=>({createdAt:x.createdAt,html:`<tr data-action="feedback-detail" data-id="${h(x.caseId)}"><td>用户反馈</td><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${time(x.createdAt)}</td></tr>`})),
-    ].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,8).map((item)=>item.html);
+  const overview=deriveOperationsOverview(feedback,reviews);
+  const automated=reviews.length===0?0:Math.round((overview.automaticPasses/reviews.length)*100);
+  const actionRows=overview.actions.slice(0,12).map((item)=>`<tr data-action="${item.feedbackId?"feedback-detail":"answer-review-detail"}" data-id="${h(item.feedbackId??item.reviewId)}"><td>${badge(item.priority)}</td><td><strong>${h(item.reason)}</strong><br><span class="muted">${h(item.questionPreview)}</span></td><td>${h(item.userDisplayName)}</td><td>${time(item.createdAt)}</td><td><span class="action-link">查看并处理</span></td></tr>`);
   content(
-    `<div class="grid metrics">${metric("待处理反馈", pending, "用户主动反馈")}${metric("待人工复查", summary.answerReviews.pendingHuman, "自动复查发现")}${metric("自动复查通过", summary.answerReviews.passed, `共 ${summary.answerReviews.total} 条`)}${metric("复查执行异常", summary.answerReviews.errored, summary.answerReviews.errored ? "需要排查" : "运行正常")}</div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>反馈分类分布</h2><button class="button small" data-nav="feedback">进入工作台</button></div><div class="panel-body stack">${bars(summary.feedback)}</div></section><section class="panel"><div class="panel-head"><h2>发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
+    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>系统已自动收敛正常回答；下面只突出需要人工介入的异常和判断冲突。</p></div><button class="button primary" data-nav="feedback">进入处理工作台</button></div><div class="grid metrics operations-metrics">${metric("严重错误",overview.criticalFailures,"必须优先核对","danger")}${metric("需要人工复核",overview.needsHuman,"回答可能有遗漏","warning")}${metric("判断冲突",overview.judgementConflicts,"用户与系统结论不一致","warning")}${metric("复查异常",overview.reviewErrors,overview.reviewErrors?"需要排查服务":"运行正常",overview.reviewErrors?"danger":"neutral")}${metric("自动通过",overview.automaticPasses,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${overview.actions.length} 项待办，按风险与时间排序</span></div><button class="button small" data-nav="feedback">查看全部</button></div>${actionRows.length?table(["优先级","需要处理的问题","用户","发生时间","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>用户反馈概况</h2><span class="muted">用于观察体验，不要求逐条处理正常反馈</span></div></div><div class="panel-body stack">${bars(summary.feedback)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
       jobs
         .slice(0, 3)
-        .map((x) => `${badge(x.status)} ${h(x.type)}`)
+        .map((x) => `${badge(x.status)} ${h(label(x.type))}`)
         .join("<br>") || "—"
-    }</div></div></div></section></div><section class="panel mt-16"><div class="panel-head"><h2>最新待办</h2></div>${
-      reviews.length || feedback.length
-        ? table(
-            ["来源", "用户", "结论/类型", "状态", "时间"],
-            latestRows,
-          )
-        : empty("暂无反馈")
-    }</section>`,
+    }</div></div></div></section></div>`,
   );
 }
 async function renderFeedback() {
   const [values,reviews] = await Promise.all([api.get<FeedbackMeta[]>("/v1/feedback"),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
   const reviewByRequest=new Map(reviews.map((review)=>[review.requestId,review]));
+  const reviewNeedsAction=reviews.filter((item)=>item.processingStatus==="errored"||item.verdict==="fail"||item.verdict==="needs_review"||item.workflowStatus==="open"||item.workflowStatus==="in_review").length;
+  const feedbackNeedsAction=values.filter((item)=>item.status!=="resolved"&&item.status!=="rejected"&&item.classification!=="useful").length;
   content(
-    `<div class="notice workflow-note"><strong>这里有两种不同信号：</strong>自动复查是系统对每条回答的独立判断；用户反馈是用户通过 /q 表达的体验。两者按同一请求关联，只有人工审核后的答案卡或知识修订才会影响后续回答，反馈不会自动写入知识库。</div><section class="panel mt-16"><div class="panel-head"><div><h2>自动复查</h2><span class="muted">每条知识回答自动进入；默认优先处理未通过和执行异常</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="">全部结论</option>${["pending","pass","needs_review","fail"].map((x)=>`<option>${x}</option>`).join("")}</select><span class="muted">共 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","处理状态","复查结论","分数","缺陷","时间"],reviews.map((x)=>`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}"><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${h(x.questionPreview)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`)):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户反馈</h2><span class="muted">用户只表达体验；详情可联查同一回答的自动复查</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按状态筛选"><option value="">全部状态</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => `<option>${x}</option>`).join("")}</select><span class="muted">共 ${values.length} 条；原问与原答仅在打开详情时解密</span></div>${
+    `<div class="notice workflow-note"><strong>管理原则：</strong>默认只显示需要人工介入的记录。复查通过和“回答有帮助”由系统自动收敛；只有人工审核后的答案卡或知识修订才会影响后续回答。</div><section class="panel mt-16"><div class="panel-head"><div><h2>自动复查异常</h2><span class="muted">只处理未通过、需要人工复核和执行异常</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部复查记录</option>${["pending","pass","needs_review","fail"].map((x)=>option(x)).join("")}</select><span class="muted">待处理 ${reviewNeedsAction} 条 · 全部 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","执行状态","复查结论","分数","缺陷","时间"],reviews.map((x)=>{const actionable=x.processingStatus==="errored"||x.verdict==="fail"||x.verdict==="needs_review"||x.workflowStatus==="open"||x.workflowStatus==="in_review";return`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}" data-actionable="${actionable}"${actionable?"":" hidden"}><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${h(x.questionPreview)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`;})):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户负面反馈</h2><span class="muted">默认隐藏“回答有帮助”和已关闭记录</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按反馈状态筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部反馈记录</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x)).join("")}</select><span class="muted">待处理 ${feedbackNeedsAction} 条 · 全部 ${values.length} 条；原问原答仅在详情中解密</span></div>${
       values.length
         ? table(
             [
@@ -130,7 +122,8 @@ async function renderFeedback() {
             values.map(
               (x) => {
                 const linked=reviewByRequest.get(x.requestId);
-                return `<tr data-action="feedback-detail" data-id="${h(x.caseId)}" data-status="${h(x.status)}"><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${linked?badge(linked.verdict):'<span class="muted">未生成</span>'}</td><td>${h(x.answerStatus)}</td><td>${h(x.scope ?? "—")}</td><td>${x.referenceCount}</td><td>${h(x.userDisplayName ?? "未获取到聊天名")}</td><td>${time(x.createdAt)}</td></tr>`;
+                const actionable=x.status!=="resolved"&&x.status!=="rejected"&&x.classification!=="useful";
+                return `<tr data-action="feedback-detail" data-id="${h(x.caseId)}" data-status="${h(x.status)}" data-actionable="${actionable}"${actionable?"":" hidden"}><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${linked?badge(linked.verdict):'<span class="muted">尚无关联复查</span>'}</td><td>${badge(x.answerStatus)}</td><td>${h(label(x.scope ?? "—"))}</td><td>${x.referenceCount}</td><td>${h(x.userDisplayName ?? "未获取到聊天名")}</td><td>${time(x.createdAt)}</td></tr>`;
               },
             ),
           )
@@ -357,10 +350,10 @@ function handleChange(event: Event) {
   const select = event.target;
   if (!(select instanceof HTMLSelectElement)) return;
   if(select.id==="feedback-status"){
-    for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="feedback-detail"]')) row.hidden=select.value!==""&&row.dataset.status!==select.value;
+    for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="feedback-detail"]')) row.hidden=select.value==="actionable"?row.dataset.actionable!=="true":select.value!=="all"&&row.dataset.status!==select.value;
   }
   if(select.id==="review-verdict"){
-    for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="answer-review-detail"]')) row.hidden=select.value!==""&&row.dataset.verdict!==select.value;
+    for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="answer-review-detail"]')) row.hidden=select.value==="actionable"?row.dataset.actionable!=="true":select.value!=="all"&&row.dataset.verdict!==select.value;
   }
 }
 
@@ -374,13 +367,13 @@ async function answerReviewDrawer(id:string){
       <div class="detail-section"><h3>用户与复查状态</h3><div class="content-box">${h(item.userDisplayName??"未获取到聊天名")}</div><div class="muted mt-6">模型：${h(item.model)} · 分数：${h(item.score??"—")} · 缺陷：${item.defectCount}</div></div>
       ${item.errorCode?`<div class="notice error">复查执行异常：${h(item.errorCode)}。该记录不会被当作通过，请安排人工检查或重试。</div>`:""}
       <div class="detail-section"><h3>复查结论</h3><div class="content-box">${h(item.result?.summary??"复查尚未完成")}</div></div>
-      ${obligations.length?`<div class="detail-section"><h3>必答项检查</h3>${table(["必答项","覆盖","说明"],obligations.map((x)=>`<tr><td class="mono">${h(x.obligationId)}</td><td>${badge(x.covered?"covered":"missing")}</td><td>${h(x.explanation)}</td></tr>`))}</div>`:""}
-      ${defects.length?`<div class="detail-section"><h3>发现的问题</h3>${table(["严重度","分类","问题","依据"],defects.map((x)=>`<tr><td>${badge(x.severity)}</td><td>${h(x.category)}</td><td>${h(x.summary)}</td><td>${h(x.evidence||"—")}</td></tr>`))}</div>`:""}
+      ${obligations.length?`<div class="detail-section"><h3>必答项检查</h3>${table(["必答项","覆盖情况","说明"],obligations.map((x)=>`<tr><td class="mono">${h(x.obligationId)}</td><td>${badge(x.covered?"covered":"missing")}</td><td>${h(x.explanation)}</td></tr>`))}</div>`:""}
+      ${defects.length?`<div class="detail-section"><h3>发现的问题</h3>${table(["严重程度","问题分类","问题","依据"],defects.map((x)=>`<tr><td>${badge(x.severity)}</td><td>${badge(x.category)}</td><td>${h(x.summary)}</td><td>${h(x.evidence||"—")}</td></tr>`))}</div>`:""}
       <div class="detail-section"><h3>原始问题</h3><div class="content-box">${h(item.question)}</div></div>
       <div class="detail-section"><h3>原始回答</h3><div class="content-box">${h(item.answer)}</div></div>
       <div class="detail-section"><h3>正式引用</h3><pre class="content-box mono">${json(item.references)}</pre></div>
       <div class="detail-section"><h3>答案卡激活摘要</h3><pre class="content-box mono">${json({match:item.answerCardMatch??{},activation:item.answerCardActivation??{}})}</pre></div>
-      <form id="answer-review-triage-form" data-id="${h(id)}"><div class="field"><label for="answer-review-workflow-status">人工处理状态</label><select id="answer-review-workflow-status" name="workflowStatus">${["open","in_review","resolved","dismissed"].map((x)=>`<option ${x===item.workflowStatus?"selected":""}>${x}</option>`).join("")}</select><div class="field-help">只有人工确认后再标记 resolved；dismissed 表示确认无需处理。</div></div><button class="button primary" type="submit">保存人工处理状态</button></form>
+      <form id="answer-review-triage-form" data-id="${h(id)}"><div class="field"><label for="answer-review-workflow-status">人工处理状态</label><select id="answer-review-workflow-status" name="workflowStatus">${["open","in_review","resolved","dismissed"].map((x)=>option(x,item.workflowStatus)).join("")}</select><div class="field-help">确认开始处理后选择“处理中”；问题已修复选择“已解决”；确认属于误报或无需处理选择“无需处理”。</div></div><button class="button primary" type="submit">保存处理状态</button></form>
     </div>`,
   );
 }
@@ -408,8 +401,8 @@ async function feedbackDrawer(id: string) {
       <div class="detail-section"><h3>答案卡匹配摘要</h3><pre class="content-box mono">${json(item.answerCardMatch ?? {})}</pre></div>
       <form id="triage-form" data-id="${h(id)}">
         <div class="notice">如果用户误点了反馈类型，可在这里纠正。修改只影响工单分类，不会直接改写线上答案。</div>
-        <div class="field"><label for="feedback-classification">反馈类型</label><select id="feedback-classification" name="classification">${classifications.map((x) => `<option ${x === item.classification ? "selected" : ""}>${x}</option>`).join("")}</select></div>
-        <div class="field"><label for="feedback-workflow-status">处理状态</label><select id="feedback-workflow-status" name="status">${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => `<option ${x === item.status ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+        <div class="field"><label for="feedback-classification">反馈类型</label><select id="feedback-classification" name="classification">${classifications.map((x) => option(x,item.classification)).join("")}</select></div>
+        <div class="field"><label for="feedback-workflow-status">处理状态</label><select id="feedback-workflow-status" name="status">${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x,item.status)).join("")}</select><div class="field-help">待处理：尚未判断；已分类：已确认问题类型；处理中：已有负责人；已解决：修复并验证完成；已关闭：无效或重复反馈。</div></div>
         <button class="button primary" type="submit">保存反馈处理结果</button>
       </form>
     </div>`,
@@ -549,8 +542,8 @@ function empty(value: string) {
 function loading() {
   return `<div class="grid gap-12">${Array.from({ length: 8 }, () => '<div class="skeleton"></div>').join("")}</div>`;
 }
-function metric(label: string, value: string | number, note: string) {
-  return `<article class="metric"><div class="metric-label">${h(label)}</div><div class="metric-value">${h(value)}<span class="metric-note">${h(note)}</span></div></article>`;
+function metric(title: string, value: string | number, note: string,tone="neutral") {
+  return `<article class="metric metric-${h(tone)}"><div class="metric-label">${h(title)}</div><div class="metric-value">${h(value)}<span class="metric-note">${h(note)}</span></div></article>`;
 }
 function bars(values: Record<string, number>) {
   const entries = Object.entries(values);
@@ -558,8 +551,8 @@ function bars(values: Record<string, number>) {
   return (
     entries
       .map(
-        ([label, value]) =>
-          `<div class="bar-row"><span>${h(label)}</span><progress class="bar-progress" max="${max}" value="${value}" aria-label="${h(label)}：${value}"></progress><strong>${value}</strong></div>`,
+        ([status, value]) =>
+          `<div class="bar-row"><span>${h(label(status))}</span><progress class="bar-progress" max="${max}" value="${value}" aria-label="${h(label(status))}：${value}"></progress><strong>${value}</strong></div>`,
       )
       .join("") || empty("暂无数据")
   );

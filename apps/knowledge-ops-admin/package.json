@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build --configLoader runner",
     "dev": "vite --host 127.0.0.1 --configLoader runner",
+    "test": "vitest run src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
