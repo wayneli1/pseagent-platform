@@ -113,6 +113,8 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     const next = { ...old, ...patch, updatedAt: now() }; this.feedback.set(id, next); return copy(next);
   }
   async recordIssue(value:IssueRecordInput):Promise<IssueCaseSummary>{
+    const occurrenceKey=`${value.occurrence.sourceType}:${value.occurrence.sourceId}`;
+    const recorded=this.issueOccurrences.get(occurrenceKey);if(recorded!==undefined){const issue=this.issues.get(recorded.issueId);if(issue===undefined)throw new Error("issue_occurrence_orphaned");return this.issueSummary(issue);}
     const linkedOccurrence=[...this.issueOccurrences.values()].find((item)=>item.requestId===value.occurrence.requestId);
     const byFingerprint=[...this.issues.values()].find((item)=>item.fingerprint===value.fingerprint);
     const existing=linkedOccurrence===undefined?byFingerprint:this.issues.get(linkedOccurrence.issueId);
@@ -120,8 +122,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     if(existing===undefined){issue={issueId:randomUUID(),fingerprint:value.fingerprint,title:value.title,priority:value.priority,status:"open",category:value.category,...(value.scope?{scope:value.scope}:{}),...(value.answerCardKey?{answerCardKey:value.answerCardKey}:{}),slaDueAt:slaDeadline(value.occurredAt,value.priority),firstSeenAt:value.occurredAt,lastSeenAt:value.occurredAt,createdAt:timestamp,updatedAt:timestamp};}
     else{const escalated=isHigherPriority(value.priority,existing.priority);issue={...existing,...(escalated?{priority:value.priority,title:value.title,category:value.category,slaDueAt:slaDeadline(value.occurredAt,value.priority)}:{}),...(!existing.answerCardKey&&value.answerCardKey?{answerCardKey:value.answerCardKey}:{}),status:existing.status==="resolved"||existing.status==="dismissed"?"open":existing.status,lastSeenAt:value.occurredAt>existing.lastSeenAt?value.occurredAt:existing.lastSeenAt,updatedAt:timestamp};}
     this.issues.set(issue.issueId,issue);
-    const occurrenceKey=`${value.occurrence.sourceType}:${value.occurrence.sourceId}`;
-    if(!this.issueOccurrences.has(occurrenceKey))this.issueOccurrences.set(occurrenceKey,{occurrenceId:randomUUID(),issueId:issue.issueId,...copy(value.occurrence),createdAt:value.occurredAt});
+    this.issueOccurrences.set(occurrenceKey,{occurrenceId:randomUUID(),issueId:issue.issueId,...copy(value.occurrence),createdAt:value.occurredAt});
     return this.issueSummary(issue);
   }
   async listIssues(query:IssueListQuery):Promise<IssuePage>{const filtered=[...this.issues.values()].filter((item)=>(query.status===undefined||item.status===query.status)&&(query.priority===undefined||item.priority===query.priority)&&(!query.actionableOnly||isActionableIssue(item))).sort((left,right)=>priorityRank(left.priority)-priorityRank(right.priority)||right.lastSeenAt.localeCompare(left.lastSeenAt));return{items:filtered.slice(query.offset,query.offset+query.limit).map((item)=>this.issueSummary(item)),total:filtered.length};}

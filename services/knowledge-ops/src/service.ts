@@ -6,7 +6,7 @@ import { answerReviewIntakeSchema, feedbackIntakeSchema, releaseQualityReportImp
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
   AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision,
-  FeedbackCaseListView, FeedbackCaseView, IssueListQuery, IssueStatus, OpsActor, RegressionCaseRecord,
+  FeedbackCaseListView, FeedbackCaseView, IssueCategory, IssueListQuery, IssuePriority, IssueStatus, OpsActor, RegressionCaseRecord,
   ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
 } from "./types.js";
 
@@ -66,11 +66,7 @@ export class KnowledgeOpsService {
     const result=await this.store.insertFeedback(stored);
     await this.audit(actor,"feedback.ingest","feedback_case",result.caseId,{classification:result.classification,source:result.source});
     if(intake.classification!=="useful"){
-      const linkedReview=await this.store.getAnswerReviewByRequestId(intake.requestId);const conflict=linkedReview?.verdict==="pass";
-      const category=conflict?"judgement_conflict" as const:feedbackIssueCategory(intake.classification);
-      const priority=conflict||intake.classification==="incorrect"?"p1" as const:"p2" as const;
-      const cardKey=answerCardKey(intake.answerCardMatch);const questionKey=hash(normalizeQuestion(intake.question));
-      const issue=await this.store.recordIssue({fingerprint:hash(`${intake.scope??"unknown"}\0${cardKey??questionKey}\0${category}`),title:`feedback:${category}:${(cardKey??questionKey).slice(0,12)}`,priority,category,...(intake.scope?{scope:intake.scope}:{}),...(cardKey?{answerCardKey:cardKey}:{}),occurredAt:timestamp,occurrence:{sourceType:"feedback",sourceId:result.caseId,requestId:result.requestId,pseudonymousUserId:result.pseudonymousUserId}});
+      const issue=await this.recordFeedbackIssue(result,{question:intake.question,...(intake.answerCardMatch?{answerCardMatch:intake.answerCardMatch}:{})},await this.store.getAnswerReviewByRequestId(intake.requestId));
       await this.audit(actor,"issue.feedback.upsert","issue_case",issue.issueId,{classification:intake.classification,priority:issue.priority,category:issue.category});
     }
     return result;
@@ -101,6 +97,7 @@ export class KnowledgeOpsService {
 
   async listIssues(actor:OpsActor,query:IssueListQuery){assertAuthorized(actor,"issue:read");return this.store.listIssues(query);}
   async issueDetail(actor:OpsActor,issueId:string){assertAuthorized(actor,"issue:read");const issue=await this.store.getIssue(issueId);if(issue===undefined)return undefined;return{...issue,occurrences:await this.store.listIssueOccurrences(issueId)};}
+  async rebuildIssues(actor:OpsActor){assertAuthorized(actor,"issue:rebuild");let feedbackCount=0,reviewCount=0;for(const stored of await this.store.listFeedback()){if(stored.classification==="useful"||stored.status==="resolved"||stored.status==="rejected")continue;const payload=this.cipher.decrypt<FeedbackIssuePayload>(stored.encryptedPayload);await this.recordFeedbackIssue(stored,payload,await this.store.getAnswerReviewByRequestId(stored.requestId));feedbackCount++;}for(const stored of await this.store.listAnswerReviews()){if(stored.workflowStatus==="resolved"||stored.workflowStatus==="dismissed"||stored.verdict==="pass"||stored.verdict==="pending"&&stored.processingStatus!=="errored")continue;const payload=this.cipher.decrypt<AnswerReviewEncryptedPayload>(stored.encryptedPayload);const priority=stored.processingStatus==="errored"?"p3":stored.verdict==="fail"?"p0":"p1";const category=stored.processingStatus==="errored"?"review_error":primaryReviewIssueCategory(payload);await this.recordReviewIssue(stored,payload,priority,category);reviewCount++;}await this.audit(actor,"issue.rebuild","issue_case","all",{feedbackCount,reviewCount});return{feedbackCount,reviewCount};}
   async triageIssue(actor:OpsActor,issueId:string,patch:{readonly status?:IssueStatus;readonly ownerId?:string}){assertAuthorized(actor,"issue:triage");const before=await this.store.getIssue(issueId);if(before===undefined)return undefined;const status=patch.status??(patch.ownerId&&before.status==="open"?"assigned":before.status);if(!validIssueTransition(before.status,status))throw new Error("invalid_issue_transition");const ownerId=patch.ownerId??before.ownerId;if(["assigned","in_progress","validating","resolved"].includes(status)&&ownerId===undefined)throw new Error("issue_owner_required");const value=await this.store.updateIssue(issueId,{status,...(ownerId?{ownerId}:{})});if(value)await this.audit(actor,"issue.triage","issue_case",issueId,{previousStatus:before.status,status,...(ownerId&&ownerId!==before.ownerId?{previousOwnerId:before.ownerId,ownerId}:{})});return value;}
 
   async listCards(actor: OpsActor){assertAuthorized(actor,"card:read");return this.store.listCardRevisions();}
@@ -155,6 +152,8 @@ export class KnowledgeOpsService {
   async auditEvents(actor:OpsActor){assertAuthorized(actor,"audit:read");return this.store.listAudit();}
 
   private timestamp(){return this.clock().toISOString();}
+  private recordFeedbackIssue(stored:StoredFeedbackCase,payload:FeedbackIssuePayload,linkedReview:StoredAnswerReviewCase|undefined){const conflict=linkedReview?.verdict==="pass";const category=conflict?"judgement_conflict" as const:feedbackIssueCategory(stored.classification as Exclude<StoredFeedbackCase["classification"],"useful">);const priority=conflict||stored.classification==="incorrect"?"p1" as const:"p2" as const;const cardKey=answerCardKey(payload.answerCardMatch),questionKey=hash(normalizeQuestion(payload.question)),groupKey=cardKey??questionKey;return this.store.recordIssue({fingerprint:hash(`${stored.scope??"unknown"}\0${groupKey}\0${category}`),title:`feedback:${category}:${groupKey.slice(0,12)}`,priority,category,...(stored.scope?{scope:stored.scope}:{}),...(cardKey?{answerCardKey:cardKey}:{}),occurredAt:stored.createdAt,occurrence:{sourceType:"feedback",sourceId:stored.caseId,requestId:stored.requestId,pseudonymousUserId:stored.pseudonymousUserId}});}
+  private recordReviewIssue(stored:StoredAnswerReviewCase,payload:AnswerReviewEncryptedPayload,priority:IssuePriority,category:IssueCategory){const questionKey=hash(normalizeQuestion(payload.question)),cardKey=answerCardKey(payload.answerCardMatch),groupKey=cardKey??questionKey;return this.store.recordIssue({fingerprint:hash(`${stored.scope??"unknown"}\0${groupKey}\0${category}`),title:`review:${category}:${groupKey.slice(0,12)}`,priority,category,...(stored.scope?{scope:stored.scope}:{}),...(cardKey?{answerCardKey:cardKey}:{}),occurredAt:stored.createdAt,occurrence:{sourceType:"answer_review",sourceId:stored.reviewId,requestId:stored.requestId,pseudonymousUserId:stored.pseudonymousUserId}});}
   private async audit(actor:OpsActor,action:string,resourceType:string,resourceId:string,metadata:Record<string,unknown>){
     await this.store.appendAudit({auditId:randomUUID(),actorId:actor.actorId,action,resourceType,resourceId,metadata,createdAt:this.timestamp()});
   }
@@ -162,9 +161,12 @@ export class KnowledgeOpsService {
 
 export class OpsNotFoundError extends Error { constructor(readonly code:string){super(code);this.name="OpsNotFoundError";} }
 
+interface FeedbackIssuePayload {readonly question:string;readonly answerCardMatch?:Record<string,unknown>;}
+
 function feedbackIssueCategory(classification:Exclude<StoredFeedbackCase["classification"],"useful">){return({incorrect:"user_incorrect",missing:"user_missing",review_requested:"review_requested",evidence:"evidence",correction:"correction"} as const)[classification];}
 function answerCardKey(match:Record<string,unknown>|undefined):string|undefined{const values=match?.cardIdHashes;return Array.isArray(values)&&typeof values[0]==="string"&&/^[a-f0-9]{64}$/u.test(values[0])?values[0]:undefined;}
 function normalizeQuestion(value:string):string{return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu,"");}
 function hash(value:string):string{return createHash("sha256").update(value,"utf8").digest("hex");}
+function primaryReviewIssueCategory(payload:AnswerReviewEncryptedPayload):IssueCategory{return payload.result?.defects.find((item)=>item.severity==="critical")?.category??payload.result?.defects.find((item)=>item.severity==="major")?.category??payload.result?.defects[0]?.category??"coverage_gap";}
 const ISSUE_TRANSITIONS:Readonly<Record<IssueStatus,readonly IssueStatus[]>>={open:["open","assigned","dismissed"],assigned:["assigned","in_progress","open","dismissed"],in_progress:["in_progress","validating","assigned","dismissed"],validating:["validating","resolved","in_progress","dismissed"],resolved:["resolved","open"],dismissed:["dismissed","open"]};
 function validIssueTransition(current:IssueStatus,next:IssueStatus):boolean{return ISSUE_TRANSITIONS[current].includes(next);}

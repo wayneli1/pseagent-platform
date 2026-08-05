@@ -102,6 +102,9 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[`issue-request:${v.occurrence.requestId}`]);
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[`issue-fingerprint:${v.fingerprint}`]);
+      const recorded=await client.query("SELECT issue_id FROM issue_occurrences WHERE source_type=$1 AND source_id=$2",[v.occurrence.sourceType,v.occurrence.sourceId]);
+      if(recorded.rows[0]!==undefined){issueId=String(recorded.rows[0].issue_id);await client.query("COMMIT");}
+      else{
       const linked=await client.query(`SELECT c.* FROM issue_cases c JOIN issue_occurrences o ON o.issue_id=c.issue_id
         WHERE o.request_id=$1 ORDER BY c.created_at LIMIT 1 FOR UPDATE OF c`,[v.occurrence.requestId]);
       const matching=linked.rows[0]===undefined?await client.query("SELECT * FROM issue_cases WHERE fingerprint=$1 FOR UPDATE",[v.fingerprint]):linked;
@@ -124,6 +127,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (source_type,source_id) DO NOTHING`,
         [randomUUID(),issueId,v.occurrence.sourceType,v.occurrence.sourceId,v.occurrence.requestId,v.occurrence.pseudonymousUserId,v.occurredAt]);
       await client.query("COMMIT");
+      }
     }catch(error){await safeRollback(client);throw error;}finally{client.release();}
     const result=issueId===undefined?undefined:await this.getIssue(issueId);if(result===undefined)throw new Error("database_write_failed");return result;
   }
