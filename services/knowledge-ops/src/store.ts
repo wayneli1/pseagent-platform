@@ -3,6 +3,8 @@ import type {
   StoredAnswerReviewCase,
   AuditEvent,
   ApprovalRecord,
+  CatalogCardRevisionInput,
+  CatalogCardSyncResult,
   CardRevision,
   DashboardSummary,
   OpsJob,
@@ -25,6 +27,7 @@ export interface KnowledgeOpsStore {
   getFeedback(caseId: string): Promise<StoredFeedbackCase | undefined>;
   updateFeedback(caseId: string, patch: Pick<Partial<StoredFeedbackCase>, "status" | "classification">): Promise<StoredFeedbackCase | undefined>;
   createCardRevision(value: CardRevision): Promise<CardRevision>;
+  syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult>;
   listCardRevisions(): Promise<readonly CardRevision[]>;
   getCardRevision(revisionId: string): Promise<CardRevision | undefined>;
   updateCardRevisionStatus(revisionId: string, status: CardRevision["status"]): Promise<CardRevision | undefined>;
@@ -93,6 +96,28 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     const next = { ...old, ...patch, updatedAt: now() }; this.feedback.set(id, next); return copy(next);
   }
   async createCardRevision(value: CardRevision) { this.revisions.set(value.revisionId, copy(value)); return copy(value); }
+  async syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult> {
+    const existing = [...this.revisions.values()].find((revision) =>
+      revision.cardId === value.cardId &&
+      revision.createdBy === "catalog-sync" &&
+      revision.status === value.status &&
+      revision.baseGitRevision === value.baseGitRevision &&
+      stableJson(revision.content) === stableJson(value.content),
+    );
+    if (existing !== undefined) return { revision: copy(existing), created: false };
+    const revision = Math.max(0, ...[...this.revisions.values()].filter((item) => item.cardId === value.cardId).map((item) => item.revision)) + 1;
+    const timestamp = now();
+    const created: CardRevision = {
+      revisionId: randomUUID(),
+      ...copy(value),
+      revision,
+      createdBy: "catalog-sync",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.revisions.set(created.revisionId, created);
+    return { revision: copy(created), created: true };
+  }
   async listCardRevisions() { return newest([...this.revisions.values()].map(copy)); }
   async getCardRevision(id: string) { return maybeCopy(this.revisions.get(id)); }
   async updateCardRevisionStatus(id: string, status: CardRevision["status"]) {
@@ -168,3 +193,11 @@ function now(): string { return new Date().toISOString(); }
 function copy<T>(value: T): T { return structuredClone(value); }
 function maybeCopy<T>(value: T | undefined): T | undefined { return value === undefined ? undefined : copy(value); }
 function newest<T extends { createdAt: string }>(values: T[]): T[] { return values.sort((a,b) => b.createdAt.localeCompare(a.createdAt)); }
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}

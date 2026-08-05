@@ -171,6 +171,19 @@ export interface CardRevision {
   readonly updatedAt: string;
 }
 
+export interface CatalogCardRevisionInput {
+  readonly cardId: string;
+  readonly domain: KnowledgeDomain;
+  readonly status: GovernanceReviewStatus;
+  readonly content: Record<string, unknown>;
+  readonly baseGitRevision: string;
+}
+
+export interface CatalogCardSyncResult {
+  readonly revision: CardRevision;
+  readonly created: boolean;
+}
+
 export interface ReviewRecord {
   readonly reviewId: string;
   readonly revisionId: string;

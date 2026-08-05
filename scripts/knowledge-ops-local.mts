@@ -46,6 +46,7 @@ const worker = new KnowledgeOpsWorker("local-worker", {
     new OpenAiCompatibleModelClient(reviewModel),
   ),
 });
+await store.enqueueJob("compile_catalog", { trigger: "local_startup" });
 const server = createKnowledgeOpsHttpServer(
   new KnowledgeOpsApi(service, authorizer),
   { staticRoot, readiness: async () => true },

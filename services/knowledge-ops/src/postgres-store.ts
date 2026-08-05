@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  ApprovalRecord, AuditEvent, CardRevision, DashboardSummary, OpsJob, OpsJobType,
+  ApprovalRecord, AuditEvent, CatalogCardRevisionInput, CatalogCardSyncResult, CardRevision, DashboardSummary, OpsJob, OpsJobType,
   RegressionCaseRecord, RegressionRun, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
   StoredAnswerReviewCase,
 } from "./types.js";
@@ -85,6 +85,35 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [v.revisionId,v.cardId,v.domain,v.revision,v.status,v.content,v.createdBy,v.baseGitRevision,v.createdAt,v.updatedAt]);
     return map<CardRevision>(row);
+  }
+  async syncCatalogCardRevision(v: CatalogCardRevisionInput): Promise<CatalogCardSyncResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [v.cardId]);
+      const current = await client.query(
+        "SELECT * FROM card_revisions WHERE card_id=$1 ORDER BY revision DESC FOR UPDATE",
+        [v.cardId],
+      );
+      const existing = current.rows.map((row) => map<CardRevision>(row)).find((revision) =>
+        revision.createdBy === "catalog-sync" &&
+        revision.status === v.status &&
+        revision.baseGitRevision === v.baseGitRevision &&
+        stableJson(revision.content) === stableJson(v.content),
+      );
+      if (existing !== undefined) {
+        await client.query("COMMIT");
+        return { revision: existing, created: false };
+      }
+      const revision = Math.max(0, ...current.rows.map((row) => Number(row.revision))) + 1;
+      const inserted = await client.query(`INSERT INTO card_revisions
+        (revision_id,card_id,domain,revision,status,content,created_by,base_git_revision,created_at,updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,'catalog-sync',$7,now(),now()) RETURNING *`,
+        [randomUUID(),v.cardId,v.domain,revision,v.status,v.content,v.baseGitRevision]);
+      await client.query("COMMIT");
+      if (inserted.rows[0] === undefined) throw new Error("database_write_failed");
+      return { revision: map<CardRevision>(inserted.rows[0]), created: true };
+    } catch (error) { await safeRollback(client); throw error; } finally { client.release(); }
   }
   async listCardRevisions() { return rows<CardRevision>(await this.pool.query("SELECT * FROM card_revisions ORDER BY updated_at DESC")); }
   async getCardRevision(id: string) { return optional<CardRevision>(await this.pool.query("SELECT * FROM card_revisions WHERE revision_id=$1",[id])); }
@@ -186,3 +215,11 @@ async function one(client:{query:(sql:string,values?:unknown[])=>Promise<{rows:Q
 function rows<T>(result:{rows:QueryResultRow[]}):T[]{return result.rows.map((row)=>map<T>(row));}
 function optional<T>(result:{rows:QueryResultRow[]}):T|undefined{return result.rows[0]===undefined?undefined:map<T>(result.rows[0]);}
 function map<T>(row:QueryResultRow):T { const output:Record<string,unknown>={}; for(const [key,value] of Object.entries(row)) output[key.replace(/_([a-z])/gu,(_,letter:string)=>letter.toUpperCase())]=value instanceof Date?value.toISOString():value; return output as T; }
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}

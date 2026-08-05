@@ -343,6 +343,26 @@ tr[data-action]:hover {
   text-align: center;
   color: var(--muted);
 }
+.action-empty {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 9px;
+  background: #fff;
+}
+.action-empty strong { color: var(--text); font-size: 15px; }
+.workflow-note { font-size: 13px; }
+.source-tag {
+  display: inline-flex;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 600;
+}
+.source-tag.operator { background: #fff7ed; color: #9a3412; }
 .muted {
   color: var(--muted);
 }

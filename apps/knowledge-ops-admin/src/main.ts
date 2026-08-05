@@ -48,7 +48,7 @@ function showLogin(error = "") {
   root.innerHTML = `<main class="login"><form class="login-card" id="login-form"><div class="brand-mark">P</div><h1>PSE 知识运营台</h1><p>集中处理用户反馈、答案卡审核、回归评测和知识发布。访问令牌仅保存在当前浏览器标签会话中。</p>${error ? `<div class="notice error" role="alert">${h(error)}</div>` : ""}<div class="field"><label for="token">访问令牌</label><input id="token" name="token" type="password" minlength="24" required autocomplete="current-password" placeholder="输入管理员或运营令牌"></div><button class="button primary" type="submit">进入运营台</button></form></main>`;
 }
 async function showApp() {
-  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">P</div><div><strong>PSE 知识运营</strong><small>Knowledge Ops</small></div></div><nav class="nav" aria-label="主导航">${nav.map((item) => `<button data-nav="${item.id}" class="${item.id === current ? "active" : ""}" aria-current="${item.id === current ? "page" : "false"}"><span aria-hidden="true">${item.icon}</span><span class="label">${item.label}</span></button>`).join("")}</nav><div class="sidebar-foot"><div class="connection"><i class="dot"></i><span>管理服务已连接</span></div><button class="button small" data-action="logout">退出会话</button></div></aside><main class="main"><header class="topbar"><h1>${h(nav.find((x) => x.id === current)?.label)}</h1><div class="top-actions"><button class="button" data-action="refresh">刷新</button>${current === "cards" ? '<button class="button primary" data-action="new-card">新建修订</button>' : ""}</div></header><section id="content" class="content" aria-live="polite">${loading()}</section></main></div><div id="overlay"></div><div id="toast" aria-live="assertive"></div>`;
+  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">P</div><div><strong>PSE 知识运营</strong><small>Knowledge Ops</small></div></div><nav class="nav" aria-label="主导航">${nav.map((item) => `<button data-nav="${item.id}" class="${item.id === current ? "active" : ""}" aria-current="${item.id === current ? "page" : "false"}"><span aria-hidden="true">${item.icon}</span><span class="label">${item.label}</span></button>`).join("")}</nav><div class="sidebar-foot"><div class="connection"><i class="dot"></i><span>管理服务已连接</span></div><button class="button small" data-action="logout">退出会话</button></div></aside><main class="main"><header class="topbar"><h1>${h(nav.find((x) => x.id === current)?.label)}</h1><div class="top-actions"><button class="button" data-action="refresh">刷新</button>${current === "cards" ? '<button class="button" data-action="sync-cards">同步知识库答案卡</button><button class="button primary" data-action="new-card">新建修订</button>' : ""}</div></header><section id="content" class="content" aria-live="polite">${loading()}</section></main></div><div id="overlay"></div><div id="toast" aria-live="assertive"></div>`;
   await loadCurrent();
 }
 async function loadCurrent() {
@@ -112,13 +112,15 @@ async function renderDashboard() {
 }
 async function renderFeedback() {
   const [values,reviews] = await Promise.all([api.get<FeedbackMeta[]>("/v1/feedback"),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
+  const reviewByRequest=new Map(reviews.map((review)=>[review.requestId,review]));
   content(
-    `<section class="panel"><div class="panel-head"><div><h2>自动复查</h2><span class="muted">每条知识回答自动进入；默认优先处理未通过和执行异常</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="">全部结论</option>${["pending","pass","needs_review","fail"].map((x)=>`<option>${x}</option>`).join("")}</select><span class="muted">共 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","处理状态","复查结论","分数","缺陷","时间"],reviews.map((x)=>`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}"><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${h(x.questionPreview)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`)):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户反馈</h2><span class="muted">用户只表达体验；可在详情中纠正误点分类</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按状态筛选"><option value="">全部状态</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => `<option>${x}</option>`).join("")}</select><span class="muted">共 ${values.length} 条；原问与原答仅在打开详情时解密</span></div>${
+    `<div class="notice workflow-note"><strong>这里有两种不同信号：</strong>自动复查是系统对每条回答的独立判断；用户反馈是用户通过 /q 表达的体验。两者按同一请求关联，只有人工审核后的答案卡或知识修订才会影响后续回答，反馈不会自动写入知识库。</div><section class="panel mt-16"><div class="panel-head"><div><h2>自动复查</h2><span class="muted">每条知识回答自动进入；默认优先处理未通过和执行异常</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="">全部结论</option>${["pending","pass","needs_review","fail"].map((x)=>`<option>${x}</option>`).join("")}</select><span class="muted">共 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","处理状态","复查结论","分数","缺陷","时间"],reviews.map((x)=>`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}"><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${h(x.questionPreview)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`)):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户反馈</h2><span class="muted">用户只表达体验；详情可联查同一回答的自动复查</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按状态筛选"><option value="">全部状态</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => `<option>${x}</option>`).join("")}</select><span class="muted">共 ${values.length} 条；原问与原答仅在打开详情时解密</span></div>${
       values.length
         ? table(
             [
               "反馈类型",
               "处理状态",
+              "关联复查",
               "回答状态",
               "范围",
               "引用",
@@ -126,8 +128,10 @@ async function renderFeedback() {
               "提交时间",
             ],
             values.map(
-              (x) =>
-                `<tr data-action="feedback-detail" data-id="${h(x.caseId)}" data-status="${h(x.status)}"><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${h(x.answerStatus)}</td><td>${h(x.scope ?? "—")}</td><td>${x.referenceCount}</td><td>${h(x.userDisplayName ?? "未获取到聊天名")}</td><td>${time(x.createdAt)}</td></tr>`,
+              (x) => {
+                const linked=reviewByRequest.get(x.requestId);
+                return `<tr data-action="feedback-detail" data-id="${h(x.caseId)}" data-status="${h(x.status)}"><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${linked?badge(linked.verdict):'<span class="muted">未生成</span>'}</td><td>${h(x.answerStatus)}</td><td>${h(x.scope ?? "—")}</td><td>${x.referenceCount}</td><td>${h(x.userDisplayName ?? "未获取到聊天名")}</td><td>${time(x.createdAt)}</td></tr>`;
+              },
             ),
           )
         : empty("尚未收到用户反馈")
@@ -136,12 +140,15 @@ async function renderFeedback() {
 }
 async function renderCards() {
   const cards = await api.get<CardRevision[]>("/v1/cards");
+  const catalogCount=cards.filter((card)=>card.createdBy==="catalog-sync").length;
+  const operatorCount=cards.length-catalogCount;
   content(
-    cards.length
+    `<div class="notice workflow-note"><strong>数据来源：</strong>两套 Git/Obsidian 知识库是已批准答案卡的事实来源，后台同步为只读目录镜像；人工新建的内容是运营修订，必须经过审核、回归和发布才会影响用户回答。当前：${catalogCount} 条目录镜像，${operatorCount} 条运营修订。</div><div class="mt-16">${cards.length
       ? table(
           [
             "答案卡",
             "知识域",
+            "来源",
             "修订",
             "状态",
             "创建人",
@@ -151,10 +158,10 @@ async function renderCards() {
           ],
           cards.map(
             (card) =>
-              `<tr><td><strong>${h(card.cardId)}</strong><br><span class="muted">${h(String(card.content.title ?? ""))}</span></td><td>${h(domainName(card.domain))}</td><td>r${card.revision}</td><td>${badge(card.status)}</td><td>${h(card.createdBy)}</td><td class="mono">${shortId(card.baseGitRevision)}</td><td>${time(card.updatedAt)}</td><td><button class="button small" data-action="card-detail" data-id="${h(card.revisionId)}">查看</button> ${card.status !== "approved" ? `<button class="button small primary" data-action="review-card" data-id="${h(card.revisionId)}">审核</button>` : ""}</td></tr>`,
+              `<tr><td><strong>${h(card.cardId)}</strong><br><span class="muted">${h(String(card.content.title ?? ""))}</span></td><td>${h(domainName(card.domain))}</td><td>${card.createdBy==="catalog-sync"?'<span class="source-tag">知识库目录</span>':'<span class="source-tag operator">运营修订</span>'}</td><td>r${card.revision}</td><td>${badge(card.status)}</td><td>${h(card.createdBy==="catalog-sync"?"系统同步":card.createdBy)}</td><td class="mono">${shortId(card.baseGitRevision)}</td><td>${time(card.updatedAt)}</td><td><button class="button small" data-action="card-detail" data-id="${h(card.revisionId)}">查看</button> ${card.status !== "approved" && card.createdBy!=="catalog-sync" ? `<button class="button small primary" data-action="review-card" data-id="${h(card.revisionId)}">审核</button>` : ""}</td></tr>`,
           ),
         )
-      : empty("暂无答案卡修订"),
+      : `<div class="empty action-empty"><strong>还没有同步答案卡目录</strong><span>线上知识库可能已有答案卡，但后台需要 Worker 完成首次目录同步。</span><button class="button primary" data-action="sync-cards">立即同步两套知识库</button></div>`}</div>`,
   );
 }
 async function renderRegressions() {
@@ -268,6 +275,9 @@ async function handleClick(event: MouseEvent) {
     case "new-card":
       newCardDrawer();
       break;
+    case "sync-cards":
+      await syncCatalog(target);
+      break;
     case "run-regression":
       await runRegression();
       break;
@@ -376,7 +386,8 @@ async function answerReviewDrawer(id:string){
 }
 
 async function feedbackDrawer(id: string) {
-  const item = await api.get<FeedbackDetail>(`/v1/feedback/${id}`);
+  const [item,reviews] = await Promise.all([api.get<FeedbackDetail>(`/v1/feedback/${id}`),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
+  const linkedReview=reviews.find((review)=>review.requestId===item.requestId);
   const classifications = [
     "useful",
     "incorrect",
@@ -388,6 +399,7 @@ async function feedbackDrawer(id: string) {
   overlay(
     `<div class="drawer-head"><div><strong>反馈 #${item.questionId}</strong> ${badge(item.classification)} ${badge(item.status)}</div><button class="button" data-action="close-overlay">关闭</button></div>
     <div class="drawer-body">
+      <div class="notice"><strong>运营处理建议：</strong>先核对同一回答的自动复查，再判断是知识缺口、检索问题还是表达问题。用户反馈不会自动改写答案。${linkedReview?` <button class="button small" data-action="answer-review-detail" data-id="${h(linkedReview.reviewId)}">查看关联自动复查 ${badge(linkedReview.verdict)}</button>`:" 当前请求尚无自动复查记录，请人工核对原问原答。"}</div>
       <div class="detail-section"><h3>反馈用户</h3><div class="content-box">${h(item.userDisplayName ?? "未获取到聊天名")}</div><div class="muted mt-6">技术关联标识：<span class="mono">${shortId(item.pseudonymousUserId, 16)}</span></div></div>
       ${item.proposedAnswer ? `<div class="detail-section"><h3>用户提交的候选答案</h3><div class="notice">该内容仅供人工审核，不会自动进入线上知识。</div><div class="content-box mt-6">${h(item.proposedAnswer)}</div></div>` : ""}
       <div class="detail-section"><h3>用户补充</h3><div class="content-box">${h(item.comment || "（未填写补充说明）")}</div></div>
@@ -467,6 +479,24 @@ async function runRegression() {
   await api.post("/v1/regressions/run", {});
   toast("全量回归已进入独立队列");
   await loadCurrent();
+}
+async function syncCatalog(button:HTMLElement){
+  const control=button instanceof HTMLButtonElement?button:undefined;
+  if(control){control.disabled=true;control.setAttribute("aria-busy","true");}
+  try{
+    const job=await api.post<OpsJob>("/v1/cards/sync",{});
+    toast("答案卡同步作业已进入队列");
+    for(let attempt=0;attempt<20;attempt+=1){
+      await new Promise((resolve)=>setTimeout(resolve,500));
+      const jobs=await api.get<OpsJob[]>("/v1/jobs");
+      const currentJob=jobs.find((item)=>item.jobId===job.jobId);
+      if(currentJob?.status==="completed"){toast("两套知识库答案卡已同步");await loadCurrent();return;}
+      if(currentJob?.status==="failed")throw new Error(`catalog_sync_failed:${currentJob.errorCode??"unknown"}`);
+    }
+    toast("同步仍在后台运行，稍后刷新即可查看");
+  }finally{
+    if(control){control.disabled=false;control.removeAttribute("aria-busy");}
+  }
 }
 async function rollback(id: string) {
   if (

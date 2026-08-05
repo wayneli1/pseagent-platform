@@ -28,6 +28,7 @@ export class KnowledgeOpsApi {
         if(request.method==="PATCH"){const input=feedbackPatchSchema.parse(request.body);const patch={...(input.status===undefined?{}:{status:input.status}),...(input.classification===undefined?{}:{classification:input.classification})};const value=await this.service.triageFeedback(actor,segments[2],patch);return value?ok(value):notFound();}
       }
       if(request.method==="GET"&&pathname==="/v1/cards")return ok(await this.service.listCards(actor));
+      if(request.method==="POST"&&pathname==="/v1/cards/sync")return created(await this.service.enqueueCatalogSync(actor));
       if(segments[0]==="v1"&&segments[1]==="cards"&&segments[2]&&segments[3]==="revisions"&&request.method==="POST"){
         const body=record(request.body);return created(await this.service.createCardRevision(actor,segments[2],knowledgeDomainSchema.parse(body.domain),record(body.content),String(body.baseGitRevision)));
       }

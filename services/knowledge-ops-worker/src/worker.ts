@@ -17,7 +17,11 @@ export class KnowledgeOpsWorker {
   private async execute(job:OpsJob):Promise<Record<string,unknown>>{
     switch(job.type){
       case "answer_review":return this.reviewAnswer(requireString(job.payload,"reviewId"));
-      case "compile_catalog":{const catalog=await this.compile();return{catalogHash:hashCatalog(catalog),cardCount:catalog.cards.length,familyCount:catalog.families.length};}
+      case "compile_catalog":{
+        const catalog=await this.compile();
+        const synced=await this.syncCatalog(catalog);
+        return{catalogHash:hashCatalog(catalog),cardCount:catalog.cards.length,familyCount:catalog.families.length,syncedCardCount:synced.created,existingCardCount:synced.existing};
+      }
       case "regression_run":return this.regression(job);
       case "publish_release":return this.publish(requireString(job.payload,"releaseId"));
       case "rollback_release":{const id=requireString(job.payload,"releaseId");await this.dependencies.snapshots.rollback(id);await this.dependencies.store.rollbackRelease(id);return{releaseId:id,active:true};}
@@ -26,6 +30,16 @@ export class KnowledgeOpsWorker {
     throw new Error("unsupported_job_type");
   }
   private compile(){return this.compiler.compile(this.dependencies.sources);}
+  private async syncCatalog(catalog:AnswerCardCatalog):Promise<{created:number;existing:number}>{
+    const revisions=new Map(catalog.domains.map((domain)=>[domain.domain,domain.revision]));
+    let created=0,existing=0;
+    for(const card of catalog.cards){
+      const baseGitRevision=revisions.get(card.domain);if(baseGitRevision===undefined)throw new Error("catalog_domain_revision_missing");
+      const result=await this.dependencies.store.syncCatalogCardRevision({cardId:card.cardId,domain:card.domain,status:card.reviewStatus,content:structuredClone(card) as unknown as Record<string,unknown>,baseGitRevision});
+      if(result.created)created++;else existing++;
+    }
+    return{created,existing};
+  }
   private async reviewAnswer(reviewId:string):Promise<Record<string,unknown>>{
     const cipher=this.dependencies.cipher,reviewer=this.dependencies.answerReviewer;if(cipher===undefined||reviewer===undefined)throw new Error("answer_reviewer_not_configured");
     const stored=await this.dependencies.store.getAnswerReview(reviewId);if(stored===undefined)throw new Error("answer_review_not_found");

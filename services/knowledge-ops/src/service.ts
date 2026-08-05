@@ -92,6 +92,12 @@ export class KnowledgeOpsService {
   }
 
   async listCards(actor: OpsActor){assertAuthorized(actor,"card:read");return this.store.listCardRevisions();}
+  async enqueueCatalogSync(actor:OpsActor){
+    assertAuthorized(actor,"card:edit");
+    const job=await this.store.enqueueJob("compile_catalog",{trigger:"admin"});
+    await this.audit(actor,"card.catalog.sync.enqueue","job",job.jobId,{});
+    return job;
+  }
   async createCardRevision(actor:OpsActor,cardId:string,domain:KnowledgeDomain,content:Record<string,unknown>,baseGitRevision:string){
     assertAuthorized(actor,"card:edit",domain);
     const card=answerCardSchema.parse({...content,cardId,domain,reviewStatus:"draft"});
