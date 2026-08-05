@@ -343,7 +343,7 @@ export type RepairDraftStatus =
   | "ready_to_publish" | "publishing" | "published" | "failed";
 export type RepairValidationStatus = "queued" | "running" | "passed" | "failed";
 export type RepairPublicationStatus = "pending" | "publishing" | "published" | "failed" | "rolled_back";
-export type RepairRegressionKind = "canonical" | "alias" | "typo" | "follow_up" | "negative";
+export type RepairRegressionKind = "canonical" | "alias" | "colloquial" | "follow_up" | "negative";
 
 export interface RepairObligation {
   readonly id: string;

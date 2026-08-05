@@ -120,7 +120,7 @@ export const issueListQuerySchema=z.object({
 export const issuePatchSchema=z.object({status:z.enum(["open","dismissed"])}).strict();
 
 export const repairTargetKindSchema=z.enum(["answer_card","knowledge_page","retrieval_rule","system_fix"]);
-export const repairRegressionKindSchema=z.enum(["canonical","alias","typo","follow_up","negative"]);
+export const repairRegressionKindSchema=z.enum(["canonical","alias","colloquial","follow_up","negative"]);
 const repairPathSchema=z.string().trim().min(1).max(1_000).refine((value)=>
   /^(?:wiki\/(?:queries|concepts)\/[\p{L}\p{N}_.\- ()（）]+\.md|governance\/(?:question-families|regression)\/[A-Za-z0-9_.-]+\.json)$/u.test(value)&&
   !value.includes("\\")&&!value.split("/").includes(".."),"invalid_repair_target_path");

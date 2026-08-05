@@ -8,7 +8,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
+    "pretypecheck": "npm run build -w @pseagent/knowledge-ops",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "npm run build -w @pseagent/knowledge-ops",
     "test": "vitest run src"
   },
   "dependencies": {

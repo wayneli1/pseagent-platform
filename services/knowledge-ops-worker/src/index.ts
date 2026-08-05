@@ -5,3 +5,5 @@ export * from "./snapshot-manager.js";
 export * from "./worker.js";
 export * from "./answer-review-config.js";
 export * from "./answer-reviewer.js";
+export * from "./repair-agent.js";
+export * from "./repair-evidence.js";
