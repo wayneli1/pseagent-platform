@@ -7,6 +7,12 @@ import type {
   CatalogCardSyncResult,
   CardRevision,
   DashboardSummary,
+  IssueCase,
+  IssueCaseSummary,
+  IssueListQuery,
+  IssueOccurrence,
+  IssuePage,
+  IssueRecordInput,
   OpsJob,
   OpsJobType,
   RegressionCaseRecord,
@@ -20,12 +26,19 @@ export interface KnowledgeOpsStore {
   insertAnswerReviewAndEnqueue(value: StoredAnswerReviewCase): Promise<{ readonly review: StoredAnswerReviewCase; readonly enqueued: boolean }>;
   listAnswerReviews(): Promise<readonly StoredAnswerReviewCase[]>;
   getAnswerReview(reviewId: string): Promise<StoredAnswerReviewCase | undefined>;
+  getAnswerReviewByRequestId(requestId: string): Promise<StoredAnswerReviewCase | undefined>;
   updateAnswerReviewWorkflow(reviewId: string, workflowStatus: StoredAnswerReviewCase["workflowStatus"]): Promise<StoredAnswerReviewCase | undefined>;
   updateAnswerReviewMachine(reviewId: string, patch: Partial<Pick<StoredAnswerReviewCase,"processingStatus"|"verdict"|"workflowStatus"|"encryptedPayload"|"score"|"defectCount"|"errorCode">>): Promise<StoredAnswerReviewCase | undefined>;
   insertFeedback(value: StoredFeedbackCase): Promise<StoredFeedbackCase>;
   listFeedback(): Promise<readonly StoredFeedbackCase[]>;
   getFeedback(caseId: string): Promise<StoredFeedbackCase | undefined>;
+  getFeedbackByRequestId(requestId: string): Promise<StoredFeedbackCase | undefined>;
   updateFeedback(caseId: string, patch: Pick<Partial<StoredFeedbackCase>, "status" | "classification">): Promise<StoredFeedbackCase | undefined>;
+  recordIssue(value: IssueRecordInput): Promise<IssueCaseSummary>;
+  listIssues(query: IssueListQuery): Promise<IssuePage>;
+  getIssue(issueId: string): Promise<IssueCaseSummary | undefined>;
+  listIssueOccurrences(issueId: string): Promise<readonly IssueOccurrence[]>;
+  updateIssue(issueId: string, patch: Pick<Partial<IssueCase>,"status"|"ownerId">): Promise<IssueCaseSummary | undefined>;
   createCardRevision(value: CardRevision): Promise<CardRevision>;
   syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult>;
   listCardRevisions(): Promise<readonly CardRevision[]>;
@@ -58,6 +71,8 @@ export interface KnowledgeOpsStore {
 export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   private readonly answerReviews = new Map<string, StoredAnswerReviewCase>();
   private readonly feedback = new Map<string, StoredFeedbackCase>();
+  private readonly issues = new Map<string, IssueCase>();
+  private readonly issueOccurrences = new Map<string, IssueOccurrence>();
   private readonly revisions = new Map<string, CardRevision>();
   private readonly reviews = new Map<string, ReviewRecord>();
   private readonly approvals = new Map<string, ApprovalRecord>();
@@ -76,6 +91,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listAnswerReviews(){return newest([...this.answerReviews.values()].map(copy));}
   async getAnswerReview(id:string){return maybeCopy(this.answerReviews.get(id));}
+  async getAnswerReviewByRequestId(requestId:string){return maybeCopy([...this.answerReviews.values()].find((item)=>item.requestId===requestId));}
   async updateAnswerReviewWorkflow(id:string,workflowStatus:StoredAnswerReviewCase["workflowStatus"]){
     return this.updateAnswerReviewMachine(id,{workflowStatus});
   }
@@ -91,10 +107,27 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listFeedback() { return newest([...this.feedback.values()].map(copy)); }
   async getFeedback(id: string) { return maybeCopy(this.feedback.get(id)); }
+  async getFeedbackByRequestId(requestId:string){return maybeCopy([...this.feedback.values()].find((item)=>item.requestId===requestId));}
   async updateFeedback(id: string, patch: Pick<Partial<StoredFeedbackCase>, "status" | "classification">) {
     const old = this.feedback.get(id); if (!old) return undefined;
     const next = { ...old, ...patch, updatedAt: now() }; this.feedback.set(id, next); return copy(next);
   }
+  async recordIssue(value:IssueRecordInput):Promise<IssueCaseSummary>{
+    const linkedOccurrence=[...this.issueOccurrences.values()].find((item)=>item.requestId===value.occurrence.requestId);
+    const byFingerprint=[...this.issues.values()].find((item)=>item.fingerprint===value.fingerprint);
+    const existing=linkedOccurrence===undefined?byFingerprint:this.issues.get(linkedOccurrence.issueId);
+    const timestamp=now();let issue:IssueCase;
+    if(existing===undefined){issue={issueId:randomUUID(),fingerprint:value.fingerprint,title:value.title,priority:value.priority,status:"open",category:value.category,...(value.scope?{scope:value.scope}:{}),...(value.answerCardKey?{answerCardKey:value.answerCardKey}:{}),slaDueAt:slaDeadline(value.occurredAt,value.priority),firstSeenAt:value.occurredAt,lastSeenAt:value.occurredAt,createdAt:timestamp,updatedAt:timestamp};}
+    else{const escalated=isHigherPriority(value.priority,existing.priority);issue={...existing,...(escalated?{priority:value.priority,title:value.title,category:value.category,slaDueAt:slaDeadline(value.occurredAt,value.priority)}:{}),...(!existing.answerCardKey&&value.answerCardKey?{answerCardKey:value.answerCardKey}:{}),status:existing.status==="resolved"||existing.status==="dismissed"?"open":existing.status,lastSeenAt:value.occurredAt>existing.lastSeenAt?value.occurredAt:existing.lastSeenAt,updatedAt:timestamp};}
+    this.issues.set(issue.issueId,issue);
+    const occurrenceKey=`${value.occurrence.sourceType}:${value.occurrence.sourceId}`;
+    if(!this.issueOccurrences.has(occurrenceKey))this.issueOccurrences.set(occurrenceKey,{occurrenceId:randomUUID(),issueId:issue.issueId,...copy(value.occurrence),createdAt:value.occurredAt});
+    return this.issueSummary(issue);
+  }
+  async listIssues(query:IssueListQuery):Promise<IssuePage>{const filtered=[...this.issues.values()].filter((item)=>(query.status===undefined||item.status===query.status)&&(query.priority===undefined||item.priority===query.priority)).sort((left,right)=>priorityRank(left.priority)-priorityRank(right.priority)||right.lastSeenAt.localeCompare(left.lastSeenAt));return{items:filtered.slice(query.offset,query.offset+query.limit).map((item)=>this.issueSummary(item)),total:filtered.length};}
+  async getIssue(id:string){const issue=this.issues.get(id);return issue===undefined?undefined:this.issueSummary(issue);}
+  async listIssueOccurrences(id:string){return newest([...this.issueOccurrences.values()].filter((item)=>item.issueId===id).map(copy));}
+  async updateIssue(id:string,patch:Pick<Partial<IssueCase>,"status"|"ownerId">){const issue=this.issues.get(id);if(issue===undefined)return undefined;const next={...issue,...patch,updatedAt:now()};this.issues.set(id,next);return this.issueSummary(next);}
   async createCardRevision(value: CardRevision) { this.revisions.set(value.revisionId, copy(value)); return copy(value); }
   async syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult> {
     const existing = [...this.revisions.values()].find((revision) =>
@@ -187,6 +220,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     const old = this.jobs.get(id); if (!old) throw new Error("job_not_found");
     this.jobs.set(id, { ...old, ...patch, updatedAt: now() });
   }
+  private issueSummary(issue:IssueCase):IssueCaseSummary{const occurrences=[...this.issueOccurrences.values()].filter((item)=>item.issueId===issue.issueId);return{...copy(issue),occurrenceCount:new Set(occurrences.map((item)=>item.requestId)).size,affectedUserCount:new Set(occurrences.map((item)=>item.pseudonymousUserId)).size};}
 }
 
 function now(): string { return new Date().toISOString(); }
@@ -201,3 +235,7 @@ function stableJson(value: unknown): string {
   }
   return JSON.stringify(value);
 }
+const ISSUE_PRIORITY_ORDER={p0:0,p1:1,p2:2,p3:3} as const;
+function priorityRank(value:IssueCase["priority"]):number{return ISSUE_PRIORITY_ORDER[value];}
+function isHigherPriority(candidate:IssueCase["priority"],current:IssueCase["priority"]):boolean{return priorityRank(candidate)<priorityRank(current);}
+function slaDeadline(occurredAt:string,priority:IssueCase["priority"]):string{const hours={p0:2,p1:8,p2:24,p3:72}[priority];return new Date(new Date(occurredAt).valueOf()+hours*60*60_000).toISOString();}

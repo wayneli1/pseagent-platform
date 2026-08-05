@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AnswerReviewEncryptedPayload, KnowledgeOpsStore, OpsJob, RegressionRun } from "@pseagent/knowledge-ops";
+import type { AnswerReviewEncryptedPayload, IssueCategory, IssuePriority, KnowledgeOpsStore, OpsJob, RegressionRun, StoredAnswerReviewCase } from "@pseagent/knowledge-ops";
 import { ContentCipher } from "@pseagent/knowledge-ops";
 import type { AnswerCardCatalog } from "@pseagent/knowledge-governance-contracts";
 import { CatalogCompiler, type KnowledgeSource } from "./catalog-compiler.js";
@@ -44,16 +44,21 @@ export class KnowledgeOpsWorker {
     const cipher=this.dependencies.cipher,reviewer=this.dependencies.answerReviewer;if(cipher===undefined||reviewer===undefined)throw new Error("answer_reviewer_not_configured");
     const stored=await this.dependencies.store.getAnswerReview(reviewId);if(stored===undefined)throw new Error("answer_review_not_found");
     await this.dependencies.store.updateAnswerReviewMachine(reviewId,{processingStatus:"running"});
+    let payload:AnswerReviewEncryptedPayload|undefined;let machineCompleted=false;
     try{
-      const payload=cipher.decrypt<AnswerReviewEncryptedPayload>(stored.encryptedPayload);const catalog=await this.compile();
-      const exactCard=catalog.cards.find((card)=>isActiveCard(card.reviewStatus)&&[card.canonicalQuestion,...card.aliases].some((question)=>normalize(question)===normalize(payload.question)));
-      const evidence=await loadReviewEvidence({sources:this.dependencies.sources,catalog,references:payload.references});
-      const result=await reviewer.review({question:payload.question,answer:payload.answer,answerStatus:stored.answerStatus,evidence:evidence.documents,evidenceIssues:evidence.issues,...(exactCard===undefined?{}:{exactCard}),...(payload.answerCardActivation===undefined?{}:{answerCardActivation:payload.answerCardActivation})});
-      const encryptedPayload=cipher.encrypt({...payload,result});const workflowStatus=result.verdict==="pass"?"resolved" as const:"open" as const;
+      const decrypted=cipher.decrypt<AnswerReviewEncryptedPayload>(stored.encryptedPayload);payload=decrypted;const catalog=await this.compile();
+      const exactCard=catalog.cards.find((card)=>isActiveCard(card.reviewStatus)&&[card.canonicalQuestion,...card.aliases].some((question)=>normalize(question)===normalize(decrypted.question)));
+      const evidence=await loadReviewEvidence({sources:this.dependencies.sources,catalog,references:decrypted.references});
+      const result=await reviewer.review({question:decrypted.question,answer:decrypted.answer,answerStatus:stored.answerStatus,evidence:evidence.documents,evidenceIssues:evidence.issues,...(exactCard===undefined?{}:{exactCard}),...(decrypted.answerCardActivation===undefined?{}:{answerCardActivation:decrypted.answerCardActivation})});
+      const encryptedPayload=cipher.encrypt({...decrypted,result});const workflowStatus=result.verdict==="pass"?"resolved" as const:"open" as const;
       await this.dependencies.store.updateAnswerReviewMachine(reviewId,{processingStatus:"completed",verdict:result.verdict,workflowStatus,encryptedPayload,score:result.score,defectCount:result.defects.length});
+      machineCompleted=true;
+      if(result.verdict!=="pass")await this.recordReviewIssue(stored,payload,result.verdict==="fail"?"p0":"p1",primaryIssueCategory(result));
+      else{const feedback=await this.dependencies.store.getFeedbackByRequestId(stored.requestId);if(feedback!==undefined&&feedback.classification!=="useful"&&feedback.status!=="resolved"&&feedback.status!=="rejected")await this.recordReviewIssue(stored,payload,"p1","judgement_conflict");}
       return{reviewId,verdict:result.verdict,score:result.score,defectCount:result.defects.length};
-    }catch(error){await this.dependencies.store.updateAnswerReviewMachine(reviewId,{processingStatus:"errored",verdict:"pending",workflowStatus:"open",errorCode:safeCode(error)});throw error;}
+    }catch(error){if(!machineCompleted){await this.dependencies.store.updateAnswerReviewMachine(reviewId,{processingStatus:"errored",verdict:"pending",workflowStatus:"open",errorCode:safeCode(error)});await this.recordReviewIssue(stored,payload,"p3","review_error");}throw error;}
   }
+  private async recordReviewIssue(stored:StoredAnswerReviewCase,payload:AnswerReviewEncryptedPayload|undefined,priority:IssuePriority,category:IssueCategory){const questionKey=hashText(normalize(payload?.question??stored.reviewId));const answerCardKey=cardKey(payload?.answerCardMatch);const groupKey=answerCardKey??questionKey;const occurredAt=new Date().toISOString();const issue=await this.dependencies.store.recordIssue({fingerprint:hashText(`${stored.scope??"unknown"}\0${groupKey}\0${category}`),title:`review:${category}:${groupKey.slice(0,12)}`,priority,category,...(stored.scope?{scope:stored.scope}:{}),...(answerCardKey?{answerCardKey}:{}),occurredAt,occurrence:{sourceType:"answer_review",sourceId:stored.reviewId,requestId:stored.requestId,pseudonymousUserId:stored.pseudonymousUserId}});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"issue.review.upsert",resourceType:"issue_case",resourceId:issue.issueId,metadata:{priority:issue.priority,category:issue.category},createdAt:occurredAt});}
   private async regression(job:OpsJob){
     const runId=typeof job.payload.runId==="string"?job.payload.runId:randomUUID();const catalog=await this.compile();const cases=await this.dependencies.store.listRegressionCases();
     const outcomes=cases.filter(x=>x.enabled).map(test=>{const normalized=normalize(test.question);const exact=catalog.cards.find(card=>[card.canonicalQuestion,...card.aliases].some(q=>normalize(q)===normalized));const passed=(test.expectedCardId===undefined||exact?.cardId===test.expectedCardId)&&test.forbiddenClaims.every(x=>!exact?.answerTemplate.includes(x));return{caseId:test.caseId,passed,actualCardId:exact?.cardId};});
@@ -71,3 +76,6 @@ function isActiveCard(status:string){return status==="approved"||status==="relea
 function hashCatalog(catalog:AnswerCardCatalog){return createHash("sha256").update(stableJson(catalog)).digest("hex");}
 function stableJson(value:unknown):string{if(Array.isArray(value))return`[${value.map(stableJson).join(",")}]`;if(value!==null&&typeof value==="object"){const r=value as Record<string,unknown>;return`{${Object.keys(r).sort().map(k=>`${JSON.stringify(k)}:${stableJson(r[k])}`).join(",")}}`;}return JSON.stringify(value);}
 function safeCode(error:unknown){return error instanceof Error?error.message.replace(/[^a-z0-9_:.-]/giu,"_").slice(0,160):"worker_job_failed";}
+function primaryIssueCategory(result:{readonly defects:readonly{readonly category:IssueCategory;readonly severity:string}[]}):IssueCategory{return result.defects.find((item)=>item.severity==="critical")?.category??result.defects.find((item)=>item.severity==="major")?.category??result.defects[0]?.category??"coverage_gap";}
+function cardKey(match:Record<string,unknown>|undefined):string|undefined{const values=match?.cardIdHashes;return Array.isArray(values)&&typeof values[0]==="string"&&/^[a-f0-9]{64}$/u.test(values[0])?values[0]:undefined;}
+function hashText(value:string):string{return createHash("sha256").update(value,"utf8").digest("hex");}

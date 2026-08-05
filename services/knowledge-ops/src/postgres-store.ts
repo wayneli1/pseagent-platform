@@ -5,6 +5,7 @@ import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
   ApprovalRecord, AuditEvent, CatalogCardRevisionInput, CatalogCardSyncResult, CardRevision, DashboardSummary, OpsJob, OpsJobType,
+  IssueCase, IssueCaseSummary, IssueListQuery, IssueOccurrence, IssuePage, IssueRecordInput,
   RegressionCaseRecord, RegressionRun, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
   StoredAnswerReviewCase,
 } from "./types.js";
@@ -31,6 +32,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       "002_feedback_correction.sql",
       "003_feedback_identity_review_request.sql",
       "004_answer_reviews.sql",
+      "005_issue_center.sql",
     ]) {
       if (applied.has(fileName)) continue;
       const migration = await readFile(fileURLToPath(
@@ -66,6 +68,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listAnswerReviews(){return rows<StoredAnswerReviewCase>(await this.pool.query("SELECT * FROM answer_review_cases ORDER BY created_at DESC"));}
   async getAnswerReview(id:string){return optional<StoredAnswerReviewCase>(await this.pool.query("SELECT * FROM answer_review_cases WHERE review_id=$1",[id]));}
+  async getAnswerReviewByRequestId(requestId:string){return optional<StoredAnswerReviewCase>(await this.pool.query("SELECT * FROM answer_review_cases WHERE request_id=$1",[requestId]));}
   async updateAnswerReviewWorkflow(id:string,workflowStatus:StoredAnswerReviewCase["workflowStatus"]){return optional<StoredAnswerReviewCase>(await this.pool.query("UPDATE answer_review_cases SET workflow_status=$2,updated_at=now() WHERE review_id=$1 RETURNING *",[id,workflowStatus]));}
   async updateAnswerReviewMachine(id:string,patch:Partial<Pick<StoredAnswerReviewCase,"processingStatus"|"verdict"|"workflowStatus"|"encryptedPayload"|"score"|"defectCount"|"errorCode">>){
     const current=await this.getAnswerReview(id);if(current===undefined)return undefined;
@@ -84,6 +87,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listFeedback() { return rows<StoredFeedbackCase>(await this.pool.query("SELECT * FROM feedback_cases ORDER BY created_at DESC")); }
   async getFeedback(id: string) { return optional<StoredFeedbackCase>(await this.pool.query("SELECT * FROM feedback_cases WHERE case_id=$1",[id])); }
+  async getFeedbackByRequestId(requestId:string){return optional<StoredFeedbackCase>(await this.pool.query("SELECT * FROM feedback_cases WHERE request_id=$1",[requestId]));}
   async updateFeedback(id: string,patch: Pick<Partial<StoredFeedbackCase>,"status"|"classification">) {
     const current=await this.getFeedback(id);if(current===undefined)return undefined;
     return optional<StoredFeedbackCase>(await this.pool.query(
@@ -91,6 +95,53 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       [id,patch.status??current.status,patch.classification??current.classification],
     ));
   }
+
+  async recordIssue(v:IssueRecordInput):Promise<IssueCaseSummary>{
+    const client=await this.pool.connect();let issueId:string|undefined;
+    try{
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[`issue-request:${v.occurrence.requestId}`]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[`issue-fingerprint:${v.fingerprint}`]);
+      const linked=await client.query(`SELECT c.* FROM issue_cases c JOIN issue_occurrences o ON o.issue_id=c.issue_id
+        WHERE o.request_id=$1 ORDER BY c.created_at LIMIT 1 FOR UPDATE OF c`,[v.occurrence.requestId]);
+      const matching=linked.rows[0]===undefined?await client.query("SELECT * FROM issue_cases WHERE fingerprint=$1 FOR UPDATE",[v.fingerprint]):linked;
+      if(matching.rows[0]===undefined){
+        issueId=randomUUID();
+        await client.query(`INSERT INTO issue_cases
+          (issue_id,fingerprint,title,priority,status,category,scope,answer_card_key,owner_id,sla_due_at,first_seen_at,last_seen_at,created_at,updated_at)
+          VALUES ($1,$2,$3,$4,'open',$5,$6,$7,NULL,$8,$9,$9,now(),now())`,
+          [issueId,v.fingerprint,v.title,v.priority,v.category,v.scope??null,v.answerCardKey??null,slaDeadline(v.occurredAt,v.priority),v.occurredAt]);
+      }else{
+        const existing=map<IssueCase>(matching.rows[0]);issueId=existing.issueId;const escalated=isHigherPriority(v.priority,existing.priority);
+        await client.query(`UPDATE issue_cases SET
+          priority=$2,title=$3,category=$4,scope=COALESCE(scope,$5),answer_card_key=COALESCE(answer_card_key,$6),
+          status=CASE WHEN status IN ('resolved','dismissed') THEN 'open' ELSE status END,
+          sla_due_at=$7,last_seen_at=GREATEST(last_seen_at,$8),updated_at=now() WHERE issue_id=$1`,
+          [issueId,escalated?v.priority:existing.priority,escalated?v.title:existing.title,escalated?v.category:existing.category,v.scope??null,v.answerCardKey??null,escalated?slaDeadline(v.occurredAt,v.priority):existing.slaDueAt,v.occurredAt]);
+      }
+      await client.query(`INSERT INTO issue_occurrences
+        (occurrence_id,issue_id,source_type,source_id,request_id,pseudonymous_user_id,created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (source_type,source_id) DO NOTHING`,
+        [randomUUID(),issueId,v.occurrence.sourceType,v.occurrence.sourceId,v.occurrence.requestId,v.occurrence.pseudonymousUserId,v.occurredAt]);
+      await client.query("COMMIT");
+    }catch(error){await safeRollback(client);throw error;}finally{client.release();}
+    const result=issueId===undefined?undefined:await this.getIssue(issueId);if(result===undefined)throw new Error("database_write_failed");return result;
+  }
+  async listIssues(query:IssueListQuery):Promise<IssuePage>{
+    const values=[query.status??null,query.priority??null,query.limit,query.offset];
+    const where="WHERE ($1::text IS NULL OR c.status=$1) AND ($2::text IS NULL OR c.priority=$2)";
+    const [items,total]=await Promise.all([
+      this.pool.query(`SELECT c.*,COUNT(DISTINCT o.request_id)::int AS occurrence_count,COUNT(DISTINCT o.pseudonymous_user_id)::int AS affected_user_count
+        FROM issue_cases c LEFT JOIN issue_occurrences o ON o.issue_id=c.issue_id ${where}
+        GROUP BY c.issue_id ORDER BY CASE c.priority WHEN 'p0' THEN 0 WHEN 'p1' THEN 1 WHEN 'p2' THEN 2 ELSE 3 END,c.last_seen_at DESC LIMIT $3 OFFSET $4`,values),
+      this.pool.query(`SELECT COUNT(*)::int AS count FROM issue_cases c ${where}`,[values[0],values[1]]),
+    ]);
+    return{items:rows<IssueCaseSummary>(items),total:Number(total.rows[0]?.count??0)};
+  }
+  async getIssue(id:string):Promise<IssueCaseSummary|undefined>{return optional<IssueCaseSummary>(await this.pool.query(`SELECT c.*,COUNT(DISTINCT o.request_id)::int AS occurrence_count,COUNT(DISTINCT o.pseudonymous_user_id)::int AS affected_user_count
+    FROM issue_cases c LEFT JOIN issue_occurrences o ON o.issue_id=c.issue_id WHERE c.issue_id=$1 GROUP BY c.issue_id`,[id]));}
+  async listIssueOccurrences(id:string){return rows<IssueOccurrence>(await this.pool.query("SELECT * FROM issue_occurrences WHERE issue_id=$1 ORDER BY created_at DESC",[id]));}
+  async updateIssue(id:string,patch:Pick<Partial<IssueCase>,"status"|"ownerId">){const current=await this.getIssue(id);if(current===undefined)return undefined;await this.pool.query("UPDATE issue_cases SET status=$2,owner_id=$3,updated_at=now() WHERE issue_id=$1",[id,patch.status??current.status,patch.ownerId??current.ownerId??null]);return this.getIssue(id);}
 
   async createCardRevision(v: CardRevision) {
     const row = await one(this.pool, `INSERT INTO card_revisions
@@ -236,3 +287,6 @@ function stableJson(value: unknown): string {
   }
   return JSON.stringify(value);
 }
+const ISSUE_PRIORITY_ORDER={p0:0,p1:1,p2:2,p3:3} as const;
+function isHigherPriority(candidate:IssueCase["priority"],current:IssueCase["priority"]):boolean{return ISSUE_PRIORITY_ORDER[candidate]<ISSUE_PRIORITY_ORDER[current];}
+function slaDeadline(occurredAt:string,priority:IssueCase["priority"]):string{const hours={p0:2,p1:8,p2:24,p3:72}[priority];return new Date(new Date(occurredAt).valueOf()+hours*60*60_000).toISOString();}

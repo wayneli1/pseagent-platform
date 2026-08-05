@@ -110,6 +110,14 @@ export const feedbackPatchSchema = z.object({
 });
 export const cardStatusSchema = governanceReviewStatusSchema;
 
+export const issuePrioritySchema=z.enum(["p0","p1","p2","p3"]);
+export const issueStatusSchema=z.enum(["open","assigned","in_progress","validating","resolved","dismissed"]);
+export const issueListQuerySchema=z.object({
+  status:issueStatusSchema.optional(),priority:issuePrioritySchema.optional(),
+  limit:z.coerce.number().int().min(1).max(100).default(50),offset:z.coerce.number().int().min(0).default(0),
+}).strict();
+export const issuePatchSchema=z.object({status:issueStatusSchema.optional(),ownerId:z.string().trim().min(1).max(128).optional()}).strict().refine((value)=>value.status!==undefined||value.ownerId!==undefined,{message:"issue_patch_empty"});
+
 const qualityBucketSchema = z.object({
   passed: z.boolean(),
   passedCases: z.number().int().min(0).max(20),

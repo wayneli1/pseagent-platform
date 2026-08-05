@@ -1,7 +1,7 @@
 import { ZodError } from "zod";
 import { knowledgeDomainSchema } from "@pseagent/knowledge-governance-contracts";
 import { OpsAuthorizationError, StaticTokenAuthorizer } from "./rbac.js";
-import { answerReviewWorkflowPatchSchema, feedbackPatchSchema, reviewInputSchema } from "./schemas.js";
+import { answerReviewWorkflowPatchSchema, feedbackPatchSchema, issueListQuerySchema, issuePatchSchema, reviewInputSchema } from "./schemas.js";
 import { KnowledgeOpsService, OpsNotFoundError } from "./service.js";
 
 export interface OpsApiRequest { readonly method:string; readonly path:string; readonly authorization?:string; readonly body?:unknown; }
@@ -12,7 +12,7 @@ export class KnowledgeOpsApi {
   async handle(request:OpsApiRequest):Promise<OpsApiResponse>{
     const actor=this.authorizer.authenticate(bearer(request.authorization));
     if(!actor)return {status:401,body:{error:"authentication_required"}};
-    const pathname=request.path.split("?",1)[0]??"/";const segments=pathname.split("/").filter(Boolean);
+    const url=new URL(request.path,"http://knowledge-ops.local");const pathname=url.pathname;const segments=pathname.split("/").filter(Boolean);
     try{
       if(request.method==="GET"&&pathname==="/v1/dashboard")return ok(await this.service.dashboard(actor));
       if(request.method==="POST"&&pathname==="/v1/answer-reviews")return created(await this.service.ingestAnswerReview(actor,request.body));
@@ -26,6 +26,11 @@ export class KnowledgeOpsApi {
       if(segments[0]==="v1"&&segments[1]==="feedback"&&segments[2]){
         if(request.method==="GET"){const value=await this.service.feedbackDetail(actor,segments[2]);return value?ok(value):notFound();}
         if(request.method==="PATCH"){const input=feedbackPatchSchema.parse(request.body);const patch={...(input.status===undefined?{}:{status:input.status}),...(input.classification===undefined?{}:{classification:input.classification})};const value=await this.service.triageFeedback(actor,segments[2],patch);return value?ok(value):notFound();}
+      }
+      if(request.method==="GET"&&pathname==="/v1/issues"){const input=issueListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listIssues(actor,{limit:input.limit,offset:input.offset,...(input.status?{status:input.status}:{}),...(input.priority?{priority:input.priority}:{})}));}
+      if(segments[0]==="v1"&&segments[1]==="issues"&&segments[2]){
+        if(request.method==="GET"){const value=await this.service.issueDetail(actor,segments[2]);return value?ok(value):notFound();}
+        if(request.method==="PATCH"){const input=issuePatchSchema.parse(request.body);const value=await this.service.triageIssue(actor,segments[2],{...(input.status?{status:input.status}:{}),...(input.ownerId?{ownerId:input.ownerId}:{})});return value?ok(value):notFound();}
       }
       if(request.method==="GET"&&pathname==="/v1/cards")return ok(await this.service.listCards(actor));
       if(request.method==="POST"&&pathname==="/v1/cards/sync")return created(await this.service.enqueueCatalogSync(actor));

@@ -271,6 +271,68 @@ export interface AuditEvent {
   readonly createdAt: string;
 }
 
+export type IssuePriority = "p0" | "p1" | "p2" | "p3";
+export type IssueStatus = "open" | "assigned" | "in_progress" | "validating" | "resolved" | "dismissed";
+export type IssueCategory =
+  | "knowledge_gap" | "retrieval_gap" | "planning_gap" | "coverage_gap" | "logic_gap" | "citation_gap" | "expression_gap"
+  | "user_incorrect" | "user_missing" | "review_requested" | "evidence" | "correction" | "judgement_conflict" | "review_error";
+export type IssueSourceType = "answer_review" | "feedback";
+
+export interface IssueCase {
+  readonly issueId: string;
+  readonly fingerprint: string;
+  readonly title: string;
+  readonly priority: IssuePriority;
+  readonly status: IssueStatus;
+  readonly category: IssueCategory;
+  readonly scope?: string;
+  readonly answerCardKey?: string;
+  readonly ownerId?: string;
+  readonly slaDueAt: string;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface IssueOccurrence {
+  readonly occurrenceId: string;
+  readonly issueId: string;
+  readonly sourceType: IssueSourceType;
+  readonly sourceId: string;
+  readonly requestId: string;
+  readonly pseudonymousUserId: string;
+  readonly createdAt: string;
+}
+
+export interface IssueCaseSummary extends IssueCase {
+  readonly occurrenceCount: number;
+  readonly affectedUserCount: number;
+}
+
+export interface IssueRecordInput {
+  readonly fingerprint: string;
+  readonly title: string;
+  readonly priority: IssuePriority;
+  readonly category: IssueCategory;
+  readonly scope?: string;
+  readonly answerCardKey?: string;
+  readonly occurredAt: string;
+  readonly occurrence: Omit<IssueOccurrence,"occurrenceId"|"issueId"|"createdAt">;
+}
+
+export interface IssueListQuery {
+  readonly status?: IssueStatus;
+  readonly priority?: IssuePriority;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface IssuePage {
+  readonly items: readonly IssueCaseSummary[];
+  readonly total: number;
+}
+
 export interface DashboardSummary {
   readonly feedback: Record<StoredFeedbackCase["status"], number>;
   readonly answerReviews: {

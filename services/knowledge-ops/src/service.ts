@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash,randomUUID } from "node:crypto";
 import { answerCardSchema, releaseManifestSchema, type KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import { ContentCipher } from "./crypto.js";
 import { assertAuthorized, assertSeparationOfDuties } from "./rbac.js";
@@ -6,7 +6,7 @@ import { answerReviewIntakeSchema, feedbackIntakeSchema, releaseQualityReportImp
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
   AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision,
-  FeedbackCaseListView, FeedbackCaseView, OpsActor, RegressionCaseRecord,
+  FeedbackCaseListView, FeedbackCaseView, IssueListQuery, IssueStatus, OpsActor, RegressionCaseRecord,
   ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
 } from "./types.js";
 
@@ -65,6 +65,14 @@ export class KnowledgeOpsService {
     };
     const result=await this.store.insertFeedback(stored);
     await this.audit(actor,"feedback.ingest","feedback_case",result.caseId,{classification:result.classification,source:result.source});
+    if(intake.classification!=="useful"){
+      const linkedReview=await this.store.getAnswerReviewByRequestId(intake.requestId);const conflict=linkedReview?.verdict==="pass";
+      const category=conflict?"judgement_conflict" as const:feedbackIssueCategory(intake.classification);
+      const priority=conflict||intake.classification==="incorrect"?"p1" as const:"p2" as const;
+      const cardKey=answerCardKey(intake.answerCardMatch);const questionKey=hash(normalizeQuestion(intake.question));
+      const issue=await this.store.recordIssue({fingerprint:hash(`${intake.scope??"unknown"}\0${cardKey??questionKey}\0${category}`),title:`feedback:${category}:${(cardKey??questionKey).slice(0,12)}`,priority,category,...(intake.scope?{scope:intake.scope}:{}),...(cardKey?{answerCardKey:cardKey}:{}),occurredAt:timestamp,occurrence:{sourceType:"feedback",sourceId:result.caseId,requestId:result.requestId,pseudonymousUserId:result.pseudonymousUserId}});
+      await this.audit(actor,"issue.feedback.upsert","issue_case",issue.issueId,{classification:intake.classification,priority:issue.priority,category:issue.category});
+    }
     return result;
   }
 
@@ -90,6 +98,10 @@ export class KnowledgeOpsService {
       ...(patch.classification===undefined?{}:{previousClassification:before?.classification,classification:patch.classification}),
     });return value;
   }
+
+  async listIssues(actor:OpsActor,query:IssueListQuery){assertAuthorized(actor,"issue:read");return this.store.listIssues(query);}
+  async issueDetail(actor:OpsActor,issueId:string){assertAuthorized(actor,"issue:read");const issue=await this.store.getIssue(issueId);if(issue===undefined)return undefined;return{...issue,occurrences:await this.store.listIssueOccurrences(issueId)};}
+  async triageIssue(actor:OpsActor,issueId:string,patch:{readonly status?:IssueStatus;readonly ownerId?:string}){assertAuthorized(actor,"issue:triage");const before=await this.store.getIssue(issueId);const value=await this.store.updateIssue(issueId,patch);if(value)await this.audit(actor,"issue.triage","issue_case",issueId,{...(patch.status?{previousStatus:before?.status,status:patch.status}:{}),...(patch.ownerId?{previousOwnerId:before?.ownerId,ownerId:patch.ownerId}:{})});return value;}
 
   async listCards(actor: OpsActor){assertAuthorized(actor,"card:read");return this.store.listCardRevisions();}
   async enqueueCatalogSync(actor:OpsActor){
@@ -149,3 +161,8 @@ export class KnowledgeOpsService {
 }
 
 export class OpsNotFoundError extends Error { constructor(readonly code:string){super(code);this.name="OpsNotFoundError";} }
+
+function feedbackIssueCategory(classification:Exclude<StoredFeedbackCase["classification"],"useful">){return({incorrect:"user_incorrect",missing:"user_missing",review_requested:"review_requested",evidence:"evidence",correction:"correction"} as const)[classification];}
+function answerCardKey(match:Record<string,unknown>|undefined):string|undefined{const values=match?.cardIdHashes;return Array.isArray(values)&&typeof values[0]==="string"&&/^[a-f0-9]{64}$/u.test(values[0])?values[0]:undefined;}
+function normalizeQuestion(value:string):string{return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu,"");}
+function hash(value:string):string{return createHash("sha256").update(value,"utf8").digest("hex");}
