@@ -5,6 +5,6 @@ ALTER TABLE feedback_cases
 
 ALTER TABLE feedback_cases
   ADD CONSTRAINT feedback_cases_classification_check
-  CHECK (classification IN ('useful','incorrect','missing','evidence','correction'));
+  CHECK (classification IN ('useful','incorrect','missing','review_requested','evidence','correction'));
 
 COMMIT;

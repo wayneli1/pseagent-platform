@@ -18,16 +18,29 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
 
   async migrate(): Promise<void> {
+    await this.pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+      version text PRIMARY KEY,
+      applied_at timestamptz NOT NULL DEFAULT now()
+    )`);
+    const applied = new Set(
+      (await this.pool.query("SELECT version FROM schema_migrations")).rows
+        .map((row) => String(row.version)),
+    );
     for (const fileName of [
       "001_initial.sql",
       "002_feedback_correction.sql",
       "003_feedback_identity_review_request.sql",
       "004_answer_reviews.sql",
     ]) {
+      if (applied.has(fileName)) continue;
       const migration = await readFile(fileURLToPath(
         new URL(`../migrations/${fileName}`, import.meta.url),
       ), "utf8");
       await this.pool.query(migration);
+      await this.pool.query(
+        "INSERT INTO schema_migrations(version) VALUES ($1) ON CONFLICT (version) DO NOTHING",
+        [fileName],
+      );
     }
   }
   async ping(): Promise<boolean> {
