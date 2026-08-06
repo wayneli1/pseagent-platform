@@ -86,6 +86,27 @@ describe("structured answer", () => {
     );
   });
 
+  it("keeps an ordered sequence whose first step follows a list introduction", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer:
+          "操作步骤为：1. 说明期待；2. 确认可行性；3. 邀请复述；4. 讨论障碍；5. 约定检查点 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    const rendered = renderStructuredAnswer(structured);
+    expect(rendered).toContain("说明期待");
+    expect(rendered).toContain("确认可行性");
+    expect(rendered).toContain("邀请复述");
+    expect(rendered).toContain("讨论障碍");
+    expect(rendered).toContain("约定检查点");
+  });
+
   it("keeps obligation order, citations and verifier support kind", () => {
     const action: FinalAction = {
       action: "final",

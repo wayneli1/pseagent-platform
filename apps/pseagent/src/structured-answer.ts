@@ -152,7 +152,9 @@ function retainCoherentOrderedSegments(
 }
 
 function leadingOrderedStep(value: string): number | undefined {
-  const match = value.match(/(?:^|\n)\s*[（(]?([1-9]\d{0,2})[.、．)）]\s*/u);
+  const match = value.match(
+    /(?:^|\n)\s*(?:(?:[^：:\n]{0,40})(?:步骤|流程|阶段|顺序|清单|要点|如下)[^：:\n]{0,12}[：:]\s*)?[（(]?([1-9]\d{0,2})[.、．)）]\s*/u,
+  );
   if (match?.[1] === undefined) return undefined;
   return Number(match[1]);
 }
