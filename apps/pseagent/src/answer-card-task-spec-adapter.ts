@@ -19,6 +19,7 @@ export interface AnswerCardObligationPolicy {
   readonly requiredConcepts: readonly string[];
   readonly forbiddenClaims: readonly string[];
   readonly preferredEvidencePaths: readonly string[];
+  readonly answerTemplate?: string;
 }
 
 export type AnswerCardTaskSpecAdapterResult =
@@ -108,6 +109,9 @@ export function compileExactAnswerCardTaskSpec(input: {
     requiredConcepts: Object.freeze([...binding.requiredConcepts]),
     forbiddenClaims: Object.freeze([...binding.forbiddenClaims]),
     preferredEvidencePaths: Object.freeze([...binding.preferredEvidencePaths]),
+    ...(binding.answerTemplate === undefined
+      ? {}
+      : { answerTemplate: binding.answerTemplate }),
   }));
   const guard: TaskSpecGuardResult = Object.freeze({
     ok: true,
@@ -230,6 +234,9 @@ export function adaptAnswerCardToTaskSpec(input: {
             preferredEvidencePaths: Object.freeze([
               ...draft.cardBinding.preferredEvidencePaths,
             ]),
+            ...(draft.cardBinding.answerTemplate === undefined
+              ? {}
+              : { answerTemplate: draft.cardBinding.answerTemplate }),
           }));
         }
         return { ...draft.value, id };

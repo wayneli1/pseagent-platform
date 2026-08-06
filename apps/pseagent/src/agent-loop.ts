@@ -16,6 +16,7 @@ import type {
 } from "./knowledge-session.js";
 import {
   InvalidCoverageVerificationError,
+  coverageVerificationReport,
   notCoveredRequirementAnswer,
   verifyKnowledgeCoverage,
   type CoverageEvidenceDocument,
@@ -190,6 +191,8 @@ type AgentState = {
   citationRepairAttempts: number;
   directAnswerRepairAttempts: number;
   comparisonSubjectRepairAttempts: number;
+  structuredCoverageRepairAttempts: number;
+  answerCardConceptRepairAttempts: number;
   invalidPayloadTurnRetries: number;
   forceFinal: boolean;
   successfulSeedSearches: number;
@@ -337,11 +340,44 @@ async function runKnowledgeAgentCore(
         input.plan,
         state,
       );
-      normalizedAction = applyGroundedAnswerCardRequiredConcepts(
+      const missingDraftCardConcepts = missingAnswerCardRequiredConcepts(
         normalizedAction,
         input.requirementBindings,
         readEvidence(state),
       );
+      if (
+        missingDraftCardConcepts.length > 0 &&
+        state.answerCardConceptRepairAttempts < 2 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.answerCardConceptRepairAttempts += 1;
+        state.forceFinal = true;
+        observe(state, {
+          type: "answer_card_concept_repair_required",
+          requirements: missingDraftCardConcepts,
+        });
+        continue;
+      }
+      if (missingDraftCardConcepts.length > 0) {
+        normalizedAction = applyGroundedAnswerCardRequiredConcepts(
+          normalizedAction,
+          input.requirementBindings,
+          readEvidence(state),
+        );
+        const remainingDraftCardConcepts = missingAnswerCardRequiredConcepts(
+          normalizedAction,
+          input.requirementBindings,
+          readEvidence(state),
+        );
+        if (remainingDraftCardConcepts.length > 0) {
+          return fallbackUnavailable(input, "invalid_final");
+        }
+        observe(state, {
+          type: "answer_card_grounded_fact_projection",
+          requirements: missingDraftCardConcepts,
+        });
+      }
       const comparisonSubjectRepairs = pendingComparisonSubjectRepairs(
         normalizedAction,
         state,
@@ -518,15 +554,44 @@ async function runKnowledgeAgentCore(
         });
         return unavailableResult(input.scope);
       }
-      // Required answer-card concepts were grounded before model verification.
-      // Re-apply the same deterministic, preferred-evidence-only projection
-      // afterwards so a conservative verifier cannot randomly drop a governed
-      // boundary that has already been proven by a page we actually read.
-      auditedAction = applyGroundedAnswerCardRequiredConcepts(
+      const missingAuditedCardConcepts = missingAnswerCardRequiredConcepts(
         auditedAction,
         input.requirementBindings,
         readEvidence(state),
       );
+      if (
+        missingAuditedCardConcepts.length > 0 &&
+        state.answerCardConceptRepairAttempts < 2 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.answerCardConceptRepairAttempts += 1;
+        state.forceFinal = true;
+        observe(state, {
+          type: "answer_card_concept_repair_required",
+          requirements: missingAuditedCardConcepts,
+        });
+        continue;
+      }
+      const structuredCoverageRepairs = pendingStructuredCoverageRepairs(
+        normalizedAction,
+        auditedAction,
+        input.plan,
+      );
+      if (
+        structuredCoverageRepairs.length > 0 &&
+        state.structuredCoverageRepairAttempts < 2 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.structuredCoverageRepairAttempts += 1;
+        state.forceFinal = true;
+        observe(state, {
+          type: "structured_coverage_repair_required",
+          requirements: structuredCoverageRepairs,
+        });
+        continue;
+      }
       const auditedValidation = state.references.validateFinal(
         auditedAction,
         input.plan.requirements,
@@ -544,15 +609,27 @@ async function runKnowledgeAgentCore(
       const missingCardConcepts = missingAnswerCardRequiredConcepts(
         auditedAction,
         input.requirementBindings,
+        readEvidence(state),
       );
       if (missingCardConcepts.length > 0) {
-        recordDiagnostic(input.trace, {
-          event: "validation",
-          result: "rejected",
-          reason: "answer_card_required_concept_missing",
-          repairAttempt: 1,
+        auditedAction = markAnswerCardConceptGapsPartial(
+          auditedAction,
+          missingCardConcepts,
+        );
+        if (verificationReport !== undefined) {
+          try {
+            verificationReport = coverageVerificationReport(
+              auditedAction,
+              verificationReport.summaries,
+            );
+          } catch {
+            return fallbackUnavailable(input, "coverage_verifier_invalid");
+          }
+        }
+        observe(state, {
+          type: "answer_card_verified_partial",
+          requirements: missingCardConcepts.map((item) => item.requirementId),
         });
-        return fallbackUnavailable(input, "coverage_verifier_invalid");
       }
       if (violatesAnswerCardForbiddenClaims(
         auditedAction,
@@ -941,6 +1018,8 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     citationRepairAttempts: 0,
     directAnswerRepairAttempts: 0,
     comparisonSubjectRepairAttempts: 0,
+    structuredCoverageRepairAttempts: 0,
+    answerCardConceptRepairAttempts: 0,
     invalidPayloadTurnRetries: 0,
     forceFinal: false,
     successfulSeedSearches: 0,
@@ -2173,6 +2252,22 @@ function evidenceByRequirement(state: AgentState): ReadonlyMap<string, ReadonlyS
   ]));
 }
 
+function markAnswerCardConceptGapsPartial(
+  action: FinalAction,
+  gaps: readonly { readonly requirementId: string }[],
+): FinalAction {
+  const affected = new Set(gaps.map((gap) => gap.requirementId));
+  let changed = false;
+  const requirements = action.requirements.map((requirement) => {
+    if (!affected.has(requirement.id) || requirement.coverage !== "complete") {
+      return requirement;
+    }
+    changed = true;
+    return { ...requirement, coverage: "partial" as const };
+  });
+  return changed ? { ...action, requirements } : action;
+}
+
 function coverageEvidence(
   draft: FinalAction,
   state: AgentState,
@@ -3009,6 +3104,29 @@ function pendingComparisonSubjectRepairs(
           result.answer,
         ).length > 0
       ? [result.id]
+      : [];
+  });
+}
+
+const STRUCTURED_COMPLETENESS_QUESTION_PATTERN =
+  /(?:认证流程|处理流程|操作流程|关键步骤|完整步骤|关键配置|配置项|配置参数)/u;
+
+function pendingStructuredCoverageRepairs(
+  draft: FinalAction,
+  audited: FinalAction,
+  plan: KnowledgePlan,
+): string[] {
+  const draftById = new Map(
+    draft.requirements.map((requirement) => [requirement.id, requirement] as const),
+  );
+  return audited.requirements.flatMap((requirement, index) => {
+    const planned = plan.requirements[index];
+    const original = draftById.get(requirement.id);
+    return planned?.evidenceMode === "direct_only" &&
+        original?.coverage === "complete" &&
+        requirement.coverage === "partial" &&
+        STRUCTURED_COMPLETENESS_QUESTION_PATTERN.test(planned.question)
+      ? [requirement.id]
       : [];
   });
 }

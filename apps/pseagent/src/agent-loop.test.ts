@@ -1900,6 +1900,59 @@ describe("runKnowledgeAgent", () => {
     expect(systemPrompt).toContain("模块全称与缩写");
   });
 
+  it("rewrites a structured direct answer after verification drops required stages", async () => {
+    const plan: KnowledgePlan = {
+      subject: "认证对接",
+      requirements: [{
+        id: "R1",
+        question: "认证流程和关键配置是什么",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "认证流程和关键配置",
+          terms: ["认证流程", "关键配置"],
+        }],
+        queries: [{ text: "认证流程关键配置", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "认证流程关键配置": [{
+          path: "wiki/concepts/auth.md",
+          title: "认证对接",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/auth.md"),
+      final("complete", "先跳转授权页面 [1]。\n再交换令牌并取得用户标识 [1]。", [1]),
+      final("complete", "先跳转授权页面 [1]。\n再交换令牌并取得用户标识 [1]。", [1]),
+    ]);
+    const verifyCoverage = vi.fn()
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input, {
+          ...input.draft,
+          requirements: input.draft.requirements.map((requirement) => ({
+            ...requirement,
+            coverage: "partial" as const,
+            answer: "再交换令牌并取得用户标识 [1]。",
+          })),
+        }))
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(verifyCoverage).toHaveBeenCalledTimes(2);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "structured_coverage_repair_required",
+    );
+  });
+
   it("accepts a verifier-supported partial comparison without another rewrite", async () => {
     const plan: KnowledgePlan = {
       subject: "产品对比",
@@ -3610,11 +3663,12 @@ describe("runKnowledgeAgent", () => {
     expect(model.lastSchemaName()).toBe("pse_final_action");
   });
 
-  it("grounds a missing answer-card concept before verification without another model turn", async () => {
+  it("repairs a missing answer-card concept as a natural model-authored fact", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     session.compactPage.mockReturnValue("The governed page requires measurable success criteria.");
     const model = scriptedAgentModel([
       final("complete", "Discuss business value with the customer [1].", [1]),
+      final("complete", "Discuss business value and agree measurable success criteria with the customer [1].", [1]),
     ]);
 
     const result = await runKnowledgeAgent({
@@ -3632,15 +3686,65 @@ describe("runKnowledgeAgent", () => {
 
     expect(result.status).toBe("answered");
     expect(result.answer).toContain("success criteria");
-    expect(model.calls).toBe(1);
+    expect(result.answer).not.toContain("处理原则包括");
+    expect(model.calls).toBe(2);
+    expect(payloadAt(model, 1).observations).toEqual(expect.arrayContaining([
+      expect.stringContaining("answer_card_concept_repair_required"),
+    ]));
     expect(model.lastSchemaName()).toBe("pse_final_action");
   });
 
-  it("restores a preferred-evidence answer-card concept removed by verification", async () => {
+  it("asks for a natural rewrite when verification removes an answer-card concept", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     session.compactPage.mockReturnValue("The governed page requires a migration transition period.");
     const model = scriptedAgentModel([
       final("complete", "Use the approved migration boundary [1].", [1]),
+      final("complete", "Use the approved migration transition period [1].", [1]),
+      final("complete", "Use the approved migration transition period [1].", [1]),
+    ]);
+    let verificationCalls = 0;
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        requiredConcepts: ["transition period"],
+        preferredEvidencePaths: ["wiki/queries/governed-answer.md"],
+      }],
+      verifyCoverage: async (input) => {
+        verificationCalls += 1;
+        return reportAndReturn(input, verificationCalls === 1 ? {
+          ...input.draft,
+          requirements: input.draft.requirements.map((requirement) => ({
+            ...requirement,
+            answer: "Use the approved migration boundary [1].",
+            citations: [1],
+          })),
+          citations: [1],
+        } : input.draft);
+      },
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.answer).toContain("transition period");
+    expect(result.answer).not.toContain("处理原则包括");
+    expect(model.calls).toBe(3);
+    expect(verificationCalls).toBe(2);
+  });
+
+  it("keeps verifier-approved content as partial after concept repairs are exhausted", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    session.compactPage.mockReturnValue(
+      "Use the approved migration transition period before the final cutover.",
+    );
+    const model = scriptedAgentModel([
+      final("complete", "Use the approved migration transition period [1].", [1]),
+      final("complete", "Use the approved migration transition period [1].", [1]),
+      final("complete", "Use the approved migration transition period [1].", [1]),
     ]);
 
     const result = await runKnowledgeAgent({
@@ -3665,14 +3769,17 @@ describe("runKnowledgeAgent", () => {
       }),
     });
 
-    expect(result.status).toBe("answered");
-    expect(result.answer).toContain("transition period");
-    expect(model.calls).toBe(1);
+    expect(result.status).toBe("partially_answered");
+    expect(result.answer).toContain("approved migration boundary");
+    expect(result.answer).not.toContain("处理原则包括");
+    expect(model.calls).toBe(3);
   });
 
-  it("fails closed after one final when a required concept has no preferred evidence support", async () => {
+  it("fails closed instead of keyword stuffing when a required concept stays missing", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([
+      final("complete", "Discuss the approved migration path [1].", [1]),
+      final("complete", "Discuss the approved migration path [1].", [1]),
       final("complete", "Discuss the approved migration path [1].", [1]),
     ]);
 
@@ -3690,7 +3797,39 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(result.status).toBe("temporarily_unavailable");
-    expect(model.calls).toBe(1);
+    expect(model.calls).toBe(3);
+  });
+
+  it("projects a complete governed fact after natural concept repairs are exhausted", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    session.compactPage.mockReturnValue(
+      "Agree on measurable success criteria before proposing a price.",
+    );
+    const model = scriptedAgentModel([
+      final("complete", "Discuss the approved value path [1].", [1]),
+      final("complete", "Discuss the approved value path [1].", [1]),
+      final("complete", "Discuss the approved value path [1].", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      requirementBindings: [{
+        domain: "presales-general",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        requiredConcepts: ["success criteria"],
+        preferredEvidencePaths: ["wiki/queries/governed-answer.md"],
+      }],
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.answer).toContain(
+      "Agree on measurable success criteria before proposing a price",
+    );
+    expect(result.answer).not.toContain("处理原则包括");
+    expect(model.calls).toBe(3);
   });
 
   it("repairs one invalid action with an explicit schema instruction", async () => {

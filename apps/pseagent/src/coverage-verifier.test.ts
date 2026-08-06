@@ -891,6 +891,65 @@ describe("verifyKnowledgeCoverage", () => {
     }]);
   });
 
+  it("does not hide a verifier downgrade of an originally complete structured answer", async () => {
+    const plan: KnowledgePlan = {
+      subject: "认证配置",
+      requirements: [{
+        id: "R1",
+        question: "认证流程的关键配置是什么",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "关键配置",
+          terms: ["关键配置"],
+        }],
+        queries: [{ text: "认证流程关键配置", aspectIds: ["A1"] }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: [
+          "AuthorizeUrl 指向授权页面 [1]。",
+          "AccessTokenUrl 用于获取令牌 [1]。",
+        ].join("\n"),
+        citations: [1],
+      }],
+      citations: [1],
+    };
+
+    const result = await verifyKnowledgeCoverage({
+      question: plan.subject,
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "认证配置",
+        path: "wiki/concepts/auth.md",
+        content: "AuthorizeUrl 指向授权页面，AccessTokenUrl 用于获取令牌。",
+        aspectIds: ["A1"],
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain_partial",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
+          reason: "partial_support",
+        }],
+      } as CoverageVerificationAction),
+    });
+
+    expect(result.requirements[0]?.coverage).toBe("partial");
+    expect(result.requirements[0]?.answer).not.toContain("AccessTokenUrl");
+  });
+
   it("keeps partial after filtering when a planned aspect is still missing", async () => {
     const plan: KnowledgePlan = {
       subject: "两项能力",

@@ -35,10 +35,12 @@ const broadBanVerbPattern=/(?:禁止|不得|不能|不应|不要).{0,16}(?:出�
 const generalizationPattern=/(?:所有客户|其他客户|所有项目|通用配置|标准配置|产品(?:容量)?上限|容量上限|保证|承诺|新项目.{0,8}(?:一定|必须|均)|一定采用相同配置)/u;
 const currentClaimPattern=/(?:当前|目前|现在|实时)(?:的|项目|系统|用户|规模|容量|授权|部署)?/u;
 const abstractRequiredConceptPattern=/(?:核心功能|主要功能|功能概述|功能介绍|职责区分|职责区别|职责对比|职责说明|角色区别|角色差异|角色说明|协作关系|区别与联系|差异说明|相关内容|关键信息|具体说明)$/u;
-export const PROJECT_DATA_POLICY_VERSION="2026-08-06.3";
+const countedCollectionConceptPattern=/(?:\d+|[一二三四五六七八九十两]+)\s*个?(?:步骤|环节|阶段|流程|配置项|参数|字段|要点|事项)$/u;
+export const PROJECT_DATA_POLICY_VERSION="2026-08-07.1";
 
 export function isUnverifiableRequiredConcept(concept:string):boolean{
-  return abstractRequiredConceptPattern.test(concept.normalize("NFKC").trim());
+  const normalized=concept.normalize("NFKC").trim();
+  return abstractRequiredConceptPattern.test(normalized)||countedCollectionConceptPattern.test(normalized);
 }
 
 export function isBroadProjectDataForbiddenClaim(claim:string):boolean{
@@ -79,7 +81,7 @@ export function inspectAnswerCardRuleConflicts(input:{
       conflicts.push(answerCardRuleConflictSchema.parse({
         code:"unverifiable_required_concept",obligationId:obligation.id,field:"requiredConcepts",
         triggerText:concept,rule:concept,
-        message:`${obligation.id} 的必答概念“${concept}”是抽象标签，无法用确定性规则验证。请改为正式证据和答案正文中实际出现的模块、动作或配置项。`,
+        message:`${obligation.id} 的必答概念“${concept}”是抽象或集合标签，无法用确定性规则验证。请拆成正式证据和答案正文中实际出现的原子事实、动作或配置项。`,
         suggestedAction:"modify_rule",evidencePaths:obligation.preferredEvidencePaths,
       }));
     }

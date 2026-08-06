@@ -17,45 +17,55 @@ export interface MissingAnswerCardConcepts {
 export function missingAnswerCardRequiredConcepts(
   action: FinalAction,
   bindings: readonly DomainRequirementBinding[] = [],
+  evidence?: readonly AnswerCardPolicyEvidence[],
 ): readonly MissingAnswerCardConcepts[] {
-  const answerByRequirement = new Map(action.requirements.map((requirement) => [
+  const requirementById = new Map(action.requirements.map((requirement) => [
     requirement.id,
-    {
-      coverage: requirement.coverage,
-      text: normalizePolicyText([
-        requirement.answer,
-        ...(requirement.relatedContext ?? []).map((item) => item.statement),
-      ].join(" ")),
-    },
+    requirement,
   ] as const));
+  const finalAnswer = normalizePolicyText(action.requirements
+    .filter((requirement) => requirement.coverage !== "none")
+    .flatMap((requirement) => [
+      requirement.answer,
+      ...(requirement.relatedContext ?? []).map((item) => item.statement),
+    ])
+    .join(" "));
   return bindings.flatMap((binding) => {
-    const requiredConcepts = binding.requiredConcepts ?? [];
+    const declaredConcepts = binding.requiredConcepts ?? [];
+    const grounded = evidence === undefined
+      ? []
+      : groundedConcepts(
+          declaredConcepts,
+          evidence.filter((document) =>
+            document.requirementId === binding.requirementId &&
+            (binding.preferredEvidencePaths ?? []).includes(document.path)),
+        ).map((item) => normalizePolicyText(item.concept));
+    const requiredConcepts = evidence === undefined || binding.answerTemplate === undefined
+      ? declaredConcepts
+      : declaredConcepts.filter((concept) =>
+          grounded.includes(normalizePolicyText(concept)));
     if (requiredConcepts.length === 0) return [];
-    const requirement = answerByRequirement.get(binding.requirementId);
+    const requirement = requirementById.get(binding.requirementId);
     // A not-covered obligation must remain evidence-safe. Requiring a governed
     // concept here would force the final answer to imply support that the
     // verifier explicitly did not retain.
     if (requirement?.coverage === "none") return [];
-    const answer = requirement?.text ?? "";
-    // The catalog may still contain legacy labels that are not literal evidence
-    // terms. Ground every verifiable concept below, while this final liveness
-    // gate rejects only an obligation for which no governed concept survived.
-    const covered = requiredConcepts.some((concept) => {
+    const missing = requiredConcepts.filter((concept) => {
       const normalized = normalizePolicyText(concept);
-      return normalized.length > 0 && answer.includes(normalized);
+      return normalized.length > 0 && !finalAnswer.includes(normalized);
     });
-    return covered ? [] : [{
+    return missing.length === 0 ? [] : [{
       requirementId: binding.requirementId,
-      requiredConcepts: Object.freeze([...requiredConcepts]),
+      requiredConcepts: Object.freeze(missing),
     }];
   });
 }
 
 /**
- * Preserve an approved answer-card concept without asking the model to rewrite
- * the whole answer again. A concept is added only when it occurs verbatim in a
+ * Project a complete fact from governed evidence after natural rewrite attempts
+ * are exhausted. A fact is added only when the missing concept occurs in a
  * preferred evidence page that was actually read for the same requirement.
- * The coverage verifier still audits the resulting claim and may remove it.
+ * Callers must run the coverage verifier over the resulting draft.
  */
 export function applyGroundedAnswerCardRequiredConcepts(
   action: FinalAction,
@@ -76,6 +86,14 @@ export function applyGroundedAnswerCardRequiredConcepts(
   }
 
   let changed = false;
+  let combinedAnswer = normalizePolicyText(action.requirements
+    .filter((requirement) => requirement.coverage !== "none")
+    .flatMap((requirement) => [
+      requirement.answer,
+      ...(requirement.relatedContext ?? []).map((item) => item.statement),
+    ])
+    .join(" "));
+  const appendedFacts = new Set<string>();
   const requirements = action.requirements.map((requirement) => {
     if (requirement.coverage === "none") return requirement;
     let answer = requirement.answer;
@@ -92,16 +110,15 @@ export function applyGroundedAnswerCardRequiredConcepts(
           .filter((document) => preferredPaths.has(document.path)),
       );
       for (const item of grounded) {
-        const sentence = groundedSentence(item.concept, item.citation);
-        // The verifier may conservatively remove a model-written segment even
-        // when that segment happened to contain the required concept. Keep one
-        // canonical, directly cited sentence for every governed concept so
-        // concept survival never depends on the model's phrasing.
-        if (normalizePolicyText(`${answer} ${relatedText}`).includes(normalizePolicyText(sentence))) {
-          continue;
-        }
+        if (combinedAnswer.includes(normalizePolicyText(item.concept))) continue;
+        const normalizedFact = normalizePolicyText(item.fact);
+        if (normalizedFact.length === 0 || appendedFacts.has(normalizedFact)) continue;
+        const sentence = groundedSentence(item.fact, item.citation);
+        if (sentence === undefined) continue;
         answer = `${answer.trim()} ${sentence}`;
         if (!citations.includes(item.citation)) citations.push(item.citation);
+        combinedAnswer += normalizePolicyText(` ${sentence}`);
+        appendedFacts.add(normalizedFact);
         changed = true;
       }
     }
@@ -124,22 +141,16 @@ export function violatesAnswerCardForbiddenClaims(
   action: FinalAction,
   bindings: readonly DomainRequirementBinding[] = [],
 ): boolean {
-  const bindingByRequirement = new Map(
-    bindings.map((binding) => [binding.requirementId, binding] as const),
-  );
-  return action.requirements.some((requirement) => {
-    const forbiddenClaims = bindingByRequirement.get(requirement.id)?.forbiddenClaims ?? [];
-    if (forbiddenClaims.length === 0) return false;
-    const answer = normalizePolicyText([
+  const answer = normalizePolicyText(action.requirements.flatMap((requirement) => [
       requirement.answer,
       ...(requirement.relatedContext ?? []).map((item) => item.statement),
-    ].join(" "));
-    return forbiddenClaims.some((claim) => {
+    ]).join(" "));
+  return bindings.some((binding) =>
+    (binding.forbiddenClaims ?? []).some((claim) => {
       const normalizedClaim = normalizePolicyText(claim);
       return normalizedClaim.length >= 4 &&
         containsUnnegatedClaim(answer, normalizedClaim);
-    });
-  });
+    }));
 }
 
 function containsUnnegatedClaim(answer: string, claim: string): boolean {
@@ -155,7 +166,19 @@ function containsUnnegatedClaim(answer: string, claim: string): boolean {
 export function answerCardPolicyObservations(
   bindings: readonly DomainRequirementBinding[] = [],
 ): readonly string[] {
-  return bindings.flatMap((binding) => {
+  const templates = new Map<string, string>();
+  for (const binding of bindings) {
+    if (binding.cardId !== undefined && binding.answerTemplate !== undefined) {
+      templates.set(binding.cardId, binding.answerTemplate);
+    }
+  }
+  const templateObservations = [...templates].map(([cardId, answerTemplate]) => JSON.stringify({
+    type: "answer_card_answer_template",
+    cardId,
+    answerTemplate,
+    instruction: "这是已审批标准答案的组织基线。只使用 readEvidence 正文支持的内容，按当前 requirement 拆分相关段落并重新标注引用；不得遗漏模板中的主流程、关键配置或证据边界。",
+  }));
+  const policyObservations = bindings.flatMap((binding) => {
     if (
       (binding.requiredConcepts?.length ?? 0) === 0 &&
       (binding.forbiddenClaims?.length ?? 0) === 0
@@ -170,6 +193,7 @@ export function answerCardPolicyObservations(
       instruction: "覆盖必要概念；不得输出禁答 claim。仍须只使用已读正式证据。",
     })];
   });
+  return [...templateObservations, ...policyObservations];
 }
 
 function normalizePolicyText(value: string): string {
@@ -181,7 +205,7 @@ function normalizePolicyText(value: string): string {
 function groundedConcepts(
   concepts: readonly string[],
   evidence: readonly AnswerCardPolicyEvidence[],
-): readonly { readonly concept: string; readonly citation: number }[] {
+): readonly { readonly concept: string; readonly citation: number; readonly fact: string }[] {
   const seen = new Set<string>();
   return concepts.flatMap((concept) => {
     const normalizedConcept = normalizePolicyText(concept);
@@ -191,17 +215,34 @@ function groundedConcepts(
       const normalizedEvidence = normalizePolicyText(
         `${document.title}\n${document.content}`,
       );
-      return normalizedEvidence.includes(normalizedConcept)
-        ? [{ concept, citation: document.citation }]
-        : [];
+      if (!normalizedEvidence.includes(normalizedConcept)) return [];
+      const fact = evidenceFactForConcept(document.content, normalizedConcept);
+      return fact === undefined ? [] : [{ concept, citation: document.citation, fact }];
     });
     candidates.sort((left, right) => left.citation - right.citation);
     return candidates.slice(0, 1);
   });
 }
 
-function groundedSentence(concept: string, citation: number): string {
-  return `处理原则包括“${concept}”[${citation}]。`;
+function evidenceFactForConcept(content: string, normalizedConcept: string): string | undefined {
+  const lines = content.replace(/\r\n?/gu, "\n").split("\n");
+  for (const rawLine of lines) {
+    if (!normalizePolicyText(rawLine).includes(normalizedConcept)) continue;
+    const fact = rawLine
+      .replace(/^\s*(?:#{1,6}|>|[-*+]\s+|\d+[.)]\s+)/u, "")
+      .replace(/^\s*\|?\s*/u, "")
+      .replace(/\s*\|?\s*$/u, "")
+      .replace(/\s*\|\s*/gu, "；")
+      .trim();
+    if (fact.length >= 4 && !/^[-:;；|\s]+$/u.test(fact)) return fact.slice(0, 500);
+  }
+  return undefined;
+}
+
+function groundedSentence(fact: string, citation: number): string | undefined {
+  const clean = fact.replace(/\s+/gu, " ").trim();
+  if (clean.length < 4) return undefined;
+  return `${clean.replace(/[。！？!?.]$/u, "")} [${citation}]。`;
 }
 
 function stableUnique(values: readonly number[]): number[] {

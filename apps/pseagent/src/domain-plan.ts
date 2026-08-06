@@ -37,6 +37,7 @@ export interface DomainRequirementBinding {
   readonly requiredConcepts?: readonly string[];
   readonly forbiddenClaims?: readonly string[];
   readonly preferredEvidencePaths?: readonly string[];
+  readonly answerTemplate?: string;
 }
 
 export interface DomainKnowledgePlan {
@@ -180,6 +181,7 @@ function bindingPolicy(
   | "requiredConcepts"
   | "forbiddenClaims"
   | "preferredEvidencePaths"
+  | "answerTemplate"
 > {
   if (policy === undefined) return {};
   return {
@@ -188,6 +190,9 @@ function bindingPolicy(
     requiredConcepts: policy.requiredConcepts,
     forbiddenClaims: policy.forbiddenClaims,
     preferredEvidencePaths: policy.preferredEvidencePaths,
+    ...(policy.answerTemplate === undefined
+      ? {}
+      : { answerTemplate: policy.answerTemplate }),
   };
 }
 

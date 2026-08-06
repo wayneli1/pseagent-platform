@@ -25,6 +25,7 @@ export interface AnswerCardMatchBinding {
   readonly requiredConcepts: readonly string[];
   readonly forbiddenClaims: readonly string[];
   readonly preferredEvidencePaths: readonly string[];
+  readonly answerTemplate?: string;
 }
 
 export type AnswerCardMatchType = "exact" | "family" | "partial" | "none";
@@ -331,5 +332,6 @@ function bindingFromCardObligation(
     requiredConcepts: Object.freeze([...obligation.requiredConcepts]),
     forbiddenClaims: Object.freeze([...obligation.forbiddenClaims]),
     preferredEvidencePaths: Object.freeze([...obligation.preferredEvidencePaths]),
+    answerTemplate: card.answerTemplate,
   });
 }

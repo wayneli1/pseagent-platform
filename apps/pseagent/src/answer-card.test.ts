@@ -572,7 +572,7 @@ describe("answer card TaskSpec adapter", () => {
     expect(governedPlan.requirements[0]?.queries).toHaveLength(2);
   });
 
-  it("reports an answer-card obligation when none of its governed concepts survive verification", () => {
+  it("reports every answer-card concept missing after verification", () => {
     const binding = {
       domain: "presales-general" as const,
       requirementId: "R1" as const,
@@ -603,7 +603,10 @@ describe("answer card TaskSpec adapter", () => {
         answer: "Agree on measurable success criteria with the customer [1].",
         citations: [1],
       }],
-    }, [binding])).toEqual([]);
+    }, [binding])).toEqual([{
+      requirementId: "R1",
+      requiredConcepts: ["measurement"],
+    }]);
     expect(missingAnswerCardRequiredConcepts({
       ...action,
       requirements: [{
@@ -623,6 +626,43 @@ describe("answer card TaskSpec adapter", () => {
       }],
       citations: [],
     }, [binding])).toEqual([]);
+  });
+
+  it("checks governed concepts and forbidden claims against the combined user answer", () => {
+    const bindings = [{
+      domain: "coremail-professional" as const,
+      requirementId: "R1" as const,
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      requiredConcepts: ["AuthorizeUrl", "AccessTokenUrl"],
+      forbiddenClaims: ["XT6 已确认兼容"],
+    }, {
+      domain: "coremail-professional" as const,
+      requirementId: "R2" as const,
+      deliverableId: "D1",
+      obligationId: "O2",
+      order: 1,
+      requiredConcepts: ["AccessTokenUrl"],
+      forbiddenClaims: [],
+    }];
+    const action = {
+      action: "final" as const,
+      requirements: [{
+        id: "R1" as const,
+        coverage: "complete" as const,
+        answer: "用户先跳转 AuthorizeUrl [1]。",
+        citations: [1],
+      }, {
+        id: "R2" as const,
+        coverage: "complete" as const,
+        answer: "系统随后调用 AccessTokenUrl；XT6 已确认兼容 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    expect(missingAnswerCardRequiredConcepts(action, bindings)).toEqual([]);
+    expect(violatesAnswerCardForbiddenClaims(action, bindings)).toBe(true);
   });
 
   it("adds only a concept grounded in the binding's preferred evidence", () => {
@@ -661,15 +701,19 @@ describe("answer card TaskSpec adapter", () => {
 
     expect(grounded.requirements[0]?.answer).toContain("success criteria");
     expect(grounded.requirements[0]?.answer).toContain(
-      "处理原则包括“success criteria”[2]。",
+      "Agree on measurable success criteria before proposing a price [2]。",
     );
+    expect(grounded.requirements[0]?.answer).not.toContain("处理原则包括");
     expect(grounded.requirements[0]?.answer).toContain("[2]");
     expect(grounded.requirements[0]?.citations).toEqual([1, 2]);
     expect(grounded.citations).toEqual([1, 2]);
-    expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([]);
+    expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([{
+      requirementId: "R1",
+      requiredConcepts: ["measurement"],
+    }]);
   });
 
-  it("keeps a canonical cited sentence for every grounded required concept", () => {
+  it("reuses one complete evidence fact for multiple required concepts", () => {
     const binding = {
       domain: "presales-general" as const,
       requirementId: "R1" as const,
@@ -697,15 +741,51 @@ describe("answer card TaskSpec adapter", () => {
     }]);
 
     expect(grounded.requirements[0]?.answer).toContain(
-      "处理原则包括“success criteria”[1]。",
+      "Agree on success criteria and a measurement before proposing a price [1]。",
     );
-    expect(grounded.requirements[0]?.answer).toContain(
-      "处理原则包括“measurement”[1]。",
-    );
+    expect(grounded.requirements[0]?.answer).not.toContain("处理原则包括");
     expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([]);
   });
 
-  it("keeps a canonical cited concept sentence even when model text already mentions it", () => {
+  it("does not repeat a complete fact when another requirement already covers it", () => {
+    const bindings = ["R1", "R2"].map((requirementId, order) => ({
+      domain: "presales-general" as const,
+      requirementId,
+      deliverableId: `D${order + 1}`,
+      obligationId: `O${order + 1}`,
+      order,
+      requiredConcepts: ["success criteria"],
+      preferredEvidencePaths: ["wiki/queries/value.md"],
+    }));
+    const grounded = applyGroundedAnswerCardRequiredConcepts({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "Agree on measurable success criteria with the customer [1].",
+        citations: [1],
+      }, {
+        id: "R2",
+        coverage: "complete",
+        answer: "Then confirm the commercial path [2].",
+        citations: [2],
+      }],
+      citations: [1, 2],
+    }, bindings, [{
+      requirementId: "R2",
+      citation: 2,
+      path: "wiki/queries/value.md",
+      title: "Value discovery",
+      content: "Agree on measurable success criteria before proposing a price.",
+    }]);
+
+    expect(grounded.requirements[1]?.answer).toBe(
+      "Then confirm the commercial path [2].",
+    );
+    expect(grounded.citations).toEqual([1, 2]);
+  });
+
+  it("does not invent a missing concept that preferred evidence does not contain", () => {
     const binding = {
       domain: "presales-general" as const,
       requirementId: "R1" as const,
@@ -732,9 +812,49 @@ describe("answer card TaskSpec adapter", () => {
       content: "Agree on measurable success criteria before proposing a price.",
     }]);
 
-    expect(grounded.requirements[0]?.answer).toContain(
-      "处理原则包括“success criteria”[1]。",
+    expect(grounded.requirements[0]?.answer).toBe(
+      "Discuss measurable success criteria with the customer [1].",
     );
+    expect(grounded.requirements[0]?.answer).not.toContain("处理原则包括");
+    expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([{
+      requirementId: "R1",
+      requiredConcepts: ["measurement"],
+    }]);
+  });
+
+  it("enforces only concepts that can be checked against the read preferred evidence", () => {
+    const binding = {
+      domain: "coremail-professional" as const,
+      requirementId: "R1" as const,
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      requiredConcepts: ["IMAP", "个人配置边界"],
+      preferredEvidencePaths: ["wiki/queries/migration.md"],
+      answerTemplate: "启用 IMAP 服务；资料未说明通讯录、日程和规则是否迁移。",
+    };
+    const action = {
+      action: "final" as const,
+      requirements: [{
+        id: "R1" as const,
+        coverage: "complete" as const,
+        answer: "启用客户端访问能力 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const evidence = [{
+      requirementId: "R1",
+      citation: 1,
+      path: "wiki/queries/migration.md",
+      title: "迁移设置",
+      content: "请启用 IMAP 服务；资料未说明通讯录、日程和规则是否迁移。",
+    }];
+
+    expect(missingAnswerCardRequiredConcepts(action, [binding], evidence)).toEqual([{
+      requirementId: "R1",
+      requiredConcepts: ["IMAP"],
+    }]);
   });
 
   it("does not add an ungrounded concept or turn an uncovered answer into coverage", () => {

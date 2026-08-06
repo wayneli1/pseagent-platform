@@ -78,6 +78,25 @@ describe("release quality gate", () => {
       }),
     );
   });
+
+  it("treats answered and partially answered as the same supported direction", () => {
+    const observations = perfectObservations(suites);
+    const partialIndex = observations.findIndex((item) =>
+      item.caseId === "QG-SAFE-COLLOQUIAL");
+    observations[partialIndex] = {
+      ...observations[partialIndex]!,
+      status: "partially_answered",
+    };
+
+    const report = evaluateReleaseQualityGate(source, observations);
+
+    expect(report.passed).toBe(true);
+    expect(report.consistencyChecks).toContainEqual(expect.objectContaining({
+      id: "consistency:nvc-response-direction",
+      passed: true,
+      detail: "general:supported <> general:supported",
+    }));
+  });
 });
 
 function perfectObservations(values: readonly ReleaseQualitySuite[]): ReleaseQualityObservation[] {

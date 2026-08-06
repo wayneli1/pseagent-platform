@@ -289,6 +289,7 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
     ),
     input.plan,
     summaries,
+    input.draft,
   );
   input.onVerified?.(summaries.map(stripAspectIds));
   input.onReport?.(coverageVerificationReport(materialized, summaries));
@@ -1230,6 +1231,7 @@ function enforceAspectCoverage(
   action: FinalAction,
   plan: KnowledgePlan,
   summaries: readonly CoverageVerificationSummary[],
+  draft: FinalAction,
 ): FinalAction {
   const requirements = action.requirements.map((requirement, index) => {
     const plannedAspectCount =
@@ -1241,6 +1243,12 @@ function enforceAspectCoverage(
     if (
       requirement.coverage === "partial" &&
       summary.removedSegmentCount > 0 &&
+      (
+        draft.requirements[index]?.coverage === "partial" ||
+        !/(?:认证流程|处理流程|操作流程|关键步骤|完整步骤|关键配置|配置项|配置参数)/u.test(
+          plan.requirements[index]?.question ?? "",
+        )
+      ) &&
       summary.retainedDirectSegmentCount +
           summary.retainedSynthesizedSegmentCount > 0 &&
       summary.coveredAspectCount === plannedAspectCount &&

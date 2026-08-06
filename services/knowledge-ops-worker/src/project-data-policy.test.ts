@@ -30,7 +30,12 @@ describe("项目数据证据边界",()=>{
 
   it("在模型调用前把抽象必答概念识别为规则问题",()=>{
     const conflicts=inspectAnswerCardRuleConflicts({answerTemplate:"MTA 接收邮件后交给 deliveragent 完成病毒扫描和反垃圾检查。",evidence:[],obligations:[{id:"O1",label:"区分职责",evidencePolicy:"direct",requiredConcepts:["MTA 双处理队列","deliveragent 核心功能","入信链路"],forbiddenClaims:[],preferredEvidencePaths:["wiki/entities/deliveragent.md"]}]});
-    expect(conflicts).toEqual([expect.objectContaining({code:"unverifiable_required_concept",obligationId:"O1",field:"requiredConcepts",triggerText:"deliveragent 核心功能",suggestedAction:"modify_rule",message:expect.stringContaining("抽象标签")})]);
+    expect(conflicts).toEqual([expect.objectContaining({code:"unverifiable_required_concept",obligationId:"O1",field:"requiredConcepts",triggerText:"deliveragent 核心功能",suggestedAction:"modify_rule",message:expect.stringContaining("抽象或集合标签")})]);
+  });
+
+  it("在模型调用前把带数量的流程集合拆为可验证原子事实",()=>{
+    const conflicts=inspectAnswerCardRuleConflicts({answerTemplate:"系统跳转到 AuthorizeUrl，取得授权码后调用 AccessTokenUrl，再通过 UsernameUrl 获取用户标识。",evidence:[],obligations:[{id:"O1",label:"认证流程",evidencePolicy:"direct",requiredConcepts:["OAuth2 授权码模式认证流程 7 个步骤"],forbiddenClaims:[],preferredEvidencePaths:["wiki/concepts/OAuth2统一身份认证对接.md"]}]});
+    expect(conflicts).toEqual([expect.objectContaining({code:"unverifiable_required_concept",obligationId:"O1",triggerText:"OAuth2 授权码模式认证流程 7 个步骤",suggestedAction:"modify_rule",message:expect.stringContaining("集合标签")})]);
   });
 
   it("不把约44万误认为超过44万",()=>{

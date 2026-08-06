@@ -247,7 +247,11 @@ function evaluateConsistency(
 
 function directionSignature(value: ReleaseQualityObservation | undefined): string {
   if (value?.scope === undefined || value.status === undefined) return "missing";
-  const direction = value.status === "answered" ? "supported" : value.status === "partially_answered" ? "qualified" : value.status === "not_covered" ? "unsupported" : "unavailable";
+  const direction = value.status === "answered" || value.status === "partially_answered"
+    ? "supported"
+    : value.status === "not_covered"
+      ? "unsupported"
+      : "unavailable";
   return `${value.scope}:${direction}`;
 }
 
