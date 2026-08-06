@@ -2,6 +2,7 @@ import { createHash,randomUUID } from "node:crypto";
 import { answerCardSchema, releaseManifestSchema, type KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import { ContentCipher } from "./crypto.js";
 import { assertAuthorized } from "./rbac.js";
+import { releaseQualityPlan } from "./regression-plan.js";
 import { answerReviewIntakeSchema, conversationContextQuerySchema, conversationEndSchema, conversationTurnIntakeSchema, feedbackIntakeSchema, releaseQualityReportImportSchema, repairProposalSchema } from "./schemas.js";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
@@ -190,6 +191,7 @@ export class KnowledgeOpsService {
   }
 
   async listRegressionCases(actor:OpsActor){assertAuthorized(actor,"regression:read");return this.store.listRegressionCases();}
+  async regressionPlan(actor:OpsActor){assertAuthorized(actor,"regression:read");return releaseQualityPlan;}
   async listRegressionRuns(actor:OpsActor){assertAuthorized(actor,"regression:read");return this.store.listRegressionRuns();}
   async recordRegressionRun(actor:OpsActor,source:unknown){
     assertAuthorized(actor,"regression:run");const report=releaseQualityReportImportSchema.parse(source);const timestamp=this.timestamp();

@@ -2,6 +2,7 @@ export * from "./crypto.js";
 export * from "./api.js";
 export * from "./http-server.js";
 export * from "./postgres-store.js";
+export * from "./regression-plan.js";
 export * from "./rbac.js";
 export * from "./runtime-config.js";
 export * from "./runtime-status.js";

@@ -25,6 +25,7 @@ const records: Record<string, unknown>[] = [];
 try {
   await Promise.all(suites.map(async (suite) => {
     for (const testCase of [...suite.cases].sort((left, right) => left.turn - right.turn)) {
+      process.stdout.write(`${JSON.stringify({ type: "case_started", suiteId: suite.suiteId, caseId: testCase.id, kind: testCase.kind, turn: testCase.turn })}\n`);
       const context = conversation.context(suite.suiteId, testCase.question);
       const started = performance.now();
       try {

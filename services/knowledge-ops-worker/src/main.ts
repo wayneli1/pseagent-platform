@@ -30,6 +30,7 @@ const dependencies={
   runtimeController:new HttpKnowledgeRuntimeController({baseUrl:required("KNOWLEDGE_ENGINE_URL"),token:required("KNOWLEDGE_ENGINE_TOKEN"),timeoutMs:duration("KNOWLEDGE_OPS_ENGINE_RELOAD_TIMEOUT_MS",900_000)}),
   releaseQualityRunner:new ProcessReleaseQualityRunner({command:process.execPath,entryPath:path.resolve(process.env.KNOWLEDGE_OPS_RELEASE_GATE_ENTRY_PATH??"scripts/probe-release-quality.mts"),cwd:process.cwd(),timeoutMs:duration("KNOWLEDGE_OPS_RELEASE_GATE_TIMEOUT_MS",1_800_000)}),
 } as const;
+await store.recoverStaleJobs();
 await store.enqueueJob("compile_catalog",{trigger:"worker_startup"});
 await store.enqueueJob("reconcile_runtime",{trigger:"worker_startup"});
 let stopping=false;process.once("SIGINT",()=>{stopping=true;});process.once("SIGTERM",()=>{stopping=true;});

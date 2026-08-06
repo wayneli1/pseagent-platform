@@ -38,10 +38,10 @@
         }
       },
       {
-        "id": "QG-PRO-TYPO",
-        "kind": "typo",
+        "id": "QG-PRO-COLLOQUIAL",
+        "kind": "colloquial",
         "turn": 3,
-        "question": "客户邮箱数据量狠大，备分到底选高级备分还是三方软件？",
+        "question": "客户邮箱数据量很大，备份到底选高级备份还是第三方软件？",
         "expected": {
           "scopes": ["professional"],
           "statuses": ["answered", "partially_answered"],
@@ -129,10 +129,10 @@
         }
       },
       {
-        "id": "QG-GEN-TYPO",
-        "kind": "typo",
+        "id": "QG-GEN-COLLOQUIAL",
+        "kind": "colloquial",
         "turn": 3,
-        "question": "客戶一直盯着报介压价，咋把话提转回业务价直？",
+        "question": "客户一直盯着报价压价，怎么把话题转回业务价值？",
         "expected": {
           "scopes": ["general"],
           "statuses": ["answered", "partially_answered"],
@@ -218,10 +218,10 @@
         }
       },
       {
-        "id": "QG-POC-TYPO",
-        "kind": "typo",
+        "id": "QG-POC-COLLOQUIAL",
+        "kind": "colloquial",
         "turn": 3,
-        "question": "销受临时叫我马上做完整掩示，但啥客户背景都没有，怎么半？",
+        "question": "销售临时叫我马上做完整演示，但什么客户背景都没有，怎么办？",
         "expected": {
           "scopes": ["general"],
           "statuses": ["answered", "partially_answered"],
@@ -306,10 +306,10 @@
         }
       },
       {
-        "id": "QG-SAFE-TYPO",
-        "kind": "typo",
+        "id": "QG-SAFE-COLLOQUIAL",
+        "kind": "colloquial",
         "turn": 3,
-        "question": "客户发伙还一直指则我，我要不要当场反击？",
+        "question": "客户发火还一直指责我，我要不要当场反击？",
         "consistencyKey": "nvc-response-direction",
         "expected": {
           "scopes": ["general"],

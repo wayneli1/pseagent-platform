@@ -777,6 +777,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .deployment-timeline li { grid-template-columns: 18px 1fr; justify-items: start; text-align: left; }
   .deployment-timeline li:not(:last-child)::after { top: 16px; bottom: -8px; left: 8px; right: auto; width: 2px; height: auto; }
 }
+.regression-live { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.regression-live span { color:var(--text-secondary); }
+.regression-table-wrap { overflow-x:auto; }
+.regression-table-wrap table { min-width:1120px; }
+.regression-question { min-width:280px; max-width:460px; line-height:1.55; }
+.regression-row-running { background:#eff6ff; box-shadow:inset 3px 0 0 #2563eb; }
+.regression-row-running .regression-question { color:#1d4ed8; font-weight:650; }
 @media (max-width: 600px) {
   .topbar {
     padding: 0 16px;
@@ -807,4 +814,5 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .regression-grid label:last-child { grid-column: auto; }
   .repair-actionbar { align-items: stretch; flex-direction: column; margin-inline: 0; }
   .repair-actionbar > div:last-child { display: grid; grid-template-columns: 1fr; }
+  .regression-live { align-items:flex-start; flex-direction:column; }
 }

@@ -13,13 +13,29 @@ import { renderRepairMarkdown } from "./repair-renderer.js";
 import { PROJECT_DATA_POLICY_VERSION, conflictDiagnostics, inspectAnswerCardRuleConflicts } from "./project-data-policy.js";
 import type { KnowledgeRuntimeController } from "./knowledge-runtime-controller.js";
 import type { ReleaseQualityGateReport, ReleaseQualityRunner } from "./release-quality-runner.js";
+import { applyReleaseQualityEvent, finalizeReleaseQualityProgress, initialReleaseQualityProgress } from "./release-quality-progress.js";
 
 export interface WorkerDependencies { readonly store:KnowledgeOpsStore; readonly sources:readonly KnowledgeSource[]; readonly snapshots:SnapshotManager; readonly git:SafeGitWorkspace; readonly cipher?:ContentCipher; readonly answerReviewer?:IndependentAnswerReviewer; readonly repairAgent?:KnowledgeRepairAgent; readonly answerContractRevision?:string; readonly runtimeController?:KnowledgeRuntimeController; readonly releaseQualityRunner?:ReleaseQualityRunner; }
 
 export class KnowledgeOpsWorker {
   private readonly compiler=new CatalogCompiler();
   constructor(private readonly workerId:string,private readonly dependencies:WorkerDependencies){}
-  async runOnce(types?:readonly OpsJobType[]):Promise<boolean>{const job=await this.dependencies.store.claimJob(this.workerId,types);if(!job)return false;try{const result=await this.execute(job);await this.dependencies.store.completeJob(job.jobId,result);return true;}catch(error){await this.dependencies.store.failJob(job.jobId,safeCode(error));return true;}}
+  async runOnce(types?:readonly OpsJobType[]):Promise<boolean>{const job=await this.dependencies.store.claimJob(this.workerId,types);if(!job)return false;const heartbeat=setInterval(()=>void this.dependencies.store.heartbeatJob(job.jobId,this.workerId).catch(()=>undefined),30_000);heartbeat.unref();try{const result=await this.execute(job);await this.dependencies.store.completeJob(job.jobId,result);return true;}catch(error){await this.handleJobFailure(job,error);return true;}finally{clearInterval(heartbeat);}}
+  private async handleJobFailure(job:OpsJob,error:unknown):Promise<void>{
+    const code=safeCode(error);
+    if(job.type==="generate_repair_draft"){
+      const draftId=requireString(job.payload,"draftId"),draft=await this.dependencies.store.getRepairDraft(draftId);
+      if(draft!==undefined&&isTransientModelError(code)&&job.attempts<3){
+        const delayMs=job.attempts===1?15_000:45_000,availableAt=new Date(Date.now()+delayMs).toISOString();
+        await this.dependencies.store.updateRepairDraft(draftId,{status:"generating",errorCode:code});
+        await this.dependencies.store.retryJob(job.jobId,code,availableAt);
+        await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.retry_scheduled",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:draft.issueId,errorCode:code,attempt:job.attempts,maxAttempts:3,availableAt},createdAt:new Date().toISOString()});
+        return;
+      }
+      if(draft!==undefined){await this.dependencies.store.updateRepairDraft(draftId,{status:"failed",errorCode:code});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.failed",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:draft.issueId,errorCode:code,attempt:job.attempts,maxAttempts:3},createdAt:new Date().toISOString()});}
+    }
+    await this.dependencies.store.failJob(job.jobId,code);
+  }
   private async execute(job:OpsJob):Promise<Record<string,unknown>>{
     switch(job.type){
       case "answer_review":return this.reviewAnswer(requireString(job.payload,"reviewId"));
@@ -77,6 +93,7 @@ export class KnowledgeOpsWorker {
   private async generateRepairDraft(draftId:string):Promise<Record<string,unknown>>{
     const cipher=this.dependencies.cipher,agent=this.dependencies.repairAgent;if(cipher===undefined||agent===undefined)throw new Error("repair_agent_not_configured");
     const draft=await this.dependencies.store.getRepairDraft(draftId);if(draft===undefined)throw new Error("repair_draft_not_found");
+    await this.dependencies.store.updateRepairDraft(draftId,{status:"generating",errorCode:""});
     try{
       const issue=await this.dependencies.store.getIssue(draft.issueId);if(issue===undefined)throw new Error("repair_issue_not_found");
       if(issue.status==="dismissed"||issue.status==="resolved")throw new Error("repair_issue_closed");
@@ -90,11 +107,11 @@ export class KnowledgeOpsWorker {
       const currentIssue=await this.dependencies.store.getIssue(issue.issueId);if(currentIssue?.status==="dismissed"||currentIssue?.status==="resolved")throw new Error("repair_issue_closed");
       const updated=await this.dependencies.store.updateRepairDraft(draftId,{status:"draft_ready",targetKind:proposal.targetKind,
         ...(proposal.targetDomain===undefined?{}:{targetDomain:proposal.targetDomain}),...(proposal.targetPath===undefined?{}:{targetPath:proposal.targetPath}),
-        ...(route.baseGitRevision===undefined?{}:{baseGitRevision:route.baseGitRevision}),encryptedPayload:cipher.encrypt({proposal,evidenceSummary:{loadedCount:evidence.documents.length,revalidatedReferenceCount:evidence.revalidatedReferenceCount,issues:evidence.issues}})});
+        ...(route.baseGitRevision===undefined?{}:{baseGitRevision:route.baseGitRevision}),encryptedPayload:cipher.encrypt({proposal,evidenceSummary:{loadedCount:evidence.documents.length,revalidatedReferenceCount:evidence.revalidatedReferenceCount,issues:evidence.issues}}),errorCode:""});
       if(updated===undefined)throw new Error("repair_draft_update_failed");await this.dependencies.store.updateIssue(issue.issueId,"in_progress");
       const timestamp=new Date().toISOString();await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.generated",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:issue.issueId,targetKind:proposal.targetKind,publishable:proposal.publishable,evidenceCount:evidence.documents.length,evidenceIssueCount:evidence.issues.length,revalidatedReferenceCount:evidence.revalidatedReferenceCount},createdAt:timestamp});
       return{draftId,status:updated.status,targetKind:proposal.targetKind,publishable:proposal.publishable,evidenceCount:evidence.documents.length};
-    }catch(error){const code=safeCode(error);await this.dependencies.store.updateRepairDraft(draftId,{status:"failed",errorCode:code});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.failed",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:draft.issueId,errorCode:code},createdAt:new Date().toISOString()});throw error;}
+    }catch(error){throw error;}
   }
   private async loadRepairRecords(issueId:string,cipher:ContentCipher):Promise<{readonly records:readonly RepairRecord[];readonly references:readonly AnswerReviewReference[];readonly sensitiveTerms:readonly string[]}>{
     const records:RepairRecord[]=[];const references:AnswerReviewReference[]=[];const sensitiveTerms:string[]=[];const seenReviews=new Set<string>();
@@ -342,7 +359,9 @@ export class KnowledgeOpsWorker {
   private async recordReviewIssue(stored:StoredAnswerReviewCase,payload:AnswerReviewEncryptedPayload|undefined,priority:IssuePriority,category:IssueCategory){const resolved=(await this.dependencies.store.getConversationTurnByRequestId(stored.requestId))?.resolvedQuestion,questionKey=hashText(normalize(resolved??payload?.question??stored.reviewId));const answerCardKey=cardKey(payload?.answerCardMatch);const groupKey=answerCardKey??questionKey;const occurredAt=new Date().toISOString();const issue=await this.dependencies.store.recordIssue({fingerprint:hashText(`${stored.scope??"unknown"}\0${groupKey}\0${category}`),title:`review:${category}:${groupKey.slice(0,12)}`,priority,category,...(stored.scope?{scope:stored.scope}:{}),...(answerCardKey?{answerCardKey}:{}),occurredAt,occurrence:{sourceType:"answer_review",sourceId:stored.reviewId,requestId:stored.requestId,pseudonymousUserId:stored.pseudonymousUserId}});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"issue.review.upsert",resourceType:"issue_case",resourceId:issue.issueId,metadata:{priority:issue.priority,category:issue.category},createdAt:occurredAt});}
   private async reviewConversation(requestId:string){const current=await this.dependencies.store.getConversationTurnByRequestId(requestId);if(current===undefined)return undefined;const parent=current.parentRequestId===undefined?undefined:await this.dependencies.store.getConversationTurnByRequestId(current.parentRequestId);return{current,parent};}
   private async regression(job:OpsJob){
-    const runner=this.dependencies.releaseQualityRunner;if(runner===undefined)throw new Error("release_quality_runner_not_configured");const runId=typeof job.payload.runId==="string"?job.payload.runId:randomUUID();const run=await this.recordQualityRun(await runner.run(await this.compile()),runId);return{runId,status:run.status,totalCases:run.totalCases,passedCases:run.passedCases};
+    const runner=this.dependencies.releaseQualityRunner;if(runner===undefined)throw new Error("release_quality_runner_not_configured");const runId=typeof job.payload.runId==="string"?job.payload.runId:randomUUID();let progress=initialReleaseQualityProgress();await this.dependencies.store.updateJobProgress(job.jobId,{runId,...progress});
+    const report=await runner.run(await this.compile(),async(event)=>{progress=applyReleaseQualityEvent(progress,event);await this.dependencies.store.updateJobProgress(job.jobId,{runId,...progress});});
+    progress=finalizeReleaseQualityProgress(progress,report);await this.dependencies.store.updateJobProgress(job.jobId,{runId,...progress});const run=await this.recordQualityRun(report,runId);return{runId,status:run.status,...progress};
   }
   private async publish(releaseId:string){const release=(await this.dependencies.store.listReleases()).find(x=>x.releaseId===releaseId);if(!release)throw new Error("release_not_found");const catalog=await this.compile();
     if(catalog.domains.find(x=>x.domain==="coremail-professional")?.revision!==release.professionalRevision||catalog.domains.find(x=>x.domain==="presales-general")?.revision!==release.generalRevision)throw new Error("knowledge_revision_changed");
@@ -379,6 +398,7 @@ function isActiveCard(status:string){return status==="approved"||status==="relea
 function hashCatalog(catalog:AnswerCardCatalog){return createHash("sha256").update(stableJson(catalog)).digest("hex");}
 function stableJson(value:unknown):string{if(Array.isArray(value))return`[${value.map(stableJson).join(",")}]`;if(value!==null&&typeof value==="object"){const r=value as Record<string,unknown>;return`{${Object.keys(r).sort().map(k=>`${JSON.stringify(k)}:${stableJson(r[k])}`).join(",")}}`;}return JSON.stringify(value);}
 function safeCode(error:unknown){return error instanceof Error?error.message.replace(/[^a-z0-9_:.-]/giu,"_").slice(0,160):"worker_job_failed";}
+function isTransientModelError(code:string){return code==="model_unavailable"||code.startsWith("model_unavailable_")||code.startsWith("model_request_timeout")||code.startsWith("model_timeout");}
 function primaryIssueCategory(result:{readonly defects:readonly{readonly category:IssueCategory;readonly severity:string}[]}):IssueCategory{return result.defects.find((item)=>item.severity==="critical")?.category??result.defects.find((item)=>item.severity==="major")?.category??result.defects[0]?.category??"coverage_gap";}
 function cardKey(match:Record<string,unknown>|undefined):string|undefined{const values=match?.cardIdHashes;return Array.isArray(values)&&typeof values[0]==="string"&&/^[a-f0-9]{64}$/u.test(values[0])?values[0]:undefined;}
 function hashText(value:string):string{return createHash("sha256").update(value,"utf8").digest("hex");}

@@ -3,7 +3,7 @@ import { z } from "zod";
 export const questionKindSchema = z.enum([
   "canonical",
   "alias",
-  "typo",
+  "colloquial",
   "follow_up",
   "negative",
 ]);

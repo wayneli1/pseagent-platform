@@ -20,7 +20,7 @@ describe("release quality gate", () => {
     for (const suite of suites) {
       expect(suite.cases.map((item) => item.turn).sort()).toEqual([1, 2, 3, 4, 5]);
       expect(new Set(suite.cases.map((item) => item.kind))).toEqual(new Set([
-        "canonical", "alias", "typo", "follow_up", "negative",
+        "canonical", "alias", "colloquial", "follow_up", "negative",
       ]));
     }
   });

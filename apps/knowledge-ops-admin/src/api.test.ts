@@ -12,4 +12,5 @@ describe("management session API client",()=>{
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/v1/auth/login");expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({"content-type":"application/json"});
     api.setSessionToken(session.sessionToken);await api.get("/v1/dashboard");expect(fetchMock.mock.calls[1]?.[1]?.headers).toEqual({authorization:"Bearer session-token"});
   });
+  it("turns an aborted management request into an actionable timeout",async()=>{vi.stubGlobal("fetch",vi.fn().mockRejectedValue(new DOMException("timed out","TimeoutError")));await expect(new OpsApiClient("session").get("/v1/jobs")).rejects.toMatchObject({status:503,code:"management_service_timeout"});});
 });
