@@ -14,6 +14,12 @@ export interface ReviewEvidenceDocument {
 
 export interface IndependentAnswerReviewInput {
   readonly question: string;
+  readonly rawQuestion?: string;
+  readonly conversation?: {
+    readonly contextUsed: boolean;
+    readonly parentQuestion?: string;
+    readonly parentAnswerOutline?: string;
+  };
   readonly answer: string;
   readonly answerStatus: string;
   readonly evidence: readonly ReviewEvidenceDocument[];
@@ -41,6 +47,8 @@ export class IndependentAnswerReviewer {
         ].join("\n")},
         {role:"user",content:JSON.stringify({
           question:input.question,
+          rawQuestion:input.rawQuestion??input.question,
+          conversation:input.conversation??null,
           answer:input.answer,
           answerStatus:input.answerStatus,
           evidenceIssues:input.evidenceIssues,

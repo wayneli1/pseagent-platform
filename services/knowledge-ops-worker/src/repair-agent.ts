@@ -36,6 +36,10 @@ const caseAssessmentSchema=z.object({cases:z.unknown().optional()}).passthrough(
 
 export interface RepairRecord {
   readonly question: string;
+  readonly rawQuestion?: string;
+  readonly contextUsed?: boolean;
+  readonly parentQuestion?: string;
+  readonly parentAnswerOutline?: string;
   readonly answer: string;
   readonly feedbackClassification?: FeedbackClassification;
   readonly feedback?: string;
@@ -281,7 +285,7 @@ function normalizeObligationCollection(value:unknown,depth=0):unknown[]|undefine
 
 function redactRecords(records:readonly RepairRecord[],terms:readonly string[]):readonly RepairRecord[]{
   const redact=(value:string|undefined)=>value===undefined?undefined:terms.reduce((result,term)=>term.trim().length<2?result:result.replaceAll(term,"[用户]"),value);
-  return records.map((record)=>({question:redact(record.question)!,answer:redact(record.answer)!,
+  return records.map((record)=>({question:redact(record.question)!,...(record.rawQuestion===undefined?{}:{rawQuestion:redact(record.rawQuestion)!}),...(record.contextUsed===undefined?{}:{contextUsed:record.contextUsed}),...(record.parentQuestion===undefined?{}:{parentQuestion:redact(record.parentQuestion)!}),...(record.parentAnswerOutline===undefined?{}:{parentAnswerOutline:redact(record.parentAnswerOutline)!}),answer:redact(record.answer)!,
     ...(record.feedbackClassification===undefined?{}:{feedbackClassification:record.feedbackClassification}),
     ...(record.feedback===undefined?{}:{feedback:redact(record.feedback)!}),
     ...(record.proposedAnswer===undefined?{}:{proposedAnswer:redact(record.proposedAnswer)!}),
