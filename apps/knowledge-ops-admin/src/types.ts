@@ -1,4 +1,4 @@
-export type ViewName="dashboard"|"issues"|"repair"|"batches"|"feedback"|"cards"|"regressions"|"releases"|"audit";
+export type ViewName="dashboard"|"issues"|"evidence"|"repair"|"batches"|"feedback"|"cards"|"regressions"|"releases"|"audit";
 export type FeedbackClassification="useful"|"incorrect"|"missing"|"review_requested"|"evidence"|"correction";
 export type FeedbackStatus="new"|"triaged"|"in_review"|"resolved"|"rejected";
 export type ReviewProcessingStatus="queued"|"running"|"completed"|"errored";
@@ -6,23 +6,26 @@ export type ReviewVerdict="pending"|"pass"|"needs_review"|"fail";
 export type ReviewWorkflowStatus="open"|"in_review"|"resolved"|"dismissed";
 export interface ConversationTurn {turnId:string;sessionId:string;turnIndex:number;requestId:string;questionId:number;parentTurnId?:string;parentRequestId?:string;rawQuestion:string;resolvedQuestion:string;contextUsed:boolean;inheritedSubjects:string[];answerOutline?:string;answerStatus:string;scope?:string;answerCardMatch?:Record<string,unknown>;answeredAt:string;createdAt:string;}
 export interface ConversationRelation {session:{sessionId:string;pseudonymousUserId:string;source:"lunkr_direct";startedAt:string;lastActiveAt:string;expiresAt:string;endedAt?:string;endReason?:string};current:ConversationTurn;parent?:ConversationTurn;chain:ConversationTurn[];}
-export interface Dashboard {issues:{actionable:number;urgent:number;overdue:number;validating:number;readyToPublish:number;byPriority:Record<IssuePriority,number>};repairBatches:{queued:number;publishing:number;published:number;failed:number};feedback:Record<string,number>;answerReviews:{pendingHuman:number;passed:number;errored:number;total:number};cardsByStatus:Record<string,number>;jobs:Record<string,number>;activeReleaseId?:string;}
+export interface Dashboard {issues:{actionable:number;awaitingEvidence:number;urgent:number;overdue:number;validating:number;readyToPublish:number;byPriority:Record<IssuePriority,number>};repairBatches:{queued:number;publishing:number;published:number;failed:number};feedback:Record<string,number>;answerReviews:{pendingHuman:number;passed:number;errored:number;total:number};cardsByStatus:Record<string,number>;jobs:Record<string,number>;activeReleaseId?:string;}
 export interface FeedbackMeta {caseId:string;requestId:string;pseudonymousUserId:string;userDisplayName?:string;classification:FeedbackClassification;status:FeedbackStatus;answerStatus:string;scope?:string;referenceCount:number;source:string;createdAt:string;updatedAt:string;}
 export interface FeedbackDetail extends FeedbackMeta {question:string;answer:string;comment:string;proposedAnswer?:string;questionId:number;answeredAt:string;answerCardMatch?:Record<string,unknown>;conversation?:ConversationRelation;}
 export interface AnswerReviewMeta {reviewId:string;requestId:string;pseudonymousUserId:string;userDisplayName?:string;questionPreview:string;rawQuestionPreview?:string;contextUsed?:boolean;processingStatus:ReviewProcessingStatus;verdict:ReviewVerdict;workflowStatus:ReviewWorkflowStatus;answerStatus:string;scope?:string;referenceCount:number;source:string;model:string;score?:number;defectCount:number;errorCode?:string;createdAt:string;updatedAt:string;}
 export interface AnswerReviewDetail extends AnswerReviewMeta {questionId:number;question:string;answer:string;references:Array<Record<string,unknown>>;answeredAt:string;answerCardMatch?:Record<string,unknown>;answerCardActivation?:Record<string,unknown>;result?:{summary:string;defects:Array<{category:string;severity:string;summary:string;evidence:string}>;obligationChecks:Array<{obligationId:string;covered:boolean;explanation:string}>};conversation?:ConversationRelation;}
 export type IssuePriority="p0"|"p1"|"p2"|"p3";
-export type IssueStatus="open"|"in_progress"|"validating"|"resolved"|"dismissed";
+export type IssueStatus="open"|"in_progress"|"awaiting_evidence"|"validating"|"resolved"|"dismissed";
 export type IssueCategory="knowledge_gap"|"retrieval_gap"|"planning_gap"|"coverage_gap"|"logic_gap"|"citation_gap"|"expression_gap"|"user_incorrect"|"user_missing"|"review_requested"|"evidence"|"correction"|"judgement_conflict"|"review_error";
 export interface IssueSummary {issueId:string;fingerprint:string;title:string;priority:IssuePriority;status:IssueStatus;category:IssueCategory;scope?:string;answerCardKey?:string;slaDueAt:string;firstSeenAt:string;lastSeenAt:string;createdAt:string;updatedAt:string;occurrenceCount:number;affectedUserCount:number;}
 export interface IssueOccurrence {occurrenceId:string;issueId:string;sourceType:"answer_review"|"feedback";sourceId:string;requestId:string;pseudonymousUserId:string;createdAt:string;}
 export interface IssueDetail extends IssueSummary {occurrences:IssueOccurrence[];}
 export interface IssuePage {items:IssueSummary[];total:number;}
+export interface RepairEvidenceRequest {summary:string;requiredMaterials:string[];acceptanceCriteria:string[];}
+export interface EvidenceNeed {issue:IssueSummary;draftId:string;targetDomain?:string;topic:string;blockingReason:string;evidenceRequest:RepairEvidenceRequest;updatedAt:string;}
+export interface EvidenceNeedPage {items:EvidenceNeed[];total:number;}
 export type RepairTargetKind="answer_card"|"knowledge_page"|"retrieval_rule"|"system_fix";
 export type RepairDraftStatus="generating"|"draft_ready"|"validating"|"validation_failed"|"ready_to_publish"|"publishing"|"published"|"failed";
 export type RepairRegressionKind="canonical"|"alias"|"colloquial"|"follow_up"|"negative";
 export interface RepairObligation {id:string;label:string;evidencePolicy:"direct"|"synthesis"|"customer_input";requiredConcepts:string[];forbiddenClaims:string[];preferredEvidencePaths:string[];}
-export interface RepairProposal {rootCause:IssueCategory;targetKind:RepairTargetKind;targetDomain?:string;targetPath?:string;cardId?:string;title:string;canonicalQuestion:string;aliases:string[];answerTemplate:string;obligations:RepairObligation[];regressionQuestions:Array<{kind:RepairRegressionKind;question:string}>;generationSummary:string;publishable:boolean;blockingReason?:string;}
+export interface RepairProposal {rootCause:IssueCategory;targetKind:RepairTargetKind;targetDomain?:string;targetPath?:string;cardId?:string;title:string;canonicalQuestion:string;aliases:string[];answerTemplate:string;obligations:RepairObligation[];regressionQuestions:Array<{kind:RepairRegressionKind;question:string}>;generationSummary:string;publishable:boolean;blockingReason?:string;blockingKind?:"evidence_required"|"system_fix_required"|"human_decision_required"|"candidate_invalid";evidenceRequest?:RepairEvidenceRequest;}
 export interface RepairEvidenceSummary {loadedCount:number;revalidatedReferenceCount:number;issues:string[];}
 export interface RepairDraft {draftId:string;issueId:string;status:RepairDraftStatus;targetKind?:RepairTargetKind;targetDomain?:string;targetPath?:string;baseGitRevision?:string;model:"deepseek_v4_flash";createdBy:string;errorCode?:string;createdAt:string;updatedAt:string;proposal?:RepairProposal;evidenceSummary?:RepairEvidenceSummary;}
 export type RepairValidationStage="card_match"|"obligation_coverage"|"forbidden_claim"|"evidence_support"|"independent_review"|"rule_conflict";
@@ -37,6 +40,7 @@ export interface RepairBatch {batchId:string;status:"queued"|"publishing"|"publi
 export interface RepairBatchDetail extends RepairBatch {publications:RepairPublication[];}
 export interface KnowledgeRuntimeStatus {state:"aligned"|"switching"|"degraded"|"unavailable";checkedAt:string;servingPreviousVersion:boolean;engineStatus:"ready"|"reloading"|"failed"|"unavailable";activeReleaseId?:string;targetReleaseId?:string;activeProfessionalRevision?:string;activeGeneralRevision?:string;engineProfessionalRevision?:string;engineGeneralRevision?:string;errorCode?:string;activeBatch?:RepairBatch;}
 export interface CardRevision {revisionId:string;cardId:string;domain:string;revision:number;status:string;content:Record<string,unknown>;createdBy:string;baseGitRevision:string;createdAt:string;updatedAt:string;}
+export interface CardRevisionPage {items:CardRevision[];total:number;}
 export interface OpsJob {jobId:string;type:string;payload:Record<string,unknown>;status:string;attempts:number;availableAt:string;lockedBy?:string;result?:Record<string,unknown>;errorCode?:string;createdAt:string;updatedAt:string;}
 export type ReleaseQualityQuestionKind="canonical"|"alias"|"colloquial"|"follow_up"|"negative";
 export interface RegressionPlanCase {caseId:string;kind:ReleaseQualityQuestionKind;turn:number;question:string;}

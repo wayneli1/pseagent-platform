@@ -1,6 +1,6 @@
 const LABELS: Readonly<Record<string,string>>={
   useful:"回答有帮助",incorrect:"答案错误",missing:"信息不完整",review_requested:"请求人工复查",evidence:"证据或引用有问题",correction:"用户提供了纠正",
-  new:"待处理",triaged:"已分类",in_review:"处理中",resolved:"已解决",rejected:"已关闭",open:"待处理",in_progress:"修订中",validating:"待验证",dismissed:"无需处理",
+  new:"待处理",triaged:"已分类",in_review:"处理中",resolved:"已解决",rejected:"已关闭",open:"待处理",in_progress:"修订中",awaiting_evidence:"待补正式资料",validating:"待验证",dismissed:"无需处理",
   queued:"等待处理",running:"处理中",completed:"处理完成",errored:"处理异常",pending:"等待处理",pass:"复查通过",needs_review:"需要人工复核",fail:"复查未通过",
   answered:"已完整回答",partially_answered:"部分回答",failed:"处理失败",
   draft:"草稿",approved:"已批准",changes_requested:"需要修改",deprecated:"已停用",release_ready:"待发布",released:"已发布",
@@ -56,6 +56,6 @@ export function option(value:string,current?:string):string{return`<option value
 export function isKnownLabel(value:string):boolean{return Object.hasOwn(LABELS,value);}
 export function errorMessage(value:string):string{if(value.startsWith("model_timeout"))return ERROR_MESSAGES.model_timeout!;if(value.startsWith("model_unavailable"))return ERROR_MESSAGES.model_unavailable!;return ERROR_MESSAGES[value]??`操作失败（${value}）`;}
 
-export function issueStatusHelp(value:string):string{return({open:"等待后台管理员处理",in_progress:"后台管理员正在修订答案卡或知识",validating:"修订完成，等待回归验证",resolved:"修复已验证并关闭",dismissed:"误报、重复或无需处理"} as Readonly<Record<string,string>>)[value]??"";}
+export function issueStatusHelp(value:string):string{return({open:"等待后台管理员处理",in_progress:"后台管理员正在修订答案卡或知识",awaiting_evidence:"正式资料不足，已停止发布并等待资料负责人补充",validating:"修订完成，等待回归验证",resolved:"修复已验证并关闭",dismissed:"误报、重复或无需处理"} as Readonly<Record<string,string>>)[value]??"";}
 
 function escapeAttribute(value:string):string{return value.replace(/[&<>"']/gu,(character)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[character]!);}

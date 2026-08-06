@@ -6,14 +6,17 @@ import {isAnswerReviewActionable} from "./operations-overview.js";
 import {conversationPresentation} from "./conversation-view.js";
 import {deploymentStageLabel,runtimeStatusPresentation} from "./runtime-status-view.js";
 import {regressionRunView,summarizeProgress} from "./regression-view.js";
+import {paginationView} from "./pagination-view.js";
 import {hasCompleteRepairProposal,isRepairEditable,repairEvidenceState,repairPrimaryAction,repairStep,repairSuggestedActionLabel,repairValidationCaseState,repairValidationFieldLabel,repairValidationIsUnchanged,repairValidationStageLabel,shouldShowRepairDiff,standaloneRepairAliases} from "./repair-workflow.js";
 import type {
   Audit,
   AnswerReviewDetail,
   AnswerReviewMeta,
   CardRevision,
+  CardRevisionPage,
   ConversationRelation,
   Dashboard,
+  EvidenceNeedPage,
   FeedbackDetail,
   FeedbackMeta,
   IssueDetail,
@@ -40,6 +43,7 @@ const root: HTMLDivElement = rootElement;
 const nav: { id: ViewName; label: string; icon: string }[] = [
   { id: "dashboard", label: "总览", icon: "⌂" },
   { id: "issues", label: "问题中心", icon: "!" },
+  { id: "evidence", label: "资料待补", icon: "◇" },
   { id: "batches", label: "待发布", icon: "⇧" },
   { id: "feedback", label: "原始记录", icon: "◎" },
   { id: "cards", label: "答案卡", icon: "▤" },
@@ -59,7 +63,11 @@ let repairRefreshTimer:ReturnType<typeof setTimeout>|undefined;
 let runtimeRefreshTimer:ReturnType<typeof setTimeout>|undefined;
 const selectedRepairDraftIds=new Set<string>();
 const ISSUE_PAGE_SIZE=25;
+const EVIDENCE_PAGE_SIZE=25;
+const CARD_PAGE_SIZE=25;
 let issueFilters:{status:"actionable"|"all"|IssueStatus;priority:"all"|IssuePriority;offset:number}={status:"actionable",priority:"all",offset:0};
+let evidenceOffset=0;
+let cardOffset=0;
 
 if (sessionToken) void showApp();
 else showLogin();
@@ -100,6 +108,9 @@ async function loadCurrent() {
       case "issues":
         await renderIssues();
         break;
+      case "evidence":
+        await renderEvidenceNeeds();
+        break;
       case "repair":
         await renderRepairWorkbench();
         break;
@@ -137,7 +148,7 @@ async function renderDashboard() {
   const automated=summary.answerReviews.total===0?0:Math.round((summary.answerReviews.passed/summary.answerReviews.total)*100);
   const actionRows=issues.items.map((item)=>issueRow(item,true));
   content(
-    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>正常回答由系统自动收敛；管理员重点确认高风险问题、修订质量和待发布批次。</p></div><div><button class="button" data-nav="issues">进入问题中心</button> <button class="button primary" data-nav="batches">查看待发布</button></div></div><div class="grid metrics operations-metrics">${metric("紧急问题",summary.issues.urgent,"P0 / P1 优先处理",summary.issues.urgent?"danger":"neutral")}${metric("待发布修订",summary.issues.readyToPublish,"已验证，可组成批次",summary.issues.readyToPublish?"warning":"neutral")}${metric("正在验证",summary.issues.validating,"可同时处理其他修订",summary.issues.validating?"warning":"neutral")}${metric("发布失败批次",summary.repairBatches.failed,"需要检查 Git 或回归结果",summary.repairBatches.failed?"danger":"neutral")}${metric("自动复查通过",summary.answerReviews.passed,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${issues.total} 个问题组，已按风险和最近发生时间排序</span></div><button class="button small" data-nav="issues">查看全部</button></div>${actionRows.length?table(["优先级","问题类型","状态","影响","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>问题优先级</h2><span class="muted">一个问题组可包含多位用户的重复反馈</span></div></div><div class="panel-body stack">${bars(summary.issues.byPriority)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
+    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>正常回答由系统自动收敛；管理员重点确认高风险问题、资料缺口、修订质量和待发布批次。</p></div><div><button class="button" data-nav="issues">进入问题中心</button> <button class="button" data-nav="evidence">资料待补 ${summary.issues.awaitingEvidence}</button> <button class="button primary" data-nav="batches">查看待发布</button></div></div><div class="grid metrics operations-metrics">${metric("紧急问题",summary.issues.urgent,"P0 / P1 优先处理",summary.issues.urgent?"danger":"neutral")}${metric("待补正式资料",summary.issues.awaitingEvidence,"资料不足，已停止发布",summary.issues.awaitingEvidence?"warning":"neutral")}${metric("待发布修订",summary.issues.readyToPublish,"已验证，可组成批次",summary.issues.readyToPublish?"warning":"neutral")}${metric("正在验证",summary.issues.validating,"可同时处理其他修订",summary.issues.validating?"warning":"neutral")}${metric("发布失败批次",summary.repairBatches.failed,"需要检查 Git 或回归结果",summary.repairBatches.failed?"danger":"neutral")}${metric("自动复查通过",summary.answerReviews.passed,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${issues.total} 个问题组，已按风险和最近发生时间排序</span></div><button class="button small" data-nav="issues">查看全部</button></div>${actionRows.length?table(["优先级","问题类型","状态","影响","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>问题优先级</h2><span class="muted">一个问题组可包含多位用户的重复反馈</span></div></div><div class="panel-body stack">${bars(summary.issues.byPriority)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
       jobs
         .slice(0, 3)
         .map((x) => `${badge(x.status)} ${h(label(x.type))}`)
@@ -156,9 +167,14 @@ async function renderIssues(){
   content(`<div class="page-intro"><div><h2>只管理需要行动的问题</h2><p>系统自动合并重复反馈和复查异常；原始问答仅在证据记录中按需查看。</p></div></div>
     <div class="notice workflow-note"><strong>后台管理员负责：</strong>确认问题类型、完成修订、执行回归验证并关闭问题。系统不会因为用户点了“答案错误”就直接改写线上知识。</div>
     <section class="panel mt-16"><div class="panel-head"><div><h2>问题队列</h2><span class="muted">共 ${page.total} 个问题组</span></div></div>
-    <div class="toolbar issue-toolbar"><select id="issue-status" class="button" aria-label="按处理阶段筛选"><option value="actionable"${issueFilters.status==="actionable"?" selected":""}>只看待处理</option><option value="all"${issueFilters.status==="all"?" selected":""}>全部阶段</option>${(["open","in_progress","validating","resolved","dismissed"] as IssueStatus[]).map((value)=>option(value,issueFilters.status)).join("")}</select><select id="issue-priority" class="button" aria-label="按优先级筛选"><option value="all"${issueFilters.priority==="all"?" selected":""}>全部优先级</option>${(["p0","p1","p2","p3"] as IssuePriority[]).map((value)=>option(value,issueFilters.priority)).join("")}</select><span class="muted">重复反馈已自动合并；优先看影响用户多、风险高的问题</span></div>
+    <div class="toolbar issue-toolbar"><select id="issue-status" class="button" aria-label="按处理阶段筛选"><option value="actionable"${issueFilters.status==="actionable"?" selected":""}>只看待处理</option><option value="all"${issueFilters.status==="all"?" selected":""}>全部阶段</option>${(["open","in_progress","awaiting_evidence","validating","resolved","dismissed"] as IssueStatus[]).map((value)=>option(value,issueFilters.status)).join("")}</select><select id="issue-priority" class="button" aria-label="按优先级筛选"><option value="all"${issueFilters.priority==="all"?" selected":""}>全部优先级</option>${(["p0","p1","p2","p3"] as IssuePriority[]).map((value)=>option(value,issueFilters.priority)).join("")}</select><span class="muted">重复反馈已自动合并；优先看影响用户多、风险高的问题</span></div>
     ${page.items.length?table(["优先级","问题类型","状态","影响","最近发生","下一步"],page.items.map((item)=>issueRow(item,false))):empty("当前筛选条件下没有问题")}
     <div class="pagination"><span class="muted">显示 ${start}–${end} / ${page.total}</span><div><button class="button small" data-action="issue-page-prev"${issueFilters.offset===0?" disabled":""}>上一页</button> <button class="button small" data-action="issue-page-next"${issueFilters.offset+ISSUE_PAGE_SIZE>=page.total?" disabled":""}>下一页</button></div></div></section>`);
+}
+async function renderEvidenceNeeds(){
+  const page=await api.get<EvidenceNeedPage>(`/v1/evidence-needs?limit=${EVIDENCE_PAGE_SIZE}&offset=${evidenceOffset}`),paging=paginationView(page.total,evidenceOffset,page.items.length,EVIDENCE_PAGE_SIZE);
+  const cards=page.items.map((item)=>`<article class="evidence-need-card"><header><div><span class="eyebrow">${h(domainName(item.targetDomain??"未确定知识库"))}</span><h3>${h(item.topic)}</h3></div><div class="evidence-need-status">${badge(item.issue.priority)} ${badge(item.issue.status)}</div></header><div class="evidence-need-meta"><span>影响 ${item.issue.affectedUserCount} 位用户 · ${item.issue.occurrenceCount} 次</span><span>最近更新 ${time(item.updatedAt)}</span></div><div class="evidence-block-reason"><strong>为什么不能发布</strong><p>${h(item.blockingReason)}</p></div><div class="evidence-request-summary">${h(item.evidenceRequest.summary)}</div><div class="evidence-need-columns"><section><h4>请补充这些正式资料</h4><ol>${item.evidenceRequest.requiredMaterials.map((material)=>`<li>${h(material)}</li>`).join("")}</ol></section><section><h4>资料验收标准</h4><ul>${item.evidenceRequest.acceptanceCriteria.map((criterion)=>`<li>${h(criterion)}</li>`).join("")}</ul></section></div><footer><span>资料补齐并进入正式知识库后，重新生成该题修订草稿。</span><button class="button primary" data-action="issue-detail" data-id="${h(item.issue.issueId)}">查看关联问题</button></footer></article>`).join("");
+  content(`<div class="page-intro"><div><h2>正式资料待补</h2><p>这里专门承接“不是答案没写好，而是正式资料库没有足够依据”的问题，避免它们一直显示为修订中。</p></div><button class="button" data-nav="issues">返回普通问题队列</button></div><div class="notice evidence-policy-note"><strong>处理原则：</strong>没有正式证据就不生成猜测答案、不进入验证、更不会发布。资料负责人需按下列清单补齐正式页面；后台管理员随后回到关联问题重新生成草稿。</div><section class="panel mt-16"><div class="panel-head"><div><h2>待补清单</h2><span class="muted">共 ${page.total} 个问题组，按最近更新时间排列</span></div></div><div class="evidence-need-list">${cards||empty("当前没有等待补充正式资料的问题")}</div><div class="pagination"><span class="muted">显示 ${paging.start}–${paging.end} / ${page.total}</span><div><button class="button small" data-action="evidence-page-prev"${paging.hasPrevious?"":" disabled"}>上一页</button> <button class="button small" data-action="evidence-page-next"${paging.hasNext?"":" disabled"}>下一页</button></div></div></section>`);
 }
 async function renderRepairBatches(){
   const [ready,batches]=await Promise.all([api.get<RepairDraft[]>("/v1/repair-drafts/ready"),api.get<RepairBatch[]>("/v1/repair-batches")]),readyIds=new Set(ready.map((item)=>item.draftId));
@@ -239,11 +255,11 @@ async function renderFeedback() {
   );
 }
 async function renderCards() {
-  const cards = await api.get<CardRevision[]>("/v1/cards");
+  const page = await api.get<CardRevisionPage>(`/v1/cards?limit=${CARD_PAGE_SIZE}&offset=${cardOffset}`),cards=page.items,paging=paginationView(page.total,cardOffset,cards.length,CARD_PAGE_SIZE);
   const catalogCount=cards.filter((card)=>card.createdBy==="catalog-sync").length;
   const operatorCount=cards.length-catalogCount;
   content(
-    `<div class="notice workflow-note"><strong>数据来源：</strong>两套 Git/Obsidian 知识库是已批准答案卡的事实来源，后台同步为只读目录镜像；人工新建的内容是运营修订，必须经过审核、回归和发布才会影响用户回答。当前：${catalogCount} 条目录镜像，${operatorCount} 条运营修订。</div><div class="mt-16">${cards.length
+    `<div class="notice workflow-note"><strong>数据来源：</strong>两套 Git/Obsidian 知识库是已批准答案卡的事实来源，后台同步为只读目录镜像；人工新建的内容是运营修订，必须经过审核、回归和发布才会影响用户回答。本页：${catalogCount} 条目录镜像，${operatorCount} 条运营修订；全部共 ${page.total} 条。</div><section class="panel mt-16"><div class="panel-head"><div><h2>答案卡修订</h2><span class="muted">每页最多 ${CARD_PAGE_SIZE} 条，无需滚动加载全部记录</span></div></div>${cards.length
       ? table(
           [
             "答案卡",
@@ -261,7 +277,7 @@ async function renderCards() {
               `<tr><td><strong>${h(card.cardId)}</strong><br><span class="muted">${h(String(card.content.title ?? ""))}</span></td><td>${h(domainName(card.domain))}</td><td>${card.createdBy==="catalog-sync"?'<span class="source-tag">知识库目录</span>':'<span class="source-tag operator">运营修订</span>'}</td><td>r${card.revision}</td><td>${badge(card.status)}</td><td>${h(card.createdBy==="catalog-sync"?"系统同步":card.createdBy)}</td><td class="mono">${shortId(card.baseGitRevision)}</td><td>${time(card.updatedAt)}</td><td><button class="button small" data-action="card-detail" data-id="${h(card.revisionId)}">查看</button> ${card.status !== "approved" && card.createdBy!=="catalog-sync" ? `<button class="button small primary" data-action="review-card" data-id="${h(card.revisionId)}">审核</button>` : ""}</td></tr>`,
           ),
         )
-      : `<div class="empty action-empty"><strong>还没有同步答案卡目录</strong><span>线上知识库可能已有答案卡，但后台需要 Worker 完成首次目录同步。</span><button class="button primary" data-action="sync-cards">立即同步两套知识库</button></div>`}</div>`,
+      : `<div class="empty action-empty"><strong>还没有同步答案卡目录</strong><span>线上知识库可能已有答案卡，但后台需要 Worker 完成首次目录同步。</span><button class="button primary" data-action="sync-cards">立即同步两套知识库</button></div>`}<div class="pagination"><span class="muted">显示 ${paging.start}–${paging.end} / ${page.total}</span><div><button class="button small" data-action="card-page-prev"${paging.hasPrevious?"":" disabled"}>上一页</button> <button class="button small" data-action="card-page-next"${paging.hasNext?"":" disabled"}>下一页</button></div></div></section>`,
   );
 }
 async function renderRegressions() {
@@ -421,6 +437,22 @@ async function handleClick(event: MouseEvent) {
     case "issue-page-next":
       issueFilters={...issueFilters,offset:issueFilters.offset+ISSUE_PAGE_SIZE};
       await renderIssues();
+      break;
+    case "evidence-page-prev":
+      evidenceOffset=Math.max(0,evidenceOffset-EVIDENCE_PAGE_SIZE);
+      await renderEvidenceNeeds();
+      break;
+    case "evidence-page-next":
+      evidenceOffset+=EVIDENCE_PAGE_SIZE;
+      await renderEvidenceNeeds();
+      break;
+    case "card-page-prev":
+      cardOffset=Math.max(0,cardOffset-CARD_PAGE_SIZE);
+      await renderCards();
+      break;
+    case "card-page-next":
+      cardOffset+=CARD_PAGE_SIZE;
+      await renderCards();
       break;
     case "card-detail":
       await cardDrawer(target.dataset.id!);
@@ -603,8 +635,7 @@ async function feedbackDrawer(id: string) {
   );
 }
 async function cardDrawer(id: string) {
-  const cards = await api.get<CardRevision[]>("/v1/cards");
-  const item = cards.find((x) => x.revisionId === id);
+  const item = await api.get<CardRevision>(`/v1/revisions/${encodeURIComponent(id)}`);
   if (!item) return;
   overlay(
     `<div class="drawer-head"><strong>${h(item.cardId)} · r${item.revision}</strong><button class="button" data-action="close-overlay">关闭</button></div><div class="drawer-body"><div class="toolbar">${badge(item.status)} ${badge(domainName(item.domain))}</div><pre class="content-box mono">${json(item.content)}</pre></div>`,
@@ -706,7 +737,7 @@ function issueRow(item:IssuePage["items"][number],compact:boolean){
   const impact=`${item.affectedUserCount} 位用户 · ${item.occurrenceCount} 次`;
   return `<tr data-action="issue-detail" data-id="${h(item.issueId)}"><td>${badge(item.priority)}</td><td><strong>${h(label(item.category))}</strong>${item.answerCardKey?`<br><span class="muted">答案卡 ${shortId(item.answerCardKey,10)}</span>`:""}</td><td>${badge(item.status)}${compact?"":`<br><span class="muted">${h(issueStatusHelp(item.status))}</span>`}</td><td>${h(impact)}</td>${compact?"":`<td>${time(item.lastSeenAt)}</td>`}<td><span class="action-link">${h(nextIssueAction(item))}</span></td></tr>`;
 }
-function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open")return"打开修订工作台";if(item.status==="in_progress")return"继续修订";if(item.status==="validating")return"查看验证或待发布";if(item.status==="resolved")return"查看已发布记录";return"查看记录";}
+function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open")return"打开修订工作台";if(item.status==="in_progress")return"继续修订";if(item.status==="awaiting_evidence")return"查看资料要求";if(item.status==="validating")return"查看验证或待发布";if(item.status==="resolved")return"查看已发布记录";return"查看记录";}
 
 function reviewQuestionSummary(item:AnswerReviewMeta){return`<div class="question-summary">${item.contextUsed?'<span class="context-kind follow_up">上下文追问</span>':""}${item.rawQuestionPreview?`<span class="question-raw">${h(item.rawQuestionPreview)}</span><small>补全为：${h(item.questionPreview)}</small>`:`<span>${h(item.questionPreview)}</span>`}</div>`;}
 function conversationContextHtml(question:string,conversation?:ConversationRelation){const view=conversationPresentation(question,conversation),changed=view.rawQuestion.trim()!==view.resolvedQuestion.trim();if(view.kind==="history")return`<div class="context-card history"><div class="context-head"><strong>用户原始问题</strong><span class="context-kind history">${h(view.label)}</span></div><div class="context-question">${h(view.rawQuestion)}</div><p>历史记录没有持久化上下文关系，按原问题处理。</p></div>`;if(view.kind==="independent")return`<div class="context-card independent"><div class="context-head"><strong>本轮问题</strong><span class="context-kind independent">${h(view.label)}</span></div><div class="context-question">${h(view.rawQuestion)}</div>${changed?`<div class="context-resolved"><span>系统用于检索、复查和归并的问题</span><strong>${h(view.resolvedQuestion)}</strong></div>`:""}</div>`;return`<div class="context-card follow-up"><div class="context-head"><strong>已绑定上一轮上下文</strong><span class="context-kind follow_up">${h(view.label)}</span></div>${view.parentQuestion?`<div class="context-node parent"><span>上一问</span><strong>${h(view.parentQuestion)}</strong>${view.parentAnswerOutline?`<small>上一答提纲：${h(view.parentAnswerOutline)}</small>`:""}</div><div class="context-connector" aria-hidden="true">↓</div>`:""}<div class="context-node current"><span>用户本轮原话</span><strong>${h(view.rawQuestion)}</strong></div><div class="context-resolved"><span>补全后用于检索、复查、修订和问题归并</span><strong>${h(view.resolvedQuestion)}</strong>${view.inheritedSubjects.length?`<small>继承主题：${view.inheritedSubjects.map(h).join("、")}</small>`:""}</div></div>`;}
