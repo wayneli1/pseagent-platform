@@ -34,7 +34,12 @@ const scopedBoundaryPattern=/(?:描述为|视为|套用|扩大|推断|承诺|当
 const broadBanVerbPattern=/(?:禁止|不得|不能|不应|不要).{0,16}(?:出现|回答|提供|披露|包含)/u;
 const generalizationPattern=/(?:所有客户|其他客户|所有项目|通用配置|标准配置|产品(?:容量)?上限|容量上限|保证|承诺|新项目.{0,8}(?:一定|必须|均)|一定采用相同配置)/u;
 const currentClaimPattern=/(?:当前|目前|现在|实时)(?:的|项目|系统|用户|规模|容量|授权|部署)?/u;
-export const PROJECT_DATA_POLICY_VERSION="2026-08-06.2";
+const abstractRequiredConceptPattern=/(?:核心功能|主要功能|功能概述|功能介绍|职责区分|职责区别|职责对比|职责说明|角色区别|角色差异|角色说明|协作关系|区别与联系|差异说明|相关内容|关键信息|具体说明)$/u;
+export const PROJECT_DATA_POLICY_VERSION="2026-08-06.3";
+
+export function isUnverifiableRequiredConcept(concept:string):boolean{
+  return abstractRequiredConceptPattern.test(concept.normalize("NFKC").trim());
+}
 
 export function isBroadProjectDataForbiddenClaim(claim:string):boolean{
   const normalized=claim.trim();
@@ -69,6 +74,15 @@ export function inspectAnswerCardRuleConflicts(input:{
   const projects=collectProjectNames(input.answerTemplate,input.evidence),answerFacts=extractFacts(input.answerTemplate,projects),evidenceFacts=input.evidence.flatMap((item)=>extractFacts(item.content,projects,item.path,item.title));
   const conflicts:AnswerCardRuleConflict[]=[];
   for(const obligation of input.obligations){
+    for(const concept of obligation.requiredConcepts){
+      if(!isUnverifiableRequiredConcept(concept))continue;
+      conflicts.push(answerCardRuleConflictSchema.parse({
+        code:"unverifiable_required_concept",obligationId:obligation.id,field:"requiredConcepts",
+        triggerText:concept,rule:concept,
+        message:`${obligation.id} 的必答概念“${concept}”是抽象标签，无法用确定性规则验证。请改为正式证据和答案正文中实际出现的模块、动作或配置项。`,
+        suggestedAction:"modify_rule",evidencePaths:obligation.preferredEvidencePaths,
+      }));
+    }
     for(const claim of obligation.forbiddenClaims){
       if(isBroadProjectDataForbiddenClaim(claim)){
         const fact=answerFacts.find((candidate)=>evidenceFacts.some((source)=>factsReferToSameData(candidate,source)&&comparatorSupported(source.comparator,candidate.comparator)));

@@ -195,6 +195,7 @@ export const answerCardRuleConflictCodeSchema = z.enum([
   "answer_forbidden_conflict",
   "evidence_supported_project_data_forbidden",
   "numeric_boundary_conflict",
+  "unverifiable_required_concept",
 ]);
 
 export const answerCardRuleConflictSchema = z.object({

@@ -8,7 +8,7 @@ import {
   type RepairTargetKind,
 } from "@pseagent/knowledge-ops";
 import { z } from "zod";
-import { inspectAnswerCardRuleConflicts, rewriteBroadProjectDataForbiddenClaims } from "./project-data-policy.js";
+import { inspectAnswerCardRuleConflicts, isUnverifiableRequiredConcept, rewriteBroadProjectDataForbiddenClaims } from "./project-data-policy.js";
 
 const regressionKindSchema=z.enum(["canonical","alias","colloquial","follow_up","negative"]);
 const obligationSchema=z.object({
@@ -94,6 +94,7 @@ export class KnowledgeRepairAgent {
         "正式证据直接记载的项目用户数、授权量、服务器数、节点数和部署规模可以写入答案，但必须绑定项目、场景和数据口径。不得仅因它是项目具体数据就禁止回答。",
         "不得跨项目套用数据，不得把历史项目数据扩大为当前实时规模、通用产品上限或新客户承诺，不得把约等于改写为超过或不少于。无正式证据的数据必须省略或标记待客户确认。",
         "forbiddenClaims 不得生成“禁止出现某项目具体用户数/授权量/服务器数量/节点数量/所有项目规模数据”等宽泛规则；应改为防止跨项目套用、实时化、容量上限化和承诺化的精确边界。",
+        "requiredConcepts 只能填写正式证据和 answerTemplate 中实际出现、可以逐项确定性核验的原子事实，例如模块名、动作、配置项或数据口径。不得填写“核心功能、主要功能、职责区别、协作关系、相关内容、关键信息”等抽象分类标签；每个必答概念都必须能在答案正文中直接定位。",
         "answerTemplate 不需要手工添加 [1] 等运行时引用编号；正式引用编号由在线回答链路按证据生成。",
         "必须生成五个且各一个回归问题：canonical 原始标准问法、alias 同义改写、colloquial 口语问法、follow_up 上下文追问、negative 边界负例。",
         "obligations 必须是 JSON 对象数组，即使只有一项也不能输出为对象、分组映射或说明文字；每项必须严格包含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths，其中后三项是字符串数组，evidencePolicy 只能是 direct、synthesis 或 customer_input。",
@@ -115,10 +116,20 @@ export class KnowledgeRepairAgent {
         evidence:input.evidence.map((item)=>({title:item.title,path:item.path,content:item.content})),
       })},
     ];
-    let candidate:z.infer<typeof repairCandidateSchema>|undefined;let lastError:unknown;
+    let candidate:z.infer<typeof repairCandidateSchema>|undefined;let lastError:unknown;let retryInstruction:string|undefined;
     for(let attempt=1;attempt<=2;attempt+=1){
-      try{candidate=await this.model.completeJson({messages:attempt===1?messages:[...messages,{role:"user",content:"上一次输出未通过严格 Schema。请只依据 evidence 修正；把 title 等字段直接放在 JSON 根节点；obligations 必须是对象数组，每项含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths；保持五类回归问题各一个。"}],schema:repairCandidateInputSchema,schemaDescription:"knowledge repair draft with answer, structured obligation objects, evidence paths and five regression questions",...(input.signal===undefined?{}:{signal:input.signal})});break;}
-      catch(error){candidate=recoverWrappedRepairCandidate(error);if(candidate!==undefined)break;lastError=error;if(!(error instanceof InvalidModelPayloadError)||attempt===2)throw error;}
+      try{candidate=await this.model.completeJson({messages:retryInstruction===undefined?messages:[...messages,{role:"user",content:retryInstruction}],schema:repairCandidateInputSchema,schemaDescription:"knowledge repair draft with answer, structured obligation objects, evidence paths and five regression questions",...(input.signal===undefined?{}:{signal:input.signal})});}
+      catch(error){candidate=recoverWrappedRepairCandidate(error);if(candidate===undefined){lastError=error;if(!(error instanceof InvalidModelPayloadError)||attempt===2)throw error;retryInstruction="上一次输出未通过严格 Schema。请只依据 evidence 修正；把 title 等字段直接放在 JSON 根节点；obligations 必须是对象数组，每项含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths；保持五类回归问题各一个。";continue;}}
+      const proposal=enforceRepairCandidate(input,candidate);
+      const abstractConcepts=proposal.obligations.flatMap((item)=>item.requiredConcepts.filter(isUnverifiableRequiredConcept).map((concept)=>`${item.id}：${concept}`));
+      if(abstractConcepts.length===0)return proposal;
+      if(attempt===2)return proposal;
+      retryInstruction=[
+        `上一次草稿包含无法确定性验证的抽象必答概念：${abstractConcepts.join("；")}。`,
+        "请重新生成完整草稿，把这些抽象标签替换为 evidence 与 answerTemplate 中逐字可定位的原子事实，例如具体模块名、动作、配置项或数据口径。",
+        "不得仅在 answerTemplate 中补写“核心功能”等标签来绕过检查；应让 requiredConcepts 精确描述答案已经陈述的事实。",
+      ].join("\n");
+      candidate=undefined;
     }
     if(candidate===undefined)throw lastError;
     return enforceRepairCandidate(input,candidate);
@@ -245,8 +256,10 @@ function mergeObligations(
   const byId=new Map(candidate.map((item)=>[item.id,item] as const));let unsupportedEvidence=false;
   const source=existing===undefined?candidate:existing.obligations.filter((item)=>item.required).map((baseline)=>{
     const proposed=byId.get(baseline.id);byId.delete(baseline.id);
+    const proposedConcepts=proposed?.requiredConcepts??[];
+    const retainedBaselineConcepts=baseline.requiredConcepts.filter((concept)=>!isUnverifiableRequiredConcept(concept)||proposedConcepts.some((candidateConcept)=>normalize(candidateConcept)===normalize(concept)));
     return{id:baseline.id,label:proposed?.label??baseline.label,evidencePolicy:proposed?.evidencePolicy??baseline.evidencePolicy,
-      requiredConcepts:unique([...baseline.requiredConcepts,...(proposed?.requiredConcepts??[])]),
+      requiredConcepts:unique([...retainedBaselineConcepts,...proposedConcepts]),
       forbiddenClaims:rewriteBroadProjectDataForbiddenClaims(unique([...baseline.forbiddenClaims,...(proposed?.forbiddenClaims??[])])).claims,
       preferredEvidencePaths:unique([...baseline.preferredEvidencePaths,...(proposed?.preferredEvidencePaths??[])]),
     };

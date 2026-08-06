@@ -382,8 +382,11 @@ function validationCaseDiagnostics(input:{
   if(input.review===undefined)return[{stage:"independent_review",field:"answerTemplate",triggerText:answerExcerpt(input.answer),rule:"独立内容复核必须返回明确结论",message:"独立内容复查未返回通过结论。",suggestedAction:"human_review",evidencePaths:[]}];
   const diagnostics=input.review.defects.filter((item)=>item.severity!=="minor").map((defect):RepairValidationDiagnostic=>{
     const stage=defect.category==="citation_gap"?"evidence_support":defect.category==="coverage_gap"||defect.category==="planning_gap"?"obligation_coverage":defect.category==="logic_gap"?"forbidden_claim":"independent_review";
-    const suggestedAction=stage==="evidence_support"?"add_evidence":stage==="independent_review"?"human_review":"modify_answer",obligationId=obligationIdFrom(`${defect.summary} ${defect.evidence}`),triggerText=answerTrigger(input.answer,defect.evidence);
-    return{stage,...(obligationId===undefined?{}:{obligationId}),field:stage==="evidence_support"?"preferredEvidencePaths":"answerTemplate",triggerText,rule:defect.summary,message:defect.summary,suggestedAction,evidencePaths:stage==="evidence_support"?evidencePathsFrom(defect.evidence):[]};
+    const missingGovernedConcept=defect.summary.includes("缺少受治理概念")&&defect.evidence.trim()!=="";
+    const message=missingGovernedConcept?`${defect.summary}：${defect.evidence}`:defect.summary;
+    const rule=missingGovernedConcept?`必须覆盖：${defect.evidence}`:defect.summary;
+    const suggestedAction=stage==="evidence_support"?"add_evidence":stage==="independent_review"?"human_review":"modify_answer",obligationId=obligationIdFrom(`${defect.summary} ${defect.evidence}`),triggerText=missingGovernedConcept?answerExcerpt(input.answer):answerTrigger(input.answer,defect.evidence);
+    return{stage,...(obligationId===undefined?{}:{obligationId}),field:stage==="evidence_support"?"preferredEvidencePaths":"answerTemplate",triggerText,rule,message,suggestedAction,evidencePaths:stage==="evidence_support"?evidencePathsFrom(defect.evidence):[]};
   });
   return diagnostics.length>0?diagnostics:[{stage:"independent_review",field:"answerTemplate",triggerText:answerExcerpt(input.answer),rule:input.review.summary,message:input.review.summary,suggestedAction:"human_review",evidencePaths:[]}];
 }

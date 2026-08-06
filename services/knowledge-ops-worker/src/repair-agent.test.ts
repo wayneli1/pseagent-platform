@@ -19,6 +19,14 @@ describe("KnowledgeRepairAgent",()=>{
     await expect(agent.generate({issueId:"00000000-0000-4000-8000-000000000011",rootCause:"coverage_gap",records:[{question:"迁移前准备什么？",answer:"原回答"}],evidence:[{title:"腾讯迁移",path:"wiki/concepts/腾讯迁移.md",content:"迁移需要客户端专用密码并开启 IMAP。"}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",baseGitRevision:"a".repeat(40),publishableAllowed:true}})).resolves.toMatchObject({publishable:true});
     expect(completeJson).toHaveBeenCalledTimes(2);
   });
+  it("regenerates abstract required concepts as evidence-backed atomic facts",async()=>{
+    const abstract={...candidate,title:"Coremail DA 与 MTA 的区别",canonicalQuestion:"DA 与 MTA 有什么区别？",answerTemplate:"MTA 使用双处理队列；在入信链路中，deliveragent 负责病毒扫描和反垃圾检查。",obligations:[{...candidate.obligations[0]!,requiredConcepts:["MTA 双处理队列","deliveragent 核心功能","入信链路"],preferredEvidencePaths:["wiki/entities/deliveragent.md"]}]};
+    const corrected={...abstract,obligations:[{...abstract.obligations[0]!,requiredConcepts:["MTA 双处理队列","病毒扫描","反垃圾检查","入信链路"]}]};
+    const completeJson=vi.fn().mockResolvedValueOnce(abstract).mockResolvedValueOnce(corrected),agent=new KnowledgeRepairAgent(model(completeJson));
+    const result=await agent.generate({issueId:"00000000-0000-4000-8000-000000000012",rootCause:"coverage_gap",records:[{question:"DA 与 MTA 有什么区别？",answer:"原回答不完整"}],evidence:[{title:"deliveragent",path:"wiki/entities/deliveragent.md",content:"MTA 使用双处理队列；在入信链路中，deliveragent 负责病毒扫描和反垃圾检查。"}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",baseGitRevision:"a".repeat(40),publishableAllowed:true}});
+    expect(result).toMatchObject({publishable:true,obligations:[{requiredConcepts:["MTA 双处理队列","病毒扫描","反垃圾检查","入信链路"]}]});
+    expect(completeJson).toHaveBeenCalledTimes(2);expect(JSON.stringify(completeJson.mock.calls[1])).toContain("无法确定性验证的抽象必答概念");
+  });
   it("generates a customer-neutral evidence-bound draft and preserves governed card constraints",async()=>{
     const completeJson=vi.fn(async()=>candidate);const agent=new KnowledgeRepairAgent(model(completeJson));
     const result=await agent.generate({issueId:"00000000-0000-4000-8000-000000000001",rootCause:"coverage_gap",records:[{question:"腾讯企业邮箱迁移到 Coremail 时，客户端专用密码如何配置？",rawQuestion:"第二点怎么操作？",contextUsed:true,parentQuestion:"Wayne 黎政良问腾讯企业邮箱迁移前要做什么？",parentAnswerOutline:"第二点是生成客户端专用密码",answer:"只开启 IMAP",feedbackClassification:"incorrect",feedback:"Wayne 黎政良说缺少密码说明"}],evidence:[{title:"腾讯迁移",path:"wiki/concepts/腾讯迁移.md",content:"迁移需要客户端专用密码并开启 IMAP。"}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",targetPath:"wiki/queries/腾讯企业邮箱迁移到Coremail前需要哪些设置.md",cardId:card.cardId,baseGitRevision:"a".repeat(40),existingCard:card,publishableAllowed:true},sensitiveTerms:["Wayne 黎政良"]});

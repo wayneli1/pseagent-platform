@@ -28,6 +28,11 @@ describe("项目数据证据边界",()=>{
     expect(conflicts).toEqual([expect.objectContaining({code:"evidence_supported_project_data_forbidden",obligationId:"O1",field:"forbiddenClaims",suggestedAction:"modify_rule"})]);
   });
 
+  it("在模型调用前把抽象必答概念识别为规则问题",()=>{
+    const conflicts=inspectAnswerCardRuleConflicts({answerTemplate:"MTA 接收邮件后交给 deliveragent 完成病毒扫描和反垃圾检查。",evidence:[],obligations:[{id:"O1",label:"区分职责",evidencePolicy:"direct",requiredConcepts:["MTA 双处理队列","deliveragent 核心功能","入信链路"],forbiddenClaims:[],preferredEvidencePaths:["wiki/entities/deliveragent.md"]}]});
+    expect(conflicts).toEqual([expect.objectContaining({code:"unverifiable_required_concept",obligationId:"O1",field:"requiredConcepts",triggerText:"deliveragent 核心功能",suggestedAction:"modify_rule",message:expect.stringContaining("抽象标签")})]);
+  });
+
   it("不把约44万误认为超过44万",()=>{
     expect(evaluateProjectDataAnswer({answer:"**比亚迪项目**\n总授权约44万用户。",evidence}).diagnostics).toEqual([]);
     expect(evaluateProjectDataAnswer({answer:"**比亚迪项目**\n总授权超过44万用户。",evidence}).diagnostics).toEqual([expect.objectContaining({stage:"evidence_support",message:expect.stringContaining("数值口径")})]);

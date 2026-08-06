@@ -4,7 +4,7 @@ import {
   type AnswerReviewResult,
 } from "@pseagent/knowledge-governance-contracts";
 import type { ModelClient } from "@pseagent/app/embedded";
-import { evaluateProjectDataAnswer, inspectAnswerCardRuleConflicts } from "./project-data-policy.js";
+import { evaluateProjectDataAnswer, inspectAnswerCardRuleConflicts, isUnverifiableRequiredConcept } from "./project-data-policy.js";
 
 export interface ReviewEvidenceDocument {
   readonly index: number;
@@ -96,7 +96,7 @@ export function enforceDeterministicReview(
     defects.push({category:"citation_gap",severity:"major",summary:"没有可供独立复查的正式知识页面",evidence:"复查证据包为空"});
   }
   const required=input.exactCard?.obligations.filter((item)=>item.required)??[];
-  const ruleConflicts=input.exactCard===undefined?[]:inspectAnswerCardRuleConflicts({answerTemplate:input.answer,obligations:required,evidence:input.evidence});
+  const ruleConflicts=input.exactCard===undefined?[]:inspectAnswerCardRuleConflicts({answerTemplate:input.answer,obligations:required,evidence:input.evidence}).filter((item)=>item.code!=="unverifiable_required_concept");
   for(const conflict of ruleConflicts){forceFail=true;defects.push({category:"logic_gap",severity:"critical",summary:`答案卡规则冲突（${conflict.obligationId}）`,evidence:`${conflict.message} 规则：${conflict.rule}`.slice(0,1_000)});}
   const checks=new Map(modelResult.obligationChecks.map((check)=>[check.obligationId,check] as const));
   const normalizedAnswer=normalize(input.answer);
@@ -107,7 +107,7 @@ export function enforceDeterministicReview(
     }else if(!check.covered){
       defects.push({category:"coverage_gap",severity:"major",summary:`必答项 ${obligation.id} 未完整覆盖`,evidence:check.explanation});
     }
-    const missingConcepts=obligation.requiredConcepts.filter((concept)=>
+    const missingConcepts=obligation.requiredConcepts.filter((concept)=>!isUnverifiableRequiredConcept(concept)).filter((concept)=>
       !containsGovernedConcept(normalizedAnswer,normalize(concept)));
     if(missingConcepts.length>0){
       defects.push({category:"coverage_gap",severity:"major",summary:`必答项 ${obligation.id} 缺少受治理概念`,evidence:missingConcepts.join("、")});
