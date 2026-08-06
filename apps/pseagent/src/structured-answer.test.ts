@@ -107,6 +107,28 @@ describe("structured answer", () => {
     expect(rendered).toContain("约定检查点");
   });
 
+  it("keeps an ordered sequence introduced as a concrete method", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer:
+          "具体做法：1. 识别角色 [1]；2. 判断关系状态 [1]；3. 提供相应价值 [1]；4. 验证信息 [1]；5. 扩大覆盖 [1]；6. 定期更新 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    const rendered = renderStructuredAnswer(structured);
+    expect(rendered).toContain("识别角色");
+    expect(rendered).toContain("判断关系状态");
+    expect(rendered).toContain("提供相应价值");
+    expect(rendered).toContain("验证信息");
+    expect(rendered).toContain("扩大覆盖");
+    expect(rendered).toContain("定期更新");
+  });
+
   it("keeps obligation order, citations and verifier support kind", () => {
     const action: FinalAction = {
       action: "final",
