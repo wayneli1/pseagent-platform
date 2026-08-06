@@ -37,6 +37,9 @@ export function missingAnswerCardRequiredConcepts(
     // verifier explicitly did not retain.
     if (requirement?.coverage === "none") return [];
     const answer = requirement?.text ?? "";
+    // The catalog may still contain legacy labels that are not literal evidence
+    // terms. Ground every verifiable concept below, while this final liveness
+    // gate rejects only an obligation for which no governed concept survived.
     const covered = requiredConcepts.some((concept) => {
       const normalized = normalizePolicyText(concept);
       return normalized.length > 0 && answer.includes(normalized);
@@ -81,26 +84,26 @@ export function applyGroundedAnswerCardRequiredConcepts(
       .map((item) => item.statement)
       .join(" ");
     for (const binding of bindingsByRequirement.get(requirement.id) ?? []) {
-      const normalizedAnswer = normalizePolicyText(`${answer} ${relatedText}`);
       const preferredPaths = new Set(binding.preferredEvidencePaths ?? []);
       if (preferredPaths.size === 0) continue;
-      const grounded = groundedConcept(
+      const grounded = groundedConcepts(
         binding.requiredConcepts ?? [],
         (evidenceByRequirement.get(requirement.id) ?? [])
           .filter((document) => preferredPaths.has(document.path)),
       );
-      if (grounded === undefined) continue;
-      const sentence = groundedSentence(grounded.concept, grounded.citation);
-      // The verifier may conservatively remove a model-written segment even
-      // when that segment happened to contain the required concept. Keep one
-      // canonical, directly cited sentence for every governed obligation so
-      // concept survival never depends on the model's phrasing.
-      if (normalizedAnswer.includes(normalizePolicyText(sentence))) {
-        continue;
+      for (const item of grounded) {
+        const sentence = groundedSentence(item.concept, item.citation);
+        // The verifier may conservatively remove a model-written segment even
+        // when that segment happened to contain the required concept. Keep one
+        // canonical, directly cited sentence for every governed concept so
+        // concept survival never depends on the model's phrasing.
+        if (normalizePolicyText(`${answer} ${relatedText}`).includes(normalizePolicyText(sentence))) {
+          continue;
+        }
+        answer = `${answer.trim()} ${sentence}`;
+        if (!citations.includes(item.citation)) citations.push(item.citation);
+        changed = true;
       }
-      answer = `${answer.trim()} ${sentence}`;
-      if (!citations.includes(grounded.citation)) citations.push(grounded.citation);
-      changed = true;
     }
     return answer === requirement.answer
       ? requirement
@@ -175,28 +178,26 @@ function normalizePolicyText(value: string): string {
     .replace(/[\s\p{P}\p{S}]+/gu, "");
 }
 
-function groundedConcept(
+function groundedConcepts(
   concepts: readonly string[],
   evidence: readonly AnswerCardPolicyEvidence[],
-): { readonly concept: string; readonly citation: number } | undefined {
-  const candidates = concepts.flatMap((concept) => {
+): readonly { readonly concept: string; readonly citation: number }[] {
+  const seen = new Set<string>();
+  return concepts.flatMap((concept) => {
     const normalizedConcept = normalizePolicyText(concept);
-    if (normalizedConcept.length === 0) return [];
-    return evidence.flatMap((document) => {
+    if (normalizedConcept.length === 0 || seen.has(normalizedConcept)) return [];
+    seen.add(normalizedConcept);
+    const candidates = evidence.flatMap((document) => {
       const normalizedEvidence = normalizePolicyText(
         `${document.title}\n${document.content}`,
       );
       return normalizedEvidence.includes(normalizedConcept)
-        ? [{ concept, citation: document.citation, score: normalizedConcept.length }]
+        ? [{ concept, citation: document.citation }]
         : [];
     });
+    candidates.sort((left, right) => left.citation - right.citation);
+    return candidates.slice(0, 1);
   });
-  candidates.sort((left, right) =>
-    right.score - left.score || left.citation - right.citation);
-  const selected = candidates[0];
-  return selected === undefined
-    ? undefined
-    : { concept: selected.concept, citation: selected.citation };
 }
 
 function groundedSentence(concept: string, citation: number): string {

@@ -547,7 +547,7 @@ describe("answer card TaskSpec adapter", () => {
     expect(governedPlan.requirements[0]?.queries).toHaveLength(2);
   });
 
-  it("reports an answer-card obligation when none of its required concepts survive verification", () => {
+  it("reports an answer-card obligation when none of its governed concepts survive verification", () => {
     const binding = {
       domain: "presales-general" as const,
       requirementId: "R1" as const,
@@ -576,6 +576,15 @@ describe("answer card TaskSpec adapter", () => {
         id: "R1",
         coverage: "complete",
         answer: "Agree on measurable success criteria with the customer [1].",
+        citations: [1],
+      }],
+    }, [binding])).toEqual([]);
+    expect(missingAnswerCardRequiredConcepts({
+      ...action,
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "Agree on success criteria and a measurement with the customer [1].",
         citations: [1],
       }],
     }, [binding])).toEqual([]);
@@ -632,6 +641,42 @@ describe("answer card TaskSpec adapter", () => {
     expect(grounded.requirements[0]?.answer).toContain("[2]");
     expect(grounded.requirements[0]?.citations).toEqual([1, 2]);
     expect(grounded.citations).toEqual([1, 2]);
+    expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([]);
+  });
+
+  it("keeps a canonical cited sentence for every grounded required concept", () => {
+    const binding = {
+      domain: "presales-general" as const,
+      requirementId: "R1" as const,
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      requiredConcepts: ["success criteria", "measurement"],
+      preferredEvidencePaths: ["wiki/queries/value.md"],
+    };
+    const grounded = applyGroundedAnswerCardRequiredConcepts({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "Discuss business value with the customer [1].",
+        citations: [1],
+      }],
+      citations: [1],
+    }, [binding], [{
+      requirementId: "R1",
+      citation: 1,
+      path: "wiki/queries/value.md",
+      title: "Value discovery",
+      content: "Agree on success criteria and a measurement before proposing a price.",
+    }]);
+
+    expect(grounded.requirements[0]?.answer).toContain(
+      "处理原则包括“success criteria”[1]。",
+    );
+    expect(grounded.requirements[0]?.answer).toContain(
+      "处理原则包括“measurement”[1]。",
+    );
     expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([]);
   });
 
