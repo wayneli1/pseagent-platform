@@ -219,7 +219,7 @@
       "expectedScope": "general",
       "expectedTarget": "ordinary_retrieval",
       "expectedEvidence": ["wiki/concepts/异议预防.md"],
-      "requiredFactGroups": [["需求未充分发展"], ["价值表达"], ["方案过早"], ["问题", "Problem"], ["影响", "Implication"], ["需求效益", "Need-payoff"], ["知情判断"]],
+      "requiredFactGroups": [["需求未充分发展"], ["价值表达"], ["方案过早"], ["问题", "Problem"], ["影响", "Implication"], ["需求效益", "Need-payoff"], ["知情判断", "自己形成判断", "自主判断", "参与判断"]],
       "forbiddenClaims": ["异议预防就是不让客户提出反对意见", "应该夸大损失来消除异议"],
       "expectedBehavior": "解释异议根源和SPIN预防路径，同时保留客户自主判断",
       "expectedIssueCenter": false
