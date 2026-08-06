@@ -3,6 +3,7 @@ import type { LunkrDirectConfig } from "./config.js";
 import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
 import {
   LunkrPseBridge,
+  type BridgeAnswerProgress,
   type BridgeAnswerReviewDependencies,
   type BridgeConversationDependencies,
   type BridgeFeedbackDependencies,
@@ -67,6 +68,7 @@ type Answer = (
   question: string,
   conversationContext?: string,
   signal?: AbortSignal,
+  progressObserver?: (progress: BridgeAnswerProgress) => void,
 ) => Promise<TestResult>;
 
 describe("LunkrPseBridge", () => {
@@ -259,10 +261,21 @@ describe("LunkrPseBridge", () => {
 
   it("reports reliable processing and queue status without allocating a question id", async () => {
     const first = deferred<TestResult>();
-    const answer = vi.fn<Answer>(async (question) =>
-      question === "第一问" ? first.promise : answered("第二问回答"));
+    let now = Date.UTC(2026, 7, 6, 5, 50, 52);
+    const answer = vi.fn<Answer>(async (question, _context, _signal, progress) => {
+      if (question !== "第一问") return answered("第二问回答");
+      progress?.({
+        stage: "reviewing_evidence",
+        requirementCount: 4,
+        retrievalCompletedCount: 4,
+        evidenceReadCount: 7,
+        coveredRequirementCount: 3,
+        coverageRequirementCount: 4,
+      });
+      return first.promise;
+    });
     const sendText = vi.fn(async () => undefined);
-    const bridge = createBridge({ answer, sendText });
+    const bridge = createBridge({ answer, sendText, now: () => now });
 
     await bridge.handle(message("empty-status", "#a#U", "/status", "status"));
     expect(sentTexts(sendText).at(-1)).toBe(
@@ -275,10 +288,18 @@ describe("LunkrPseBridge", () => {
     await vi.waitFor(() => expect(sentTexts(sendText)).toContain(
       withProcessingGuide("已收到问题 #2，前面还有 1 个问题，已加入队列。"),
     ));
+    now += 86_000;
     await bridge.handle(message("status", "#a#U", "/status", "status"));
     expect(sentTexts(sendText).at(-1)).toBe([
       "当前问题状态：",
-      "问题 #1：处理中",
+      "问题 #1：处理中 · 已用时 1分26秒",
+      "当前阶段：核对证据",
+      "",
+      "需求拆解：4 项",
+      "资料检索：已完成 4 项",
+      "证据读取：7 份",
+      "覆盖核验：3/4 项完成",
+      "最后更新：13:50:52",
       "问题 #2：排队中，前面还有 1 个问题",
     ].join("\n"));
 
@@ -288,6 +309,28 @@ describe("LunkrPseBridge", () => {
     expect(sentTexts(sendText).at(-1)).toBe(
       "当前没有正在处理或排队的问题。直接发送文字即可提问。",
     );
+  });
+
+  it("drops cancelled progress and ignores stale callbacks after a new session", async () => {
+    const gate = deferred<TestResult>();
+    let report: ((progress: BridgeAnswerProgress) => void) | undefined;
+    const answer = vi.fn<Answer>(async (_question, _context, _signal, progress) => {
+      report = progress;
+      return gate.promise;
+    });
+    const sendText = vi.fn(async () => undefined);
+    const bridge = createBridge({ answer, sendText });
+
+    const pending = bridge.handle(message("progress-old", "#a#U", "旧问题"));
+    await vi.waitFor(() => expect(report).toBeTypeOf("function"));
+    await bridge.handle(message("progress-new", "#a#U", "/new", "new"));
+    report?.({ stage: "verifying", requirementCount: 99 });
+    await bridge.handle(message("progress-status", "#a#U", "/status", "status"));
+
+    expect(sentTexts(sendText).at(-1)).toBe(
+      "当前没有正在处理或排队的问题。直接发送文字即可提问。",
+    );
+    await pending;
   });
 
   it("persists original question and answer only after explicit pseudonymous feedback", async () => {

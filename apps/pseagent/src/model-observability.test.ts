@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DiagnosticEvent, DiagnosticTrace } from "./diagnostics.js";
+import type {
+  DiagnosticEvent,
+  DiagnosticProgressEvent,
+  DiagnosticTrace,
+} from "./diagnostics.js";
 import {
   InvalidModelPayloadError,
   ModelUnavailableError,
@@ -16,8 +20,12 @@ function trace(events: DiagnosticEvent[]): DiagnosticTrace {
 describe("model role observability", () => {
   it("records only role, operation, outcome, and bounded latency on success", async () => {
     const events: DiagnosticEvent[] = [];
+    const progress: DiagnosticProgressEvent[] = [];
     await expect(observeModelCall({
-      trace: trace(events),
+      trace: {
+        ...trace(events),
+        progress(event) { progress.push(event); },
+      },
       role: "planner",
       operation: "plan",
       call: vi.fn(async () => ({ privateAnswer: "must-not-be-recorded" })),
@@ -31,6 +39,25 @@ describe("model role observability", () => {
       elapsedMs: expect.any(Number),
     })]);
     expect(JSON.stringify(events)).not.toContain("privateAnswer");
+    expect(progress).toEqual([{
+      event: "model_call_started",
+      role: "planner",
+      operation: "plan",
+    }]);
+  });
+
+  it("keeps model execution available when a progress observer fails", async () => {
+    const call = vi.fn(async () => "answer");
+    await expect(observeModelCall({
+      trace: {
+        ...trace([]),
+        progress() { throw new Error("progress unavailable"); },
+      },
+      role: "synthesizer",
+      operation: "normal_answer",
+      call,
+    })).resolves.toBe("answer");
+    expect(call).toHaveBeenCalledOnce();
   });
 
   it.each([

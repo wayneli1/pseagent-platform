@@ -722,7 +722,13 @@ describe("AnswerService", () => {
       historicalProvider,
     });
 
-    const noProviderExecution = await service.answerDetailed("普通问题");
+    const progress: string[] = [];
+    const noProviderExecution = await service.answerDetailed(
+      "普通问题",
+      undefined,
+      undefined,
+      (snapshot) => progress.push(snapshot.stage),
+    );
     expect(noProviderExecution).toMatchObject({
       historicalAttempted: false,
       historicalUsed: false,
@@ -739,6 +745,11 @@ describe("AnswerService", () => {
     expect(knowledge.open).not.toHaveBeenCalled();
     expect(planner.plan).not.toHaveBeenCalled();
     expect(historicalProvider.answer).not.toHaveBeenCalled();
+    expect(progress).toEqual([
+      "understanding",
+      "composing",
+      "preparing_delivery",
+    ]);
   });
 
   it("answers PSEAgent architecture as normal even when Coremail dominates history", async () => {

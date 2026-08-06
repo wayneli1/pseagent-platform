@@ -5,6 +5,11 @@ export {
 } from "./main.js";
 export { formatMcpText } from "./mcp-server.js";
 export type { PseAnswerExecution } from "./answer-service.js";
+export type {
+  AnswerProgressObserver,
+  AnswerProgressSnapshot,
+  AnswerProgressStage,
+} from "./answer-progress.js";
 export type { AnswerResult } from "./contracts.js";
 export {
   OpenAiCompatibleModelClient,
