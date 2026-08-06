@@ -131,7 +131,7 @@ function enforceRepairCandidate(input:RepairGenerationInput,candidate:z.infer<ty
   const evidencePaths=new Set(input.evidence.map((item)=>item.path));
   const {obligations,unsupportedEvidence}=mergeObligations(candidate.obligations,input.route.existingCard,evidencePaths);
   const regressionQuestions=normalizeRegressionQuestions(input,candidate);
-  const regressionAliases=regressionQuestions.filter((item)=>item.kind==="alias"||item.kind==="colloquial"||item.kind==="follow_up").map((item)=>item.question);
+  const regressionAliases=regressionQuestions.filter((item)=>item.kind==="alias"||item.kind==="colloquial").map((item)=>item.question);
   const recordAliases=input.records.map((item)=>item.question.trim()).filter((question)=>question!==""&&!(input.sensitiveTerms??[]).some((term)=>term.trim().length>=2&&normalize(question).includes(normalize(term))));
   const aliases=unique([...(input.route.existingCard?.aliases??[]),...recordAliases,...candidate.aliases,...regressionAliases]).filter((value)=>normalize(value)!==normalize(candidate.canonicalQuestion));
   const protectedText=[candidate.title,candidate.canonicalQuestion,...aliases,candidate.answerTemplate,...obligations.flatMap((item)=>[item.label,...item.requiredConcepts,...item.forbiddenClaims])].join("\n");
