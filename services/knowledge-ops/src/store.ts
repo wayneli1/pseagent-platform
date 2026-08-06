@@ -132,6 +132,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async appendConversationTurn(value:ConversationTurnInput):Promise<ConversationTurn>{
     const duplicate=[...this.conversationTurns.values()].find((item)=>item.requestId===value.requestId);if(duplicate!==undefined)return copy(duplicate);
+    if(value.forceNewSession===true){for(const [id,session] of this.conversationSessions){if(session.pseudonymousUserId===value.pseudonymousUserId&&session.endedAt===undefined)this.conversationSessions.set(id,{...session,endedAt:value.answeredAt,endReason:"manual"});}}
     for(const [id,session] of this.conversationSessions){if(session.pseudonymousUserId===value.pseudonymousUserId&&session.endedAt===undefined&&session.expiresAt<=value.answeredAt)this.conversationSessions.set(id,{...session,endedAt:value.answeredAt,endReason:"idle"});}
     let session=[...this.conversationSessions.values()].find((item)=>item.pseudonymousUserId===value.pseudonymousUserId&&item.endedAt===undefined);
     if(session===undefined){session={sessionId:randomUUID(),pseudonymousUserId:value.pseudonymousUserId,source:value.source,startedAt:value.answeredAt,lastActivityAt:value.answeredAt,expiresAt:value.expiresAt};this.conversationSessions.set(session.sessionId,session);}

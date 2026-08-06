@@ -67,7 +67,7 @@ import {
   compileExactAnswerCardTaskSpec,
   type AnswerCardObligationPolicy,
 } from "./answer-card-task-spec-adapter.js";
-import { identityResolvedQuestion } from "./question-resolver.js";
+import { identityResolvedQuestion, type ResolvedQuestion } from "./question-resolver.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -120,6 +120,8 @@ export interface PseAnswerExecution {
   readonly answerCardMatch?: AnswerCardExecutionSummary;
   readonly answerCardActivation?: AnswerCardActivationSummary;
   readonly feedbackContext: FeedbackSafeExecutionContext;
+  /** The explicit question interpretation used by retrieval and planning when available. */
+  readonly questionResolution?: ResolvedQuestion;
 }
 
 export interface AnswerCardExecutionSummary {
@@ -207,6 +209,8 @@ export class AnswerService {
       startDiagnosticTrace(this.dependencies.diagnostics),
     );
     let scope: Scope | undefined;
+    let questionResolution = identityResolvedQuestion(question);
+    const withQuestionResolution = (execution:PseAnswerExecution):PseAnswerExecution => ({...execution,questionResolution});
     try {
       const exactRoute = (
         this.dependencies.answerCardExactActiveEnabled === true &&
@@ -240,7 +244,7 @@ export class AnswerService {
           }),
         });
         const result: AnswerResult = { scope, status: "answered", answer, references: [] };
-        return finishExecution(trace, result, startedAt, false, false);
+        return withQuestionResolution(finishExecution(trace, result, startedAt, false, false));
       }
       if (scope !== "professional" && scope !== "general") {
         throw new Error("invalid_routed_scope");
@@ -288,6 +292,7 @@ export class AnswerService {
             timeoutMs: this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
           })
         : undefined;
+      if(taskAnalysis!==undefined)questionResolution=taskAnalysis.resolvedQuestion;
       const answerCardMatch = await this.matchAnswerCard({
         question: exactRoute === undefined
           ? taskAnalysis?.resolvedQuestion.standaloneQuestion ?? question
@@ -377,7 +382,7 @@ export class AnswerService {
                 reason: "activated",
                 requirementCount,
               });
-              return await this.answerAcrossDomains({
+              return withQuestionResolution(await this.answerAcrossDomains({
                 scope,
                 question: taskAnalysis.resolvedQuestion.standaloneQuestion,
                 plans: derived.plans,
@@ -388,7 +393,7 @@ export class AnswerService {
                 ...(activeAnswerCardMatch === undefined
                   ? {}
                   : { expectedRevisions: activeAnswerCardMatch.expectedRevisions }),
-              });
+              }));
             }
             recordDiagnostic(trace, {
               event: "task_spec_activation",
@@ -398,13 +403,13 @@ export class AnswerService {
             });
             if (domainPlanFailureMustFailClosed(derived.reason)) {
               recordDiagnostic(trace, { event: "stop", reason: "domain_plan_invalid" });
-              return finishExecution(
+              return withQuestionResolution(finishExecution(
                 trace,
                 temporaryUnavailableResult(scope),
                 startedAt,
                 false,
                 false,
-              );
+              ));
             }
           } else {
             const adapted = adaptTaskSpecToKnowledgePlan({
@@ -498,13 +503,13 @@ export class AnswerService {
         signal: requestSignal,
       };
       const primary = await this.dependencies.runAgent(input);
-      return await this.finishPrimary({
+      return withQuestionResolution(await this.finishPrimary({
         primary,
         question: effectiveQuestion,
         requestSignal,
         trace,
         startedAt,
-      });
+      }));
     } catch (error) {
       if (error instanceof InvalidModelPayloadError) {
         recordDiagnostic(trace, {
@@ -533,7 +538,7 @@ export class AnswerService {
             ? "invalid_model_payload"
             : "routing_or_planning_unavailable";
       recordDiagnostic(trace, { event: "stop", reason });
-      return finishExecution(trace, result, startedAt, false, false);
+      return withQuestionResolution(finishExecution(trace, result, startedAt, false, false));
     }
   }
 

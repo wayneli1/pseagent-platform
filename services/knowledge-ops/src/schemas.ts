@@ -35,6 +35,7 @@ export const conversationTurnIntakeSchema = z.object({
   answeredAt: isoTimestamp,
   expiresAt: isoTimestamp,
   source: z.literal("lunkr_direct"),
+  forceNewSession: z.boolean().optional(),
 }).strict().superRefine((value, context) => {
   if (Date.parse(value.expiresAt) <= Date.parse(value.answeredAt)) {
     context.addIssue({ code: "custom", path: ["expiresAt"], message: "conversation_expiry_must_follow_answer" });

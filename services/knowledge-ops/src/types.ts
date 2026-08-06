@@ -73,6 +73,7 @@ export interface ConversationTurnInput {
   readonly answeredAt: string;
   readonly expiresAt: string;
   readonly source: "lunkr_direct";
+  readonly forceNewSession?: boolean;
 }
 
 export interface ConversationContextView {

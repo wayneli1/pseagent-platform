@@ -64,6 +64,8 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     try{
       await client.query("BEGIN");await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[`conversation:${v.pseudonymousUserId}`]);
       const duplicate=optional<ConversationTurn>(await client.query("SELECT * FROM conversation_turns WHERE request_id=$1",[v.requestId]));if(duplicate!==undefined){await client.query("COMMIT");return duplicate;}
+      if(v.forceNewSession===true)await client.query(`UPDATE conversation_sessions SET ended_at=$2,end_reason='manual'
+        WHERE pseudonymous_user_id=$1 AND ended_at IS NULL`,[v.pseudonymousUserId,v.answeredAt]);
       await client.query(`UPDATE conversation_sessions SET ended_at=$2,end_reason='idle'
         WHERE pseudonymous_user_id=$1 AND ended_at IS NULL AND expires_at<=$2`,[v.pseudonymousUserId,v.answeredAt]);
       let session=optional<ConversationSession>(await client.query(`SELECT * FROM conversation_sessions

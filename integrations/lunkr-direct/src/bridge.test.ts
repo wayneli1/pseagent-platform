@@ -4,6 +4,7 @@ import type { DirectCommand, LunkrDirectMessage } from "./contracts.js";
 import {
   LunkrPseBridge,
   type BridgeAnswerReviewDependencies,
+  type BridgeConversationDependencies,
   type BridgeFeedbackDependencies,
   type BridgeQuestionEvent,
 } from "./bridge.js";
@@ -57,6 +58,9 @@ type TestResult = {
     | "formal_support_present"
     | "structural_fallback";
   readonly references?: readonly BridgeReviewReference[];
+  readonly resolvedQuestion?: string;
+  readonly contextUsed?: boolean;
+  readonly inheritedSubjects?: readonly string[];
 };
 
 type Answer = (
@@ -1112,6 +1116,8 @@ describe("LunkrPseBridge", () => {
     expect(answer.mock.calls[1]?.[1]).not.toContain("wiki/");
   });
 
+  it("restores persisted context, saves the resolved follow-up and ends it on new",async()=>{const requestId="019fcd9f-cfb9-7c62-93a9-39b84c7e00aa",load=vi.fn(async()=>({session:{sessionId:"019fcd9f-cfb9-7c62-93a9-39b84c7e00ab"},recentTurns:[{requestId:"019fcd9f-cfb9-7c62-93a9-39b84c7e00ac",resolvedQuestion:"腾讯企业邮箱迁移前需要哪些设置？",answerOutline:"1. 确认范围\n2. 获取客户端专用密码"}]})),append=vi.fn(async()=>undefined),end=vi.fn(async()=>undefined),conversation:BridgeConversationDependencies={pseudonymizationKey:"context-test-key-with-more-than-32-characters",load,append,end},answer=vi.fn<Answer>(async(_question,context)=>({...answered("请在安全设置中生成客户端专用密码。"),requestId,resolvedQuestion:"腾讯企业邮箱迁移时，客户端专用密码怎么生成？",contextUsed:true,inheritedSubjects:["客户端专用密码"]})),sendText=vi.fn(async()=>undefined),bridge=createBridge({answer,sendText,conversation});await bridge.handle(message("m1","#a#U","第二点怎么操作？"));expect(answer.mock.calls[0]?.[1]).toContain("2. 获取客户端专用密码");expect(append).toHaveBeenCalledWith(expect.objectContaining({requestId,rawQuestion:"第二点怎么操作？",resolvedQuestion:"腾讯企业邮箱迁移时，客户端专用密码怎么生成？",contextUsed:true,inheritedSubjects:["客户端专用密码"],answerOutline:"请在安全设置中生成客户端专用密码。"}));await bridge.handle(message("m2","#a#U","/new","new"));expect(end).toHaveBeenCalledWith(expect.stringMatching(/^[a-f0-9]{64}$/u),"manual",expect.any(String));});
+
   it("falls back to numbered chunks when native text post delivery fails", async () => {
     vi.useFakeTimers();
     try {
@@ -1177,6 +1183,7 @@ function createBridge(options: {
   readonly onEvent?: (event: BridgeQuestionEvent) => void;
   readonly feedback?: BridgeFeedbackDependencies;
   readonly answerReview?: BridgeAnswerReviewDependencies;
+  readonly conversation?: BridgeConversationDependencies;
 }) {
   return new LunkrPseBridge(
     { ...config, ...options.config },
@@ -1202,6 +1209,9 @@ function createBridge(options: {
         removedSegmentCount: result.removedSegmentCount,
         historicalGateReason: result.historicalGateReason,
         references: result.references,
+        resolvedQuestion:result.resolvedQuestion,
+        contextUsed:result.contextUsed,
+        inheritedSubjects:result.inheritedSubjects,
       }),
       sendText: options.sendText,
       sendTextFile: options.sendTextFile ?? (async () => undefined),
@@ -1209,6 +1219,7 @@ function createBridge(options: {
       onEvent: options.onEvent,
       feedback: options.feedback,
       answerReview: options.answerReview,
+      conversation:options.conversation,
     },
     options.now,
   );

@@ -60,4 +60,6 @@ describe("ConversationStore", () => {
     expect(() => JSON.parse(context ?? "")).not.toThrow();
     expect(context).toContain("第二问");
   });
+
+  it("hydrates resolved persisted turns without rebuilding an answer outline",()=>{const store=new ConversationStore(6,2_000);store.replace("#a#U",[{question:"完整迁移问题",answerOutline:"1. 范围\n2. 客户端专用密码"}]);expect(store.has("#a#U")).toBe(true);expect(store.context("#a#U","第二点呢")).toContain('"question":"完整迁移问题"');expect(store.context("#a#U","第二点呢")).toContain("2. 客户端专用密码");});
 });

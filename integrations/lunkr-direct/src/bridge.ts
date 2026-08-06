@@ -10,7 +10,9 @@ import type {
   BridgeReviewReference,
 } from "./answer-review-submission.js";
 import type { LunkrDirectConfig } from "./config.js";
-import { ConversationStore } from "./conversation-store.js";
+import { buildAnswerOutline, ConversationStore } from "./conversation-store.js";
+import type { BridgeConversationDependencies } from "./conversation-persistence.js";
+export type { BridgeConversationDependencies } from "./conversation-persistence.js";
 import type { LunkrDirectMessage } from "./contracts.js";
 import { MessageDedupe } from "./dedupe.js";
 import {
@@ -96,6 +98,9 @@ export interface BridgeAnswerMetadata {
   readonly answerCardMatch?: FeedbackAnswerCardSummary | undefined;
   readonly answerCardActivation?: BridgeAnswerCardActivationSummary | undefined;
   readonly references?: readonly BridgeReviewReference[] | undefined;
+  readonly resolvedQuestion?: string | undefined;
+  readonly contextUsed?: boolean | undefined;
+  readonly inheritedSubjects?: readonly string[] | undefined;
 }
 
 export interface BridgeQuestionEvent {
@@ -156,6 +161,7 @@ export interface LunkrBridgeDependencies<Result> {
   readonly onEvent?: ((event: BridgeQuestionEvent) => void) | undefined;
   readonly feedback?: BridgeFeedbackDependencies | undefined;
   readonly answerReview?: BridgeAnswerReviewDependencies | undefined;
+  readonly conversation?: BridgeConversationDependencies | undefined;
 }
 
 export interface BridgeFeedbackDependencies {
@@ -174,6 +180,7 @@ export class LunkrPseBridge<Result> {
   private readonly scheduler: PeerScheduler;
   private readonly feedbackReceipts: FeedbackReceiptStore;
   private readonly lastAcceptedQuestionAt = new Map<string, number>();
+  private readonly forceNewSessionPeers = new Set<string>();
 
   constructor(
     private readonly config: LunkrDirectConfig,
@@ -325,7 +332,7 @@ export class LunkrPseBridge<Result> {
 
     if (!this.isCurrent(start)) return;
     const question = message.text.trim();
-    const context = this.conversations.context(message.peerUid, question);
+    const context = await this.conversationContext(message.peerUid, question);
     let result: Result | undefined;
     let metadata: BridgeAnswerMetadata | undefined;
 
@@ -441,10 +448,12 @@ export class LunkrPseBridge<Result> {
     if (
       (metadata.status === "answered" || metadata.status === "partially_answered")
     ) {
+      const resolvedQuestion=metadata.resolvedQuestion?.trim()||question,answerOutline=buildAnswerOutline(normalizedAnswer);
       this.conversations.append(message.peerUid, {
-        question,
-        answer: normalizedAnswer,
+        question:resolvedQuestion,
+        ...(answerOutline===undefined?{}:{answerOutline}),
       });
+      await this.persistConversationTurn({message,questionId:start.questionId,question,resolvedQuestion,answerOutline,metadata});
     }
     const feedbackReady = this.feedbackReceipts.remember(message.peerUid, {
       questionId: start.questionId,
@@ -555,11 +564,32 @@ export class LunkrPseBridge<Result> {
 
   private async resetPeer(peerUid: string): Promise<void> {
     this.resetPeerState(peerUid, "manual");
+    this.forceNewSessionPeers.add(peerUid);
+    await this.endPersistentConversation(peerUid,"manual");
     await this.sendWithRetry(
       peerUid,
       "已开始新会话，之前处理中和排队的问题已取消。",
     );
   }
+
+  private async conversationContext(peerUid:string,currentQuestion:string):Promise<string|undefined>{
+    const dependency=this.dependencies.conversation;
+    if(dependency!==undefined&&!this.conversations.has(peerUid)&&!this.forceNewSessionPeers.has(peerUid)){
+      try{
+        const user=pseudonymizeFeedbackUser(peerUid,dependency.pseudonymizationKey),stored=await dependency.load(user,this.config.contextMaxTurns);
+        this.conversations.replace(peerUid,stored.recentTurns.map((turn)=>({question:turn.resolvedQuestion,...(turn.answerOutline===undefined?{}:{answerOutline:turn.answerOutline})})));
+      }catch{/* persisted context is an availability enhancement; memory remains the safe fallback */}
+    }
+    return this.conversations.context(peerUid,currentQuestion);
+  }
+
+  private async persistConversationTurn(input:{readonly message:LunkrDirectMessage;readonly questionId:number;readonly question:string;readonly resolvedQuestion:string;readonly answerOutline:string|undefined;readonly metadata:BridgeAnswerMetadata;}):Promise<void>{
+    const dependency=this.dependencies.conversation,requestId=input.metadata.requestId;if(dependency===undefined||requestId===undefined||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(requestId))return;
+    const answeredAt=new Date(this.now()).toISOString(),forceNewSession=this.forceNewSessionPeers.has(input.message.peerUid);
+    try{await dependency.append({turnId:randomUUID(),requestId,pseudonymousUserId:pseudonymizeFeedbackUser(input.message.peerUid,dependency.pseudonymizationKey),questionId:input.questionId,rawQuestion:input.question,resolvedQuestion:input.resolvedQuestion,contextUsed:input.metadata.contextUsed===true,inheritedSubjects:input.metadata.inheritedSubjects??[],...(input.answerOutline===undefined?{}:{answerOutline:input.answerOutline}),answerStatus:input.metadata.status??"unknown",...(input.metadata.scope===undefined?{}:{scope:input.metadata.scope}),...(input.metadata.answerCardMatch===undefined?{}:{answerCardMatch:{...input.metadata.answerCardMatch}}),answeredAt,expiresAt:new Date(this.now()+this.config.sessionIdleMs).toISOString(),source:"lunkr_direct",...(forceNewSession?{forceNewSession:true}:{})});if(forceNewSession)this.forceNewSessionPeers.delete(input.message.peerUid);}catch{/* answer delivery and in-memory continuity must survive an ops outage */}
+  }
+
+  private async endPersistentConversation(peerUid:string,reason:"manual"|"idle"):Promise<void>{const dependency=this.dependencies.conversation;if(dependency===undefined)return;try{await dependency.end(pseudonymizeFeedbackUser(peerUid,dependency.pseudonymizationKey),reason,new Date(this.now()).toISOString());}catch{/* the next successful append carries forceNewSession */}}
 
   private async handleFeedback(message: LunkrDirectMessage): Promise<void> {
     if (message.feedback === undefined) {

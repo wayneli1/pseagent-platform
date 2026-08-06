@@ -365,6 +365,7 @@ describe("AnswerService", () => {
       expect.any(AbortSignal),
     );
     expect(execution.historicalGateReason).toBe("eligible");
+    expect(execution.questionResolution).toMatchObject({rawQuestion,standaloneQuestion,contextUsed:true});
     expect(events).toContainEqual({
       event: "task_spec_activation",
       activated: true,

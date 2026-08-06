@@ -92,6 +92,9 @@ const bridge = new LunkrPseBridge(config, {
     answerCardMatch: execution.answerCardMatch,
     answerCardActivation: execution.answerCardActivation,
     references: execution.result.references,
+    resolvedQuestion: execution.questionResolution?.standaloneQuestion,
+    contextUsed: execution.questionResolution?.contextUsed,
+    inheritedSubjects: execution.questionResolution?.inheritedSubjects,
   }),
   sendText: (peerUid, text) => api.sendText(peerUid, text),
   sendTextFile: (peerUid, title, content, caption) =>
@@ -107,6 +110,12 @@ const bridge = new LunkrPseBridge(config, {
     answerReview: {
       pseudonymizationKey: feedbackValues[2]!,
       submit: (submission) => feedbackClient.submitReview(submission),
+    },
+    conversation: {
+      pseudonymizationKey: feedbackValues[2]!,
+      load: (pseudonymousUserId,maxTurns) => feedbackClient.loadConversation(pseudonymousUserId,maxTurns),
+      append: (submission) => feedbackClient.appendConversation(submission),
+      end: (pseudonymousUserId,reason,endedAt) => feedbackClient.endConversation(pseudonymousUserId,reason,endedAt),
     },
   }),
 });

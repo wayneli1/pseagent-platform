@@ -1,6 +1,7 @@
 export interface ConversationTurn {
   readonly question: string;
   readonly answer?: string;
+  readonly answerOutline?: string;
 }
 
 interface StoredConversationTurn {
@@ -51,10 +52,17 @@ export class ConversationStore {
     return fitLatestTurn(latest, this.maxChars);
   }
 
+  has(peerUid:string):boolean{return (this.conversations.get(peerUid)?.length??0)>0;}
+
+  replace(peerUid:string,turns:readonly ConversationTurn[]):void{
+    this.conversations.delete(peerUid);
+    for(const turn of turns)this.append(peerUid,turn);
+  }
+
   append(peerUid: string, turn: ConversationTurn): void {
     const question = turn.question.trim();
     if (question === "") return;
-    const answerOutline = buildAnswerOutline(turn.answer);
+    const answerOutline = turn.answerOutline?.trim() || buildAnswerOutline(turn.answer);
     const stored: StoredConversationTurn = {
       question,
       ...(answerOutline === undefined ? {} : { answerOutline }),
