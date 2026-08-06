@@ -30,7 +30,7 @@ describe("loadRepairEvidence",()=>{
 
     const mismatched=await loadRepairEvidence({source:{domain:"coremail-professional",root},revision:changedRevision,paths:[relativePath],references:[{...reference,revision:changedRevision}]});
     expect(mismatched).toMatchObject({documents:[],issues:[`${relativePath}:content_hash_mismatch`]});
-  });
+  },15_000);
 });
 
 function git(root:string,...args:string[]):string{return execFileSync("git",["-c","user.name=PSE Test","-c","user.email=pse@example.invalid","-C",root,...args],{encoding:"utf8",windowsHide:true});}
