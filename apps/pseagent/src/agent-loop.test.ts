@@ -3395,6 +3395,56 @@ describe("runKnowledgeAgent", () => {
       references: [{ path: "wiki/queries/governed-answer.md" }],
     });
     expect(model.calls).toBe(1);
+    expect(model.lastSchemaName()).toBe("pse_final_action");
+  });
+
+  it("grounds a missing answer-card concept before verification without another model turn", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    session.compactPage.mockReturnValue("The governed page requires measurable success criteria.");
+    const model = scriptedAgentModel([
+      final("complete", "Discuss business value with the customer [1].", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        requiredConcepts: ["success criteria"],
+        preferredEvidencePaths: ["wiki/queries/governed-answer.md"],
+      }],
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.answer).toContain("success criteria");
+    expect(model.calls).toBe(1);
+    expect(model.lastSchemaName()).toBe("pse_final_action");
+  });
+
+  it("fails closed after one final when a required concept has no preferred evidence support", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    const model = scriptedAgentModel([
+      final("complete", "Discuss the approved migration path [1].", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        requiredConcepts: ["MigratePassword"],
+        preferredEvidencePaths: ["wiki/queries/governed-answer.md"],
+      }],
+    });
+
+    expect(result.status).toBe("temporarily_unavailable");
+    expect(model.calls).toBe(1);
   });
 
   it("repairs one invalid action with an explicit schema instruction", async () => {

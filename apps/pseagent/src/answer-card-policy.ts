@@ -1,6 +1,14 @@
 import type { FinalAction } from "./contracts.js";
 import type { DomainRequirementBinding } from "./domain-plan.js";
 
+export interface AnswerCardPolicyEvidence {
+  readonly requirementId: string;
+  readonly citation: number;
+  readonly path: string;
+  readonly title: string;
+  readonly content: string;
+}
+
 export interface MissingAnswerCardConcepts {
   readonly requirementId: string;
   readonly requiredConcepts: readonly string[];
@@ -30,6 +38,73 @@ export function missingAnswerCardRequiredConcepts(
       requiredConcepts: Object.freeze([...requiredConcepts]),
     }];
   });
+}
+
+/**
+ * Preserve an approved answer-card concept without asking the model to rewrite
+ * the whole answer again. A concept is added only when it occurs verbatim in a
+ * preferred evidence page that was actually read for the same requirement.
+ * The coverage verifier still audits the resulting claim and may remove it.
+ */
+export function applyGroundedAnswerCardRequiredConcepts(
+  action: FinalAction,
+  bindings: readonly DomainRequirementBinding[] = [],
+  evidence: readonly AnswerCardPolicyEvidence[] = [],
+): FinalAction {
+  const bindingsByRequirement = new Map<string, DomainRequirementBinding[]>();
+  for (const binding of bindings) {
+    const current = bindingsByRequirement.get(binding.requirementId) ?? [];
+    current.push(binding);
+    bindingsByRequirement.set(binding.requirementId, current);
+  }
+  const evidenceByRequirement = new Map<string, AnswerCardPolicyEvidence[]>();
+  for (const document of evidence) {
+    const current = evidenceByRequirement.get(document.requirementId) ?? [];
+    current.push(document);
+    evidenceByRequirement.set(document.requirementId, current);
+  }
+
+  let changed = false;
+  const requirements = action.requirements.map((requirement) => {
+    if (requirement.coverage === "none") return requirement;
+    let answer = requirement.answer;
+    let citations = [...requirement.citations];
+    const relatedText = (requirement.relatedContext ?? [])
+      .map((item) => item.statement)
+      .join(" ");
+    for (const binding of bindingsByRequirement.get(requirement.id) ?? []) {
+      const normalizedAnswer = normalizePolicyText(`${answer} ${relatedText}`);
+      if ((binding.requiredConcepts ?? []).some((concept) => {
+        const normalized = normalizePolicyText(concept);
+        return normalized.length > 0 && normalizedAnswer.includes(normalized);
+      })) {
+        continue;
+      }
+      const preferredPaths = new Set(binding.preferredEvidencePaths ?? []);
+      if (preferredPaths.size === 0) continue;
+      const grounded = groundedConcept(
+        binding.requiredConcepts ?? [],
+        (evidenceByRequirement.get(requirement.id) ?? [])
+          .filter((document) => preferredPaths.has(document.path)),
+      );
+      if (grounded === undefined) continue;
+      answer = `${answer.trim()} ${groundedSentence(grounded.concept, grounded.citation)}`;
+      if (!citations.includes(grounded.citation)) citations.push(grounded.citation);
+      changed = true;
+    }
+    return answer === requirement.answer
+      ? requirement
+      : { ...requirement, answer, citations };
+  });
+  if (!changed) return action;
+  return {
+    ...action,
+    requirements,
+    citations: stableUnique(requirements.flatMap((requirement) => [
+      ...requirement.citations,
+      ...(requirement.relatedContext ?? []).flatMap((item) => item.citations),
+    ])),
+  };
 }
 
 export function violatesAnswerCardForbiddenClaims(
@@ -88,4 +163,41 @@ function normalizePolicyText(value: string): string {
   return value.normalize("NFKC")
     .toLocaleLowerCase("zh-CN")
     .replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function groundedConcept(
+  concepts: readonly string[],
+  evidence: readonly AnswerCardPolicyEvidence[],
+): { readonly concept: string; readonly citation: number } | undefined {
+  const candidates = concepts.flatMap((concept) => {
+    const normalizedConcept = normalizePolicyText(concept);
+    if (normalizedConcept.length === 0) return [];
+    return evidence.flatMap((document) => {
+      const normalizedEvidence = normalizePolicyText(
+        `${document.title}\n${document.content}`,
+      );
+      return normalizedEvidence.includes(normalizedConcept)
+        ? [{ concept, citation: document.citation, score: normalizedConcept.length }]
+        : [];
+    });
+  });
+  candidates.sort((left, right) =>
+    right.score - left.score || left.citation - right.citation);
+  const selected = candidates[0];
+  return selected === undefined
+    ? undefined
+    : { concept: selected.concept, citation: selected.citation };
+}
+
+function groundedSentence(concept: string, citation: number): string {
+  return `还应明确核对“${concept}”这一正式资料要点[${citation}]。`;
+}
+
+function stableUnique(values: readonly number[]): number[] {
+  const seen = new Set<number>();
+  return values.filter((value) => {
+    if (seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
 }

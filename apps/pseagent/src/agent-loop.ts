@@ -55,6 +55,7 @@ import { analyzeCoverageGaps, type CoverageGap } from "./coverage-gap.js";
 import type { DomainRequirementBinding } from "./domain-plan.js";
 import { observeModelCall } from "./model-observability.js";
 import {
+  applyGroundedAnswerCardRequiredConcepts,
   answerCardPolicyObservations,
   missingAnswerCardRequiredConcepts,
   violatesAnswerCardForbiddenClaims,
@@ -67,7 +68,6 @@ export const MAX_BATCH_READS_PER_REQUIREMENT = 2;
 export const MAX_GRAPH_ACTIONS_PER_REQUIREMENT = 1;
 export const MAX_AGENT_TURNS_PER_REQUIREMENT = 7;
 const MAX_CITATION_REPAIR_ATTEMPTS = 2;
-const MAX_ANSWER_CARD_POLICY_REPAIR_ATTEMPTS = 2;
 const RRF_K = 60;
 const SEED_TOP_K = 10;
 const SYNTHESIS_SEED_TOP_K_LIMIT = 20;
@@ -185,7 +185,6 @@ type AgentState = {
   >;
   citationRepairAttempts: number;
   directAnswerRepairAttempts: number;
-  answerCardPolicyRepairAttempts: number;
   invalidPayloadTurnRetries: number;
   forceFinal: boolean;
   successfulSeedSearches: number;
@@ -265,6 +264,10 @@ async function runKnowledgeAgentCore(
   } else {
     await preloadBroadSynthesisEvidence(input, state);
   }
+  if (governedEvidenceReady(input, state)) {
+    state.forceFinal = true;
+    observe(state, { type: "governed_answer_card_evidence_ready" });
+  }
 
   const actionTurnBudget = Math.min(
     40,
@@ -328,6 +331,11 @@ async function runKnowledgeAgentCore(
         normalizedAction,
         input.plan,
         state,
+      );
+      normalizedAction = applyGroundedAnswerCardRequiredConcepts(
+        normalizedAction,
+        input.requirementBindings,
+        readEvidence(state),
       );
       const directAnswerRepairs = pendingDirectAnswerRepairs(
         normalizedAction,
@@ -510,22 +518,8 @@ async function runKnowledgeAgentCore(
           event: "validation",
           result: "rejected",
           reason: "answer_card_required_concept_missing",
-          repairAttempt: state.answerCardPolicyRepairAttempts + 1,
+          repairAttempt: 1,
         });
-        if (
-          state.answerCardPolicyRepairAttempts < MAX_ANSWER_CARD_POLICY_REPAIR_ATTEMPTS &&
-          turn < maxTurns &&
-          !deadlineReached(input)
-        ) {
-          state.answerCardPolicyRepairAttempts += 1;
-          state.forceFinal = true;
-          observe(state, {
-            type: "answer_card_required_concepts_missing",
-            requirements: missingCardConcepts,
-            instruction: "下一版 final 必须在对应 requirement 的 answer 中原样写出 requiredConcepts 至少一个，并保持正式证据引用。",
-          });
-          continue;
-        }
         return fallbackUnavailable(input, "coverage_verifier_invalid");
       }
       if (violatesAnswerCardForbiddenClaims(
@@ -714,6 +708,34 @@ async function preloadGovernedEvidence(
   }
 }
 
+function governedEvidenceReady(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+): boolean {
+  const bindings = input.requirementBindings ?? [];
+  if (bindings.length === 0) return false;
+  const bindingsByRequirement = new Map<string, DomainRequirementBinding[]>();
+  for (const binding of bindings) {
+    const current = bindingsByRequirement.get(binding.requirementId) ?? [];
+    current.push(binding);
+    bindingsByRequirement.set(binding.requirementId, current);
+  }
+  return input.plan.requirements.every((requirement) => {
+    if (state.evidenceConditions.get(requirement.id)?.inputState === "missing") {
+      return true;
+    }
+    const requirementState = state.requirements.get(requirement.id);
+    const requirementBindings = bindingsByRequirement.get(requirement.id) ?? [];
+    return requirementState !== undefined &&
+      requirementBindings.length > 0 &&
+      requirementBindings.every((binding) => {
+        const preferredPaths = binding.preferredEvidencePaths ?? [];
+        return preferredPaths.length > 0 &&
+          preferredPaths.some((path) => requirementState.directReadPaths.has(path));
+      });
+  });
+}
+
 async function preloadBroadSynthesisEvidence(
   input: KnowledgeAgentInput,
   state: AgentState,
@@ -886,7 +908,6 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     readProvenanceByCitation: new Map(),
     citationRepairAttempts: 0,
     directAnswerRepairAttempts: 0,
-    answerCardPolicyRepairAttempts: 0,
     invalidPayloadTurnRetries: 0,
     forceFinal: false,
     successfulSeedSearches: 0,

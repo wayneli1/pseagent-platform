@@ -14,6 +14,7 @@ import { applyAnswerCardPoliciesToPlan } from "./answer-card-task-spec-adapter.j
 import { identityResolvedQuestion } from "./question-resolver.js";
 import { taskSpecSchema } from "./task-spec.js";
 import {
+  applyGroundedAnswerCardRequiredConcepts,
   missingAnswerCardRequiredConcepts,
   violatesAnswerCardForbiddenClaims,
 } from "./answer-card-policy.js";
@@ -578,6 +579,94 @@ describe("answer card TaskSpec adapter", () => {
         citations: [1],
       }],
     }, [binding])).toEqual([]);
+  });
+
+  it("adds only a concept grounded in the binding's preferred evidence", () => {
+    const binding = {
+      domain: "presales-general" as const,
+      requirementId: "R1" as const,
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      requiredConcepts: ["success criteria", "measurement"],
+      preferredEvidencePaths: ["wiki/queries/value.md"],
+    };
+    const action = {
+      action: "final" as const,
+      requirements: [{
+        id: "R1" as const,
+        coverage: "complete" as const,
+        answer: "Discuss business value with the customer [1].",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const grounded = applyGroundedAnswerCardRequiredConcepts(action, [binding], [{
+      requirementId: "R1",
+      citation: 2,
+      path: "wiki/queries/value.md",
+      title: "Value discovery",
+      content: "Agree on measurable success criteria before proposing a price.",
+    }, {
+      requirementId: "R1",
+      citation: 3,
+      path: "wiki/unreviewed.md",
+      title: "Unreviewed",
+      content: "measurement",
+    }]);
+
+    expect(grounded.requirements[0]?.answer).toContain("success criteria");
+    expect(grounded.requirements[0]?.answer).toContain("[2]");
+    expect(grounded.requirements[0]?.citations).toEqual([1, 2]);
+    expect(grounded.citations).toEqual([1, 2]);
+    expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([]);
+  });
+
+  it("does not add an ungrounded concept or turn an uncovered answer into coverage", () => {
+    const binding = {
+      domain: "coremail-professional" as const,
+      requirementId: "R1" as const,
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      requiredConcepts: ["MigratePassword"],
+      preferredEvidencePaths: ["wiki/queries/migration.md"],
+    };
+    const uncovered = {
+      action: "final" as const,
+      requirements: [{
+        id: "R1" as const,
+        coverage: "none" as const,
+        answer: "The reviewed material does not cover this question.",
+        citations: [],
+      }],
+      citations: [],
+    };
+    expect(applyGroundedAnswerCardRequiredConcepts(uncovered, [binding], [{
+      requirementId: "R1",
+      citation: 1,
+      path: "wiki/queries/migration.md",
+      title: "Migration",
+      content: "MigratePassword",
+    }])).toBe(uncovered);
+
+    const covered = {
+      ...uncovered,
+      requirements: [{
+        id: "R1" as const,
+        coverage: "complete" as const,
+        answer: "Use the approved authentication path [1].",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    expect(applyGroundedAnswerCardRequiredConcepts(covered, [binding], [{
+      requirementId: "R1",
+      citation: 1,
+      path: "wiki/queries/migration.md",
+      title: "Migration",
+      content: "Only AD is described here.",
+    }])).toBe(covered);
   });
 
   it("blocks a governed forbidden claim after evidence verification", () => {
