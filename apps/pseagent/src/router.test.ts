@@ -55,6 +55,8 @@ describe("ScopeRouter", () => {
     "昨天找到的案例写的是 XT5，今天客户环境是 XT6，旧案例能直接套用吗？",
     "华为和比亚迪邮件项目的合同金额是多少？",
     "现有知识里关于某项目，哪些是已记录事实，哪些只是可借鉴的经验？",
+    "招标要求支持 IPv6 双栈，售前要准备哪些验证证据，能否承诺所有模块都支持？",
+    "项目要求各模块适配双栈，应该准备哪些技术验证？",
   ])("routes an explicit product boundary without model ambiguity: %s", async (question) => {
     const completeJson = vi.fn();
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
