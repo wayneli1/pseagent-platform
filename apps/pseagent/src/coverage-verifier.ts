@@ -17,6 +17,7 @@ import {
   coverageVerificationMessages,
 } from "./prompts.js";
 import { normalizeTrailingCitationPlacement } from "./references.js";
+import { missingExplicitScenarioChoiceLabels } from "./comparison-question.js";
 
 export interface CoverageEvidenceDocument {
   readonly requirementId: string;
@@ -362,6 +363,7 @@ function isRecoverableDecisionShapeReason(reason: string): boolean {
     "covered_aspect_not_in_plan",
     "not_covered_cannot_cover_aspects",
     "retained_target_segment_without_citation",
+    "explicit_scenario_choice_omitted",
   ];
   return safePrefixes.some((prefix) =>
     reason === prefix || reason.startsWith(`${prefix}:`));
@@ -926,6 +928,18 @@ function validateVerification(
       );
       if (unsupportedCitation !== undefined) {
         return `target_segment_citation_not_in_evidence:${decision.id}:${unsupportedCitation}`;
+      }
+    }
+    if (decision.targetDecision !== "not_covered") {
+      const retainedAnswer = decision.retainedTargetSegmentIndexes
+        .map((targetIndex) => segments[targetIndex]?.text ?? "")
+        .join("\n");
+      const missingChoiceLabels = missingExplicitScenarioChoiceLabels(
+        planned.question,
+        retainedAnswer,
+      );
+      if (missingChoiceLabels.length > 0) {
+        return `explicit_scenario_choice_omitted:${decision.id}:${missingChoiceLabels.join(",")}`;
       }
     }
     for (const relatedIndex of decision.retainedRelatedContextIndexes) {

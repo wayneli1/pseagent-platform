@@ -1747,6 +1747,48 @@ describe("runKnowledgeAgent", () => {
     expect(result.answer).toContain("Beta 不支持多中心部署");
   });
 
+  it("rewrites a scenario comparison that omits one explicitly named choice", async () => {
+    const plan: KnowledgePlan = {
+      subject: "DNS 切换",
+      requirements: [{
+        id: "R1",
+        question: "上线时 CNAME 跳转和直接改 A 记录各适合什么场景",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "两种 DNS 方案的适用场景",
+          terms: ["CNAME", "A 记录", "适用场景"],
+        }],
+        queries: [{ text: "CNAME A 记录适用场景", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "CNAME A 记录适用场景": [{
+          path: "wiki/comparison/dns-cutover.md",
+          title: "CNAME 与 A 记录切换对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/dns-cutover.md"),
+      final("complete", "直接改 A 记录适合客户端可统一变更的场景 [1]。", [1]),
+      final(
+        "complete",
+        "CNAME 跳转适合减少客户端改动的场景 [1]。\n直接改 A 记录适合客户端可统一变更的场景 [1]。",
+        [1],
+      ),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "comparison_subject_repair_required",
+    );
+    expect(result.answer).toContain("CNAME");
+  });
+
   it("accepts comparison bullets under an explicit object heading", async () => {
     const plan: KnowledgePlan = {
       subject: "产品对比",

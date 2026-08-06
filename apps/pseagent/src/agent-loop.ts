@@ -60,6 +60,10 @@ import {
   missingAnswerCardRequiredConcepts,
   violatesAnswerCardForbiddenClaims,
 } from "./answer-card-policy.js";
+import {
+  isDirectComparisonQuestion,
+  missingExplicitScenarioChoiceLabels,
+} from "./comparison-question.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const DIRECT_ONLY_READ_LIMIT = 3;
@@ -2863,14 +2867,11 @@ function closeEvidenceReviewAtRetrievalBoundary(
   };
 }
 
-const DIRECT_COMPARISON_QUESTION_PATTERN =
-  /(?:对比|比较|相比|较之|区别|差异|不同|\bvs\.?\b|\bversus\b)/iu;
-
 function isDirectComparisonRequirement(
   requirement: KnowledgeRequirement,
 ): boolean {
   return requirement.evidenceMode === "direct_only" &&
-    DIRECT_COMPARISON_QUESTION_PATTERN.test(requirement.question);
+    isDirectComparisonQuestion(requirement.question);
 }
 
 function isExactDirectComparisonCandidate(
@@ -3002,7 +3003,13 @@ function pendingComparisonSubjectRepairs(
     ) {
       return [];
     }
-    return hasAmbiguousComparisonClaim(result.answer) ? [result.id] : [];
+    return hasAmbiguousComparisonClaim(result.answer) ||
+        missingExplicitScenarioChoiceLabels(
+          requirementState.requirement.question,
+          result.answer,
+        ).length > 0
+      ? [result.id]
+      : [];
   });
 }
 

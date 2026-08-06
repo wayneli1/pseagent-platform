@@ -156,6 +156,81 @@ const evidence = [
 ] as const;
 
 describe("verifyKnowledgeCoverage", () => {
+  it("rejects a verifier decision that drops one explicitly named scenario choice", async () => {
+    const plan: KnowledgePlan = {
+      subject: "DNS 切换",
+      requirements: [{
+        id: "R1",
+        question: "CNAME 跳转和直接改 A 记录各适合什么场景",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "两种方案的适用场景",
+          terms: ["CNAME", "A 记录", "适用场景"],
+        }],
+        queries: [{ text: "CNAME A 记录适用场景", aspectIds: ["A1"] }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: [
+          "CNAME 跳转适合减少客户端改动的场景 [1]。",
+          "直接改 A 记录适合客户端可统一变更的场景 [1]。",
+        ].join("\n"),
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse(completeJson.mock.calls.length === 1
+      ? {
+          action: "verify",
+          requirements: [{
+            id: "R1",
+            targetDecision: "retain_partial",
+            retainedTargetSegmentIndexes: [1],
+            synthesizedTargetSegmentIndexes: [],
+            retainedRelatedContextIndexes: [],
+            coveredAspectIds: ["A1"],
+            reason: "partial_support",
+          }],
+        }
+      : {
+          action: "verify",
+          requirements: [{
+            id: "R1",
+            targetDecision: "retain",
+            retainedTargetSegmentIndexes: [0, 1],
+            synthesizedTargetSegmentIndexes: [],
+            retainedRelatedContextIndexes: [],
+            coveredAspectIds: ["A1"],
+            reason: "direct_support",
+          }],
+        }));
+
+    const result = await verifyKnowledgeCoverage({
+      question: plan.subject,
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "DNS 切换方案对比",
+        path: "wiki/comparisons/dns.md",
+        content: "正文分别说明 CNAME 跳转和直接修改 A 记录的适用场景。",
+      }],
+      model: { completeJson } as unknown as ModelClient,
+    });
+
+    expect(completeJson).toHaveBeenCalledTimes(2);
+    expect(result.requirements[0]?.coverage).toBe("complete");
+    expect(result.requirements[0]?.answer).toContain("CNAME");
+  });
+
   it("normalizes an accidental synthesized marker for direct-only evidence", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],
