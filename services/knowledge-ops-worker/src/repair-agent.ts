@@ -14,7 +14,7 @@ const regressionKindSchema=z.enum(["canonical","alias","colloquial","follow_up",
 const obligationSchema=z.object({
   id:z.string().regex(/^O\d+$/u),label:z.string().trim().min(1).max(500),
   evidencePolicy:z.enum(["direct","synthesis","customer_input"]),
-  requiredConcepts:z.array(z.string().trim().min(1).max(200)).max(50),
+  requiredConcepts:z.array(z.string().trim().min(1).max(100)).max(20),
   forbiddenClaims:z.array(z.string().trim().min(1).max(500)).max(50),
   preferredEvidencePaths:z.array(z.string().trim().min(1).max(1_000)).max(20),
 }).strict();
@@ -94,7 +94,7 @@ export class KnowledgeRepairAgent {
         "正式证据直接记载的项目用户数、授权量、服务器数、节点数和部署规模可以写入答案，但必须绑定项目、场景和数据口径。不得仅因它是项目具体数据就禁止回答。",
         "不得跨项目套用数据，不得把历史项目数据扩大为当前实时规模、通用产品上限或新客户承诺，不得把约等于改写为超过或不少于。无正式证据的数据必须省略或标记待客户确认。",
         "forbiddenClaims 不得生成“禁止出现某项目具体用户数/授权量/服务器数量/节点数量/所有项目规模数据”等宽泛规则；应改为防止跨项目套用、实时化、容量上限化和承诺化的精确边界。",
-        "requiredConcepts 只能填写正式证据和 answerTemplate 中实际出现、可以逐项确定性核验的原子事实，例如模块名、动作、配置项或数据口径。不得填写“核心功能、主要功能、职责区别、协作关系、相关内容、关键信息”等抽象分类标签；每个必答概念都必须能在答案正文中直接定位。",
+        "requiredConcepts 只能填写正式证据和 answerTemplate 中实际出现、可以逐项确定性核验的原子事实，例如模块名、动作、配置项或数据口径。不得填写“核心功能、主要功能、职责区别、协作关系、相关内容、关键信息”等抽象分类标签；每个必答概念都必须能在答案正文中直接定位，单项不超过 100 字，每个必答项最多 20 个概念；长清单必须拆成原子概念。",
         "answerTemplate 不需要手工添加 [1] 等运行时引用编号；正式引用编号由在线回答链路按证据生成。",
         "必须生成五个且各一个回归问题：canonical 原始标准问法、alias 同义改写、colloquial 口语问法、follow_up 上下文追问、negative 边界负例。",
         "obligations 必须是 JSON 对象数组，即使只有一项也不能输出为对象、分组映射或说明文字；每项必须严格包含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths，其中后三项是字符串数组，evidencePolicy 只能是 direct、synthesis 或 customer_input。",

@@ -79,9 +79,9 @@ export class KnowledgeOpsWorker {
     let payload:AnswerReviewEncryptedPayload|undefined;let machineCompleted=false;
     try{
       const decrypted=cipher.decrypt<AnswerReviewEncryptedPayload>(stored.encryptedPayload);payload=decrypted;const conversation=await this.reviewConversation(stored.requestId),reviewQuestion=conversation?.current.resolvedQuestion??decrypted.question;const catalog=await this.compile();
-      const exactCard=catalog.cards.find((card)=>isActiveCard(card.reviewStatus)&&[card.canonicalQuestion,...card.aliases].some((question)=>normalize(question)===normalize(reviewQuestion)));
+      const exactCard=resolveReviewCard(catalog,reviewQuestion,decrypted.answerCardMatch);
       const evidence=await loadReviewEvidence({sources:this.dependencies.sources,catalog,references:decrypted.references});
-      const result=await reviewer.review({question:reviewQuestion,...(conversation===undefined?{}:{rawQuestion:conversation.current.rawQuestion,conversation:{contextUsed:conversation.current.contextUsed,...(conversation.parent===undefined?{}:{parentQuestion:conversation.parent.resolvedQuestion,...(conversation.parent.answerOutline===undefined?{}:{parentAnswerOutline:conversation.parent.answerOutline})})}}),answer:decrypted.answer,answerStatus:stored.answerStatus,evidence:evidence.documents,evidenceIssues:evidence.issues,...(exactCard===undefined?{}:{exactCard}),...(decrypted.answerCardActivation===undefined?{}:{answerCardActivation:decrypted.answerCardActivation})});
+      const result=await reviewer.review({question:reviewQuestion,...(conversation===undefined?{}:{rawQuestion:conversation.current.rawQuestion,conversation:{contextUsed:conversation.current.contextUsed,...(conversation.parent===undefined?{}:{parentQuestion:conversation.parent.resolvedQuestion,...(conversation.parent.answerOutline===undefined?{}:{parentAnswerOutline:conversation.parent.answerOutline})})}}),answer:decrypted.answer,answerStatus:stored.answerStatus,evidence:evidence.documents,evidenceIssues:evidence.issues,...(exactCard===undefined?{}:{exactCard}),...(decrypted.answerCardMatch===undefined?{}:{answerCardMatch:decrypted.answerCardMatch}),...(decrypted.answerCardActivation===undefined?{}:{answerCardActivation:decrypted.answerCardActivation})});
       const encryptedPayload=cipher.encrypt({...decrypted,result});const workflowStatus=result.verdict==="pass"?"resolved" as const:"open" as const;
       await this.dependencies.store.updateAnswerReviewMachine(reviewId,{processingStatus:"completed",verdict:result.verdict,workflowStatus,encryptedPayload,score:result.score,defectCount:result.defects.length});
       machineCompleted=true;
@@ -398,6 +398,14 @@ function uniqueValidationDiagnostics(values:readonly RepairValidationDiagnostic[
 function requireString(value:Record<string,unknown>,key:string){const result=value[key];if(typeof result!=="string"||result.trim()==="")throw new Error(`${key}_required`);return result;}
 function normalize(value:string){return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu,"");}
 function isActiveCard(status:string){return status==="approved"||status==="release_ready"||status==="released";}
+export function resolveReviewCard(catalog:AnswerCardCatalog,question:string,match:Record<string,unknown>|undefined):AnswerCard|undefined{
+  const exact=catalog.cards.find((card)=>isActiveCard(card.reviewStatus)&&[card.canonicalQuestion,...card.aliases].some((candidate)=>normalize(candidate)===normalize(question)));
+  if(exact!==undefined)return exact;
+  const hashes=match?.cardIdHashes;
+  if(!Array.isArray(hashes)||hashes.length!==1||typeof hashes[0]!=="string"||!/^[a-f0-9]{64}$/u.test(hashes[0]))return undefined;
+  const matched=findCardByHashedKey(catalog,hashes[0]);
+  return matched!==undefined&&isActiveCard(matched.reviewStatus)?matched:undefined;
+}
 function hashCatalog(catalog:AnswerCardCatalog){return createHash("sha256").update(stableJson(catalog)).digest("hex");}
 function stableJson(value:unknown):string{if(Array.isArray(value))return`[${value.map(stableJson).join(",")}]`;if(value!==null&&typeof value==="object"){const r=value as Record<string,unknown>;return`{${Object.keys(r).sort().map(k=>`${JSON.stringify(k)}:${stableJson(r[k])}`).join(",")}}`;}return JSON.stringify(value);}
 function safeCode(error:unknown){return error instanceof Error?error.message.replace(/[^a-z0-9_:.-]/giu,"_").slice(0,160):"worker_job_failed";}

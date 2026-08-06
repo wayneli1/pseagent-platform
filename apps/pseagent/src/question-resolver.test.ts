@@ -59,6 +59,24 @@ describe("ModelQuestionResolver", () => {
     await expect(new ModelQuestionResolver(model).resolve({question:"把刚才第二点展开说说",conversationContext:context})).resolves.toMatchObject({standaloneQuestion:"请详细说明迁移前如何获取并使用客户端专用密码。",contextUsed:true,inheritedSubjects:["客户端专用密码"]});
   });
 
+  it("repairs an unresolved leading personal pronoun when recent turns contain the role antecedent", async () => {
+    const context=JSON.stringify({version:3,recentTurns:[{question:"真正决策者与普通影响者有什么区别？",answerOutline:"真正决策者能调动预算和资源；影响者只能影响评估过程，需要通过共同会议和决策历史持续验证。"}]});
+    const completeJson=vi.fn()
+      .mockResolvedValueOnce({action:"resolve",standaloneQuestion:"判断他是否真的能调动预算和资源，最少要核验哪几类实际行为？",contextUsed:false,inheritedSubjects:[],corrections:[]})
+      .mockResolvedValueOnce({action:"resolve",standaloneQuestion:"判断真正决策者是否能调动预算和资源，最少要核验哪几类实际行为？",contextUsed:true,inheritedSubjects:["真正决策者"],corrections:[]});
+    const model={completeJson,completeText:vi.fn()} as unknown as ModelClient;
+
+    await expect(new ModelQuestionResolver(model).resolve({
+      question:"那判断他是否真的能调动预算和资源，最少要核验哪几类实际行为？",
+      conversationContext:context,
+    })).resolves.toMatchObject({
+      standaloneQuestion:"判断真正决策者是否能调动预算和资源，最少要核验哪几类实际行为？",
+      contextUsed:true,
+      inheritedSubjects:["真正决策者"],
+    });
+    expect(completeJson).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects corrections that cannot be traced to the current question", async () => {
     const model = {
       completeJson: vi.fn(async () => ({

@@ -156,6 +156,31 @@ export class AnswerCardRegistry {
       .map((candidate) => candidate.family);
   }
 
+  deterministicFamilyCandidate(
+    question: string,
+    currentDomain: KnowledgeDomain,
+  ): QuestionFamily | undefined {
+    const ranked = this.activeFamilies
+      .filter((family) => family.bindings.some((binding) =>
+        binding.domain === currentDomain))
+      .filter((family) => family.bindings
+        .filter((binding) => binding.required)
+        .every((binding) => this.familyCardApplicable(binding.cardId, question)))
+      .map((family) => ({ family, score: familySimilarity(question, family) }))
+      .sort((left, right) =>
+        right.score - left.score || left.family.familyId.localeCompare(right.family.familyId));
+    const best = ranked[0];
+    if (best === undefined || best.score < 0.55) return undefined;
+    if (best.family.bindings.filter((binding) => binding.required).length > 2) {
+      return undefined;
+    }
+    const runnerUp = ranked[1];
+    if (runnerUp !== undefined && best.score - runnerUp.score < 0.25) {
+      return undefined;
+    }
+    return best.family;
+  }
+
   card(cardId: string): AnswerCard | undefined {
     return this.cardById.get(cardId);
   }

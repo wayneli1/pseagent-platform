@@ -162,6 +162,19 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
     } catch {
+      const fallback = this.registry.deterministicFamilyCandidate(
+        input.question,
+        input.currentDomain,
+      );
+      if (fallback !== undefined) {
+        const selected = fallback.bindings.filter((binding) => binding.required);
+        return this.hitFromFamily(
+          fallback,
+          selected,
+          "family",
+          candidates.length,
+        );
+      }
       return this.none("family_match_unavailable", candidates.length);
     }
     const family = decision.familyId === null

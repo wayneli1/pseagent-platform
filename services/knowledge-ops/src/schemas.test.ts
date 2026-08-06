@@ -10,6 +10,11 @@ describe("repair proposal schema",()=>{
     expect(repairProposalSchema.safeParse({...proposal,answerTemplate:"迁移前先确认�域名"}).success).toBe(false);
   });
   it("requires at least one reusable alias for a publishable repair",()=>{expect(repairProposalSchema.safeParse({...proposal,aliases:[]}).success).toBe(false);expect(repairProposalSchema.safeParse({...proposal,aliases:[],answerTemplate:"",obligations:[],regressionQuestions:[],publishable:false,blockingReason:"缺少正式证据"}).success).toBe(true);});
+  it("enforces the publishable answer-card limits for required concepts",()=>{
+    const obligation=proposal.obligations[0]!;
+    expect(repairProposalSchema.safeParse({...proposal,obligations:[{...obligation,requiredConcepts:["x".repeat(101)]}]}).success).toBe(false);
+    expect(repairProposalSchema.safeParse({...proposal,obligations:[{...obligation,requiredConcepts:Array.from({length:21},(_,index)=>`concept-${index}`)}]}).success).toBe(false);
+  });
 });
 
 describe("repair batch request schema",()=>{

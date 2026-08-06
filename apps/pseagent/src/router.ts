@@ -25,8 +25,8 @@ export class ScopeRouter {
   async route(question: string, conversationContext?: string, signal?: AbortSignal): Promise<Scope> {
     if (isPseAgentSelfQuestion(question)) return "normal";
     if (isUnambiguouslyNormalQuestion(question)) return "normal";
-    if (isUnambiguouslyProfessionalQuestion(question)) return "professional";
     if (isUnambiguouslyGeneralPresalesQuestion(question)) return "general";
+    if (isUnambiguouslyProfessionalQuestion(question)) return "professional";
     if (isProfessionalArchitectureFollowUp(question, conversationContext)) {
       return "professional";
     }
@@ -68,6 +68,8 @@ const GENERAL_PRESALES_ACTIVITY_PATTERN =
   /(?:职责|工作|方法|需求|访谈|话术|方案组织|价值表达|异议|沟通|冲突|演示|机会管理|项目推进|可信顾问|范围|变更|非标|客户关系|承诺|免费|控制)/u;
 const PRODUCT_NEUTRAL_OPPORTUNITY_PATTERN =
   /(?:销售|赢率|胜率|成交概率|机会质量|陪标|决策链|决策人|内部支持者|客户信息|采购意向|预算状态|竞争对手)/u;
+const EXPLICIT_GENERAL_METHOD_PATTERN =
+  /(?:(?:报价|价格).{0,16}(?:压价|业务价值|价值异议)|压价.{0,16}(?:业务价值|价值|异议)|(?:讲不清|说不清|不明确).{0,16}(?:需求|目标)|(?:需求|目标).{0,16}(?:讲不清|说不清|不明确|继续追问)|继续追问|澄清需求|需求访谈)/u;
 const PROFESSIONAL_ARCHITECTURE_CUE_PATTERN =
   /(?:RPO|RTO|两地三中心|多活|容灾|镜像|故障切换|数据一致性|容量输入|用户规模)/giu;
 const EXPLICIT_NORMAL_RESET_PATTERN = /(?:换个话题|转换话题|另外写|题外话)/u;
@@ -111,6 +113,7 @@ function isProfessionalArchitectureFollowUp(
 export function isUnambiguouslyGeneralPresalesQuestion(
   question: string,
 ): boolean {
+  if (EXPLICIT_GENERAL_METHOD_PATTERN.test(question)) return true;
   return (
     (/售前/u.test(question) && GENERAL_PRESALES_ACTIVITY_PATTERN.test(question)) ||
     PRODUCT_NEUTRAL_OPPORTUNITY_PATTERN.test(question)

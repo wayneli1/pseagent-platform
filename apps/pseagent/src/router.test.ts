@@ -154,6 +154,8 @@ describe("ScopeRouter", () => {
     "客户只说先测一测，怎样判断是真机会还是陪标？",
     "接触不到决策人，怎样建立决策链并找到内部支持者？",
     "客户在 POC 中不断要求免费增加非标项，售前怎样控制范围？",
+    "客户一直盯着报价压价，怎么把话题转回业务价值？",
+    "做邮件系统售前时，客户只说想优化但讲不清需求，该怎么继续追问？",
   ])("routes a product-neutral opportunity question to general: %s", async (question) => {
     const completeJson = vi.fn();
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;

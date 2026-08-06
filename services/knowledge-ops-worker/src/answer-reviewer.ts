@@ -26,6 +26,7 @@ export interface IndependentAnswerReviewInput {
   readonly evidence: readonly ReviewEvidenceDocument[];
   readonly evidenceIssues: readonly string[];
   readonly exactCard?: AnswerCard;
+  readonly answerCardMatch?: Record<string, unknown>;
   readonly answerCardActivation?: Record<string, unknown>;
   readonly signal?: AbortSignal;
 }
@@ -42,6 +43,7 @@ export class IndependentAnswerReviewer {
           "逐项检查正确性、完整性、逻辑、引用和表达；证据不足时选择 needs_review，不得猜测 pass。",
           "exactCard 存在时，必须为每个 required obligation 返回且只返回一个 obligationChecks 项。",
           "发现与正式证据冲突的关键结论时选择 fail；缺项或证据不足选择 needs_review。",
+          "not_covered 是有效的安全交付状态：当正式证据确实不覆盖目标、回答明确说明边界且没有无依据主张时，可以判为 pass；不得只因没有给出资料外的目标答案而降级。",
           "正式证据直接支持的项目用户数、授权量、服务器数、节点数和部署规模允许出现。重点检查项目归属、数据口径、跨项目套用、历史数据实时化、产品上限化和对新客户的承诺，不得仅因答案包含具体数字而失败。",
           "不要要求 answer 包含手工 [1] 等引用编号；修订验证依据 evidence 与 preferredEvidencePaths 检查事实支持，在线引用编号由回答系统另行生成。",
           "score 采用 0-100 正向评分，0 最差、100 最好；pass 必须为 80-100 分。",
@@ -62,6 +64,7 @@ export class IndependentAnswerReviewer {
               id:item.id,label:item.label,requiredConcepts:item.requiredConcepts,forbiddenClaims:item.forbiddenClaims,
             })),
           },
+          answerCardMatch:input.answerCardMatch??null,
           answerCardActivation:input.answerCardActivation??null,
           evidence:input.evidence.map((document)=>({
             index:document.index,title:document.title,path:document.path,content:document.content,
@@ -86,8 +89,11 @@ export function enforceDeterministicReview(
   const defects=[...modelDefects,...projectData.defects];
   let forceFail=false;
   if(projectData.defects.some((defect)=>defect.severity==="critical"))forceFail=true;
-  if(input.answerStatus!=="answered"){
+  if(input.answerStatus!=="answered"&&input.answerStatus!=="not_covered"){
     defects.push({category:"coverage_gap",severity:"major",summary:`回答状态为 ${input.answerStatus}，不能自动判为完整通过`,evidence:"回答交付元数据"});
+  }
+  if(hasUnavailableGovernedFamily(input.answerCardMatch)){
+    defects.push({category:"planning_gap",severity:"major",summary:"存在答案卡族候选但匹配服务不可用，不能自动判为通过",evidence:`candidateCount=${String(input.answerCardMatch?.candidateCount)}`});
   }
   for(const issue of input.evidenceIssues){
     defects.push({category:"citation_gap",severity:"major",summary:"正式引用未通过独立校验",evidence:issue.slice(0,1_000)});
@@ -159,4 +165,8 @@ function containsGovernedConcept(answer:string,concept:string):boolean{
     answerIndex+=character.length;
   }
   return true;
+}
+
+function hasUnavailableGovernedFamily(match:Record<string,unknown>|undefined):boolean{
+  return match?.matchType==="none"&&match.reason==="family_match_unavailable"&&typeof match.candidateCount==="number"&&Number.isInteger(match.candidateCount)&&match.candidateCount>0;
 }

@@ -178,7 +178,7 @@ const repairEvidencePathSchema=z.string().trim().min(1).max(1_000).refine((value
 const repairObligationSchema=z.object({
   id:z.string().regex(/^O\d+$/u),label:z.string().trim().min(1).max(500),
   evidencePolicy:z.enum(["direct","synthesis","customer_input"]),
-  requiredConcepts:z.array(z.string().trim().min(1).max(200)).max(50),
+  requiredConcepts:z.array(z.string().trim().min(1).max(100)).max(20),
   forbiddenClaims:z.array(z.string().trim().min(1).max(500)).max(50),
   preferredEvidencePaths:z.array(repairEvidencePathSchema).max(20),
 }).strict();

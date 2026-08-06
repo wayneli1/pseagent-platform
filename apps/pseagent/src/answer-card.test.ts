@@ -246,6 +246,40 @@ describe("answer card registry and matching", () => {
       .toEqual(["coremail-professional", "presales-general"]);
     expect(partial).toMatchObject({ matchType: "partial", confidence: "high" });
   });
+
+  it("falls back only to an unambiguous high-similarity family when the model is unavailable", async () => {
+    const model = {
+      completeJson: vi.fn(async () => {
+        throw new Error("model_request_timeout");
+      }),
+    } as unknown as ModelClient;
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(catalog()),
+      model,
+    );
+
+    await expect(matcher.match({
+      question: "请设计 Coremail 迁移方案并说明风险沟通方法",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    })).resolves.toMatchObject({
+      matchType: "family",
+      confidence: "high",
+      familyId: "MIXED-MIGRATION-001",
+      candidateCount: 1,
+    });
+
+    await expect(matcher.match({
+      question: "Coremail 当前支持什么？",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    })).resolves.toMatchObject({
+      matchType: "none",
+      reason: "family_match_unavailable",
+    });
+  });
 });
 
 describe("answer card TaskSpec adapter", () => {
