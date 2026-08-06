@@ -50,7 +50,7 @@ export async function loadRepairEvidence(input:{
     if(!safeWikiPath(relativePath)){issues.push(`${relativePath}:path_rejected`);continue;}
     if(seen.has(relativePath))continue;seen.add(relativePath);
     let content:string;try{content=await readGitFile(input.source.root,input.revision,relativePath);}catch{issues.push(`${relativePath}:unreadable`);continue;}
-    const references=referencesByPath.get(relativePath)??[],contentHash=createHash("sha256").update(Buffer.from(content,"utf8")).digest("hex"),currentRevisionReferences=references.filter((item)=>item.revision===input.revision),currentRevisionMatch=currentRevisionReferences.find((item)=>item.contentHash===contentHash),matchingReference=currentRevisionMatch??references.find((item)=>item.contentHash===contentHash);
+    const references=referencesByPath.get(relativePath)??[],currentRevisionReferences=references.filter((item)=>item.revision===input.revision),currentRevisionMatch=currentRevisionReferences.find((item)=>contentHashMatches(content,item.contentHash)),matchingReference=currentRevisionMatch??references.find((item)=>contentHashMatches(content,item.contentHash));
     if(currentRevisionReferences.length>0&&currentRevisionMatch===undefined){issues.push(`${relativePath}:content_hash_mismatch`);continue;}
     if(!governedPaths.has(relativePath)&&references.length>0&&matchingReference===undefined){issues.push(`${relativePath}:reference_stale`);continue;}
     if(matchingReference!==undefined&&matchingReference.revision!==input.revision)revalidatedReferenceCount+=1;
@@ -68,6 +68,10 @@ export function domainForIssueScope(scope:string|undefined):KnowledgeDomain|unde
 }
 
 function safeWikiPath(value:string):boolean{return value.startsWith("wiki/")&&value.endsWith(".md")&&!value.includes("\\")&&!value.split("/").includes("..");}
+function contentHashMatches(content:string,expected:string):boolean{
+  const hash=(value:string)=>createHash("sha256").update(Buffer.from(value,"utf8")).digest("hex");
+  return hash(content)===expected||hash(content.replace(/\r?\n/gu,"\r\n"))===expected;
+}
 async function readGitFile(root:string,revision:string,relativePath:string):Promise<string>{
   if(!/^[a-f0-9]{40}$/u.test(revision))throw new Error("repair_evidence_revision_invalid");
   const content=await git(root,["show",`${revision}:${relativePath}`],MAX_FILE_BYTES);return content;

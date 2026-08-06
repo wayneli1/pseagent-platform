@@ -14,7 +14,7 @@ describe("loadRepairEvidence",()=>{
     const root=await mkdtemp(path.join(tmpdir(),"pse-repair-evidence-"));temporary.push(root);
     const relativePath="wiki/concepts/正式资料.md",absolutePath=path.join(root,...relativePath.split("/")),original="正式资料第一版。\n";
     await mkdir(path.dirname(absolutePath),{recursive:true});git(root,"init");await writeFile(absolutePath,original,"utf8");git(root,"add",".");git(root,"commit","-m","initial");
-    const historicalRevision=git(root,"rev-parse","HEAD").trim(),contentHash=createHash("sha256").update(Buffer.from(original,"utf8")).digest("hex");
+    const historicalRevision=git(root,"rev-parse","HEAD").trim(),contentHash=createHash("sha256").update(Buffer.from(original.replace(/\n/gu,"\r\n"),"utf8")).digest("hex");
     await writeFile(path.join(root,"README.md"),"unrelated\n","utf8");git(root,"add",".");git(root,"commit","-m","advance head");const unchangedRevision=git(root,"rev-parse","HEAD").trim();
     const reference={index:1,project:"coremail-professional" as const,title:"正式资料",path:relativePath,revision:historicalRevision,contentHash};
 

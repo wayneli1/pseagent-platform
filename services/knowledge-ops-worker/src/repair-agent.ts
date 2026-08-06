@@ -31,6 +31,7 @@ const repairCandidateSchema=z.object({
   if(value.publishable&&value.answerTemplate==="")context.addIssue({code:"custom",path:["answerTemplate"],message:"publishable_repair_requires_answer_template"});
   if(value.publishable&&value.aliases.length===0)context.addIssue({code:"custom",path:["aliases"],message:"publishable_repair_requires_alias"});
 });
+const repairCandidateInputSchema=z.preprocess(normalizeRepairCandidateEnvelope,repairCandidateSchema);
 const caseAssessmentSchema=z.object({cases:z.unknown().optional()}).passthrough();
 
 export interface RepairRecord {
@@ -86,7 +87,8 @@ export class KnowledgeRepairAgent {
         "输出客户中立、可复用的答案卡草稿，不得出现聊天用户姓名、账号、内部标识或只对单个客户成立的表述。",
         "保留现有答案卡的安全边界、禁答主张和必答项，不得用更宽泛的承诺替换它们。",
         "必须生成五个且各一个回归问题：canonical 原始标准问法、alias 同义改写、colloquial 口语问法、follow_up 上下文追问、negative 边界负例。",
-        "如果证据不能支持完整答案，将 publishable 设为 false 并写明 blockingReason。只输出严格 JSON。",
+        "obligations 必须是 JSON 对象数组，即使只有一项也不能输出为对象、分组映射或说明文字；每项必须严格包含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths，其中后三项是字符串数组，evidencePolicy 只能是 direct、synthesis 或 customer_input。",
+        "如果证据不能支持完整答案，将 publishable 设为 false 并写明 blockingReason。JSON 根节点必须直接包含 title、canonicalQuestion、aliases、answerTemplate 等字段，不要添加 proposal、data 或 result 外层。只输出严格 JSON。",
       ].join("\n")},
       {role:"user" as const,content:JSON.stringify({
         rootCause:input.rootCause,
@@ -104,12 +106,12 @@ export class KnowledgeRepairAgent {
         evidence:input.evidence.map((item)=>({title:item.title,path:item.path,content:item.content})),
       })},
     ];
-    let candidate:z.infer<typeof repairCandidateSchema>|undefined;let firstError:unknown;
+    let candidate:z.infer<typeof repairCandidateSchema>|undefined;let lastError:unknown;
     for(let attempt=1;attempt<=2;attempt+=1){
-      try{candidate=await this.model.completeJson({messages:attempt===1?messages:[...messages,{role:"user",content:"上一次输出未通过严格 Schema。请只依据 evidence 修正，并保持五类回归问题各一个。"}],schema:repairCandidateSchema,schemaDescription:"knowledge repair draft with answer, obligations, evidence paths and five regression questions",...(input.signal===undefined?{}:{signal:input.signal})});break;}
-      catch(error){firstError??=error;if(attempt===2)throw firstError;}
+      try{candidate=await this.model.completeJson({messages:attempt===1?messages:[...messages,{role:"user",content:"上一次输出未通过严格 Schema。请只依据 evidence 修正；把 title 等字段直接放在 JSON 根节点；obligations 必须是对象数组，每项含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths；保持五类回归问题各一个。"}],schema:repairCandidateInputSchema,schemaDescription:"knowledge repair draft with answer, structured obligation objects, evidence paths and five regression questions",...(input.signal===undefined?{}:{signal:input.signal})});break;}
+      catch(error){candidate=recoverWrappedRepairCandidate(error);if(candidate!==undefined)break;lastError=error;if(attempt===2)throw error;}
     }
-    if(candidate===undefined)throw firstError;
+    if(candidate===undefined)throw lastError;
     return enforceRepairCandidate(input,candidate);
   }
   async assess(input:{readonly proposal:RepairDraftProposal;readonly evidence:readonly RepairEvidence[];readonly signal?:AbortSignal}):Promise<readonly {readonly kind:z.infer<typeof regressionKindSchema>;readonly passed:boolean;readonly explanation:string}[]>{
@@ -253,6 +255,28 @@ function blockedProposal(input:RepairGenerationInput):RepairDraftProposal{
     ...(input.route.cardId===undefined?{}:{cardId:input.route.cardId}),
     title:question.slice(0,500),canonicalQuestion:question.slice(0,1_000),aliases:[],answerTemplate:"",obligations:[],regressionQuestions:[],
     generationSummary:reason,publishable:false,blockingReason:reason}) as RepairDraftProposal;
+}
+
+function recoverWrappedRepairCandidate(error:unknown):z.infer<typeof repairCandidateSchema>|undefined{
+  const raw=typeof error==="object"&&error!==null&&"rawPayload" in error&&typeof error.rawPayload==="string"?error.rawPayload:undefined;if(raw===undefined)return undefined;
+  const afterReasoning=raw.replace(/^(?:\s*<think>[\s\S]*?<\/think>\s*)+/iu,""),fenced=raw.match(/```(?:json)?\s*([\s\S]*?)```/iu)?.[1],first=raw.indexOf("{"),last=raw.lastIndexOf("}"),sources=[raw,afterReasoning,...(fenced===undefined?[]:[fenced]),...(first>=0&&last>first?[raw.slice(first,last+1)]:[])];
+  for(const source of sources){let decoded:unknown;try{decoded=JSON.parse(source.trim());}catch{continue;}const queue:Array<{value:unknown;depth:number}>=[{value:decoded,depth:0}];let visited=0;while(queue.length>0&&visited<24){const item=queue.shift()!;visited+=1;const parsed=repairCandidateSchema.safeParse(normalizeRepairCandidateShape(item.value));if(parsed.success)return parsed.data;if(item.depth>=2||typeof item.value!=="object"||item.value===null||Array.isArray(item.value))continue;for(const value of Object.values(item.value))if(typeof value==="object"&&value!==null&&!Array.isArray(value))queue.push({value,depth:item.depth+1});}}
+  return undefined;
+}
+function normalizeRepairCandidateShape(value:unknown):unknown{
+  if(typeof value!=="object"||value===null||Array.isArray(value))return value;const source=value as Record<string,unknown>,raw=source.obligations;
+  if(raw===undefined)return source;const entries=normalizeObligationCollection(raw);if(entries===undefined)return source;const obligations=entries.map((item,index)=>{if(typeof item!=="object"||item===null||Array.isArray(item))return item;const obligation=item as Record<string,unknown>,rawId=typeof obligation.id==="string"?obligation.id.trim().toUpperCase():"",id=/^O\d+$/u.test(rawId)?rawId:`O${index+1}`;return{id,label:obligation.label,evidencePolicy:obligation.evidencePolicy,requiredConcepts:obligation.requiredConcepts,forbiddenClaims:obligation.forbiddenClaims,preferredEvidencePaths:obligation.preferredEvidencePaths};});
+  return{...source,obligations};
+}
+function normalizeRepairCandidateEnvelope(value:unknown):unknown{
+  let candidate=value;for(let depth=0;depth<3;depth+=1){if(typeof candidate!=="object"||candidate===null||Array.isArray(candidate))break;const source=candidate as Record<string,unknown>;if("title" in source&&"canonicalQuestion" in source)break;const nested=["proposal","data","result","draft"].map((key)=>source[key]).find((item)=>typeof item==="object"&&item!==null&&!Array.isArray(item));if(nested===undefined)break;candidate=nested;}return normalizeRepairCandidateShape(candidate);
+}
+function normalizeObligationCollection(value:unknown,depth=0):unknown[]|undefined{
+  if(depth>3)return undefined;if(Array.isArray(value))return value;if(typeof value==="string"){try{return normalizeObligationCollection(JSON.parse(value),depth+1);}catch{return undefined;}}
+  if(typeof value!=="object"||value===null)return undefined;const source=value as Record<string,unknown>;
+  if("label" in source||"evidencePolicy" in source)return[source];
+  for(const key of ["items","obligations","requirements","必答项"]){if(key in source){const nested=normalizeObligationCollection(source[key],depth+1);if(nested!==undefined)return nested;}}
+  return Object.entries(source).map(([id,item])=>typeof item==="object"&&item!==null&&!Array.isArray(item)?{...item as Record<string,unknown>,id:(item as Record<string,unknown>).id??id}:item);
 }
 
 function redactRecords(records:readonly RepairRecord[],terms:readonly string[]):readonly RepairRecord[]{
