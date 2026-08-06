@@ -14,6 +14,25 @@ export interface MissingAnswerCardConcepts {
   readonly requiredConcepts: readonly string[];
 }
 
+export function answerCardRequirementsWithGroundedConcepts(
+  bindings: readonly DomainRequirementBinding[] = [],
+  evidence: readonly AnswerCardPolicyEvidence[] = [],
+): readonly string[] {
+  const requirementIds = new Set<string>();
+  for (const binding of bindings) {
+    const preferredPaths = new Set(binding.preferredEvidencePaths ?? []);
+    if (preferredPaths.size === 0) continue;
+    const grounded = groundedConcepts(
+      binding.requiredConcepts ?? [],
+      evidence.filter((document) =>
+        document.requirementId === binding.requirementId &&
+        preferredPaths.has(document.path)),
+    );
+    if (grounded.length > 0) requirementIds.add(binding.requirementId);
+  }
+  return Object.freeze([...requirementIds]);
+}
+
 export function missingAnswerCardRequiredConcepts(
   action: FinalAction,
   bindings: readonly DomainRequirementBinding[] = [],
@@ -65,7 +84,9 @@ export function missingAnswerCardRequiredConcepts(
  * Project a complete fact from governed evidence after natural rewrite attempts
  * are exhausted. A fact is added only when the missing concept occurs in a
  * preferred evidence page that was actually read for the same requirement.
- * Callers must run the coverage verifier over the resulting draft.
+ * Before verification, callers run the verifier over the resulting draft. If
+ * a verifier later removes one of these facts, callers may restore the same
+ * evidence-identical line and rebuild deterministic verification metadata.
  */
 export function applyGroundedAnswerCardRequiredConcepts(
   action: FinalAction,

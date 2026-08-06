@@ -17,6 +17,7 @@ import type {
 import {
   InvalidCoverageVerificationError,
   coverageVerificationReport,
+  inferCoverageVerificationReport,
   notCoveredRequirementAnswer,
   verifyKnowledgeCoverage,
   type CoverageEvidenceDocument,
@@ -57,6 +58,7 @@ import type { DomainRequirementBinding } from "./domain-plan.js";
 import { observeModelCall } from "./model-observability.js";
 import {
   applyGroundedAnswerCardRequiredConcepts,
+  answerCardRequirementsWithGroundedConcepts,
   answerCardPolicyObservations,
   missingAnswerCardRequiredConcepts,
   violatesAnswerCardForbiddenClaims,
@@ -573,6 +575,16 @@ async function runKnowledgeAgentCore(
         });
         continue;
       }
+      let projectedAfterVerification = false;
+      if (missingAuditedCardConcepts.length > 0) {
+        const projected = applyGroundedAnswerCardRequiredConcepts(
+          auditedAction,
+          input.requirementBindings,
+          readEvidence(state),
+        );
+        projectedAfterVerification = projected !== auditedAction;
+        auditedAction = projected;
+      }
       const structuredCoverageRepairs = pendingStructuredCoverageRepairs(
         normalizedAction,
         auditedAction,
@@ -611,12 +623,28 @@ async function runKnowledgeAgentCore(
         input.requirementBindings,
         readEvidence(state),
       );
-      if (missingCardConcepts.length > 0) {
-        auditedAction = markAnswerCardConceptGapsPartial(
-          auditedAction,
-          missingCardConcepts,
-        );
-        if (verificationReport !== undefined) {
+      const reconciledAction = reconcileAnswerCardCoverage(
+        auditedAction,
+        missingCardConcepts,
+        answerCardRequirementsWithGroundedConcepts(
+          input.requirementBindings,
+          readEvidence(state),
+        ),
+        verificationReport,
+      );
+      if (reconciledAction !== auditedAction || projectedAfterVerification) {
+        auditedAction = reconciledAction;
+        if (projectedAfterVerification) {
+          try {
+            verificationReport = inferCoverageVerificationReport(
+              auditedAction,
+              input.plan,
+            );
+            verificationSummaries = verificationReport.summaries;
+          } catch {
+            return fallbackUnavailable(input, "coverage_verifier_invalid");
+          }
+        } else if (verificationReport !== undefined) {
           try {
             verificationReport = coverageVerificationReport(
               auditedAction,
@@ -627,8 +655,9 @@ async function runKnowledgeAgentCore(
           }
         }
         observe(state, {
-          type: "answer_card_verified_partial",
-          requirements: missingCardConcepts.map((item) => item.requirementId),
+          type: "answer_card_coverage_reconciled",
+          partialRequirements: missingCardConcepts.map((item) => item.requirementId),
+          groundedProjection: projectedAfterVerification,
         });
       }
       if (violatesAnswerCardForbiddenClaims(
@@ -2252,18 +2281,33 @@ function evidenceByRequirement(state: AgentState): ReadonlyMap<string, ReadonlyS
   ]));
 }
 
-function markAnswerCardConceptGapsPartial(
+function reconcileAnswerCardCoverage(
   action: FinalAction,
   gaps: readonly { readonly requirementId: string }[],
+  groundedRequirementIds: readonly string[],
+  report: CoverageVerificationReport | undefined,
 ): FinalAction {
-  const affected = new Set(gaps.map((gap) => gap.requirementId));
+  const missing = new Set(gaps.map((gap) => gap.requirementId));
+  const grounded = new Set(groundedRequirementIds);
+  const summaryById = new Map(
+    report?.summaries.map((summary) => [summary.id, summary] as const),
+  );
   let changed = false;
   const requirements = action.requirements.map((requirement) => {
-    if (!affected.has(requirement.id) || requirement.coverage !== "complete") {
-      return requirement;
+    if (missing.has(requirement.id)) {
+      if (requirement.coverage !== "complete") return requirement;
+      changed = true;
+      return { ...requirement, coverage: "partial" as const };
     }
-    changed = true;
-    return { ...requirement, coverage: "partial" as const };
+    if (
+      requirement.coverage === "partial" &&
+      grounded.has(requirement.id) &&
+      summaryById.get(requirement.id)?.missingAspectCount === 0
+    ) {
+      changed = true;
+      return { ...requirement, coverage: "complete" as const };
+    }
+    return requirement;
   });
   return changed ? { ...action, requirements } : action;
 }

@@ -15,6 +15,7 @@ import { identityResolvedQuestion } from "./question-resolver.js";
 import { taskSpecSchema } from "./task-spec.js";
 import {
   applyGroundedAnswerCardRequiredConcepts,
+  answerCardRequirementsWithGroundedConcepts,
   missingAnswerCardRequiredConcepts,
   violatesAnswerCardForbiddenClaims,
 } from "./answer-card-policy.js";
@@ -855,6 +856,9 @@ describe("answer card TaskSpec adapter", () => {
       requirementId: "R1",
       requiredConcepts: ["IMAP"],
     }]);
+    expect(answerCardRequirementsWithGroundedConcepts([binding], evidence)).toEqual([
+      "R1",
+    ]);
   });
 
   it("does not add an ungrounded concept or turn an uncovered answer into coverage", () => {

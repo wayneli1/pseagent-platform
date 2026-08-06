@@ -3736,7 +3736,7 @@ describe("runKnowledgeAgent", () => {
     expect(verificationCalls).toBe(2);
   });
 
-  it("keeps verifier-approved content as partial after concept repairs are exhausted", async () => {
+  it("restores a complete evidence fact after verifier concept repairs are exhausted", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     session.compactPage.mockReturnValue(
       "Use the approved migration transition period before the final cutover.",
@@ -3769,10 +3769,55 @@ describe("runKnowledgeAgent", () => {
       }),
     });
 
-    expect(result.status).toBe("partially_answered");
-    expect(result.answer).toContain("approved migration boundary");
+    expect(result.status).toBe("answered");
+    expect(result.answer).toContain("transition period before the final cutover");
     expect(result.answer).not.toContain("处理原则包括");
     expect(model.calls).toBe(3);
+  });
+
+  it("restores complete coverage when every grounded card fact survives verification", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    session.compactPage.mockReturnValue(
+      "Use the approved migration transition period before final cutover.",
+    );
+    const model = scriptedAgentModel([
+      final("complete", "Use the approved migration transition period [1].", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        requiredConcepts: ["transition period"],
+        preferredEvidencePaths: ["wiki/queries/governed-answer.md"],
+      }],
+      verifyCoverage: async (input) => {
+        const action = {
+          ...input.draft,
+          requirements: input.draft.requirements.map((requirement) => ({
+            ...requirement,
+            coverage: "partial" as const,
+          })),
+        };
+        const report = inferCoverageVerificationReport(action, input.plan);
+        input.onReport?.({
+          ...report,
+          summaries: report.summaries.map((summary) => ({
+            ...summary,
+            missingAspectCount: 0,
+            missingAspectIds: [],
+          })),
+        });
+        return action;
+      },
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.answer).toContain("transition period");
   });
 
   it("fails closed instead of keyword stuffing when a required concept stays missing", async () => {
