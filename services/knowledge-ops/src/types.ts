@@ -392,7 +392,15 @@ export interface KnowledgeRepairDraft {
 }
 
 export interface KnowledgeRepairDraftSummary extends Omit<KnowledgeRepairDraft,"encryptedPayload"> {}
-export interface KnowledgeRepairDraftView extends KnowledgeRepairDraftSummary { readonly proposal?: RepairDraftProposal; }
+export interface RepairEvidenceSummary {
+  readonly loadedCount: number;
+  readonly revalidatedReferenceCount: number;
+  readonly issues: readonly string[];
+}
+export interface KnowledgeRepairDraftView extends KnowledgeRepairDraftSummary {
+  readonly proposal?: RepairDraftProposal;
+  readonly evidenceSummary?: RepairEvidenceSummary;
+}
 
 export interface RepairValidationRun {
   readonly validationId: string;

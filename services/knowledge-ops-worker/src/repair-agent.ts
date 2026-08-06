@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ModelClient } from "@pseagent/app/embedded";
-import type { AnswerCard, KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
+import type { AnswerCard, FeedbackClassification, KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import {
   repairProposalSchema,
   type IssueCategory,
@@ -36,6 +36,7 @@ const caseAssessmentSchema=z.object({cases:z.unknown().optional()}).passthrough(
 export interface RepairRecord {
   readonly question: string;
   readonly answer: string;
+  readonly feedbackClassification?: FeedbackClassification;
   readonly feedback?: string;
   readonly proposedAnswer?: string;
   readonly reviewSummary?: string;
@@ -81,7 +82,7 @@ export class KnowledgeRepairAgent {
       {role:"system" as const,content:[
         "你是企业 Obsidian 知识库的修订 Agent，固定模型为 deepseek_v4_flash。",
         "只能使用 input.evidence 中的正式资料和 existingCard，不能使用外部知识、常识猜测或用户建议补足事实。",
-        "用户反馈和 proposedAnswer 只是问题线索，不是正式证据；只有被 evidence 支持的内容才能写入答案。",
+        "feedbackClassification、用户反馈和 proposedAnswer 只是需要核查的问题信号，不是正式证据；即使用户标记答案错误，也只有被 evidence 支持的内容才能写入答案。",
         "输出客户中立、可复用的答案卡草稿，不得出现聊天用户姓名、账号、内部标识或只对单个客户成立的表述。",
         "保留现有答案卡的安全边界、禁答主张和必答项，不得用更宽泛的承诺替换它们。",
         "必须生成五个且各一个回归问题：canonical 原始标准问法、alias 同义改写、colloquial 口语问法、follow_up 上下文追问、negative 边界负例。",
@@ -257,6 +258,7 @@ function blockedProposal(input:RepairGenerationInput):RepairDraftProposal{
 function redactRecords(records:readonly RepairRecord[],terms:readonly string[]):readonly RepairRecord[]{
   const redact=(value:string|undefined)=>value===undefined?undefined:terms.reduce((result,term)=>term.trim().length<2?result:result.replaceAll(term,"[用户]"),value);
   return records.map((record)=>({question:redact(record.question)!,answer:redact(record.answer)!,
+    ...(record.feedbackClassification===undefined?{}:{feedbackClassification:record.feedbackClassification}),
     ...(record.feedback===undefined?{}:{feedback:redact(record.feedback)!}),
     ...(record.proposedAnswer===undefined?{}:{proposedAnswer:redact(record.proposedAnswer)!}),
     ...(record.reviewSummary===undefined?{}:{reviewSummary:redact(record.reviewSummary)!}),

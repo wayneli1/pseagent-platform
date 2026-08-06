@@ -40,20 +40,25 @@ export async function loadRepairEvidence(input:{
   readonly revision:string;
   readonly paths:readonly string[];
   readonly references:readonly AnswerReviewReference[];
-}):Promise<{readonly documents:readonly RepairEvidence[];readonly issues:readonly string[]}>{
-  const documents:RepairEvidence[]=[];const issues:string[]=[];const seen=new Set<string>();let totalChars=0;
-  const referencesByPath=new Map(input.references.filter((item)=>item.project===input.source.domain&&item.revision===input.revision).map((item)=>[item.path,item] as const));
+}):Promise<{readonly documents:readonly RepairEvidence[];readonly issues:readonly string[];readonly revalidatedReferenceCount:number}>{
+  const documents:RepairEvidence[]=[];const issues:string[]=[];const seen=new Set<string>(),governedPaths=new Set(input.paths);let totalChars=0,revalidatedReferenceCount=0;
+  const referencesByPath=new Map<string,AnswerReviewReference[]>();
+  for(const reference of input.references.filter((item)=>item.project===input.source.domain)){
+    const current=referencesByPath.get(reference.path)??[];current.push(reference);referencesByPath.set(reference.path,current);
+  }
   for(const relativePath of [...new Set([...input.paths,...referencesByPath.keys()])]){
     if(!safeWikiPath(relativePath)){issues.push(`${relativePath}:path_rejected`);continue;}
     if(seen.has(relativePath))continue;seen.add(relativePath);
     let content:string;try{content=await readGitFile(input.source.root,input.revision,relativePath);}catch{issues.push(`${relativePath}:unreadable`);continue;}
-    const reference=referencesByPath.get(relativePath);
-    if(reference!==undefined&&createHash("sha256").update(Buffer.from(content,"utf8")).digest("hex")!==reference.contentHash){issues.push(`${relativePath}:content_hash_mismatch`);continue;}
+    const references=referencesByPath.get(relativePath)??[],contentHash=createHash("sha256").update(Buffer.from(content,"utf8")).digest("hex"),currentRevisionReferences=references.filter((item)=>item.revision===input.revision),currentRevisionMatch=currentRevisionReferences.find((item)=>item.contentHash===contentHash),matchingReference=currentRevisionMatch??references.find((item)=>item.contentHash===contentHash);
+    if(currentRevisionReferences.length>0&&currentRevisionMatch===undefined){issues.push(`${relativePath}:content_hash_mismatch`);continue;}
+    if(!governedPaths.has(relativePath)&&references.length>0&&matchingReference===undefined){issues.push(`${relativePath}:reference_stale`);continue;}
+    if(matchingReference!==undefined&&matchingReference.revision!==input.revision)revalidatedReferenceCount+=1;
     const remaining=MAX_TOTAL_CHARS-totalChars;if(remaining<=0){issues.push(`${relativePath}:evidence_budget_exhausted`);continue;}
     const bounded=[...content].slice(0,Math.min(MAX_DOCUMENT_CHARS,remaining)).join("");totalChars+=[...bounded].length;
-    documents.push({title:reference?.title??path.posix.basename(relativePath,".md"),path:relativePath,content:bounded});
+    documents.push({title:matchingReference?.title??references[0]?.title??path.posix.basename(relativePath,".md"),path:relativePath,content:bounded});
   }
-  return{documents:Object.freeze(documents),issues:Object.freeze(issues)};
+  return{documents:Object.freeze(documents),issues:Object.freeze(issues),revalidatedReferenceCount};
 }
 
 export function domainForIssueScope(scope:string|undefined):KnowledgeDomain|undefined{

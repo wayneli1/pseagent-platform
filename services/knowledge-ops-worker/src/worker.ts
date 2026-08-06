@@ -80,15 +80,15 @@ export class KnowledgeOpsWorker {
       const catalogCard=findCardByHashedKey(catalog,issue.answerCardKey)??findCardByCurrentQuestion(catalog,context.records),located=catalogCard===undefined?undefined:await locateAnswerCard(this.dependencies.sources,catalog,catalogCard.cardId);
       const domain=located?.card.domain??catalogCard?.domain??domainForIssueScope(issue.scope),source=domain===undefined?undefined:this.dependencies.sources.find((item)=>item.domain===domain),revision=domain===undefined?undefined:catalogRevision(catalog,domain);
       const paths=located===undefined?[]:[located.path,...located.card.obligations.flatMap((item)=>item.preferredEvidencePaths)];
-      const evidence=source===undefined||revision===undefined?{documents:[],issues:["repair_domain_or_revision_missing"]}:await loadRepairEvidence({source,revision,paths,references:context.references});
+      const evidence=source===undefined||revision===undefined?{documents:[],issues:["repair_domain_or_revision_missing"],revalidatedReferenceCount:0}:await loadRepairEvidence({source,revision,paths,references:context.references});
       const route=repairRoute({category:issue.category,domain,revision,located,hasEvidence:evidence.documents.length>0});
       const proposal=await agent.generate({issueId:issue.issueId,rootCause:issue.category,records:context.records,evidence:evidence.documents,route,sensitiveTerms:context.sensitiveTerms});
       const currentIssue=await this.dependencies.store.getIssue(issue.issueId);if(currentIssue?.status==="dismissed"||currentIssue?.status==="resolved")throw new Error("repair_issue_closed");
       const updated=await this.dependencies.store.updateRepairDraft(draftId,{status:"draft_ready",targetKind:proposal.targetKind,
         ...(proposal.targetDomain===undefined?{}:{targetDomain:proposal.targetDomain}),...(proposal.targetPath===undefined?{}:{targetPath:proposal.targetPath}),
-        ...(route.baseGitRevision===undefined?{}:{baseGitRevision:route.baseGitRevision}),encryptedPayload:cipher.encrypt({proposal,evidenceIssues:evidence.issues})});
+        ...(route.baseGitRevision===undefined?{}:{baseGitRevision:route.baseGitRevision}),encryptedPayload:cipher.encrypt({proposal,evidenceSummary:{loadedCount:evidence.documents.length,revalidatedReferenceCount:evidence.revalidatedReferenceCount,issues:evidence.issues}})});
       if(updated===undefined)throw new Error("repair_draft_update_failed");await this.dependencies.store.updateIssue(issue.issueId,"in_progress");
-      const timestamp=new Date().toISOString();await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.generated",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:issue.issueId,targetKind:proposal.targetKind,publishable:proposal.publishable,evidenceCount:evidence.documents.length,evidenceIssueCount:evidence.issues.length},createdAt:timestamp});
+      const timestamp=new Date().toISOString();await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.generated",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:issue.issueId,targetKind:proposal.targetKind,publishable:proposal.publishable,evidenceCount:evidence.documents.length,evidenceIssueCount:evidence.issues.length,revalidatedReferenceCount:evidence.revalidatedReferenceCount},createdAt:timestamp});
       return{draftId,status:updated.status,targetKind:proposal.targetKind,publishable:proposal.publishable,evidenceCount:evidence.documents.length};
     }catch(error){const code=safeCode(error);await this.dependencies.store.updateRepairDraft(draftId,{status:"failed",errorCode:code});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.failed",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:draft.issueId,errorCode:code},createdAt:new Date().toISOString()});throw error;}
   }
@@ -99,7 +99,7 @@ export class KnowledgeOpsWorker {
       if(occurrence.sourceType==="answer_review"){await appendReview(occurrence.sourceId);continue;}
       const stored=await this.dependencies.store.getFeedback(occurrence.sourceId);if(stored===undefined)continue;
       const payload=cipher.decrypt<{question:string;answer:string;comment:string;proposedAnswer?:string;userDisplayName?:string}>(stored.encryptedPayload);if(payload.userDisplayName)sensitiveTerms.push(payload.userDisplayName);
-      records.push({question:payload.question,answer:payload.answer,...(payload.comment.trim()===""?{}:{feedback:payload.comment}),...(payload.proposedAnswer===undefined?{}:{proposedAnswer:payload.proposedAnswer})});
+      records.push({question:payload.question,answer:payload.answer,feedbackClassification:stored.classification,...(payload.comment.trim()===""?{}:{feedback:payload.comment}),...(payload.proposedAnswer===undefined?{}:{proposedAnswer:payload.proposedAnswer})});
       const linked=await this.dependencies.store.getAnswerReviewByRequestId(stored.requestId);if(linked!==undefined)await appendReview(linked.reviewId);
     }
     if(records.length===0)throw new Error("repair_issue_has_no_records");return{records,references:uniqueReferences(references),sensitiveTerms:[...new Set(sensitiveTerms)]};
