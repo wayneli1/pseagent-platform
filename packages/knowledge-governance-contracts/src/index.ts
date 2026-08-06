@@ -174,6 +174,51 @@ export const answerReviewResultSchema = z.object({
   }).strict()).max(12),
 }).strict();
 
+export const repairValidationStageSchema = z.enum([
+  "card_match",
+  "obligation_coverage",
+  "forbidden_claim",
+  "evidence_support",
+  "independent_review",
+  "rule_conflict",
+]);
+
+export const repairSuggestedActionSchema = z.enum([
+  "modify_answer",
+  "modify_rule",
+  "add_evidence",
+  "human_review",
+]);
+
+export const answerCardRuleConflictCodeSchema = z.enum([
+  "required_forbidden_conflict",
+  "answer_forbidden_conflict",
+  "evidence_supported_project_data_forbidden",
+  "numeric_boundary_conflict",
+]);
+
+export const answerCardRuleConflictSchema = z.object({
+  code: answerCardRuleConflictCodeSchema,
+  obligationId: z.string().regex(/^O\d+$/u),
+  field: z.enum(["requiredConcepts", "forbiddenClaims", "answerTemplate"]),
+  triggerText: z.string().trim().min(1).max(1_000),
+  rule: z.string().trim().min(1).max(500),
+  message: z.string().trim().min(1).max(1_000),
+  suggestedAction: repairSuggestedActionSchema,
+  evidencePaths: z.array(z.string().trim().min(1).max(1_000)).max(20).default([]),
+}).strict();
+
+export const repairValidationDiagnosticSchema = z.object({
+  stage: repairValidationStageSchema,
+  obligationId: z.string().regex(/^O\d+$/u).optional(),
+  field: z.enum(["requiredConcepts", "forbiddenClaims", "answerTemplate", "preferredEvidencePaths"]).optional(),
+  triggerText: z.string().trim().max(1_000).default(""),
+  rule: z.string().trim().max(500).default(""),
+  message: z.string().trim().min(1).max(1_000),
+  suggestedAction: repairSuggestedActionSchema,
+  evidencePaths: z.array(z.string().trim().min(1).max(1_000)).max(20).default([]),
+}).strict();
+
 export const approvalSchema = z.object({
   approvalId: z.string().uuid(),
   cardId: z.string().regex(/^[A-Z][A-Z0-9-]{2,63}$/u),
@@ -220,7 +265,13 @@ export type AnswerReviewProcessingStatus = z.infer<typeof answerReviewProcessing
 export type AnswerReviewVerdict = z.infer<typeof answerReviewVerdictSchema>;
 export type AnswerReviewWorkflowStatus = z.infer<typeof answerReviewWorkflowStatusSchema>;
 export type AnswerReviewDefectCategory = z.infer<typeof answerReviewDefectCategorySchema>;
+export type AnswerReviewDefect = z.infer<typeof answerReviewDefectSchema>;
 export type AnswerReviewResult = z.infer<typeof answerReviewResultSchema>;
+export type RepairValidationStage = z.infer<typeof repairValidationStageSchema>;
+export type RepairSuggestedAction = z.infer<typeof repairSuggestedActionSchema>;
+export type AnswerCardRuleConflictCode = z.infer<typeof answerCardRuleConflictCodeSchema>;
+export type AnswerCardRuleConflict = z.infer<typeof answerCardRuleConflictSchema>;
+export type RepairValidationDiagnostic = z.infer<typeof repairValidationDiagnosticSchema>;
 export type Approval = z.infer<typeof approvalSchema>;
 export type RegressionCase = z.infer<typeof regressionCaseSchema>;
 export type ReleaseManifest = z.infer<typeof releaseManifestSchema>;

@@ -36,7 +36,8 @@
     "lunkr:start": "node --env-file=.env.local --import tsx scripts/lunkr-start.mts",
     "ops:admin:preview": "npm run build -w @pseagent/knowledge-ops-admin && node --import tsx scripts/knowledge-ops-admin-preview.mts",
     "ops:local:start": "node --env-file=.env.local --import tsx scripts/knowledge-ops-local.mts",
-    "ops:catalog:compile": "node --import tsx scripts/compile-answer-card-catalog.mts"
+    "ops:catalog:compile": "node --import tsx scripts/compile-answer-card-catalog.mts",
+    "ops:audit:project-data": "node --env-file=.env.local --import tsx scripts/audit-project-data-boundaries.mts"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

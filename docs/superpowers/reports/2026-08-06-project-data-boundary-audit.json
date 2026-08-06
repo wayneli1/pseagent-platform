@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "auditDate": "2026-08-06",
+  "policy": "正式证据直接支持的项目具体数据可以回答，但不得跨项目套用、实时化、容量上限化或承诺化。",
+  "repositoryScan": {
+    "repositories": [
+      "coremail-professional",
+      "presales-general"
+    ],
+    "queryPages": 33,
+    "versionedAnswerCards": 13,
+    "conflictCount": 0,
+    "migrationCount": 0
+  },
+  "operationalDraftMigrations": [
+    {
+      "storage": "PostgreSQL",
+      "draftId": "30003c2c-330a-443b-813b-156509354867",
+      "answerCardId": "PRO-REPAIR-00ACF6DA6848",
+      "obligationId": "O1",
+      "field": "forbiddenClaims",
+      "originalRule": "华为项目具体用户数",
+      "adjustedRules": [
+        "不得将华为项目用户数描述为产品容量上限",
+        "不得将华为项目用户数套用到其他客户",
+        "不得将华为历史项目用户数描述为当前实时数据或新客户承诺"
+      ],
+      "reason": "正式证据直接支持华为东莞预测 10 万用户和英国预测 2 万用户；原规则禁止数据本身，与答案正文及证据冲突。",
+      "evidencePaths": [
+        "wiki/entities/东莞节点.md",
+        "wiki/entities/英国节点.md"
+      ]
+    }
+  ],
+  "verification": {
+    "draftId": "30003c2c-330a-443b-813b-156509354867",
+    "validationId": "a76314df-3ee5-4c38-9087-48914f79dcda",
+    "status": "passed",
+    "passedCases": 5,
+    "totalCases": 5,
+    "caseResults": {
+      "canonical": "passed",
+      "alias": "passed",
+      "colloquial": "passed",
+      "follow_up": "passed",
+      "negative": "passed"
+    }
+  }
+}

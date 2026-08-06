@@ -8,6 +8,7 @@ import {
   type RepairTargetKind,
 } from "@pseagent/knowledge-ops";
 import { z } from "zod";
+import { inspectAnswerCardRuleConflicts, rewriteBroadProjectDataForbiddenClaims } from "./project-data-policy.js";
 
 const regressionKindSchema=z.enum(["canonical","alias","colloquial","follow_up","negative"]);
 const obligationSchema=z.object({
@@ -89,7 +90,11 @@ export class KnowledgeRepairAgent {
         "只能使用 input.evidence 中的正式资料和 existingCard，不能使用外部知识、常识猜测或用户建议补足事实。",
         "feedbackClassification、用户反馈和 proposedAnswer 只是需要核查的问题信号，不是正式证据；即使用户标记答案错误，也只有被 evidence 支持的内容才能写入答案。",
         "输出客户中立、可复用的答案卡草稿，不得出现聊天用户姓名、账号、内部标识或只对单个客户成立的表述。",
-        "保留现有答案卡的安全边界、禁答主张和必答项，不得用更宽泛的承诺替换它们。",
+        "保留现有答案卡真正有效的安全边界和必答项；若旧禁答项与正式证据或必答项冲突，必须把它精确化，不能机械继承。",
+        "正式证据直接记载的项目用户数、授权量、服务器数、节点数和部署规模可以写入答案，但必须绑定项目、场景和数据口径。不得仅因它是项目具体数据就禁止回答。",
+        "不得跨项目套用数据，不得把历史项目数据扩大为当前实时规模、通用产品上限或新客户承诺，不得把约等于改写为超过或不少于。无正式证据的数据必须省略或标记待客户确认。",
+        "forbiddenClaims 不得生成“禁止出现某项目具体用户数/授权量/服务器数量/节点数量/所有项目规模数据”等宽泛规则；应改为防止跨项目套用、实时化、容量上限化和承诺化的精确边界。",
+        "answerTemplate 不需要手工添加 [1] 等运行时引用编号；正式引用编号由在线回答链路按证据生成。",
         "必须生成五个且各一个回归问题：canonical 原始标准问法、alias 同义改写、colloquial 口语问法、follow_up 上下文追问、negative 边界负例。",
         "obligations 必须是 JSON 对象数组，即使只有一项也不能输出为对象、分组映射或说明文字；每项必须严格包含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths，其中后三项是字符串数组，evidencePolicy 只能是 direct、synthesis 或 customer_input。",
         "如果证据不能支持完整答案，将 publishable 设为 false 并写明 blockingReason。JSON 根节点必须直接包含 title、canonicalQuestion、aliases、answerTemplate 等字段，不要添加 proposal、data 或 result 外层。只输出严格 JSON。",
@@ -123,6 +128,8 @@ export class KnowledgeRepairAgent {
       "你是企业知识修订的独立验证员，固定使用 deepseek_v4_flash。只能依据 proposal 与 evidence 判定。",
       "对 canonical、alias、colloquial、follow_up：passed 表示该问法确实属于答案卡适用范围，且 answerTemplate 被正式证据支持并完整覆盖 obligations。",
       "对 negative：passed 表示该负例不应命中或套用这张答案卡，答案卡的适用边界能够排除它。",
+      "正式证据直接支持的项目用户数、授权量、服务器数、节点数和部署规模允许出现；重点检查项目归属、数据口径、跨项目套用、实时化和承诺化，不得仅因出现具体数字判定失败。",
+      "answerTemplate 不要求手工包含 [1] 等运行时引用编号，验证事实支持关系时使用 evidence 和 preferredEvidencePaths。",
       "五类必须各返回一项。证据不足、承诺超出资料、缺少必答项或负例仍会误命中时必须为 false。只输出严格 JSON。",
     ].join("\n")},{role:"user" as const,content:JSON.stringify({proposal:input.proposal,evidence:input.evidence})}];
     let result:z.infer<typeof caseAssessmentSchema>|undefined;let firstError:unknown;
@@ -141,6 +148,7 @@ function enforceRepairCandidate(input:RepairGenerationInput,candidate:z.infer<ty
   const protectedText=[candidate.title,candidate.canonicalQuestion,...aliases,candidate.answerTemplate,...obligations.flatMap((item)=>[item.label,...item.requiredConcepts,...item.forbiddenClaims])].join("\n");
   const leakedSensitive=(input.sensitiveTerms??[]).find((term)=>term.trim().length>=2&&normalize(protectedText).includes(normalize(term)));
   const forbiddenClaim=obligations.flatMap((item)=>item.forbiddenClaims).find((claim)=>claim!==""&&normalize(candidate.answerTemplate).includes(normalize(claim)));
+  const ruleConflicts=inspectAnswerCardRuleConflicts({answerTemplate:candidate.answerTemplate,obligations,evidence:input.evidence});
   const missingEvidence=obligations.some((item)=>item.evidencePolicy!=="customer_input"&&item.preferredEvidencePaths.length===0);
   const modelBlockingReason=textValue(candidate.blockingReason);
   const contradictedIdentityBlock=!candidate.publishable&&modelBlockingReason!==undefined&&/(?:身份|姓名|客户名称|敏感)/u.test(modelBlockingReason)&&leakedSensitive===undefined;
@@ -149,6 +157,7 @@ function enforceRepairCandidate(input:RepairGenerationInput,candidate:z.infer<ty
     ...(unsupportedEvidence?["草稿引用了未校验或不在当前知识版本中的资料。"]:[]),
     ...(missingEvidence?["至少一个必答项没有已校验的正式证据路径。"]:[]),
     ...(forbiddenClaim===undefined?[]:["候选答案命中了答案卡禁答主张。"]),
+    ...(ruleConflicts.length===0?[]:[`答案卡规则自身冲突：${ruleConflicts.map((item)=>`${item.obligationId} ${item.message}`).join("；")}`]),
     ...(leakedSensitive===undefined?[]:["候选草稿包含聊天用户身份信息，已阻止发布。"]),
   ];
   const publishable=reasons.length===0;
@@ -238,14 +247,14 @@ function mergeObligations(
     const proposed=byId.get(baseline.id);byId.delete(baseline.id);
     return{id:baseline.id,label:proposed?.label??baseline.label,evidencePolicy:proposed?.evidencePolicy??baseline.evidencePolicy,
       requiredConcepts:unique([...baseline.requiredConcepts,...(proposed?.requiredConcepts??[])]),
-      forbiddenClaims:unique([...baseline.forbiddenClaims,...(proposed?.forbiddenClaims??[])]),
+      forbiddenClaims:rewriteBroadProjectDataForbiddenClaims(unique([...baseline.forbiddenClaims,...(proposed?.forbiddenClaims??[])])).claims,
       preferredEvidencePaths:unique([...baseline.preferredEvidencePaths,...(proposed?.preferredEvidencePaths??[])]),
     };
   }).concat([...byId.values()]);
   const obligations=source.slice(0,12).map((item)=>{
     const preferredEvidencePaths=item.preferredEvidencePaths.filter((path)=>evidencePaths.has(path));
     if(preferredEvidencePaths.length!==item.preferredEvidencePaths.length)unsupportedEvidence=true;
-    return{...item,preferredEvidencePaths};
+    return{...item,forbiddenClaims:rewriteBroadProjectDataForbiddenClaims(item.forbiddenClaims).claims,preferredEvidencePaths};
   });
   return{obligations,unsupportedEvidence};
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  answerCardRuleConflictSchema,
   answerReviewResultSchema,
   answerCardSchema,
   feedbackCaseSchema,
@@ -119,5 +120,9 @@ describe("knowledge governance contracts", () => {
   it("keeps independent answer-review results strict and obligation-based",()=>{
     expect(answerReviewResultSchema.safeParse({verdict:"needs_review",score:55,summary:"缺少迁移认证准备",defects:[{category:"coverage_gap",severity:"major",summary:"未说明客户端专用密码",evidence:"答案卡 O1"}],obligationChecks:[{obligationId:"O1",covered:false,explanation:"必答项未覆盖"}]}).success).toBe(true);
     expect(answerReviewResultSchema.safeParse({verdict:"pass",score:101,summary:"越界",defects:[],obligationChecks:[]}).success).toBe(false);
+  });
+
+  it("keeps rule-conflict diagnostics structured and actionable",()=>{
+    expect(answerCardRuleConflictSchema.safeParse({code:"evidence_supported_project_data_forbidden",obligationId:"O1",field:"forbiddenClaims",triggerText:"华为东莞预测 10 万用户",rule:"华为项目具体用户数",message:"正式证据支持该数据，但规则笼统禁止项目数据。",suggestedAction:"modify_rule",evidencePaths:["wiki/entities/东莞节点.md"]}).success).toBe(true);
   });
 });

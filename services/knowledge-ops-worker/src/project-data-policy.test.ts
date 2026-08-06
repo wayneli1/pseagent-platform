@@ -1,0 +1,47 @@
+import {describe,expect,it} from "vitest";
+import {evaluateProjectDataAnswer,inspectAnswerCardRuleConflicts,rewriteBroadProjectDataForbiddenClaims} from "./project-data-policy.js";
+
+const evidence=[
+  {title:"东莞节点",path:"wiki/entities/东莞节点.md",content:"# 东莞节点\n### 华为Coremail邮件系统项目\n东莞节点是主生产节点，预测用户基数为10W。\n## 华为项目：服务器配置\n- 代理服务器：2台，安装 nginx\n- 前端服务器：2台，安装 MTA。"},
+  {title:"英国节点",path:"wiki/entities/英国节点.md",content:"# 英国节点\n### 华为Coremail邮件系统项目\n英国节点是海外镜像节点，预测用户基数为2W。"},
+  {title:"比亚迪股份有限公司",path:"wiki/entities/比亚迪股份有限公司.md",content:"# 比亚迪股份有限公司\n比亚迪项目采用场地授权，总授权约44万用户，部署4套系统。"},
+];
+
+describe("项目数据证据边界",()=>{
+  it("允许正式证据直接支持的华为项目用户数",()=>{
+    const result=evaluateProjectDataAnswer({answer:"**华为项目**\n东莞节点预测10万用户，英国节点预测2万用户；每个节点配置2台代理服务器和2台前端服务器。",evidence});
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("拒绝把项目数据扩大为所有客户通用配置",()=>{
+    const result=evaluateProjectDataAnswer({answer:"**华为项目**\n东莞节点预测10万用户，因此所有客户的通用配置都是10万用户。",evidence});
+    expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({stage:"forbidden_claim",suggestedAction:"modify_answer"})]));
+  });
+
+  it("拒绝把历史或预测数据描述为当前容量承诺",()=>{
+    const result=evaluateProjectDataAnswer({answer:"**华为项目**\n当前产品容量上限承诺为10万用户。",evidence});
+    expect(result.diagnostics.some((item)=>item.stage==="forbidden_claim")).toBe(true);
+  });
+
+  it("在模型调用前指出必答项与宽泛禁答项的规则冲突",()=>{
+    const conflicts=inspectAnswerCardRuleConflicts({answerTemplate:"**华为项目**\n东莞节点预测10万用户。",evidence,obligations:[{id:"O1",label:"项目规模",evidencePolicy:"direct",requiredConcepts:["华为项目规模"],forbiddenClaims:["华为项目具体用户数"],preferredEvidencePaths:["wiki/entities/东莞节点.md"]}]});
+    expect(conflicts).toEqual([expect.objectContaining({code:"evidence_supported_project_data_forbidden",obligationId:"O1",field:"forbiddenClaims",suggestedAction:"modify_rule"})]);
+  });
+
+  it("不把约44万误认为超过44万",()=>{
+    expect(evaluateProjectDataAnswer({answer:"**比亚迪项目**\n总授权约44万用户。",evidence}).diagnostics).toEqual([]);
+    expect(evaluateProjectDataAnswer({answer:"**比亚迪项目**\n总授权超过44万用户。",evidence}).diagnostics).toEqual([expect.objectContaining({stage:"evidence_support",message:expect.stringContaining("数值口径")})]);
+  });
+
+  it("没有正式证据支持的项目数字不能通过",()=>{
+    const result=evaluateProjectDataAnswer({answer:"**华为项目**\n东莞节点预测12万用户。",evidence});
+    expect(result.diagnostics).toEqual([expect.objectContaining({stage:"evidence_support",suggestedAction:"add_evidence"})]);
+  });
+
+  it("把宽泛禁答项改写为跨项目、实时化和承诺边界",()=>{
+    const result=rewriteBroadProjectDataForbiddenClaims(["工行有多节点架构方案","华为项目具体用户数"]);
+    expect(result.claims).toContain("工行有多节点架构方案");
+    expect(result.claims).not.toContain("华为项目具体用户数");
+    expect(result.claims).toEqual(expect.arrayContaining([expect.stringContaining("产品容量上限"),expect.stringContaining("其他客户"),expect.stringContaining("当前实时数据") ]));
+  });
+});
