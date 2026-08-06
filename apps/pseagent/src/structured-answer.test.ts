@@ -52,6 +52,40 @@ describe("structured answer", () => {
     );
   });
 
+  it("drops an orphaned later step after earlier steps were removed", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "接入前需确认接收格式和协议 [2]。\n3）重启 deliveragent 服务生效 [1]。\n归档邮箱必须是外站地址 [1]。",
+        citations: [2, 1],
+      }],
+      citations: [2, 1],
+    });
+
+    expect(renderStructuredAnswer(structured)).toBe(
+      "- 接入前需确认接收格式和协议 [2]。\n- 归档邮箱必须是外站地址 [1]。",
+    );
+  });
+
+  it("keeps and normalizes a complete full-width ordered sequence", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "1）添加配置文件 [1]。\n2）添加投递规则 [1]。\n3）重启服务 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    expect(renderStructuredAnswer(structured)).toBe(
+      "- 添加配置文件 [1]。\n- 添加投递规则 [1]。\n- 重启服务 [1]。",
+    );
+  });
+
   it("keeps obligation order, citations and verifier support kind", () => {
     const action: FinalAction = {
       action: "final",

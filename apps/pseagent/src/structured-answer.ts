@@ -113,20 +113,48 @@ export function buildStructuredAnswer(
 
 export function renderStructuredAnswer(answer: StructuredAnswer): string {
   const seen = new Set<string>();
-  const retained = answer.sections.flatMap((section) =>
-    section.segments.flatMap((segment) => {
+  const retained = retainCoherentOrderedSegments(
+    answer.sections.flatMap((section) => section.segments),
+  ).flatMap((segment) => {
       const statement = normalizeRenderedStatement(segment.statement);
       const fingerprint = statementFingerprint(statement);
       if (fingerprint === "" || seen.has(fingerprint)) return [];
       seen.add(fingerprint);
       return [statement];
-    }));
+    });
   if (retained.length === 0) return "";
   const body = retained.length === 1
     ? retained[0]!
     : retained.map((statement) =>
         `- ${statement.replace(/\n/gu, "\n  ")}`).join("\n");
   return [...answer.preamble, body].join("\n");
+}
+
+function retainCoherentOrderedSegments(
+  segments: readonly StructuredAnswerSegment[],
+): readonly StructuredAnswerSegment[] {
+  let expectedStep = 1;
+  let sequenceStarted = false;
+  return segments.filter((segment) => {
+    const step = leadingOrderedStep(segment.statement);
+    if (step === undefined) return true;
+    if (step === 1) {
+      sequenceStarted = true;
+      expectedStep = 2;
+      return true;
+    }
+    if (sequenceStarted && step === expectedStep) {
+      expectedStep += 1;
+      return true;
+    }
+    return false;
+  });
+}
+
+function leadingOrderedStep(value: string): number | undefined {
+  const match = value.match(/(?:^|\n)\s*[（(]?([1-9]\d{0,2})[.、．)）]\s*/u);
+  if (match?.[1] === undefined) return undefined;
+  return Number(match[1]);
 }
 
 function aggregateRequiredCoverage(
@@ -199,7 +227,7 @@ function normalizeRenderedStatement(value: string): string {
     .split("\n")
     .map((line) => line
       .replace(
-        /^\s*(?:[-*+]\s+|(?:\d{1,3}|[一二三四五六七八九十百]+)[.、．)]\s+|[（(](?:\d{1,3}|[一二三四五六七八九十百]+)[）)]\s*)/u,
+        /^\s*(?:[-*+]\s+|(?:\d{1,3}|[一二三四五六七八九十百]+)[.、．)）]\s*|[（(](?:\d{1,3}|[一二三四五六七八九十百]+)[）)]\s*)/u,
         "",
       )
       .trim())
