@@ -6,6 +6,8 @@ import type {
   CatalogCardRevisionInput,
   CatalogCardSyncResult,
   CardRevision,
+  CardRevisionListQuery,
+  CardRevisionPage,
   ConversationContextView,
   ConversationEndReason,
   ConversationSession,
@@ -77,6 +79,7 @@ export interface KnowledgeOpsStore {
   createCardRevision(value: CardRevision): Promise<CardRevision>;
   syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult>;
   listCardRevisions(): Promise<readonly CardRevision[]>;
+  listCardRevisionPage(query: CardRevisionListQuery): Promise<CardRevisionPage>;
   getCardRevision(revisionId: string): Promise<CardRevision | undefined>;
   updateCardRevisionStatus(revisionId: string, status: CardRevision["status"]): Promise<CardRevision | undefined>;
   addReview(value: ReviewRecord): Promise<ReviewRecord>;
@@ -245,6 +248,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     return { revision: copy(created), created: true };
   }
   async listCardRevisions() { return newest([...this.revisions.values()].map(copy)); }
+  async listCardRevisionPage(query:CardRevisionListQuery):Promise<CardRevisionPage>{const revisions=newest([...this.revisions.values()].map(copy));return{items:revisions.slice(query.offset,query.offset+query.limit),total:revisions.length};}
   async getCardRevision(id: string) { return maybeCopy(this.revisions.get(id)); }
   async updateCardRevisionStatus(id: string, status: CardRevision["status"]) {
     const old = this.revisions.get(id); if (!old) return undefined;
@@ -303,7 +307,8 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async appendAudit(value: AuditEvent) { this.audit.push(copy(value)); return copy(value); }
   async listAudit() { return newest(this.audit.map(copy)); }
   async dashboard(): Promise<DashboardSummary> {
-    const byPriority={p0:0,p1:0,p2:0,p3:0};let actionable=0,urgent=0,overdue=0,validating=0;const timestamp=Date.now();
+    const byPriority={p0:0,p1:0,p2:0,p3:0};let actionable=0,awaitingEvidence=0,urgent=0,overdue=0,validating=0;const timestamp=Date.now();
+    for(const issue of this.issues.values())if(issue.status==="awaiting_evidence")awaitingEvidence++;
     for(const issue of this.issues.values())if(isActionableIssue(issue)){actionable++;byPriority[issue.priority]++;if(issue.priority==="p0"||issue.priority==="p1")urgent++;if(new Date(issue.slaDueAt).valueOf()<timestamp)overdue++;if(issue.status==="validating")validating++;}
     const feedback = { new: 0, triaged: 0, in_review: 0, resolved: 0, rejected: 0 };
     for (const item of this.feedback.values()) feedback[item.status]++;
@@ -320,7 +325,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     }
     const readyToPublish=[...this.repairDrafts.values()].filter((item)=>item.status==="ready_to_publish").length,repairBatches={queued:0,publishing:0,published:0,failed:0};
     for(const batch of this.repairBatches.values())if(batch.status!=="rolled_back")repairBatches[batch.status]++;
-    return { issues:{actionable,urgent,overdue,validating,readyToPublish,byPriority},repairBatches,feedback, answerReviews, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
+    return { issues:{actionable,awaitingEvidence,urgent,overdue,validating,readyToPublish,byPriority},repairBatches,feedback, answerReviews, cardsByStatus, jobs, ...(activeReleaseId ? { activeReleaseId } : {}) };
   }
   private finishJob(id: string, patch: Partial<OpsJob>) {
     const old = this.jobs.get(id); if (!old) throw new Error("job_not_found");
@@ -345,4 +350,4 @@ const ISSUE_PRIORITY_ORDER={p0:0,p1:1,p2:2,p3:3} as const;
 function priorityRank(value:IssueCase["priority"]):number{return ISSUE_PRIORITY_ORDER[value];}
 function isHigherPriority(candidate:IssueCase["priority"],current:IssueCase["priority"]):boolean{return priorityRank(candidate)<priorityRank(current);}
 function slaDeadline(occurredAt:string,priority:IssueCase["priority"]):string{const hours={p0:2,p1:8,p2:24,p3:72}[priority];return new Date(new Date(occurredAt).valueOf()+hours*60*60_000).toISOString();}
-function isActionableIssue(issue:IssueCase):boolean{return issue.status!=="resolved"&&issue.status!=="dismissed";}
+function isActionableIssue(issue:IssueCase):boolean{return !["awaiting_evidence","resolved","dismissed"].includes(issue.status);}

@@ -108,7 +108,7 @@ export class KnowledgeOpsWorker {
       const updated=await this.dependencies.store.updateRepairDraft(draftId,{status:"draft_ready",targetKind:proposal.targetKind,
         ...(proposal.targetDomain===undefined?{}:{targetDomain:proposal.targetDomain}),...(proposal.targetPath===undefined?{}:{targetPath:proposal.targetPath}),
         ...(route.baseGitRevision===undefined?{}:{baseGitRevision:route.baseGitRevision}),encryptedPayload:cipher.encrypt({proposal,evidenceSummary:{loadedCount:evidence.documents.length,revalidatedReferenceCount:evidence.revalidatedReferenceCount,issues:evidence.issues}}),errorCode:""});
-      if(updated===undefined)throw new Error("repair_draft_update_failed");await this.dependencies.store.updateIssue(issue.issueId,"in_progress");
+      if(updated===undefined)throw new Error("repair_draft_update_failed");await this.dependencies.store.updateIssue(issue.issueId,proposal.blockingKind==="evidence_required"?"awaiting_evidence":"in_progress");
       const timestamp=new Date().toISOString();await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.generated",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:issue.issueId,targetKind:proposal.targetKind,publishable:proposal.publishable,evidenceCount:evidence.documents.length,evidenceIssueCount:evidence.issues.length,revalidatedReferenceCount:evidence.revalidatedReferenceCount},createdAt:timestamp});
       return{draftId,status:updated.status,targetKind:proposal.targetKind,publishable:proposal.publishable,evidenceCount:evidence.documents.length};
     }catch(error){throw error;}

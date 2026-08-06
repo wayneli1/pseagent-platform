@@ -1,12 +1,13 @@
 import { createHash,randomUUID } from "node:crypto";
 import { answerCardSchema, releaseManifestSchema, type KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import { ContentCipher } from "./crypto.js";
+import { evidenceRequestForProposal, isEvidenceBlockedProposal } from "./evidence-needs.js";
 import { assertAuthorized } from "./rbac.js";
 import { releaseQualityPlan } from "./regression-plan.js";
 import { answerReviewIntakeSchema, conversationContextQuerySchema, conversationEndSchema, conversationTurnIntakeSchema, feedbackIntakeSchema, releaseQualityReportImportSchema, repairProposalSchema } from "./schemas.js";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision, ConversationRelationView,
+  AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision, CardRevisionListQuery, CardRevisionPage, ConversationRelationView, EvidenceNeedPage,
   FeedbackCaseListView, FeedbackCaseView, IssueCategory, IssueListQuery, IssuePriority, IssueStatus, OpsActor, RegressionCaseRecord,
   KnowledgeRepairDraft, KnowledgeRepairDraftSummary, KnowledgeRepairDraftView, RepairBatch, RepairDraftProposal, RepairPublication,
   RepairValidationRun, RepairValidationRunView, ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
@@ -132,10 +133,10 @@ export class KnowledgeOpsService {
   }
   async saveRepairDraft(actor:OpsActor,draftId:string,proposalSource:unknown){
     assertAuthorized(actor,"repair:edit");const draft=await this.store.getRepairDraft(draftId);if(draft===undefined)throw new OpsNotFoundError("repair_draft_not_found");
-    if(!["draft_ready","validation_failed"].includes(draft.status))throw new Error("repair_draft_not_editable");const proposal=repairProposalSchema.parse(proposalSource);
+    if(!["draft_ready","validation_failed"].includes(draft.status))throw new Error("repair_draft_not_editable");const proposal=repairProposalSchema.parse(proposalSource) as RepairDraftProposal;
     const existingPayload=this.cipher.decrypt<{evidenceSummary?:KnowledgeRepairDraftView["evidenceSummary"]}>(draft.encryptedPayload);
     const updated=await this.store.updateRepairDraft(draftId,{status:"draft_ready",targetKind:proposal.targetKind,...(proposal.targetDomain?{targetDomain:proposal.targetDomain}:{}),...(proposal.targetPath?{targetPath:proposal.targetPath}:{}),encryptedPayload:this.cipher.encrypt({proposal,...(existingPayload.evidenceSummary===undefined?{}:{evidenceSummary:existingPayload.evidenceSummary})})});
-    await this.store.updateIssue(draft.issueId,"in_progress");await this.audit(actor,"repair.draft.update","repair_draft",draftId,{issueId:draft.issueId,targetKind:proposal.targetKind,targetDomain:proposal.targetDomain,publishable:proposal.publishable});return updated===undefined?undefined:this.repairDraftView(updated);
+    await this.store.updateIssue(draft.issueId,isEvidenceBlockedProposal(proposal)?"awaiting_evidence":"in_progress");await this.audit(actor,"repair.draft.update","repair_draft",draftId,{issueId:draft.issueId,targetKind:proposal.targetKind,targetDomain:proposal.targetDomain,publishable:proposal.publishable});return updated===undefined?undefined:this.repairDraftView(updated);
   }
   async requestRepairValidation(actor:OpsActor,draftId:string){
     assertAuthorized(actor,"repair:validate");const draft=await this.store.getRepairDraft(draftId);if(draft===undefined)throw new OpsNotFoundError("repair_draft_not_found");
@@ -163,7 +164,20 @@ export class KnowledgeOpsService {
   async listRepairPublications(actor:OpsActor,draftId:string){assertAuthorized(actor,"repair:read");return this.store.listRepairPublications(draftId);}
   async requestRepairRollback(actor:OpsActor,publicationId:string){assertAuthorized(actor,"repair:rollback");const publication=await this.store.getRepairPublication(publicationId);if(publication===undefined)throw new OpsNotFoundError("repair_publication_not_found");if(publication.status!=="published")throw new Error("repair_publication_not_rollbackable");if(publication.batchId!==undefined){const batch=await this.store.getRepairBatch(publication.batchId);if(batch?.status!=="published")throw new Error("repair_batch_not_rollbackable");const job=await this.store.enqueueJob("rollback_repair_batch",{batchId:batch.batchId});await this.audit(actor,"repair.batch.rollback.request","repair_batch",batch.batchId,{publicationIds:batch.publications.map((item)=>item.publicationId),jobId:job.jobId});return job;}const job=await this.store.enqueueJob("rollback_repair",{publicationId});await this.audit(actor,"repair.rollback.request","repair_publication",publicationId,{draftId:publication.draftId,issueId:publication.issueId,jobId:job.jobId});return job;}
 
-  async listCards(actor: OpsActor){assertAuthorized(actor,"card:read");return this.store.listCardRevisions();}
+  async listEvidenceNeeds(actor:OpsActor,query:CardRevisionListQuery):Promise<EvidenceNeedPage>{
+    assertAuthorized(actor,"issue:read");const page=await this.store.listIssues({status:"awaiting_evidence",limit:query.limit,offset:query.offset}),items=[];
+    for(const issue of page.items){const drafts=await this.store.listRepairDrafts(issue.issueId),view=drafts.map((draft)=>this.repairDraftView(draft)).find((draft)=>draft.proposal!==undefined&&isEvidenceBlockedProposal(draft.proposal));if(view?.proposal===undefined)continue;items.push({issue,draftId:view.draftId,...(view.proposal.targetDomain===undefined?{}:{targetDomain:view.proposal.targetDomain}),topic:view.proposal.canonicalQuestion||view.proposal.title,blockingReason:view.proposal.blockingReason??"正式资料不足，当前草稿不能发布。",evidenceRequest:evidenceRequestForProposal(view.proposal),updatedAt:view.updatedAt});}
+    return{items,total:page.total};
+  }
+  async reconcileEvidenceNeeds(actor:OpsActor){
+    assertAuthorized(actor,"issue:triage");const candidates=[];for(let offset=0;;offset+=100){const page=await this.store.listIssues({status:"in_progress",limit:100,offset});candidates.push(...page.items);if(offset+page.items.length>=page.total)break;}
+    const issueIds:string[]=[];for(const issue of candidates){const drafts=await this.store.listRepairDrafts(issue.issueId),proposal=drafts.map((draft)=>this.repairDraftView(draft).proposal).find((item)=>item!==undefined);if(proposal!==undefined&&isEvidenceBlockedProposal(proposal)){await this.store.updateIssue(issue.issueId,"awaiting_evidence");issueIds.push(issue.issueId);}}
+    await this.audit(actor,"issue.evidence.reconcile","issue_case","evidence-needs",{count:issueIds.length,issueIds});return{count:issueIds.length,issueIds};
+  }
+  async listCards(actor:OpsActor):Promise<readonly CardRevision[]>;
+  async listCards(actor:OpsActor,query:CardRevisionListQuery):Promise<CardRevisionPage>;
+  async listCards(actor:OpsActor,query?:CardRevisionListQuery):Promise<readonly CardRevision[]|CardRevisionPage>{assertAuthorized(actor,"card:read");return query===undefined?this.store.listCardRevisions():this.store.listCardRevisionPage(query);}
+  async cardRevisionDetail(actor:OpsActor,revisionId:string){assertAuthorized(actor,"card:read");return this.store.getCardRevision(revisionId);}
   async enqueueCatalogSync(actor:OpsActor){
     assertAuthorized(actor,"card:edit");
     const job=await this.store.enqueueJob("compile_catalog",{trigger:"admin"});

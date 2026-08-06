@@ -2,7 +2,7 @@ import { ZodError } from "zod";
 import { knowledgeDomainSchema } from "@pseagent/knowledge-governance-contracts";
 import { OpsAuthorizationError } from "./rbac.js";
 import type { OpsAuthenticator } from "./rbac.js";
-import { adminLoginSchema, answerReviewWorkflowPatchSchema, emptyActionSchema, feedbackPatchSchema, issueListQuerySchema, issuePatchSchema, repairBatchRequestSchema, repairDraftUpdateSchema, reviewInputSchema } from "./schemas.js";
+import { adminLoginSchema, answerReviewWorkflowPatchSchema, emptyActionSchema, feedbackPatchSchema, issueListQuerySchema, issuePatchSchema, paginatedListQuerySchema, repairBatchRequestSchema, repairDraftUpdateSchema, reviewInputSchema } from "./schemas.js";
 import { KnowledgeOpsService, OpsNotFoundError } from "./service.js";
 
 export interface OpsApiRequest { readonly method:string; readonly path:string; readonly authorization?:string; readonly body?:unknown; }
@@ -39,6 +39,8 @@ export class KnowledgeOpsApi {
         if(request.method==="PATCH"){const input=feedbackPatchSchema.parse(request.body);const patch={...(input.status===undefined?{}:{status:input.status}),...(input.classification===undefined?{}:{classification:input.classification})};const value=await this.service.triageFeedback(actor,segments[2],patch);return value?ok(value):notFound();}
       }
       if(request.method==="GET"&&pathname==="/v1/issues"){const input=issueListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listIssues(actor,{limit:input.limit,offset:input.offset,...(input.status?{status:input.status}:{}),...(input.priority?{priority:input.priority}:{}),...(input.actionable===undefined?{}:{actionableOnly:input.actionable})}));}
+      if(request.method==="GET"&&pathname==="/v1/evidence-needs"){const input=paginatedListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listEvidenceNeeds(actor,input));}
+      if(request.method==="POST"&&pathname==="/v1/evidence-needs/reconcile"){emptyActionSchema.parse(request.body??{});return ok(await this.service.reconcileEvidenceNeeds(actor));}
       if(request.method==="POST"&&pathname==="/v1/issues/rebuild")return ok(await this.service.rebuildIssues(actor));
       if(segments[0]==="v1"&&segments[1]==="issues"&&segments[2]&&segments[3]==="repair-drafts"){
         if(request.method==="GET")return ok(await this.service.listRepairDrafts(actor,segments[2]));
@@ -61,7 +63,7 @@ export class KnowledgeOpsApi {
         if(request.method==="GET"&&segments[3]==="publications")return ok(await this.service.listRepairPublications(actor,segments[2]));
       }
       if(segments[0]==="v1"&&segments[1]==="repair-publications"&&segments[2]&&segments[3]==="rollback"&&request.method==="POST"){emptyActionSchema.parse(request.body??{});return created(await this.service.requestRepairRollback(actor,segments[2]));}
-      if(request.method==="GET"&&pathname==="/v1/cards")return ok(await this.service.listCards(actor));
+      if(request.method==="GET"&&pathname==="/v1/cards"){const input=paginatedListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listCards(actor,input));}
       if(request.method==="POST"&&pathname==="/v1/cards/sync")return created(await this.service.enqueueCatalogSync(actor));
       if(segments[0]==="v1"&&segments[1]==="cards"&&segments[2]&&segments[3]==="revisions"&&request.method==="POST"){
         const body=record(request.body);return created(await this.service.createCardRevision(actor,segments[2],knowledgeDomainSchema.parse(body.domain),record(body.content),String(body.baseGitRevision)));
@@ -69,6 +71,7 @@ export class KnowledgeOpsApi {
       if(segments[0]==="v1"&&segments[1]==="revisions"&&segments[2]&&segments[3]==="reviews"&&request.method==="POST"){
         const input=reviewInputSchema.parse(request.body);return created(await this.service.reviewRevision(actor,segments[2],input.decision,input.comment));
       }
+      if(segments[0]==="v1"&&segments[1]==="revisions"&&segments[2]&&segments.length===3&&request.method==="GET"){const value=await this.service.cardRevisionDetail(actor,segments[2]);return value?ok(value):notFound();}
       if(request.method==="GET"&&pathname==="/v1/regressions")return ok(await this.service.listRegressionCases(actor));
       if(request.method==="GET"&&pathname==="/v1/regression-plan")return ok(await this.service.regressionPlan(actor));
       if(request.method==="GET"&&pathname==="/v1/regression-runs")return ok(await this.service.listRegressionRuns(actor));

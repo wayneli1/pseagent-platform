@@ -240,6 +240,16 @@ export interface CardRevision {
   readonly updatedAt: string;
 }
 
+export interface CardRevisionListQuery {
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface CardRevisionPage {
+  readonly items: readonly CardRevision[];
+  readonly total: number;
+}
+
 export interface CatalogCardRevisionInput {
   readonly cardId: string;
   readonly domain: KnowledgeDomain;
@@ -348,7 +358,7 @@ export interface AuditEvent {
 }
 
 export type IssuePriority = "p0" | "p1" | "p2" | "p3";
-export type IssueStatus = "open" | "in_progress" | "validating" | "resolved" | "dismissed";
+export type IssueStatus = "open" | "in_progress" | "awaiting_evidence" | "validating" | "resolved" | "dismissed";
 export type IssueCategory =
   | "knowledge_gap" | "retrieval_gap" | "planning_gap" | "coverage_gap" | "logic_gap" | "citation_gap" | "expression_gap"
   | "user_incorrect" | "user_missing" | "review_requested" | "evidence" | "correction" | "judgement_conflict" | "review_error";
@@ -409,6 +419,29 @@ export interface IssuePage {
   readonly total: number;
 }
 
+export type RepairBlockingKind = "evidence_required" | "system_fix_required" | "human_decision_required" | "candidate_invalid";
+
+export interface RepairEvidenceRequest {
+  readonly summary: string;
+  readonly requiredMaterials: readonly string[];
+  readonly acceptanceCriteria: readonly string[];
+}
+
+export interface EvidenceNeedItem {
+  readonly issue: IssueCaseSummary;
+  readonly draftId: string;
+  readonly targetDomain?: KnowledgeDomain;
+  readonly topic: string;
+  readonly blockingReason: string;
+  readonly evidenceRequest: RepairEvidenceRequest;
+  readonly updatedAt: string;
+}
+
+export interface EvidenceNeedPage {
+  readonly items: readonly EvidenceNeedItem[];
+  readonly total: number;
+}
+
 export type RepairTargetKind = "answer_card" | "knowledge_page" | "retrieval_rule" | "system_fix";
 export type RepairDraftStatus =
   | "generating" | "draft_ready" | "validating" | "validation_failed"
@@ -455,6 +488,8 @@ export interface RepairDraftProposal {
   readonly generationSummary: string;
   readonly publishable: boolean;
   readonly blockingReason?: string;
+  readonly blockingKind?: RepairBlockingKind;
+  readonly evidenceRequest?: RepairEvidenceRequest;
 }
 
 export interface KnowledgeRepairDraft {
@@ -567,6 +602,7 @@ export interface KnowledgeRuntimeStatus {
 export interface DashboardSummary {
   readonly issues: {
     readonly actionable: number;
+    readonly awaitingEvidence: number;
     readonly urgent: number;
     readonly overdue: number;
     readonly validating: number;

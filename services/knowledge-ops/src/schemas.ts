@@ -154,13 +154,16 @@ export const feedbackPatchSchema = z.object({
 export const cardStatusSchema = governanceReviewStatusSchema;
 
 export const issuePrioritySchema=z.enum(["p0","p1","p2","p3"]);
-export const issueStatusSchema=z.enum(["open","in_progress","validating","resolved","dismissed"]);
+export const issueStatusSchema=z.enum(["open","in_progress","awaiting_evidence","validating","resolved","dismissed"]);
 export const issueListQuerySchema=z.object({
   status:issueStatusSchema.optional(),priority:issuePrioritySchema.optional(),
   actionable:z.enum(["true","false"]).transform((value)=>value==="true").optional(),
   limit:z.coerce.number().int().min(1).max(100).default(50),offset:z.coerce.number().int().min(0).default(0),
 }).strict();
 export const issuePatchSchema=z.object({status:z.enum(["open","dismissed"])}).strict();
+export const paginatedListQuerySchema=z.object({
+  limit:z.coerce.number().int().min(1).max(100).default(25),offset:z.coerce.number().int().min(0).default(0),
+}).strict();
 
 export const repairBatchRequestSchema=z.object({
   draftIds:z.array(z.string().uuid()).min(1).max(50),
@@ -182,6 +185,11 @@ const repairObligationSchema=z.object({
   forbiddenClaims:z.array(z.string().trim().min(1).max(500)).max(50),
   preferredEvidencePaths:z.array(repairEvidencePathSchema).max(20),
 }).strict();
+const repairEvidenceRequestSchema=z.object({
+  summary:z.string().trim().min(1).max(2_000),
+  requiredMaterials:z.array(z.string().trim().min(1).max(1_000)).min(1).max(12),
+  acceptanceCriteria:z.array(z.string().trim().min(1).max(1_000)).min(1).max(12),
+}).strict();
 export const repairProposalSchema=z.object({
   rootCause:z.enum(["knowledge_gap","retrieval_gap","planning_gap","coverage_gap","logic_gap","citation_gap","expression_gap","user_incorrect","user_missing","review_requested","evidence","correction","judgement_conflict","review_error"]),
   targetKind:repairTargetKindSchema,targetDomain:knowledgeDomainSchema.optional(),targetPath:repairPathSchema.optional(),
@@ -190,8 +198,11 @@ export const repairProposalSchema=z.object({
   answerTemplate:z.string().trim().max(100_000),obligations:z.array(repairObligationSchema).max(12),
   regressionQuestions:z.array(z.object({kind:repairRegressionKindSchema,question:z.string().trim().min(1).max(2_000)}).strict()).max(5),
   generationSummary:z.string().trim().min(1).max(4_000),publishable:z.boolean(),blockingReason:z.string().trim().min(1).max(4_000).optional(),
+  blockingKind:z.enum(["evidence_required","system_fix_required","human_decision_required","candidate_invalid"]).optional(),
+  evidenceRequest:repairEvidenceRequestSchema.optional(),
 }).strict().superRefine((value,context)=>{
   const humanText=[value.title,value.canonicalQuestion,...value.aliases,value.answerTemplate,value.generationSummary,value.blockingReason??"",
+    ...(value.evidenceRequest===undefined?[]:[value.evidenceRequest.summary,...value.evidenceRequest.requiredMaterials,...value.evidenceRequest.acceptanceCriteria]),
     ...value.obligations.flatMap((item)=>[item.label,...item.requiredConcepts,...item.forbiddenClaims]),...value.regressionQuestions.map((item)=>item.question)];
   if(humanText.some((item)=>/\uFFFD|\?{3,}/u.test(item)))context.addIssue({code:"custom",path:["title"],message:"repair_text_encoding_corrupt"});
   if(value.publishable){

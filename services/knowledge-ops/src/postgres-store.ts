@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  ApprovalRecord, AuditEvent, CatalogCardRevisionInput, CatalogCardSyncResult, CardRevision, ConversationContextView, ConversationEndReason, ConversationSession, ConversationTurn, ConversationTurnInput, DashboardSummary, OpsJob, OpsJobType,
+  ApprovalRecord, AuditEvent, CatalogCardRevisionInput, CatalogCardSyncResult, CardRevision, CardRevisionListQuery, CardRevisionPage, ConversationContextView, ConversationEndReason, ConversationSession, ConversationTurn, ConversationTurnInput, DashboardSummary, OpsJob, OpsJobType,
   IssueCase, IssueCaseSummary, IssueListQuery, IssueOccurrence, IssuePage, IssueRecordInput, IssueStatus,
   KnowledgeRepairDraft, RepairBatch, RepairBatchView, RepairPublication, RepairValidationRun, RegressionCaseRecord, RegressionRun, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
   StoredAnswerReviewCase,
@@ -41,6 +41,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
         "008_repair_batches.sql",
         "009_conversation_context.sql",
         "010_knowledge_runtime_deployment.sql",
+        "011_evidence_needs.sql",
       ]) {
         if (applied.has(fileName)) continue;
         const migration = await readFile(fileURLToPath(
@@ -177,7 +178,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listIssues(query:IssueListQuery):Promise<IssuePage>{
     const values=[query.status??null,query.priority??null,query.actionableOnly??false,query.limit,query.offset];
-    const where="WHERE ($1::text IS NULL OR c.status=$1) AND ($2::text IS NULL OR c.priority=$2) AND (NOT $3::boolean OR c.status NOT IN ('resolved','dismissed'))";
+    const where="WHERE ($1::text IS NULL OR c.status=$1) AND ($2::text IS NULL OR c.priority=$2) AND (NOT $3::boolean OR c.status NOT IN ('awaiting_evidence','resolved','dismissed'))";
     const [items,total]=await Promise.all([
       this.pool.query(`SELECT c.*,COUNT(DISTINCT o.request_id)::int AS occurrence_count,COUNT(DISTINCT o.pseudonymous_user_id)::int AS affected_user_count
         FROM issue_cases c LEFT JOIN issue_occurrences o ON o.issue_id=c.issue_id ${where}
@@ -277,6 +278,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     } catch (error) { await safeRollback(client); throw error; } finally { client.release(); }
   }
   async listCardRevisions() { return rows<CardRevision>(await this.pool.query("SELECT * FROM card_revisions ORDER BY updated_at DESC")); }
+  async listCardRevisionPage(query:CardRevisionListQuery):Promise<CardRevisionPage>{const [items,total]=await Promise.all([this.pool.query("SELECT * FROM card_revisions ORDER BY updated_at DESC LIMIT $1 OFFSET $2",[query.limit,query.offset]),this.pool.query("SELECT count(*)::int AS count FROM card_revisions")]);return{items:rows<CardRevision>(items),total:Number(total.rows[0]?.count??0)};}
   async getCardRevision(id: string) { return optional<CardRevision>(await this.pool.query("SELECT * FROM card_revisions WHERE revision_id=$1",[id])); }
   async updateCardRevisionStatus(id: string,status: CardRevision["status"]) { return optional<CardRevision>(await this.pool.query("UPDATE card_revisions SET status=$2,updated_at=now() WHERE revision_id=$1 RETURNING *",[id,status])); }
   async addReview(v: ReviewRecord) {
@@ -354,11 +356,12 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async listAudit() { return rows<AuditEvent>(await this.pool.query("SELECT * FROM audit_events ORDER BY created_at DESC")); }
   async dashboard(): Promise<DashboardSummary> {
-    const [issueRows,feedback,reviews,cards,jobs,release,readyDrafts,batches] = await Promise.all([
+    const [issueRows,evidenceNeeds,feedback,reviews,cards,jobs,release,readyDrafts,batches] = await Promise.all([
       this.pool.query(`SELECT priority,count(*)::int AS count,
         count(*) FILTER (WHERE sla_due_at<now())::int AS overdue,
         count(*) FILTER (WHERE status='validating')::int AS validating
-        FROM issue_cases WHERE status NOT IN ('resolved','dismissed') GROUP BY priority`),
+        FROM issue_cases WHERE status NOT IN ('awaiting_evidence','resolved','dismissed') GROUP BY priority`),
+      this.pool.query("SELECT count(*)::int AS count FROM issue_cases WHERE status='awaiting_evidence'"),
       this.pool.query("SELECT status,count(*)::int AS count FROM feedback_cases GROUP BY status"),
       this.pool.query("SELECT processing_status,verdict,workflow_status,count(*)::int AS count FROM answer_review_cases GROUP BY processing_status,verdict,workflow_status"),
       this.pool.query("SELECT status,count(*)::int AS count FROM card_revisions GROUP BY status"),
@@ -379,7 +382,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     const answerReviews={pendingHuman:0,passed:0,errored:0,total:0};
     for(const row of reviews.rows){const count=row.count as number;answerReviews.total+=count;if(row.verdict==="pass")answerReviews.passed+=count;if(row.processing_status==="errored")answerReviews.errored+=count;if(row.workflow_status==="open"&&(row.verdict==="needs_review"||row.verdict==="fail"||row.processing_status==="errored"))answerReviews.pendingHuman+=count;}
     const repairBatches={queued:0,publishing:0,published:0,failed:0};for(const row of batches.rows)repairBatches[row.status as keyof typeof repairBatches]=Number(row.count);
-    return { issues:{actionable,urgent:byPriority.p0+byPriority.p1,overdue,validating,readyToPublish:Number(readyDrafts.rows[0]?.count??0),byPriority},repairBatches,feedback:feedbackCounts,answerReviews,cardsByStatus,jobs:jobCounts,...(activeReleaseId?{activeReleaseId}:{}) };
+    return { issues:{actionable,awaitingEvidence:Number(evidenceNeeds.rows[0]?.count??0),urgent:byPriority.p0+byPriority.p1,overdue,validating,readyToPublish:Number(readyDrafts.rows[0]?.count??0),byPriority},repairBatches,feedback:feedbackCounts,answerReviews,cardsByStatus,jobs:jobCounts,...(activeReleaseId?{activeReleaseId}:{}) };
   }
   private async changeActiveRelease(id: string,previousStatus:"superseded"|"rolled_back") {
     const client=await this.pool.connect();

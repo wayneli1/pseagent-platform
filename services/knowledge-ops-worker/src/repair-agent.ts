@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { InvalidModelPayloadError,type ModelClient } from "@pseagent/app/embedded";
 import type { AnswerCard, FeedbackClassification, KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import {
+  evidenceRequestForProposal,
+  repairBlockingKind,
   repairProposalSchema,
   type IssueCategory,
   type RepairDraftProposal,
@@ -176,12 +178,14 @@ function enforceRepairCandidate(input:RepairGenerationInput,candidate:z.infer<ty
   const title=existing?.title??candidate.title,canonicalQuestion=existing?.canonicalQuestion??candidate.canonicalQuestion;
   const cardId=existing?.cardId??input.route.cardId??newCardId(input.route.targetDomain!,input.issueId);
   const targetPath=input.route.targetPath??`wiki/queries/${safeFileName(title,input.issueId)}.md`;
-  return repairProposalSchema.parse({
-    rootCause:input.rootCause,targetKind:input.route.targetKind,targetDomain:input.route.targetDomain,targetPath,cardId,
+  const base:RepairDraftProposal={
+    rootCause:input.rootCause,targetKind:input.route.targetKind,targetDomain:input.route.targetDomain!,targetPath,cardId,
     title,canonicalQuestion,aliases,answerTemplate:candidate.answerTemplate,obligations,
     regressionQuestions,generationSummary:textValue(candidate.generationSummary)??"依据已校验正式资料生成知识修订草稿。",publishable,
     ...(publishable?{}:{blockingReason:unique(reasons).join(" ")}),
-  }) as RepairDraftProposal;
+  };
+  const blockingKind=repairBlockingKind(base);
+  return repairProposalSchema.parse({...base,...(blockingKind===undefined?{}:{blockingKind}),...(blockingKind==="evidence_required"?{evidenceRequest:evidenceRequestForProposal(base)}:{})}) as RepairDraftProposal;
 }
 
 function normalizeRegressionQuestions(
@@ -275,12 +279,14 @@ function mergeObligations(
 function blockedProposal(input:RepairGenerationInput):RepairDraftProposal{
   const question=input.records[0]?.question.trim()||"待管理员确认的问题";
   const reason=input.route.blockingReason??"当前问题不能通过知识修订自动解决，需要管理员判断。";
-  return repairProposalSchema.parse({rootCause:input.rootCause,targetKind:input.route.targetKind,
+  const base:RepairDraftProposal={rootCause:input.rootCause,targetKind:input.route.targetKind,
     ...(input.route.targetDomain===undefined?{}:{targetDomain:input.route.targetDomain}),
     ...(input.route.targetPath===undefined?{}:{targetPath:input.route.targetPath}),
     ...(input.route.cardId===undefined?{}:{cardId:input.route.cardId}),
     title:question.slice(0,500),canonicalQuestion:question.slice(0,1_000),aliases:[],answerTemplate:"",obligations:[],regressionQuestions:[],
-    generationSummary:reason,publishable:false,blockingReason:reason}) as RepairDraftProposal;
+    generationSummary:reason,publishable:false,blockingReason:reason};
+  const blockingKind=repairBlockingKind(base);
+  return repairProposalSchema.parse({...base,...(blockingKind===undefined?{}:{blockingKind}),...(blockingKind==="evidence_required"?{evidenceRequest:evidenceRequestForProposal(base)}:{})}) as RepairDraftProposal;
 }
 
 function recoverWrappedRepairCandidate(error:unknown):z.infer<typeof repairCandidateSchema>|undefined{
