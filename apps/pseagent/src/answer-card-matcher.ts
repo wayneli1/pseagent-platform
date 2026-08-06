@@ -59,7 +59,7 @@ export type AnswerCardMatch =
 
 const familyDecisionSchema = z.object({
   familyId: z.string().regex(/^[A-Z][A-Z0-9-]{2,63}$/u).nullable(),
-  confidence: z.enum(["high", "medium", "low"]),
+  confidence: z.enum(["high", "medium", "low", "none"]),
   matchedObligationIds: z.array(z.string().regex(/^O\d+$/u)).max(12),
 }).strict();
 
@@ -134,6 +134,7 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
             content: [
               "你是答案卡问题族分类器，只输出 JSON。",
               "只能从候选 familyId 中选择；不属于任一候选时 familyId 为 null。",
+              "familyId 为 null 时 confidence 必须为 none；选择候选时 confidence 只能为 high、medium 或 low。",
               "只有语义目标和适用对象明确一致时才能给 high。",
               "matchedObligationIds 只能包含候选 bindings 中确实被当前问题要求的 obligationId。",
               "不得回答问题，不得补充事实。",

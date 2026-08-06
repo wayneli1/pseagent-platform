@@ -251,6 +251,31 @@ describe("answer card registry and matching", () => {
     expect(partial).toMatchObject({ matchType: "partial", confidence: "high" });
   });
 
+  it("treats a structured no-match decision as a rejection instead of matcher unavailability", async () => {
+    const model = {
+      completeJson: vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
+        input.schema.parse({
+          familyId: null,
+          confidence: "none",
+          matchedObligationIds: [],
+        })),
+    } as unknown as ModelClient;
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(catalog()),
+      model,
+    );
+
+    await expect(matcher.match({
+      question: "某企业需要常用系统集成能力",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    })).resolves.toMatchObject({
+      matchType: "none",
+      reason: "family_rejected",
+    });
+  });
+
   it("keeps every required obligation from a selected answer card", async () => {
     const source = catalog();
     source.cards[0]!.obligations.push({

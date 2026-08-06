@@ -1789,6 +1789,53 @@ describe("ModelTaskCompiler", () => {
         obligation.domains.includes("coremail-professional"))).toBe(true);
   });
 
+  it("keeps product-selection synthesis in the routed professional domain", async () => {
+    const question = "客户要做第三方系统集成，三种接口方案应如何选？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "第三方系统集成接口选型",
+      entities: [{ id: "E1", label: "接口方案", role: "product", sourceText: "三种接口方案" }],
+      deliverables: [{
+        id: "D1",
+        label: "给出接口方案选择建议",
+        kind: "recommendation",
+        required: true,
+        sourceText: "三种接口方案应如何选",
+        obligations: [{
+          id: "O1",
+          label: "根据开发主体和能力边界选择接口方案",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "三种接口方案应如何选",
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "产品接口与集成资料",
+      },
+    });
+
+    expect(result.deliverables[0]?.obligations[0]?.domains)
+      .toEqual(["coremail-professional"]);
+  });
+
   it("keeps a customer premise plus actor-prefixed procedure in synthesis", async () => {
     const question = "客户在 POC 中不断要求免费增加非标项，售前应该怎样控制范围又不伤害关系？";
     const modelTaskSpec = taskSpecSchema.parse({
