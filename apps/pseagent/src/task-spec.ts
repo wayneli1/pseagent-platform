@@ -559,19 +559,13 @@ export class ModelTaskCompiler implements TaskCompiler {
           taskSpec,
         });
         if (guard.issues.some((issue) => issue.code === "explicit_request_unmapped")) {
-          return repairNumericOpportunityForecastPolicy(
-            input.resolvedQuestion.standaloneQuestion,
-            deterministicTaskSpecFallback(input),
-          );
+          return repairedDeterministicTaskSpecFallback(input);
         }
         return taskSpec;
       } catch (error) {
         if (!(error instanceof InvalidModelPayloadError)) throw error;
         if (attempt === 3) {
-          return repairNumericOpportunityForecastPolicy(
-            input.resolvedQuestion.standaloneQuestion,
-            deterministicTaskSpecFallback(input),
-          );
+          return repairedDeterministicTaskSpecFallback(input);
         }
       }
     }
@@ -581,6 +575,18 @@ export class ModelTaskCompiler implements TaskCompiler {
       "pse_task_spec",
     );
   }
+}
+
+function repairedDeterministicTaskSpecFallback(input: TaskCompilerInput): TaskSpec {
+  const question = input.resolvedQuestion.standaloneQuestion;
+  return repairProfessionalDirectDomains(
+    input.scopeHint,
+    question,
+    repairNumericOpportunityForecastPolicy(
+      question,
+      deterministicTaskSpecFallback(input),
+    ),
+  );
 }
 
 const DETERMINISTIC_SYNTHESIS_OVERRIDE_PATTERN =

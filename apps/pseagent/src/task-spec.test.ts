@@ -1735,6 +1735,36 @@ describe("ModelTaskCompiler", () => {
     });
   });
 
+  it("keeps a structured technical capability fallback in professional knowledge", async () => {
+    const question = "客户提出 DLP 要扫描正文附件并支持 OCR、移动端审核，售前该如何核验而不是直接承诺？";
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => {
+        throw new InvalidModelPayloadError("invalid_schema:task_spec");
+      }),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "产品安全、内容扫描和集成资料",
+      },
+    });
+
+    expect(result.deliverables.flatMap((deliverable) =>
+      deliverable.obligations).every((obligation) =>
+        obligation.domains.includes("coremail-professional"))).toBe(true);
+  });
+
   it("repairs direct product facts in a contextual follow-up to professional knowledge", async () => {
     const question = "只看刚才对比 Exchange 与 Coremail 中的安全和信创两部分，给出可核验的能力、限制和 POC 验证项。";
     const modelTaskSpec = taskSpecSchema.parse({
