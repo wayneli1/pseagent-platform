@@ -113,10 +113,16 @@ export function enforceDeterministicReview(
     }else if(!check.covered){
       defects.push({category:"coverage_gap",severity:"major",summary:`必答项 ${obligation.id} 未完整覆盖`,evidence:check.explanation});
     }
-    const missingConcepts=obligation.requiredConcepts.filter((concept)=>!isUnverifiableRequiredConcept(concept)).filter((concept)=>
-      !containsGovernedConcept(normalizedAnswer,normalize(concept)));
-    if(missingConcepts.length>0){
-      defects.push({category:"coverage_gap",severity:"major",summary:`必答项 ${obligation.id} 缺少受治理概念`,evidence:missingConcepts.join("、")});
+    const governedConcepts=obligation.requiredConcepts.filter((concept)=>!isUnverifiableRequiredConcept(concept));
+    const coveredConcepts=governedConcepts.filter((concept)=>
+      containsGovernedConcept(normalizedAnswer,normalize(concept)));
+    // A card obligation often governs a family of questions. Narrow follow-ups
+    // do not need to repeat every sibling concept when the independent reviewer
+    // has already confirmed the obligation is covered. Keep a deterministic
+    // liveness guard, but only downgrade when none of the concrete governed
+    // concepts survived in the answer.
+    if(governedConcepts.length>0&&coveredConcepts.length===0){
+      defects.push({category:"coverage_gap",severity:"major",summary:`必答项 ${obligation.id} 缺少受治理概念`,evidence:governedConcepts.join("、")});
     }
     const forbidden=obligation.forbiddenClaims.find((claim)=>normalizedAnswer.includes(normalize(claim)));
     if(forbidden!==undefined){forceFail=true;defects.push({category:"logic_gap",severity:"critical",summary:`回答包含答案卡禁答主张（${obligation.id}）`,evidence:forbidden});}
