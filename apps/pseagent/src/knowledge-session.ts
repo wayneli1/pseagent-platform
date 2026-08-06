@@ -11,9 +11,18 @@ const snapshotSchema = z.object({
   lexicalStatus: z.literal("ready"),
   graphStatus: z.literal("ready"),
 }).strict();
+const deploymentSchema = z.object({
+  status: z.enum(["ready", "reloading", "failed"]),
+  servingPreviousVersion: z.boolean(),
+  releaseId: z.string().nullable().optional(),
+  professionalRevision: revisionSchema.nullable().optional(),
+  generalRevision: revisionSchema.nullable().optional(),
+  errorCode: z.string().nullable().optional(),
+}).strict();
 const healthResultSchema = z.object({
   status: z.literal("ready"),
   projects: z.array(snapshotSchema).length(2),
+  deployment: deploymentSchema.optional(),
 }).strict();
 const contextResultSchema = z.object({
   project: projectSchema,

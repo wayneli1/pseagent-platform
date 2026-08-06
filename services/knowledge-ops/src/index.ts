@@ -4,6 +4,7 @@ export * from "./http-server.js";
 export * from "./postgres-store.js";
 export * from "./rbac.js";
 export * from "./runtime-config.js";
+export * from "./runtime-status.js";
 export * from "./schemas.js";
 export * from "./service.js";
 export * from "./store.js";

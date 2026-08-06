@@ -19,6 +19,7 @@ function fakeKnowledgeCaller(overrides: {
   searchProject?: string;
   pageProject?: string;
   pagePath?: string;
+  deploymentStatus?: "ready" | "reloading" | "failed";
 } = {}) {
   const revision = overrides.revision ?? revisionA;
   const call = vi.fn(async (name: KnowledgeToolName, input: unknown) => {
@@ -43,6 +44,14 @@ function fakeKnowledgeCaller(overrides: {
             graphStatus: "ready",
           },
         ],
+        deployment: overrides.deploymentStatus ? {
+          status: overrides.deploymentStatus,
+          servingPreviousVersion: overrides.deploymentStatus !== "ready",
+          releaseId: "KR-TEST",
+          professionalRevision: overrides.professionalRevision ?? revision,
+          generalRevision: overrides.generalRevision ?? revision,
+          errorCode: overrides.deploymentStatus === "failed" ? "reload_failed" : null,
+        } : undefined,
       };
     }
     if (name === "knowledge_context") {
@@ -111,6 +120,15 @@ describe("KnowledgeSession", () => {
     expect(caller.close).not.toHaveBeenCalled();
     await expect(KnowledgeSession.open("professional", caller)).resolves
       .toMatchObject({ project: "coremail-professional" });
+  });
+
+  it("keeps opening sessions while the engine reloads and serves the previous version", async () => {
+    const caller = fakeKnowledgeCaller({ deploymentStatus: "reloading" });
+
+    await expect(KnowledgeSession.open("professional", caller)).resolves.toMatchObject({
+      project: "coremail-professional",
+      revision: revisionA,
+    });
   });
 
   it("binds professional to coremail-professional and hides project from model actions", async () => {

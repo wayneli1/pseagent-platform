@@ -6,6 +6,7 @@ import { InMemoryKnowledgeOpsStore } from "@pseagent/knowledge-ops";
 import { SafeGitWorkspace } from "./git-workspace.js";
 import { SnapshotManager } from "./snapshot-manager.js";
 import { KnowledgeOpsWorker } from "./worker.js";
+import { CatalogCompiler } from "./catalog-compiler.js";
 
 const temporary:string[]=[];
 afterEach(async()=>{await Promise.all(temporary.splice(0).map((root)=>rm(root,{recursive:true,force:true})));});
@@ -13,6 +14,7 @@ afterEach(async()=>{await Promise.all(temporary.splice(0).map((root)=>rm(root,{r
 it("syncs both real catalog domains once and remains idempotent",async()=>{
   const workspace=path.resolve(import.meta.dirname,"../../../..");
   const professional=path.join(workspace,"coremail-professional"),general=path.join(workspace,"presales-general");
+  const expectedCount=(await new CatalogCompiler().compile([{domain:"coremail-professional",root:professional},{domain:"presales-general",root:general}])).cards.length;
   const runtime=await mkdtemp(path.join(tmpdir(),"pse-catalog-sync-"));temporary.push(runtime);
   const store=new InMemoryKnowledgeOpsStore();
   const worker=new KnowledgeOpsWorker("catalog-worker",{
@@ -25,11 +27,11 @@ it("syncs both real catalog domains once and remains idempotent",async()=>{
   expect(await worker.runOnce(["answer_review"])).toBe(false);
   expect(await worker.runOnce(["compile_catalog"])).toBe(true);
   const first=await store.listCardRevisions();
-  expect(first).toHaveLength(13);
+  expect(first).toHaveLength(expectedCount);
   expect(first.every((card)=>card.createdBy==="catalog-sync"&&card.status==="approved")).toBe(true);
   await store.enqueueJob("compile_catalog",{trigger:"test-repeat"});
   expect(await worker.runOnce()).toBe(true);
-  expect(await store.listCardRevisions()).toHaveLength(13);
+  expect(await store.listCardRevisions()).toHaveLength(expectedCount);
   const latestJob=(await store.listJobs()).find((job)=>job.payload.trigger==="test-repeat");
-  expect(latestJob).toMatchObject({status:"completed",result:{cardCount:13,syncedCardCount:0,existingCardCount:13}});
+  expect(latestJob).toMatchObject({status:"completed",result:{cardCount:expectedCount,syncedCardCount:0,existingCardCount:expectedCount}});
 },30_000);

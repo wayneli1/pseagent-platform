@@ -4,6 +4,7 @@ import { badge, h, json, shortId, time } from "./format.js";
 import {errorMessage,issueStatusHelp,label,option} from "./labels.js";
 import {isAnswerReviewActionable} from "./operations-overview.js";
 import {conversationPresentation} from "./conversation-view.js";
+import {deploymentStageLabel,runtimeStatusPresentation} from "./runtime-status-view.js";
 import {hasCompleteRepairProposal,isRepairEditable,repairEvidenceState,repairPrimaryAction,repairStep,repairSuggestedActionLabel,repairValidationCaseState,repairValidationFieldLabel,repairValidationIsUnchanged,repairValidationStageLabel,shouldShowRepairDiff,standaloneRepairAliases} from "./repair-workflow.js";
 import type {
   Audit,
@@ -18,6 +19,7 @@ import type {
   IssuePage,
   IssuePriority,
   IssueStatus,
+  KnowledgeRuntimeStatus,
   OpsJob,
   RegressionRun,
   RepairBatch,
@@ -52,6 +54,7 @@ let repairIssueId=repairIdFromHash();
 let activeRepairDraft:RepairDraft|undefined;
 let repairSaveTimer:ReturnType<typeof setTimeout>|undefined;
 let repairRefreshTimer:ReturnType<typeof setTimeout>|undefined;
+let runtimeRefreshTimer:ReturnType<typeof setTimeout>|undefined;
 const selectedRepairDraftIds=new Set<string>();
 const ISSUE_PAGE_SIZE=25;
 let issueFilters:{status:"actionable"|"all"|IssueStatus;priority:"all"|IssuePriority;offset:number}={status:"actionable",priority:"all",offset:0};
@@ -77,9 +80,14 @@ function showLogin(error = "",username="admin",busy=false) {
 }
 async function showApp() {
   if(repairRefreshTimer!==undefined)clearTimeout(repairRefreshTimer);
+  if(runtimeRefreshTimer!==undefined)clearTimeout(runtimeRefreshTimer);
   const pageTitle=current==="repair"?"知识修订工作台":nav.find((x) => x.id === current)?.label;
-  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">P</div><div><strong>PSE 知识运营</strong><small>Knowledge Ops</small></div></div><nav class="nav" aria-label="主导航">${nav.map((item) => `<button data-nav="${item.id}" class="${item.id === current ? "active" : ""}" aria-current="${item.id === current ? "page" : "false"}"><span aria-hidden="true">${item.icon}</span><span class="label">${item.label}</span></button>`).join("")}</nav><div class="sidebar-foot"><div class="connection"><i class="dot"></i><span>管理服务已连接</span></div><button class="button small" data-action="logout">退出会话</button></div></aside><main class="main"><header class="topbar"><h1>${h(pageTitle)}</h1><div class="top-actions">${current==="repair"?'<button class="button" data-nav="issues">返回问题中心</button>':""}<button class="button" data-action="refresh">刷新</button>${current === "cards" ? '<button class="button" data-action="sync-cards">同步知识库答案卡</button><button class="button primary" data-action="new-card">新建修订</button>' : ""}</div></header><section id="content" class="content" aria-live="polite">${loading()}</section></main></div><div id="overlay"></div><div id="toast" aria-live="assertive"></div>`;
-  await loadCurrent();
+  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">P</div><div><strong>PSE 知识运营</strong><small>Knowledge Ops</small></div></div><nav class="nav" aria-label="主导航">${nav.map((item) => `<button data-nav="${item.id}" class="${item.id === current ? "active" : ""}" aria-current="${item.id === current ? "page" : "false"}"><span aria-hidden="true">${item.icon}</span><span class="label">${item.label}</span></button>`).join("")}</nav><div class="sidebar-foot"><div class="connection"><i class="dot"></i><span>管理服务已连接</span></div><button class="button small" data-action="logout">退出会话</button></div></aside><main class="main"><header class="topbar"><h1>${h(pageTitle)}</h1><div class="top-actions">${current==="repair"?'<button class="button" data-nav="issues">返回问题中心</button>':""}<button class="button" data-action="refresh">刷新</button>${current === "cards" ? '<button class="button" data-action="sync-cards">同步知识库答案卡</button><button class="button primary" data-action="new-card">新建修订</button>' : ""}</div></header><section id="runtime-status" class="runtime-status-slot" aria-live="polite"></section><section id="content" class="content" aria-live="polite">${loading()}</section></main></div><div id="overlay"></div><div id="toast" aria-live="assertive"></div>`;
+  await Promise.all([loadCurrent(),renderRuntimeStatus()]);
+}
+async function renderRuntimeStatus(){
+  const slot=document.querySelector<HTMLElement>("#runtime-status");if(slot===null)return;
+  try{const status=await api.get<KnowledgeRuntimeStatus>("/v1/runtime-status"),view=runtimeStatusPresentation(status),revisions=[status.activeProfessionalRevision&&`专业库 ${shortId(status.activeProfessionalRevision,10)}`,status.activeGeneralRevision&&`通用库 ${shortId(status.activeGeneralRevision,10)}`].filter(Boolean).join(" · ");slot.innerHTML=`<div class="runtime-status ${view.tone}" role="${view.alert?"alert":"status"}"><div class="runtime-status-mark" aria-hidden="true">${view.busy?"↻":view.tone==="success"?"✓":"!"}</div><div class="runtime-status-copy"><strong>${h(view.title)}</strong><span>${h(view.description)}</span><small>当前阶段：${h(view.stage)}${revisions?` · 线上提交 ${h(revisions)}`:""}</small></div>${status.activeBatch?`<button class="button small" data-action="repair-batch-detail" data-id="${h(status.activeBatch.batchId)}">查看发布进度</button>`:""}</div>`;if(view.busy)runtimeRefreshTimer=setTimeout(()=>void renderRuntimeStatus(),1_800);}catch{slot.innerHTML='<div class="runtime-status warning" role="alert"><div class="runtime-status-mark" aria-hidden="true">!</div><div class="runtime-status-copy"><strong>暂时无法读取线上知识状态</strong><span>请刷新页面或检查管理服务；这不代表用户问答已经停止。</span></div></div>';}
 }
 async function loadCurrent() {
   try {
@@ -154,11 +162,11 @@ async function renderRepairBatches(){
   const [ready,batches]=await Promise.all([api.get<RepairDraft[]>("/v1/repair-drafts/ready"),api.get<RepairBatch[]>("/v1/repair-batches")]),readyIds=new Set(ready.map((item)=>item.draftId));
   for(const id of selectedRepairDraftIds)if(!readyIds.has(id))selectedRepairDraftIds.delete(id);
   const rows=ready.map((draft)=>`<tr><td><input type="checkbox" data-batch-draft="${h(draft.draftId)}" aria-label="选择 ${h(draft.proposal?.title??draft.draftId)}"${selectedRepairDraftIds.has(draft.draftId)?" checked":""}></td><td><strong>${h(draft.proposal?.title??"未命名修订")}</strong><br><span class="muted">${h(draft.proposal?.canonicalQuestion??"—")}</span></td><td>${h(domainName(draft.targetDomain??draft.proposal?.targetDomain??"—"))}</td><td class="mono">${h(draft.targetPath??draft.proposal?.targetPath??"—")}</td><td>${time(draft.updatedAt)}</td><td><button class="button small" data-action="open-repair" data-id="${h(draft.issueId)}">查看修订</button></td></tr>`);
-  const batchRows=batches.map((batch)=>`<tr data-action="repair-batch-detail" data-id="${h(batch.batchId)}"><td class="mono">${shortId(batch.batchId,12)}</td><td>${badge(batch.status)}</td><td>${batch.itemCount} 项</td><td>${batch.domains.map(domainName).map(h).join("<br>")}</td><td>${batch.errorCode?`<span class="danger-text">${h(errorMessage(batch.errorCode))}</span>`:batch.status==="published"?"已写入并同步 GitHub":"—"}</td><td>${time(batch.createdAt)}</td></tr>`);
+  const batchRows=batches.map((batch)=>`<tr data-action="repair-batch-detail" data-id="${h(batch.batchId)}"><td class="mono">${shortId(batch.batchId,12)}</td><td>${badge(batch.status)}<br><span class="muted">${h(deploymentStageLabel(batch.deploymentStage))}</span></td><td>${batch.itemCount} 项</td><td>${batch.domains.map(domainName).map(h).join("<br>")}</td><td>${batch.errorCode?`<span class="danger-text">${h(errorMessage(batch.errorCode))}</span>`:batch.status==="published"?"GitHub、Knowledge Engine 与答案卡均已生效":batch.servingPreviousVersion?"旧版本仍正常回答":"正在核对新版本"}</td><td>${time(batch.createdAt)}</td></tr>`);
   content(`<div class="page-intro"><div><h2>把已验证修订组成一次发布</h2><p>草稿生成和验证可以并行；这里只汇总已经通过验证、等待管理员最终发布的内容。</p></div><button class="button" data-nav="issues">继续处理问题</button></div>
-    <div class="notice workflow-note"><strong>发布规则：</strong>同一知识库的多项修订会合并成一个 Git 提交并一次推送到 GitHub；两个知识库分别提交。任何回归或推送失败都会阻止整批生效，已推送部分会自动补偿回滚。</div>
+    <div class="notice workflow-note"><strong>发布规则：</strong>先用 deepseek_v4_flash 运行 4 组 × 5 类真实问题；全部通过后才合并 Git 提交并同步 GitHub，再后台构建新索引并切换答案卡。准备期间旧版本持续回答，失败时保留或恢复上一稳定版本。</div>
     <section class="panel mt-16"><div class="panel-head"><div><h2>待发布池</h2><span class="muted">已选择 <strong id="batch-selected-count">${selectedRepairDraftIds.size}</strong> / ${ready.length} 项</span></div><button class="button primary" data-action="publish-repair-batch"${selectedRepairDraftIds.size===0?" disabled":""}>发布所选并同步 GitHub</button></div>${rows.length?table(["选择","标准答案","知识库","写入页面","验证完成","操作"],rows):empty("暂无待发布修订；先在问题中心完成草稿生成和自动验证")}</section>
-    <section class="panel mt-16"><div class="panel-head"><div><h2>最近发布批次</h2><span class="muted">点击一行查看每个知识库的同步结果</span></div></div>${batchRows.length?table(["批次","状态","修订数","知识库","结果","创建时间"],batchRows):empty("尚无发布批次")}</section>`);
+    <section class="panel mt-16"><div class="panel-head"><div><h2>最近发布批次</h2><span class="muted">点击一行查看回归、GitHub、引擎热切换和线上核对进度</span></div></div>${batchRows.length?table(["批次","状态与阶段","修订数","知识库","线上结果","创建时间"],batchRows):empty("尚无发布批次")}</section>`);
   if(batches.some((batch)=>batch.status==="queued"||batch.status==="publishing"))repairRefreshTimer=setTimeout(()=>{if(current==="batches")void renderRepairBatches().catch(handleApiError);},1_800);
 }
 async function renderRepairWorkbench(){
@@ -253,28 +261,18 @@ async function renderCards() {
   );
 }
 async function renderRegressions() {
-  const [cases, jobs, qualityRuns] = await Promise.all([
-    api.get<Array<Record<string, unknown>>>("/v1/regressions"),
+  const [jobs, qualityRuns] = await Promise.all([
     api.get<OpsJob[]>("/v1/jobs"),
     api.get<RegressionRun[]>("/v1/regression-runs"),
   ]);
   const runs = jobs.filter((x) => x.type === "regression_run");
-  const latestQuality = qualityRuns[0];
+  const latestQuality = qualityRuns.find((run)=>run.totalCases===20&&run.report?.model==="deepseek_v4_flash");
+  const failedCases=(latestQuality?.report?.cases??[]).filter((item)=>item.passed===false);
   const gateBanner = latestQuality === undefined
-    ? '<div class="notice">尚无发布质量报告；发布前必须完成 4 组 × 5 类问题的 deepseek_v4_flash 门禁。</div>'
-    : `<div class="notice ${latestQuality.status === "passed" ? "" : "error"}">最新发布门禁：${badge(latestQuality.status)} · ${latestQuality.passedCases}/${latestQuality.totalCases} 题通过 · 模型 ${h(latestQuality.report?.model ?? "未记录")} · P95 ${h(latestQuality.report?.summary?.p95LatencyMs ?? "—")} ms</div>`;
+    ? '<div class="notice">尚无真实全量回归报告。发布前必须用 deepseek_v4_flash 完成 4 个连续会话，每个会话覆盖标准、同义、口语、上下文追问和边界负例。</div>'
+    : `<div class="notice ${latestQuality.status === "passed" ? "" : "error"}"><strong>最新 4×5 发布门禁：</strong>${badge(latestQuality.status)} · ${latestQuality.passedCases}/20 题通过 · 完成 ${h(latestQuality.report?.summary?.completed??"—")}/20 · 安全失败 ${h(latestQuality.report?.summary?.safetyFailures??"—")} · 可用性失败 ${h(latestQuality.report?.summary?.availabilityFailures??"—")} · P95 ${h(latestQuality.report?.summary?.p95LatencyMs ?? "—")} ms</div>`;
   content(
-    gateBanner + `<div class="toolbar mt-14"><button class="button primary" data-action="run-regression">运行全量回归</button><span class="muted">回归在独立 Worker 执行，不阻塞在线问答</span></div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>测试用例</h2><span class="muted">${cases.length} 条</span></div>${
-      cases.length
-        ? table(
-            ["用例", "知识域", "类型", "预期答案卡", "状态"],
-            cases.map(
-              (item) =>
-                `<tr><td class="mono">${h(item.caseId)}</td><td>${h(domainName(String(item.domain)))}</td><td>${h(item.kind)}</td><td>${h(item.expectedCardId ?? "—")}</td><td>${item.enabled === false ? badge("disabled") : badge("enabled")}</td></tr>`,
-            ),
-          )
-        : empty("还没有回归用例")
-    }</section><section class="panel"><div class="panel-head"><h2>运行队列</h2></div>${
+    gateBanner + `<div class="toolbar mt-14"><button class="button primary" data-action="run-regression">运行 4 组 × 5 类真实回归</button><span class="muted">使用固定模型 deepseek_v4_flash；独立 Worker 并行处理四个会话，旧线上版本持续回答用户</span></div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>四组场景结果</h2><span class="muted">每组 5 类问题</span></div>${latestQuality?.report?.suites?.length?table(["场景组","通过","平均分","结论"],latestQuality.report.suites.map((item)=>`<tr><td class="mono">${h(item.suiteId)}</td><td>${item.passedCases}/5</td><td>${h(item.averageScore)}</td><td>${badge(item.passed?"passed":"failed")}</td></tr>`)):empty("运行后显示四组场景结果")}</section><section class="panel"><div class="panel-head"><h2>五类问法结果</h2><span class="muted">每类跨 4 个场景</span></div>${latestQuality?.report?.kinds?.length?table(["问题类型","通过","平均分","结论"],latestQuality.report.kinds.map((item)=>`<tr><td>${h(label(item.kind))}</td><td>${item.passedCases}/4</td><td>${h(item.averageScore)}</td><td>${badge(item.passed?"passed":"failed")}</td></tr>`)):empty("运行后显示五类问法结果")}</section></div><section class="panel mt-16"><div class="panel-head"><div><h2>未通过项</h2><span class="muted">直接查看失败检查，不用翻原始日志</span></div></div>${failedCases.length?table(["用例","场景","类型","失败检查"],failedCases.map((item)=>`<tr><td class="mono">${h(item.caseId??"—")}</td><td>${h(item.suiteId??"—")}</td><td>${h(label(item.kind??"—"))}</td><td>${h((item.checks??[]).filter((check)=>check.passed===false).map((check)=>`${check.category??"检查"}/${check.id??"未知"}：${check.detail??"未说明"}`).join("；")||"未记录")}</td></tr>`)):empty(latestQuality?"本轮 20 题全部通过":"尚未运行真实全量回归")}</section><section class="panel mt-16"><div class="panel-head"><h2>运行队列</h2></div>${
       runs.length
         ? table(
             ["作业", "状态", "尝试", "更新时间"],
@@ -284,8 +282,9 @@ async function renderRegressions() {
             ),
           )
         : empty("暂无回归运行")
-    }</section></div>`,
+    }</section>`,
   );
+  if(runs.some((run)=>run.status==="queued"||run.status==="running"))repairRefreshTimer=setTimeout(()=>{if(current==="regressions")void renderRegressions().catch(handleApiError);},1_800);
 }
 async function renderReleases() {
   const releases = await api.get<Release[]>("/v1/releases");
@@ -382,9 +381,9 @@ async function handleClick(event: MouseEvent) {
     }
     case "publish-repair-batch": {
       const draftIds=[...selectedRepairDraftIds];if(draftIds.length===0)break;
-      if(!window.confirm(`确认发布所选 ${draftIds.length} 项修订？系统会写入正式知识库、推送 GitHub，并在整批验证通过后应用到后续回答。`))break;
+      if(!window.confirm(`确认发布所选 ${draftIds.length} 项修订？系统会先运行 4×5 真实回归；全部通过后才写入知识库、同步 GitHub 并热切换到后续回答。准备期间旧版本持续服务。`))break;
       target.setAttribute("disabled","");
-      try{await api.post("/v1/repair-batches",{draftIds});selectedRepairDraftIds.clear();toast("发布批次已创建，系统正在合并提交、回归验证并同步 GitHub");await renderRepairBatches();}catch(error){target.removeAttribute("disabled");toast(message(error),true);}
+      try{await api.post("/v1/repair-batches",{draftIds});selectedRepairDraftIds.clear();toast("发布批次已创建，系统正在运行 4×5 真实回归；旧版本继续服务");await renderRepairBatches();await renderRuntimeStatus();}catch(error){target.removeAttribute("disabled");toast(message(error),true);}
       break;
     }
     case "repair-batch-detail":
@@ -529,7 +528,8 @@ function scheduleRepairRefresh(force=false){if(repairRefreshTimer!==undefined)cl
 
 async function repairBatchDrawer(id:string){
   const item=await api.get<RepairBatchDetail>(`/v1/repair-batches/${encodeURIComponent(id)}`),synced=item.publications.filter((publication)=>publication.remoteSyncStatus==="synced").length,compensated=item.publications.filter((publication)=>publication.remoteSyncStatus==="compensated").length;
-  overlay(`<div class="drawer-head"><div><strong>发布批次 ${shortId(item.batchId,12)}</strong> ${badge(item.status)}</div><button class="button" data-action="close-overlay">关闭</button></div><div class="drawer-body"><div class="notice"><strong>批次结果：</strong>${item.status==="published"?`${synced} 项修订已写入知识库并同步 GitHub，新的活动快照已生效。`:item.status==="failed"?`整批未生效；${compensated} 项已完成远端补偿回滚。请按错误提示修复后重新验证。`:"系统正在按知识库合并提交、执行完整回归并同步 GitHub。"}</div>${item.errorCode?`<div class="notice error mt-16"><strong>失败原因：</strong>${h(errorMessage(item.errorCode))}</div>`:""}<div class="detail-section"><h3>批次信息</h3><div class="repair-target"><div><span>修订数量</span><strong>${item.itemCount} 项</strong></div><div><span>涉及知识库</span><strong>${item.domains.map(domainName).map(h).join("、")}</strong></div><div><span>创建时间</span><strong>${time(item.createdAt)}</strong></div></div></div><div class="detail-section"><h3>知识写入与 GitHub 同步</h3>${table(["知识库","知识页面","发布状态","GitHub 状态","提交版本"],item.publications.map((publication)=>`<tr><td>${h(domainName(publication.targetDomain))}</td><td class="mono">${h(publication.targetPath)}</td><td>${badge(publication.status)}</td><td>${badge(publication.remoteSyncStatus)}</td><td class="mono">${publication.resultingGitRevision?shortId(publication.resultingGitRevision,12):"—"}</td></tr>`))}</div></div>`);
+  const stages=["running_global_regression","writing_git","pushing_github","reloading_engine","activating_snapshot","verifying_online","active"],currentIndex=stages.indexOf(item.deploymentStage),timeline=stages.map((stage,index)=>`<li class="${item.deploymentStage==="failed"?"pending":index<currentIndex?"done":index===currentIndex?"current":"pending"}"><i aria-hidden="true"></i><span>${h(deploymentStageLabel(stage))}</span></li>`).join("");
+  overlay(`<div class="drawer-head"><div><strong>发布批次 ${shortId(item.batchId,12)}</strong> ${badge(item.status)}</div><button class="button" data-action="close-overlay">关闭</button></div><div class="drawer-body"><div class="notice"><strong>当前状态：</strong>${item.status==="published"?`${synced} 项修订已同步 GitHub，Knowledge Engine 与答案卡快照均已切换并核对通过。`:item.status==="failed"?`新版本未生效；${compensated} 项已完成远端补偿回滚，上一稳定版本继续回答。`:item.servingPreviousVersion?`正在执行“${h(deploymentStageLabel(item.deploymentStage))}”，旧版本仍正常回答用户。`:`已切换新版本，正在执行“${h(deploymentStageLabel(item.deploymentStage))}”。`}</div>${item.errorCode?`<div class="notice error mt-16"><strong>失败原因：</strong>${h(errorMessage(item.errorCode))}</div>`:""}<div class="detail-section"><h3>发布进度</h3><ol class="deployment-timeline">${timeline}</ol></div><div class="detail-section"><h3>批次信息</h3><div class="repair-target"><div><span>修订数量</span><strong>${item.itemCount} 项</strong></div><div><span>涉及知识库</span><strong>${item.domains.map(domainName).map(h).join("、")}</strong></div><div><span>4×5 回归记录</span><strong class="mono">${item.qualityRunId?shortId(item.qualityRunId,12):"尚未完成"}</strong></div><div><span>目标专业库</span><strong class="mono">${item.targetProfessionalRevision?shortId(item.targetProfessionalRevision,12):"尚未生成"}</strong></div><div><span>目标通用库</span><strong class="mono">${item.targetGeneralRevision?shortId(item.targetGeneralRevision,12):"尚未生成"}</strong></div><div><span>创建时间</span><strong>${time(item.createdAt)}</strong></div></div></div><div class="detail-section"><h3>知识写入与 GitHub 同步</h3>${table(["知识库","知识页面","发布状态","GitHub 状态","提交版本"],item.publications.map((publication)=>`<tr><td>${h(domainName(publication.targetDomain))}</td><td class="mono">${h(publication.targetPath)}</td><td>${badge(publication.status)}</td><td>${badge(publication.remoteSyncStatus)}</td><td class="mono">${publication.resultingGitRevision?shortId(publication.resultingGitRevision,12):"—"}</td></tr>`))}</div></div>`);
 }
 
 async function answerReviewDrawer(id:string){
@@ -645,7 +645,7 @@ function releaseDrawer() {
 }
 async function runRegression() {
   await api.post("/v1/regressions/run", {});
-  toast("全量回归已进入独立队列");
+  toast("4 组 × 5 类真实回归已进入独立队列，线上旧版本继续服务");
   await loadCurrent();
 }
 async function syncCatalog(button:HTMLElement){

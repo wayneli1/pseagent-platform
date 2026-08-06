@@ -71,6 +71,14 @@ const snapshotSchema = z.object({
 export const healthResultSchema = z.object({
   status: z.literal("ready"),
   projects: z.array(snapshotSchema).length(2),
+  deployment: z.object({
+    status: z.enum(["ready", "reloading", "failed"]),
+    servingPreviousVersion: z.boolean(),
+    releaseId: z.string().nullable().optional(),
+    professionalRevision: revisionSchema.nullable().optional(),
+    generalRevision: revisionSchema.nullable().optional(),
+    errorCode: z.string().nullable().optional(),
+  }).strict().optional(),
 }).strict();
 export const contextResultSchema = z.object({
   project: projectSchema,

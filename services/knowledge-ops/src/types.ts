@@ -295,6 +295,7 @@ export interface RegressionRun {
 export type OpsJobType =
   | "answer_review"
   | "compile_catalog"
+  | "reconcile_runtime"
   | "regression_run"
   | "publish_release"
   | "rollback_release"
@@ -415,6 +416,18 @@ export type RepairDraftStatus =
 export type RepairValidationStatus = "queued" | "running" | "passed" | "failed";
 export type RepairPublicationStatus = "pending" | "publishing" | "published" | "failed" | "rolled_back";
 export type RepairBatchStatus = "queued" | "publishing" | "published" | "failed" | "rolled_back";
+export type KnowledgeDeploymentStage =
+  | "queued"
+  | "running_global_regression"
+  | "writing_git"
+  | "pushing_github"
+  | "reloading_engine"
+  | "activating_snapshot"
+  | "verifying_online"
+  | "active"
+  | "compensating"
+  | "failed"
+  | "rolled_back";
 export type RepairRemoteSyncStatus = "not_requested" | "pending" | "pushing" | "synced" | "failed" | "compensated";
 export type RepairRegressionKind = "canonical" | "alias" | "colloquial" | "follow_up" | "negative";
 
@@ -515,8 +528,13 @@ export interface RepairPublication {
 export interface RepairBatch {
   readonly batchId: string;
   readonly status: RepairBatchStatus;
+  readonly deploymentStage: KnowledgeDeploymentStage;
+  readonly servingPreviousVersion: boolean;
   readonly itemCount: number;
   readonly domains: readonly KnowledgeDomain[];
+  readonly targetProfessionalRevision?: string;
+  readonly targetGeneralRevision?: string;
+  readonly qualityRunId?: string;
   readonly catalogHash?: string;
   readonly snapshotReleaseId?: string;
   readonly previousReleaseId?: string;
@@ -529,6 +547,21 @@ export interface RepairBatch {
 
 export interface RepairBatchView extends RepairBatch {
   readonly publications: readonly RepairPublication[];
+}
+
+export interface KnowledgeRuntimeStatus {
+  readonly state: "aligned" | "switching" | "degraded" | "unavailable";
+  readonly checkedAt: string;
+  readonly servingPreviousVersion: boolean;
+  readonly engineStatus: "ready" | "reloading" | "failed" | "unavailable";
+  readonly activeReleaseId?: string;
+  readonly targetReleaseId?: string;
+  readonly activeProfessionalRevision?: string;
+  readonly activeGeneralRevision?: string;
+  readonly engineProfessionalRevision?: string;
+  readonly engineGeneralRevision?: string;
+  readonly errorCode?: string;
+  readonly activeBatch?: RepairBatch;
 }
 
 export interface DashboardSummary {

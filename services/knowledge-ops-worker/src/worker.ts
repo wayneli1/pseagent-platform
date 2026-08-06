@@ -11,8 +11,10 @@ import { KnowledgeRepairAgent, type RepairRecord, type RepairRoute } from "./rep
 import { catalogRevision, domainForIssueScope, findCardByHashedKey, loadRepairEvidence, locateAnswerCard, readKnowledgeFileAtRevision, type LocatedAnswerCard } from "./repair-evidence.js";
 import { renderRepairMarkdown } from "./repair-renderer.js";
 import { PROJECT_DATA_POLICY_VERSION, conflictDiagnostics, inspectAnswerCardRuleConflicts } from "./project-data-policy.js";
+import type { KnowledgeRuntimeController } from "./knowledge-runtime-controller.js";
+import type { ReleaseQualityGateReport, ReleaseQualityRunner } from "./release-quality-runner.js";
 
-export interface WorkerDependencies { readonly store:KnowledgeOpsStore; readonly sources:readonly KnowledgeSource[]; readonly snapshots:SnapshotManager; readonly git:SafeGitWorkspace; readonly cipher?:ContentCipher; readonly answerReviewer?:IndependentAnswerReviewer; readonly repairAgent?:KnowledgeRepairAgent; readonly answerContractRevision?:string; }
+export interface WorkerDependencies { readonly store:KnowledgeOpsStore; readonly sources:readonly KnowledgeSource[]; readonly snapshots:SnapshotManager; readonly git:SafeGitWorkspace; readonly cipher?:ContentCipher; readonly answerReviewer?:IndependentAnswerReviewer; readonly repairAgent?:KnowledgeRepairAgent; readonly answerContractRevision?:string; readonly runtimeController?:KnowledgeRuntimeController; readonly releaseQualityRunner?:ReleaseQualityRunner; }
 
 export class KnowledgeOpsWorker {
   private readonly compiler=new CatalogCompiler();
@@ -32,6 +34,7 @@ export class KnowledgeOpsWorker {
         const synced=await this.syncCatalog(catalog);
         return{catalogHash:hashCatalog(catalog),cardCount:catalog.cards.length,familyCount:catalog.families.length,syncedCardCount:synced.created,existingCardCount:synced.existing};
       }
+      case "reconcile_runtime":return this.reconcileRuntime();
       case "regression_run":return this.regression(job);
       case "publish_release":return this.publish(requireString(job.payload,"releaseId"));
       case "rollback_release":{const id=requireString(job.payload,"releaseId");await this.dependencies.snapshots.rollback(id);await this.dependencies.store.rollbackRelease(id);return{releaseId:id,active:true};}
@@ -151,6 +154,113 @@ export class KnowledgeOpsWorker {
     return visit(0);
   }
   private async publishRepairBatch(batchId:string):Promise<Record<string,unknown>>{
+    const cipher=this.dependencies.cipher;
+    const runtime=this.dependencies.runtimeController;
+    const qualityRunner=this.dependencies.releaseQualityRunner;
+    if(cipher===undefined)throw new Error("repair_cipher_not_configured");
+    if(runtime===undefined)throw new Error("knowledge_runtime_controller_not_configured");
+    if(qualityRunner===undefined)throw new Error("release_quality_runner_not_configured");
+    const batch=await this.dependencies.store.getRepairBatch(batchId);
+    if(batch===undefined)throw new Error("repair_batch_not_found");
+    if(batch.status!=="queued"&&batch.status!=="publishing")throw new Error("repair_batch_not_pending");
+    if(batch.publications.length!==batch.itemCount||batch.publications.length===0)throw new Error("repair_batch_item_count_invalid");
+    await this.dependencies.store.updateRepairBatch(batchId,{status:"publishing",deploymentStage:"running_global_regression",servingPreviousVersion:true});
+    for(const publication of batch.publications)await this.dependencies.store.updateRepairPublication(publication.publicationId,{status:"publishing"});
+    const applied:{source:KnowledgeSource;revision:string;publications:readonly RepairPublication[];pushed:boolean}[]=[];
+    let previousReleaseId:string|undefined;
+    try{
+      const materials:Awaited<ReturnType<KnowledgeOpsWorker["repairMaterial"]>>[]=[];
+      let baseline:AnswerCardCatalog|undefined;
+      for(const publication of batch.publications){
+        const material=await this.repairMaterial(publication.draftId,cipher);
+        if(publication.targetDomain!==material.proposal.targetDomain||publication.targetPath!==material.proposal.targetPath||publication.baseGitRevision!==material.draft.baseGitRevision)throw new Error("repair_batch_publication_mismatch");
+        if(baseline!==undefined&&hashCatalog(baseline)!==hashCatalog(material.baselineCatalog))throw new Error("knowledge_revision_changed");
+        baseline=material.baselineCatalog;
+        const latest=(await this.dependencies.store.listRepairValidations(publication.draftId))[0];
+        if(latest?.status!=="passed")throw new Error("passing_repair_validation_required");
+        materials.push(material);
+      }
+      if(baseline===undefined)throw new Error("repair_batch_empty");
+      await runtime.assertAligned(baseline);
+      const candidate=await this.compileRepairBatchCandidate(materials,baseline);
+      for(const material of materials)if(!candidate.cards.some((card)=>card.cardId===material.proposal.cardId))throw new Error("repair_candidate_card_missing");
+      const candidateRegression=runCatalogCases(candidate,await this.dependencies.store.listRegressionCases());
+      if(candidateRegression.some((item)=>!item.passed))throw new Error("repair_batch_combined_regression_failed");
+      const qualityRun=await this.recordQualityRun(await qualityRunner.run(candidate));
+      await this.dependencies.store.updateRepairBatch(batchId,{qualityRunId:qualityRun.runId});
+      if(qualityRun.status!=="passed")throw new Error("release_quality_gate_failed");
+
+      previousReleaseId=await this.ensureBaselineRelease(baseline,batch.createdBy,batchId);
+      await this.dependencies.store.updateRepairBatch(batchId,{deploymentStage:"writing_git"});
+      for(const domain of batch.domains){
+        const source=this.dependencies.sources.find((item)=>item.domain===domain);
+        if(source===undefined)throw new Error("repair_target_source_missing");
+        const publications=batch.publications.filter((item)=>item.targetDomain===domain);
+        const domainMaterials=materials.filter((item)=>item.source.domain===domain);
+        const baseRevision=catalogRevision(baseline,domain);
+        if(baseRevision===undefined||publications.some((item)=>item.baseGitRevision!==baseRevision))throw new Error("knowledge_revision_changed");
+        const write=await this.dependencies.git.publishRevision(source.root,baseRevision,domainMaterials.map((item)=>({relativePath:item.proposal.targetPath!,content:item.rendered})),`知识修订批次：${publications.length} 项`);
+        applied.push({source,revision:write.revision,publications,pushed:false});
+        for(const publication of publications)await this.dependencies.store.updateRepairPublication(publication.publicationId,{resultingGitRevision:write.revision,remoteSyncStatus:"pushing"});
+      }
+      await this.dependencies.store.updateRepairBatch(batchId,{deploymentStage:"pushing_github"});
+      for(const item of applied){
+        const pushed=await this.dependencies.git.pushCurrent(item.source.root,item.revision);
+        item.pushed=true;
+        for(const publication of item.publications)await this.dependencies.store.updateRepairPublication(publication.publicationId,{remoteSyncStatus:"synced",remoteName:pushed.remoteName,remoteBranch:pushed.remoteBranch});
+      }
+      const catalog=await this.compile();
+      for(const item of applied)if(catalogRevision(catalog,item.source.domain)!==item.revision)throw new Error("repair_published_revision_not_loaded");
+      for(const material of materials)if(!catalog.cards.some((card)=>card.cardId===material.proposal.cardId))throw new Error("repair_published_card_missing");
+      const fullRegression=runCatalogCases(catalog,await this.dependencies.store.listRegressionCases());
+      if(fullRegression.some((item)=>!item.passed))throw new Error("full_regression_failed_after_publish");
+
+      const release=await this.prepareCatalogRelease(catalog,batch.createdBy,batchId,"RB",qualityRun.runId);
+      await this.dependencies.store.updateRepairBatch(batchId,{deploymentStage:"reloading_engine",targetProfessionalRevision:release.professionalRevision,targetGeneralRevision:release.generalRevision,snapshotReleaseId:release.releaseId,previousReleaseId});
+      await runtime.reload(release.releaseId,catalog);
+      await this.dependencies.store.updateRepairBatch(batchId,{deploymentStage:"activating_snapshot"});
+      await this.activateCatalogRelease(release,catalog);
+      await this.dependencies.store.updateRepairBatch(batchId,{deploymentStage:"verifying_online",servingPreviousVersion:false});
+      await runtime.assertAligned(catalog);
+      const active=await this.dependencies.snapshots.active();
+      if(active?.releaseId!==release.releaseId)throw new Error("knowledge_snapshot_activation_mismatch");
+      await this.syncCatalog(catalog);
+
+      const publishedAt=new Date().toISOString();
+      await this.dependencies.store.updateRepairBatch(batchId,{status:"published",deploymentStage:"active",servingPreviousVersion:false,catalogHash:release.cardCatalogHash,snapshotReleaseId:release.releaseId,previousReleaseId,publishedAt});
+      for(const publication of batch.publications){
+        await this.dependencies.store.updateRepairPublication(publication.publicationId,{status:"published",catalogHash:release.cardCatalogHash,snapshotReleaseId:release.releaseId,previousReleaseId,publishedAt});
+        await this.dependencies.store.updateRepairDraft(publication.draftId,{status:"published"});
+        await this.dependencies.store.updateIssue(publication.issueId,"resolved");
+        await this.setIssueSources(publication.issueId,true);
+      }
+      await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.batch.published",resourceType:"repair_batch",resourceId:batchId,metadata:{publicationIds:batch.publications.map((item)=>item.publicationId),domains:batch.domains,resultingGitRevisions:applied.map((item)=>({domain:item.source.domain,revision:item.revision})),catalogHash:release.cardCatalogHash,snapshotReleaseId:release.releaseId,previousReleaseId,qualityRunId:qualityRun.runId},createdAt:publishedAt});
+      return{batchId,status:"published",deploymentStage:"active",itemCount:batch.itemCount,catalogHash:release.cardCatalogHash,snapshotReleaseId:release.releaseId,qualityRunId:qualityRun.runId};
+    }catch(error){
+      await this.dependencies.store.updateRepairBatch(batchId,{deploymentStage:"compensating",servingPreviousVersion:true});
+      let compensationFailed=false;
+      const compensatedRevisions=new Map<KnowledgeDomain,string>();
+      for(const item of [...applied].reverse()){
+        try{
+          const reverted=await this.dependencies.git.revertPublishedRevision(item.source.root,item.revision,item.revision,`回退失败的知识修订批次：${batchId}`);
+          compensatedRevisions.set(item.source.domain,reverted.revision);
+          if(item.pushed)await this.dependencies.git.pushCurrent(item.source.root,reverted.revision);
+          for(const publication of item.publications)await this.dependencies.store.updateRepairPublication(publication.publicationId,{remoteSyncStatus:item.pushed?"compensated":"failed"});
+        }catch{compensationFailed=true;}
+      }
+      if(applied.length>0){try{await this.activateRecoveryCatalog(batch.createdBy,batchId,"COMP");}catch{compensationFailed=true;}}
+      const code=safeCode(error),batchCode=compensationFailed?`repair_batch_compensation_failed:${code}`:code;
+      for(const publication of batch.publications){
+        await this.dependencies.store.updateRepairPublication(publication.publicationId,{status:"failed",errorCode:batchCode,...(applied.some((item)=>item.publications.some((entry)=>entry.publicationId===publication.publicationId))?{}:{remoteSyncStatus:"failed"})});
+        await this.dependencies.store.updateRepairDraft(publication.draftId,{status:compensationFailed?"failed":"validation_failed",errorCode:batchCode,...(compensatedRevisions.get(publication.targetDomain)?{baseGitRevision:compensatedRevisions.get(publication.targetDomain)!}:{})});
+        await this.dependencies.store.updateIssue(publication.issueId,"in_progress");
+      }
+      await this.dependencies.store.updateRepairBatch(batchId,{status:"failed",deploymentStage:"failed",servingPreviousVersion:true,errorCode:batchCode});
+      await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.batch.failed",resourceType:"repair_batch",resourceId:batchId,metadata:{publicationIds:batch.publications.map((item)=>item.publicationId),domains:batch.domains,errorCode:batchCode,appliedDomains:applied.map((item)=>item.source.domain),pushedDomains:applied.filter((item)=>item.pushed).map((item)=>item.source.domain),compensationFailed},createdAt:new Date().toISOString()});
+      throw error;
+    }
+  }
+  private async publishRepairBatchLegacy(batchId:string):Promise<Record<string,unknown>>{
     const cipher=this.dependencies.cipher;if(cipher===undefined)throw new Error("repair_cipher_not_configured");const batch=await this.dependencies.store.getRepairBatch(batchId);if(batch===undefined)throw new Error("repair_batch_not_found");if(batch.status!=="queued"&&batch.status!=="publishing")throw new Error("repair_batch_not_pending");if(batch.publications.length!==batch.itemCount||batch.publications.length===0)throw new Error("repair_batch_item_count_invalid");
     await this.dependencies.store.updateRepairBatch(batchId,{status:"publishing"});for(const publication of batch.publications)await this.dependencies.store.updateRepairPublication(publication.publicationId,{status:"publishing"});
     const applied:{source:KnowledgeSource;revision:string;publications:readonly RepairPublication[];pushed:boolean}[]=[],latestValidations=new Map<string,Awaited<ReturnType<KnowledgeOpsStore["getRepairValidation"]>>>();let previousReleaseId:string|undefined;
@@ -188,10 +298,36 @@ export class KnowledgeOpsWorker {
     const reverted=await this.dependencies.git.revertPublishedRevision(source.root,publication.resultingGitRevision,publication.resultingGitRevision,`回滚知识修订：${proposal.title}`);await this.dependencies.snapshots.rollback(publication.previousReleaseId);await this.dependencies.store.rollbackRelease(publication.previousReleaseId);const rolledBackAt=new Date().toISOString();await this.dependencies.store.updateRepairPublication(publicationId,{status:"rolled_back",rolledBackAt});await this.dependencies.store.updateRepairDraft(publication.draftId,{status:"failed",errorCode:"rolled_back"});await this.dependencies.store.updateIssue(publication.issueId,"open");await this.setIssueSources(publication.issueId,false);await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.publication.rolled_back",resourceType:"repair_publication",resourceId:publicationId,metadata:{draftId:publication.draftId,issueId:publication.issueId,revertRevision:reverted.revision,activeReleaseId:publication.previousReleaseId},createdAt:rolledBackAt});return{publicationId,status:"rolled_back",revertRevision:reverted.revision,activeReleaseId:publication.previousReleaseId};
   }
   private async rollbackRepairBatch(batchId:string):Promise<Record<string,unknown>>{
-    const batch=await this.dependencies.store.getRepairBatch(batchId);if(batch===undefined||batch.status!=="published"||batch.snapshotReleaseId===undefined||batch.previousReleaseId===undefined)throw new Error("repair_batch_not_rollbackable");const active=await this.dependencies.snapshots.active();if(active?.releaseId!==batch.snapshotReleaseId)throw new Error("repair_publication_not_current");const revertedByDomain:{domain:KnowledgeDomain;revision:string}[]=[];
+    const batch=await this.dependencies.store.getRepairBatch(batchId);if(batch===undefined||batch.status!=="published"||batch.snapshotReleaseId===undefined||batch.previousReleaseId===undefined)throw new Error("repair_batch_not_rollbackable");const active=await this.dependencies.snapshots.active();if(active?.releaseId!==batch.snapshotReleaseId)throw new Error("repair_publication_not_current");const revertedByDomain:{domain:KnowledgeDomain;revision:string}[]=[];await this.dependencies.store.updateRepairBatch(batchId,{status:"publishing",deploymentStage:"compensating",servingPreviousVersion:true});
     try{for(const domain of batch.domains){const publications=batch.publications.filter((item)=>item.targetDomain===domain),publishedRevision=publications[0]?.resultingGitRevision;if(publishedRevision===undefined||publications.some((item)=>item.resultingGitRevision!==publishedRevision))throw new Error("repair_batch_revision_mismatch");const source=this.dependencies.sources.find((item)=>item.domain===domain);if(source===undefined)throw new Error("repair_target_source_missing");for(const publication of publications)await this.dependencies.store.updateRepairPublication(publication.publicationId,{remoteSyncStatus:"pushing"});const reverted=await this.dependencies.git.revertPublishedRevision(source.root,publishedRevision,publishedRevision,`回滚知识修订批次：${batchId}`),pushed=await this.dependencies.git.pushCurrent(source.root,reverted.revision);revertedByDomain.push({domain,revision:reverted.revision});for(const publication of publications)await this.dependencies.store.updateRepairPublication(publication.publicationId,{remoteSyncStatus:"compensated",remoteName:pushed.remoteName,remoteBranch:pushed.remoteBranch});}
-      await this.dependencies.snapshots.rollback(batch.previousReleaseId);await this.dependencies.store.rollbackRelease(batch.previousReleaseId);const rolledBackAt=new Date().toISOString();await this.dependencies.store.updateRepairBatch(batchId,{status:"rolled_back",rolledBackAt});for(const publication of batch.publications){await this.dependencies.store.updateRepairPublication(publication.publicationId,{status:"rolled_back",rolledBackAt});await this.dependencies.store.updateRepairDraft(publication.draftId,{status:"failed",errorCode:"rolled_back",...(revertedByDomain.find((item)=>item.domain===publication.targetDomain)?{baseGitRevision:revertedByDomain.find((item)=>item.domain===publication.targetDomain)!.revision}:{})});await this.dependencies.store.updateIssue(publication.issueId,"open");await this.setIssueSources(publication.issueId,false);}await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.batch.rolled_back",resourceType:"repair_batch",resourceId:batchId,metadata:{publicationIds:batch.publications.map((item)=>item.publicationId),revertedByDomain,activeReleaseId:batch.previousReleaseId},createdAt:rolledBackAt});return{batchId,status:"rolled_back",activeReleaseId:batch.previousReleaseId,revertedByDomain};
-    }catch(error){const code=safeCode(error);await this.dependencies.store.updateRepairBatch(batchId,{status:"failed",errorCode:code});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.batch.rollback.failed",resourceType:"repair_batch",resourceId:batchId,metadata:{errorCode:code,revertedByDomain},createdAt:new Date().toISOString()});throw error;}
+      const release=await this.activateRecoveryCatalog(batch.createdBy,batchId,"ROLLBACK"),rolledBackAt=new Date().toISOString();await this.dependencies.store.updateRepairBatch(batchId,{status:"rolled_back",deploymentStage:"rolled_back",servingPreviousVersion:false,snapshotReleaseId:release.releaseId,rolledBackAt});for(const publication of batch.publications){await this.dependencies.store.updateRepairPublication(publication.publicationId,{status:"rolled_back",snapshotReleaseId:release.releaseId,rolledBackAt});await this.dependencies.store.updateRepairDraft(publication.draftId,{status:"failed",errorCode:"rolled_back",...(revertedByDomain.find((item)=>item.domain===publication.targetDomain)?{baseGitRevision:revertedByDomain.find((item)=>item.domain===publication.targetDomain)!.revision}:{})});await this.dependencies.store.updateIssue(publication.issueId,"open");await this.setIssueSources(publication.issueId,false);}await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.batch.rolled_back",resourceType:"repair_batch",resourceId:batchId,metadata:{publicationIds:batch.publications.map((item)=>item.publicationId),revertedByDomain,activeReleaseId:release.releaseId,restoredFromReleaseId:batch.previousReleaseId},createdAt:rolledBackAt});return{batchId,status:"rolled_back",activeReleaseId:release.releaseId,revertedByDomain};
+    }catch(error){const code=safeCode(error);await this.dependencies.store.updateRepairBatch(batchId,{status:"failed",deploymentStage:"failed",servingPreviousVersion:true,errorCode:code});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.batch.rollback.failed",resourceType:"repair_batch",resourceId:batchId,metadata:{errorCode:code,revertedByDomain},createdAt:new Date().toISOString()});throw error;}
+  }
+  private async recordQualityRun(report:ReleaseQualityGateReport,runId:string=randomUUID()):Promise<RegressionRun>{
+    const timestamp=new Date().toISOString(),run:RegressionRun={runId,status:report.passed?"passed":"failed",totalCases:report.summary.total,passedCases:report.summary.passedCases,report:structuredClone(report) as Record<string,unknown>,createdAt:timestamp,completedAt:timestamp};
+    const existing=await this.dependencies.store.getRegressionRun(runId);
+    return existing===undefined?this.dependencies.store.createRegressionRun(run):this.dependencies.store.updateRegressionRun(run);
+  }
+  private async prepareCatalogRelease(catalog:AnswerCardCatalog,actorId:string,seed:string,kind:string,regressionRunId:string):Promise<ReleaseRecord>{
+    const answerContractRevision=this.dependencies.answerContractRevision;if(answerContractRevision===undefined||!/^[a-f0-9]{40}$/u.test(answerContractRevision))throw new Error("answer_contract_revision_required");
+    const run=await this.dependencies.store.getRegressionRun(regressionRunId);if(run?.status!=="passed")throw new Error("passing_release_quality_gate_required");
+    const timestamp=new Date().toISOString(),revisions=new Map(catalog.domains.map((item)=>[item.domain,item.revision] as const)),professionalRevision=revisions.get("coremail-professional"),generalRevision=revisions.get("presales-general");if(professionalRevision===undefined||generalRevision===undefined)throw new Error("catalog_domain_revision_missing");
+    const cardCatalogHash=hashCatalog(catalog),releaseId=repairReleaseId(timestamp,kind,seed),manifest:ReleaseManifest={schemaVersion:1,releaseId,professionalRevision,generalRevision,answerContractRevision,cardCatalogHash,regressionRunId,approvedBy:[actorId],createdAt:timestamp},release:ReleaseRecord={...manifest,manifest,status:"pending",createdBy:actorId};
+    await this.dependencies.store.createRelease(release);return release;
+  }
+  private async activateCatalogRelease(release:ReleaseRecord,catalog:AnswerCardCatalog):Promise<void>{
+    await this.dependencies.snapshots.publish(release.manifest,catalog);await this.dependencies.store.activateRelease(release.releaseId);
+  }
+  private async activateRecoveryCatalog(actorId:string,seed:string,kind:string):Promise<ReleaseRecord>{
+    const runtime=this.dependencies.runtimeController;if(runtime===undefined)throw new Error("knowledge_runtime_controller_not_configured");const catalog=await this.compile(),timestamp=new Date().toISOString(),run:RegressionRun={runId:randomUUID(),status:"passed",totalCases:0,passedCases:0,report:{kind:"known_good_content_recovery",sourceSeed:seed},createdAt:timestamp,completedAt:timestamp};await this.dependencies.store.createRegressionRun(run);const release=await this.prepareCatalogRelease(catalog,actorId,`${seed}-${timestamp}`,kind,run.runId);await runtime.reload(release.releaseId,catalog);await this.activateCatalogRelease(release,catalog);await runtime.assertAligned(catalog);return release;
+  }
+  private async reconcileRuntime():Promise<Record<string,unknown>>{
+    const runtime=this.dependencies.runtimeController;if(runtime===undefined)throw new Error("knowledge_runtime_controller_not_configured");const catalog=await this.compile();
+    try{const health=await runtime.assertAligned(catalog);return{status:"already_aligned",projects:health.projects};}catch{/* Reload the immutable active release below while the previous engine stays online. */}
+    let active=await this.dependencies.snapshots.active();
+    if(active===undefined){const releaseId=await this.ensureBaselineRelease(catalog,this.workerId,"worker-startup");active=await this.dependencies.snapshots.active();if(active?.releaseId!==releaseId)throw new Error("knowledge_snapshot_activation_mismatch");}
+    if(active.professionalRevision!==catalogRevision(catalog,"coremail-professional")||active.generalRevision!==catalogRevision(catalog,"presales-general"))throw new Error("active_snapshot_repository_revision_mismatch");
+    const health=await runtime.reload(active.releaseId,catalog);return{status:"reloaded",releaseId:active.releaseId,projects:health.projects};
   }
   private async ensureBaselineRelease(catalog:AnswerCardCatalog,actorId:string,seed:string):Promise<string>{
     const active=await this.dependencies.snapshots.active();if(active!==undefined){const known=(await this.dependencies.store.listReleases()).find((item)=>item.releaseId===active.releaseId);if(known===undefined){if(await this.dependencies.store.getRegressionRun(active.regressionRunId)===undefined)await this.dependencies.store.createRegressionRun({runId:active.regressionRunId,status:"passed",totalCases:0,passedCases:0,report:{kind:"imported_active_snapshot"},createdAt:active.createdAt,completedAt:active.createdAt});await this.dependencies.store.createRelease({...active,manifest:active,status:"pending",createdBy:actorId});await this.dependencies.store.activateRelease(active.releaseId);}return active.releaseId;}
@@ -206,14 +342,11 @@ export class KnowledgeOpsWorker {
   private async recordReviewIssue(stored:StoredAnswerReviewCase,payload:AnswerReviewEncryptedPayload|undefined,priority:IssuePriority,category:IssueCategory){const resolved=(await this.dependencies.store.getConversationTurnByRequestId(stored.requestId))?.resolvedQuestion,questionKey=hashText(normalize(resolved??payload?.question??stored.reviewId));const answerCardKey=cardKey(payload?.answerCardMatch);const groupKey=answerCardKey??questionKey;const occurredAt=new Date().toISOString();const issue=await this.dependencies.store.recordIssue({fingerprint:hashText(`${stored.scope??"unknown"}\0${groupKey}\0${category}`),title:`review:${category}:${groupKey.slice(0,12)}`,priority,category,...(stored.scope?{scope:stored.scope}:{}),...(answerCardKey?{answerCardKey}:{}),occurredAt,occurrence:{sourceType:"answer_review",sourceId:stored.reviewId,requestId:stored.requestId,pseudonymousUserId:stored.pseudonymousUserId}});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"issue.review.upsert",resourceType:"issue_case",resourceId:issue.issueId,metadata:{priority:issue.priority,category:issue.category},createdAt:occurredAt});}
   private async reviewConversation(requestId:string){const current=await this.dependencies.store.getConversationTurnByRequestId(requestId);if(current===undefined)return undefined;const parent=current.parentRequestId===undefined?undefined:await this.dependencies.store.getConversationTurnByRequestId(current.parentRequestId);return{current,parent};}
   private async regression(job:OpsJob){
-    const runId=typeof job.payload.runId==="string"?job.payload.runId:randomUUID();const catalog=await this.compile();const cases=await this.dependencies.store.listRegressionCases();
-    const outcomes=cases.filter(x=>x.enabled).map(test=>{const normalized=normalize(test.question);const exact=catalog.cards.find(card=>[card.canonicalQuestion,...card.aliases].some(q=>normalize(q)===normalized));const passed=(test.expectedCardId===undefined||exact?.cardId===test.expectedCardId)&&test.forbiddenClaims.every(x=>!exact?.answerTemplate.includes(x));return{caseId:test.caseId,passed,actualCardId:exact?.cardId};});
-    const passed=outcomes.filter(x=>x.passed).length;const timestamp=new Date().toISOString();const run:RegressionRun={runId,status:passed===outcomes.length?"passed":"failed",totalCases:outcomes.length,passedCases:passed,report:{outcomes},createdAt:timestamp,completedAt:timestamp};
-    const existing=await this.dependencies.store.getRegressionRun(runId);if(existing)await this.dependencies.store.updateRegressionRun(run);else await this.dependencies.store.createRegressionRun(run);return{runId,status:run.status,totalCases:run.totalCases,passedCases:passed};
+    const runner=this.dependencies.releaseQualityRunner;if(runner===undefined)throw new Error("release_quality_runner_not_configured");const runId=typeof job.payload.runId==="string"?job.payload.runId:randomUUID();const run=await this.recordQualityRun(await runner.run(await this.compile()),runId);return{runId,status:run.status,totalCases:run.totalCases,passedCases:run.passedCases};
   }
   private async publish(releaseId:string){const release=(await this.dependencies.store.listReleases()).find(x=>x.releaseId===releaseId);if(!release)throw new Error("release_not_found");const catalog=await this.compile();
     if(catalog.domains.find(x=>x.domain==="coremail-professional")?.revision!==release.professionalRevision||catalog.domains.find(x=>x.domain==="presales-general")?.revision!==release.generalRevision)throw new Error("knowledge_revision_changed");
-    const result=await this.dependencies.snapshots.publish(release.manifest,catalog);await this.dependencies.store.activateRelease(releaseId);return{releaseId,...result};}
+    const runtime=this.dependencies.runtimeController;if(runtime===undefined)throw new Error("knowledge_runtime_controller_not_configured");await runtime.reload(releaseId,catalog);const result=await this.dependencies.snapshots.publish(release.manifest,catalog);await this.dependencies.store.activateRelease(releaseId);await runtime.assertAligned(catalog);return{releaseId,...result};}
   private async writeback(payload:Record<string,unknown>){const repositoryRoot=requireString(payload,"repositoryRoot"),baseRevision=requireString(payload,"baseRevision"),message=requireString(payload,"message");if(!Array.isArray(payload.changes))throw new Error("changes_required");const changes=payload.changes as GitFileChange[];return this.dependencies.git.writeRevision(repositoryRoot,baseRevision,changes,message);}
 }
 function validationCaseDiagnostics(input:{

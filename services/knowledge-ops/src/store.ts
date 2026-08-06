@@ -72,7 +72,7 @@ export interface KnowledgeOpsStore {
   createRepairBatch(value: RepairBatch, publications: readonly RepairPublication[]): Promise<RepairBatchView>;
   getRepairBatch(batchId: string): Promise<RepairBatchView | undefined>;
   listRepairBatches(): Promise<readonly RepairBatch[]>;
-  updateRepairBatch(batchId: string, patch: Partial<Pick<RepairBatch,"status"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>): Promise<RepairBatch | undefined>;
+  updateRepairBatch(batchId: string, patch: Partial<Pick<RepairBatch,"status"|"deploymentStage"|"servingPreviousVersion"|"targetProfessionalRevision"|"targetGeneralRevision"|"qualityRunId"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>): Promise<RepairBatch | undefined>;
   listRepairPublicationsByBatch(batchId: string): Promise<readonly RepairPublication[]>;
   createCardRevision(value: CardRevision): Promise<CardRevision>;
   syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult>;
@@ -215,7 +215,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async getRepairBatch(id:string):Promise<RepairBatchView|undefined>{const batch=this.repairBatches.get(id);return batch===undefined?undefined:{...copy(batch),publications:await this.listRepairPublicationsByBatch(id)};}
   async listRepairBatches(){return newest([...this.repairBatches.values()].map(copy));}
-  async updateRepairBatch(id:string,patch:Partial<Pick<RepairBatch,"status"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const old=this.repairBatches.get(id);if(old===undefined)return undefined;const next={...old,...patch};this.repairBatches.set(id,next);return copy(next);}
+  async updateRepairBatch(id:string,patch:Partial<Pick<RepairBatch,"status"|"deploymentStage"|"servingPreviousVersion"|"targetProfessionalRevision"|"targetGeneralRevision"|"qualityRunId"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const old=this.repairBatches.get(id);if(old===undefined)return undefined;const next={...old,...patch};this.repairBatches.set(id,next);return copy(next);}
   async listRepairPublicationsByBatch(id:string){return [...this.repairPublications.values()].filter((item)=>item.batchId===id).map(copy).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));}
   async createCardRevision(value: CardRevision) { this.revisions.set(value.revisionId, copy(value)); return copy(value); }
   async syncCatalogCardRevision(value: CatalogCardRevisionInput): Promise<CatalogCardSyncResult> {

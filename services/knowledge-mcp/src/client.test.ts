@@ -22,6 +22,12 @@ describe("HttpKnowledgeEngine", () => {
     await expect(engine.health()).rejects.not.toThrow(/top-secret|secret-body/u);
   });
 
+  it("accepts the zero-downtime deployment status returned by the engine",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(JSON.stringify({status:"ready",projects:[{project:"coremail-professional",revision:"a".repeat(40),lexicalStatus:"ready",graphStatus:"ready"},{project:"presales-general",revision:"b".repeat(40),lexicalStatus:"ready",graphStatus:"ready"}],deployment:{status:"reloading",servingPreviousVersion:true,releaseId:"KR-2026-08-TEST",professionalRevision:"c".repeat(40),generalRevision:"b".repeat(40),errorCode:null}}),{status:200})));
+    const result=await new HttpKnowledgeEngine({baseUrl:"http://127.0.0.1:19829",token:"secret",timeoutMs:1_000}).health();
+    expect(result.deployment).toMatchObject({status:"reloading",servingPreviousVersion:true,professionalRevision:"c".repeat(40)});
+  });
+
   it("passes governed search filters through and validates hit metadata", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => new Response(JSON.stringify({
       project: "coremail-professional",

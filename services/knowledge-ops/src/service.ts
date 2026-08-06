@@ -9,16 +9,20 @@ import type {
   FeedbackCaseListView, FeedbackCaseView, IssueCategory, IssueListQuery, IssuePriority, IssueStatus, OpsActor, RegressionCaseRecord,
   KnowledgeRepairDraft, KnowledgeRepairDraftSummary, KnowledgeRepairDraftView, RepairBatch, RepairDraftProposal, RepairPublication,
   RepairValidationRun, RepairValidationRunView, ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
+  KnowledgeRuntimeStatus,
 } from "./types.js";
+import type { KnowledgeRuntimeStatusProvider } from "./runtime-status.js";
 
 export class KnowledgeOpsService {
   constructor(
     private readonly store: KnowledgeOpsStore,
     private readonly cipher: ContentCipher,
     private readonly clock: () => Date = () => new Date(),
+    private readonly runtimeStatusProvider?: KnowledgeRuntimeStatusProvider,
   ) {}
 
   async dashboard(actor: OpsActor) { assertAuthorized(actor,"dashboard:read"); return this.store.dashboard(); }
+  async runtimeStatus(actor:OpsActor):Promise<KnowledgeRuntimeStatus>{assertAuthorized(actor,"release:read");const status=await this.runtimeStatusProvider?.status()??{state:"unavailable" as const,checkedAt:this.timestamp(),servingPreviousVersion:true,engineStatus:"unavailable" as const,errorCode:"knowledge_runtime_status_not_configured"};const activeBatch=(await this.store.listRepairBatches()).find((batch)=>batch.status==="queued"||batch.status==="publishing");return{...status,...(activeBatch===undefined?{}:{activeBatch,servingPreviousVersion:activeBatch.servingPreviousVersion})};}
 
   async conversationContext(actor:OpsActor,source:unknown){assertAuthorized(actor,"conversation:write");const input=conversationContextQuerySchema.parse(source);return this.store.getConversationContext(input.pseudonymousUserId,this.timestamp(),input.maxTurns);}
   async appendConversationTurn(actor:OpsActor,source:unknown){assertAuthorized(actor,"conversation:write");const input=conversationTurnIntakeSchema.parse(source);const turn=await this.store.appendConversationTurn({turnId:input.turnId,requestId:input.requestId,pseudonymousUserId:input.pseudonymousUserId,questionId:input.questionId,rawQuestion:input.rawQuestion,resolvedQuestion:input.resolvedQuestion,contextUsed:input.contextUsed,inheritedSubjects:input.inheritedSubjects,...(input.answerOutline===undefined?{}:{answerOutline:input.answerOutline}),answerStatus:input.answerStatus,...(input.scope===undefined?{}:{scope:input.scope}),...(input.answerCardMatch===undefined?{}:{answerCardMatch:input.answerCardMatch}),answeredAt:input.answeredAt,expiresAt:input.expiresAt,source:input.source,...(input.forceNewSession===undefined?{}:{forceNewSession:input.forceNewSession})});return{turn,conversation:await this.conversationRelation(turn.requestId)};}
@@ -148,7 +152,7 @@ export class KnowledgeOpsService {
     const drafts:KnowledgeRepairDraft[]=[];
     for(const draftId of draftIds){const draft=await this.store.getRepairDraft(draftId);if(draft===undefined)throw new OpsNotFoundError("repair_draft_not_found");if(draft.status!=="ready_to_publish"||draft.targetDomain===undefined||draft.targetPath===undefined||draft.baseGitRevision===undefined)throw new Error("repair_draft_not_ready_for_batch");const latest=(await this.store.listRepairValidations(draftId))[0];if(latest?.status!=="passed")throw new Error("passing_repair_validation_required");drafts.push(draft);}
     const targets=new Set<string>();for(const draft of drafts){const key=`${draft.targetDomain}:${draft.targetPath}`;if(targets.has(key))throw new Error("repair_batch_target_conflict");targets.add(key);}
-    const timestamp=this.timestamp(),batchId=randomUUID(),domains=[...new Set(drafts.map((draft)=>draft.targetDomain!))].sort(),batch:RepairBatch={batchId,status:"queued",itemCount:drafts.length,domains,createdBy:actor.actorId,createdAt:timestamp};
+    const timestamp=this.timestamp(),batchId=randomUUID(),domains=[...new Set(drafts.map((draft)=>draft.targetDomain!))].sort(),batch:RepairBatch={batchId,status:"queued",deploymentStage:"queued",servingPreviousVersion:true,itemCount:drafts.length,domains,createdBy:actor.actorId,createdAt:timestamp};
     const publications:RepairPublication[]=drafts.map((draft)=>({publicationId:randomUUID(),batchId,draftId:draft.draftId,issueId:draft.issueId,status:"pending",targetDomain:draft.targetDomain!,targetPath:draft.targetPath!,baseGitRevision:draft.baseGitRevision!,remoteSyncStatus:"pending",createdBy:actor.actorId,createdAt:timestamp}));
     const created=await this.store.createRepairBatch(batch,publications),job=await this.store.enqueueJob("publish_repair_batch",{batchId});
     await this.audit(actor,"repair.batch.request","repair_batch",batchId,{draftIds:[...draftIds],issueIds:drafts.map((draft)=>draft.issueId),domains,itemCount:drafts.length,jobId:job.jobId});return{batch:created,job};

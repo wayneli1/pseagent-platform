@@ -8,3 +8,5 @@ export * from "./answer-reviewer.js";
 export * from "./repair-agent.js";
 export * from "./repair-evidence.js";
 export * from "./repair-renderer.js";
+export * from "./knowledge-runtime-controller.js";
+export * from "./release-quality-runner.js";

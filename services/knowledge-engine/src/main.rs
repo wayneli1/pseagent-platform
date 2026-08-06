@@ -46,7 +46,7 @@ async fn run() -> Result<(), EngineError> {
         (ProjectKey::CoremailProfessional, professional),
         (ProjectKey::PresalesGeneral, general),
     ])?;
-    let state = HttpState::new(service, token)?;
+    let state = HttpState::new_reloadable(service, token, registry, index_root)?;
     let port = optional_port("KNOWLEDGE_ENGINE_PORT", 19_829)?;
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(address)
