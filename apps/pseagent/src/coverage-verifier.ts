@@ -17,7 +17,7 @@ import {
   coverageVerificationMessages,
 } from "./prompts.js";
 import { normalizeTrailingCitationPlacement } from "./references.js";
-import { missingExplicitScenarioChoiceLabels } from "./comparison-question.js";
+import { missingExplicitComparisonLabels } from "./comparison-question.js";
 
 export interface CoverageEvidenceDocument {
   readonly requirementId: string;
@@ -934,7 +934,7 @@ function validateVerification(
       const retainedAnswer = decision.retainedTargetSegmentIndexes
         .map((targetIndex) => segments[targetIndex]?.text ?? "")
         .join("\n");
-      const missingChoiceLabels = missingExplicitScenarioChoiceLabels(
+      const missingChoiceLabels = missingExplicitComparisonLabels(
         planned.question,
         retainedAnswer,
       );

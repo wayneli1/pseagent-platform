@@ -62,7 +62,7 @@ import {
 } from "./answer-card-policy.js";
 import {
   isDirectComparisonQuestion,
-  missingExplicitScenarioChoiceLabels,
+  missingExplicitComparisonLabels,
 } from "./comparison-question.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
@@ -3004,7 +3004,7 @@ function pendingComparisonSubjectRepairs(
       return [];
     }
     return hasAmbiguousComparisonClaim(result.answer) ||
-        missingExplicitScenarioChoiceLabels(
+        missingExplicitComparisonLabels(
           requirementState.requirement.question,
           result.answer,
         ).length > 0

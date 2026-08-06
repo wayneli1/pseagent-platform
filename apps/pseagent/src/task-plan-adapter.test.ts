@@ -176,6 +176,52 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
     expect(selectionRequirement.queries[0]?.text).toContain("两者关键差异和限制");
   });
 
+  it("keeps explicitly requested comparison dimensions as separate evidence aspects", () => {
+    const question =
+      "Exchange 和 Domino 在接口、权限、运行环境、可迁数据上有什么区别？";
+    const spec: TaskSpec = {
+      subject: "迁移方式对比",
+      entities: [
+        { id: "E1", label: "Exchange", role: "reference", sourceText: "Exchange" },
+        { id: "E2", label: "Domino", role: "reference", sourceText: "Domino" },
+      ],
+      deliverables: [{
+        id: "D1",
+        label: "迁移方式区别",
+        kind: "comparison",
+        required: true,
+        sourceText: question.replace(/？$/u, ""),
+        obligations: [{
+          id: "O1",
+          label: "迁移方式区别",
+          targetEntityIds: ["E1", "E2"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question.replace(/？$/u, ""),
+        }],
+      }],
+    };
+
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: {
+        ...resolvedQuestion,
+        rawQuestion: question,
+        standaloneQuestion: question,
+      },
+      taskSpec: spec,
+      guardResult: passingGuard,
+    });
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+
+    expect(result.plan.requirements[0]?.evidenceAspects.map((aspect) => aspect.label))
+      .toEqual(["接口", "权限", "运行环境", "可迁数据"]);
+    expect(result.plan.requirements[0]?.queries[0]?.aspectIds)
+      .toEqual(["A1", "A2", "A3", "A4"]);
+  });
+
   it("maps the current general scope to the general knowledge domain", () => {
     const spec = taskSpec();
     spec.deliverables[0]!.obligations[0]!.required = false;

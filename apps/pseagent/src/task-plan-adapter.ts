@@ -172,6 +172,27 @@ export function adaptTaskSpecToKnowledgePlan(
       selectionContext,
       safeLabel,
     );
+    const comparisonDimensions = explicitComparisonDimensions(
+      obligationContext,
+    );
+    const evidenceAspects = comparisonDimensions.length >= 2
+      ? comparisonDimensions.map((dimension, dimensionIndex) => ({
+          id: `A${dimensionIndex + 1}` as KnowledgePlan["requirements"][number]["evidenceAspects"][number]["id"],
+          label: dimension,
+          terms: buildAspectTerms(entitySourceTexts, dimension) ?? [dimension],
+        }))
+      : terms === undefined
+        ? undefined
+        : [{
+            id: "A1" as const,
+            label: aspectLabel(
+              obligationSourceText,
+              deliverableSourceText,
+              entitySourceTexts,
+            ),
+            terms,
+          }];
+    const aspectIds = evidenceAspects?.map((aspect) => aspect.id) ?? [];
     const queries = [primaryQuery];
     if (safeLabel !== "") {
       const expanded = buildSemanticQuery([primaryQuery, safeLabel]);
@@ -184,7 +205,7 @@ export function adaptTaskSpecToKnowledgePlan(
       }
     }
     if (
-      terms === undefined ||
+      evidenceAspects === undefined ||
       characterLength(requirementQuestion) === 0 ||
       characterLength(requirementQuestion) > 1_024 ||
       characterLength(primaryQuery) > MAX_QUERY_CHARACTERS
@@ -201,18 +222,10 @@ export function adaptTaskSpecToKnowledgePlan(
       evidenceMode: item.obligation.evidencePolicy === "direct"
         ? "direct_only"
         : "synthesis_allowed",
-      evidenceAspects: [{
-        id: "A1",
-        label: aspectLabel(
-          obligationSourceText,
-          deliverableSourceText,
-          entitySourceTexts,
-        ),
-        terms,
-      }],
+      evidenceAspects,
       queries: queries.map((query) => ({
         text: query,
-        aspectIds: ["A1"],
+        aspectIds,
       })),
     });
   }
@@ -240,6 +253,22 @@ export function adaptTaskSpecToKnowledgePlan(
       ...taskEvidenceConditionFor(obligation),
     })),
   };
+}
+
+function explicitComparisonDimensions(value: string): string[] {
+  const list = value.match(
+    /在(?<list>[^？?。！!]{2,180}?)(?:上|方面)(?:有|存在)?(?:什么|哪些|何种)?(?:区别|差异|不同)/u,
+  )?.groups?.list;
+  if (list === undefined) return [];
+  const dimensions = stableUniqueText(
+    list.split(/[、，,；;]|\s+(?:和|与|及)\s+/u)
+      .map((dimension) => dimension.trim())
+      .filter((dimension) =>
+        dimension.length > 0 &&
+        characterLength(dimension) <= 64
+      ),
+  );
+  return dimensions.length >= 2 && dimensions.length <= 8 ? dimensions : [];
 }
 
 function buildAspectTerms(

@@ -1633,7 +1633,7 @@ describe("runKnowledgeAgent", () => {
     });
     const model = scriptedAgentModel([
       read("R1", "wiki/cases/alpha-project.md"),
-      final("complete", "正式对比页确认了主要差异 [1]", [1]),
+      final("complete", "正式对比页确认了 Alpha 与 Beta 的主要差异 [1]", [1]),
     ]);
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
@@ -1677,7 +1677,7 @@ describe("runKnowledgeAgent", () => {
     const model = scriptedAgentModel([
       read("R1", "wiki/comparison/alpha-vs-beta.md"),
       final("none"),
-      final("complete", "正式对比页确认了主要差异 [1]", [1]),
+      final("complete", "正式对比页确认了 Alpha 与 Beta 的主要差异 [1]", [1]),
     ]);
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
@@ -1789,6 +1789,48 @@ describe("runKnowledgeAgent", () => {
     expect(result.answer).toContain("CNAME");
   });
 
+  it("rewrites a direct technical comparison that omits one named side", async () => {
+    const plan: KnowledgePlan = {
+      subject: "迁移对比",
+      requirements: [{
+        id: "R1",
+        question: "Exchange 和 Domino 在接口、权限和运行环境上有什么区别",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "两种迁移方式的区别",
+          terms: ["Exchange", "Domino", "接口", "权限", "运行环境"],
+        }],
+        queries: [{ text: "Exchange Domino 迁移对比", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Exchange Domino 迁移对比": [{
+          path: "wiki/comparison/exchange-vs-domino.md",
+          title: "Exchange 与 Domino 迁移对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/exchange-vs-domino.md"),
+      final("complete", "Domino 依赖本地客户端和 ACL [1]。", [1]),
+      final(
+        "complete",
+        "Exchange 使用服务接口和模拟用户权限 [1]。\nDomino 依赖本地客户端和 ACL [1]。",
+        [1],
+      ),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "comparison_subject_repair_required",
+    );
+    expect(result.answer).toContain("Exchange");
+  });
+
   it("accepts comparison bullets under an explicit object heading", async () => {
     const plan: KnowledgePlan = {
       subject: "产品对比",
@@ -1814,7 +1856,7 @@ describe("runKnowledgeAgent", () => {
     });
     const model = scriptedAgentModel([
       read("R1", "wiki/comparison/alpha-vs-beta.md"),
-      final("complete", "Alpha：\n- 支持多中心部署 [1]。", [1]),
+      final("complete", "Alpha：\n- 支持多中心部署 [1]。\nBeta：\n- 不支持多中心部署 [1]。", [1]),
     ]);
 
     const result = await runKnowledgeAgent(agentInput(model, session, plan));
@@ -1886,8 +1928,8 @@ describe("runKnowledgeAgent", () => {
     });
     const model = scriptedAgentModel([
       read("R1", "wiki/comparison/alpha-vs-beta.md"),
-      final("complete", "第一版差异结论 [1]", [1]),
-      final("complete", "保守差异结论与边界 [1]", [1]),
+      final("complete", "Alpha 与 Beta 的第一版差异结论 [1]", [1]),
+      final("complete", "Alpha 与 Beta 的保守差异结论与边界 [1]", [1]),
     ]);
     const verifyCoverage = vi.fn()
       .mockImplementationOnce(async (input: CoverageVerifierInput) =>
