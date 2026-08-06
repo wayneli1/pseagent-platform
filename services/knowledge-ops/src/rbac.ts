@@ -10,6 +10,7 @@ export type OpsAction =
   | "feedback:ingest"
   | "feedback:read"
   | "feedback:triage"
+  | "conversation:write"
   | "issue:read"
   | "issue:triage"
   | "issue:rebuild"
@@ -34,7 +35,7 @@ const GLOBAL_ACTIONS: Partial<Record<OpsRole, readonly OpsAction[]>> = {
   operator: ["dashboard:read", "answer_review:read", "answer_review:triage", "feedback:read", "feedback:triage", "issue:read", "issue:triage", "card:read", "regression:read", "job:read"],
   release_manager: ["dashboard:read", "card:read", "regression:read", "regression:run", "release:read", "release:publish", "release:rollback", "job:read", "audit:read"],
   admin: ["dashboard:read", "answer_review:read", "answer_review:triage", "feedback:read", "feedback:triage", "issue:read", "issue:triage", "issue:rebuild", "repair:read", "repair:edit", "repair:validate", "repair:publish", "repair:rollback", "card:read", "card:edit", "card:review", "regression:read", "regression:run", "release:read", "release:publish", "release:rollback", "audit:read", "job:read"],
-  service: ["answer_review:ingest", "feedback:ingest"],
+  service: ["answer_review:ingest", "feedback:ingest", "conversation:write"],
 };
 
 export function assertAuthorized(

@@ -22,6 +22,9 @@ export class KnowledgeOpsApi {
       if(!actor)return {status:401,body:{error:"authentication_required"}};
       if(request.method==="POST"&&pathname==="/v1/auth/logout"){this.authorizer.logout?.(credential);return ok({status:"logged_out"});}
       if(request.method==="GET"&&pathname==="/v1/dashboard")return ok(await this.service.dashboard(actor));
+      if(request.method==="POST"&&pathname==="/v1/conversations/context")return ok(await this.service.conversationContext(actor,request.body));
+      if(request.method==="POST"&&pathname==="/v1/conversations/turns")return created(await this.service.appendConversationTurn(actor,request.body));
+      if(request.method==="POST"&&pathname==="/v1/conversations/end")return ok(await this.service.endConversation(actor,request.body));
       if(request.method==="POST"&&pathname==="/v1/answer-reviews")return created(await this.service.ingestAnswerReview(actor,request.body));
       if(request.method==="GET"&&pathname==="/v1/answer-reviews")return ok(await this.service.listAnswerReviews(actor));
       if(segments[0]==="v1"&&segments[1]==="answer-reviews"&&segments[2]){

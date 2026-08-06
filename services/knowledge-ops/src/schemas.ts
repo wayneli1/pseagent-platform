@@ -12,11 +12,48 @@ export const adminLoginSchema=z.object({
 }).strict();
 
 const isoTimestamp = z.string().datetime({ offset: true });
+const pseudonymousUserIdSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+
+export const conversationContextQuerySchema = z.object({
+  pseudonymousUserId: pseudonymousUserIdSchema,
+  maxTurns: z.number().int().min(1).max(20).default(6),
+}).strict();
+
+export const conversationTurnIntakeSchema = z.object({
+  turnId: z.string().uuid(),
+  requestId: z.string().uuid(),
+  pseudonymousUserId: pseudonymousUserIdSchema,
+  questionId: z.number().int().positive(),
+  rawQuestion: z.string().trim().min(1).max(20_000),
+  resolvedQuestion: z.string().trim().min(1).max(20_000),
+  contextUsed: z.boolean(),
+  inheritedSubjects: z.array(z.string().trim().min(1).max(128)).max(16),
+  answerOutline: z.string().trim().min(1).max(1_500).optional(),
+  answerStatus: z.string().trim().min(1).max(100),
+  scope: z.string().trim().max(500).optional(),
+  answerCardMatch: z.record(z.string(), z.unknown()).optional(),
+  answeredAt: isoTimestamp,
+  expiresAt: isoTimestamp,
+  source: z.literal("lunkr_direct"),
+}).strict().superRefine((value, context) => {
+  if (Date.parse(value.expiresAt) <= Date.parse(value.answeredAt)) {
+    context.addIssue({ code: "custom", path: ["expiresAt"], message: "conversation_expiry_must_follow_answer" });
+  }
+  if (!value.contextUsed && value.inheritedSubjects.length > 0) {
+    context.addIssue({ code: "custom", path: ["inheritedSubjects"], message: "unused_context_has_inherited_subjects" });
+  }
+});
+
+export const conversationEndSchema = z.object({
+  pseudonymousUserId: pseudonymousUserIdSchema,
+  reason: z.enum(["manual", "idle"]),
+  endedAt: isoTimestamp,
+}).strict();
 
 export const feedbackIntakeSchema = z.object({
   caseId: z.string().uuid(),
   requestId: z.string().uuid(),
-  pseudonymousUserId: z.string().regex(/^[a-f0-9]{64}$/u),
+  pseudonymousUserId: pseudonymousUserIdSchema,
   userDisplayName: z.string().trim().min(1).max(128).optional(),
   questionId: z.number().int().positive(),
   classification: feedbackClassificationSchema,
@@ -65,7 +102,7 @@ const answerReviewReferenceSchema = z.object({
 export const answerReviewIntakeSchema = z.object({
   reviewId: z.string().uuid(),
   requestId: z.string().uuid(),
-  pseudonymousUserId: z.string().regex(/^[a-f0-9]{64}$/u),
+  pseudonymousUserId: pseudonymousUserIdSchema,
   userDisplayName: z.string().trim().min(1).max(128).optional(),
   questionId: z.number().int().positive(),
   question: z.string().trim().min(1).max(20_000),

@@ -35,14 +35,14 @@ Lunkr 在线回答已经能用最近问题和回答提纲解析“第二点怎�
 
 新增 `conversation_turns`：
 
-- `turn_id`、`session_id`、`request_id`、`question_id`；
+- `turn_id`、`session_id`、会话内稳定递增的 `turn_index`、`request_id`、展示用 `question_id`；
 - `parent_turn_id`、`parent_request_id`；
 - `raw_question`、`resolved_question`、`context_used`；
 - `inherited_subjects`、`answer_outline`；
 - `answer_status`、`scope`、`answer_card_match`；
 - `answered_at`、`created_at`。
 
-`request_id` 全局唯一；`session_id + question_id` 唯一。活动会话按伪匿名用户查询并在事务中续期。过期会话先标记为 `idle`，再创建新会话。
+`request_id` 全局唯一，`session_id + turn_index` 唯一。`question_id` 允许在 Bridge 重启后重新编号，不承担数据库唯一性。活动会话按伪匿名用户查询并在事务中续期。过期会话先标记为 `idle`，再创建新会话。
 
 ## 5. 在线链路
 

@@ -24,6 +24,69 @@ export interface OpsActor {
   readonly roles: readonly OpsRole[];
 }
 
+export type ConversationEndReason = "manual" | "idle";
+
+export interface ConversationSession {
+  readonly sessionId: string;
+  readonly pseudonymousUserId: string;
+  readonly source: "lunkr_direct";
+  readonly startedAt: string;
+  readonly lastActivityAt: string;
+  readonly expiresAt: string;
+  readonly endedAt?: string;
+  readonly endReason?: ConversationEndReason;
+}
+
+export interface ConversationTurn {
+  readonly turnId: string;
+  readonly sessionId: string;
+  readonly turnIndex: number;
+  readonly requestId: string;
+  readonly questionId: number;
+  readonly parentTurnId?: string;
+  readonly parentRequestId?: string;
+  readonly rawQuestion: string;
+  readonly resolvedQuestion: string;
+  readonly contextUsed: boolean;
+  readonly inheritedSubjects: readonly string[];
+  readonly answerOutline?: string;
+  readonly answerStatus: string;
+  readonly scope?: string;
+  readonly answerCardMatch?: Record<string, unknown>;
+  readonly answeredAt: string;
+  readonly createdAt: string;
+}
+
+export interface ConversationTurnInput {
+  readonly turnId: string;
+  readonly requestId: string;
+  readonly pseudonymousUserId: string;
+  readonly questionId: number;
+  readonly rawQuestion: string;
+  readonly resolvedQuestion: string;
+  readonly contextUsed: boolean;
+  readonly inheritedSubjects: readonly string[];
+  readonly answerOutline?: string;
+  readonly answerStatus: string;
+  readonly scope?: string;
+  readonly answerCardMatch?: Record<string, unknown>;
+  readonly answeredAt: string;
+  readonly expiresAt: string;
+  readonly source: "lunkr_direct";
+}
+
+export interface ConversationContextView {
+  readonly session?: ConversationSession;
+  readonly recentTurns: readonly ConversationTurn[];
+}
+
+export interface ConversationRelationView {
+  readonly session: ConversationSession;
+  readonly current: ConversationTurn;
+  readonly parent?: ConversationTurn;
+  readonly chain: readonly ConversationTurn[];
+}
+
 export interface EncryptedPayload {
   readonly algorithm: "aes-256-gcm";
   readonly keyVersion: number;
@@ -76,10 +139,12 @@ export interface FeedbackCaseView extends Omit<StoredFeedbackCase, "encryptedPay
   readonly questionId: number;
   readonly answeredAt: string;
   readonly answerCardMatch?: Record<string, unknown>;
+  readonly conversation?: ConversationRelationView;
 }
 
 export interface FeedbackCaseListView extends Omit<StoredFeedbackCase, "encryptedPayload"> {
   readonly userDisplayName?: string;
+  readonly contextUsed?: boolean;
 }
 
 export interface AnswerReviewReference {
@@ -144,6 +209,8 @@ export interface StoredAnswerReviewCase {
 export interface AnswerReviewCaseListView extends Omit<StoredAnswerReviewCase, "encryptedPayload"> {
   readonly userDisplayName?: string;
   readonly questionPreview: string;
+  readonly rawQuestionPreview?: string;
+  readonly contextUsed?: boolean;
 }
 
 export interface AnswerReviewCaseView extends Omit<StoredAnswerReviewCase, "encryptedPayload"> {
@@ -156,6 +223,7 @@ export interface AnswerReviewCaseView extends Omit<StoredAnswerReviewCase, "encr
   readonly answerCardMatch?: AnswerReviewEncryptedPayload["answerCardMatch"];
   readonly answerCardActivation?: AnswerReviewEncryptedPayload["answerCardActivation"];
   readonly result?: AnswerReviewEncryptedPayload["result"];
+  readonly conversation?: ConversationRelationView;
 }
 
 export interface CardRevision {

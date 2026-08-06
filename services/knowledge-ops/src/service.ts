@@ -2,10 +2,10 @@ import { createHash,randomUUID } from "node:crypto";
 import { answerCardSchema, releaseManifestSchema, type KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import { ContentCipher } from "./crypto.js";
 import { assertAuthorized } from "./rbac.js";
-import { answerReviewIntakeSchema, feedbackIntakeSchema, releaseQualityReportImportSchema, repairProposalSchema } from "./schemas.js";
+import { answerReviewIntakeSchema, conversationContextQuerySchema, conversationEndSchema, conversationTurnIntakeSchema, feedbackIntakeSchema, releaseQualityReportImportSchema, repairProposalSchema } from "./schemas.js";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision,
+  AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision, ConversationRelationView,
   FeedbackCaseListView, FeedbackCaseView, IssueCategory, IssueListQuery, IssuePriority, IssueStatus, OpsActor, RegressionCaseRecord,
   KnowledgeRepairDraft, KnowledgeRepairDraftSummary, KnowledgeRepairDraftView, RepairBatch, RepairDraftProposal, RepairPublication,
   RepairValidationRun, RepairValidationRunView, ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
@@ -19,6 +19,10 @@ export class KnowledgeOpsService {
   ) {}
 
   async dashboard(actor: OpsActor) { assertAuthorized(actor,"dashboard:read"); return this.store.dashboard(); }
+
+  async conversationContext(actor:OpsActor,source:unknown){assertAuthorized(actor,"conversation:write");const input=conversationContextQuerySchema.parse(source);return this.store.getConversationContext(input.pseudonymousUserId,this.timestamp(),input.maxTurns);}
+  async appendConversationTurn(actor:OpsActor,source:unknown){assertAuthorized(actor,"conversation:write");const input=conversationTurnIntakeSchema.parse(source);const turn=await this.store.appendConversationTurn({turnId:input.turnId,requestId:input.requestId,pseudonymousUserId:input.pseudonymousUserId,questionId:input.questionId,rawQuestion:input.rawQuestion,resolvedQuestion:input.resolvedQuestion,contextUsed:input.contextUsed,inheritedSubjects:input.inheritedSubjects,...(input.answerOutline===undefined?{}:{answerOutline:input.answerOutline}),answerStatus:input.answerStatus,...(input.scope===undefined?{}:{scope:input.scope}),...(input.answerCardMatch===undefined?{}:{answerCardMatch:input.answerCardMatch}),answeredAt:input.answeredAt,expiresAt:input.expiresAt,source:input.source});return{turn,conversation:await this.conversationRelation(turn.requestId)};}
+  async endConversation(actor:OpsActor,source:unknown){assertAuthorized(actor,"conversation:write");const input=conversationEndSchema.parse(source);return{session:await this.store.endConversation(input.pseudonymousUserId,input.reason,input.endedAt)};}
 
   async ingestAnswerReview(actor:OpsActor,source:unknown){
     assertAuthorized(actor,"answer_review:ingest");const intake=answerReviewIntakeSchema.parse(source);const timestamp=this.timestamp();
@@ -35,14 +39,14 @@ export class KnowledgeOpsService {
     return{reviewId:result.review.reviewId,processingStatus:result.review.processingStatus,enqueued:result.enqueued};
   }
   async listAnswerReviews(actor:OpsActor):Promise<readonly AnswerReviewCaseListView[]>{
-    assertAuthorized(actor,"answer_review:read");return(await this.store.listAnswerReviews()).map((stored)=>{
-      const content=this.cipher.decrypt<{question:string;userDisplayName?:string}>(stored.encryptedPayload);const{encryptedPayload:_secret,...metadata}=stored;
-      return{...metadata,questionPreview:[...content.question].slice(0,160).join(""),...(content.userDisplayName?{userDisplayName:content.userDisplayName}:{})};
-    });
+    assertAuthorized(actor,"answer_review:read");return Promise.all((await this.store.listAnswerReviews()).map(async(stored)=>{
+      const content=this.cipher.decrypt<{question:string;userDisplayName?:string}>(stored.encryptedPayload),turn=await this.store.getConversationTurnByRequestId(stored.requestId);const{encryptedPayload:_secret,...metadata}=stored;
+      const preview=turn?.resolvedQuestion??content.question;return{...metadata,questionPreview:[...preview].slice(0,160).join(""),...(turn?.contextUsed?{rawQuestionPreview:[...turn.rawQuestion].slice(0,160).join(""),contextUsed:true}:{}),...(content.userDisplayName?{userDisplayName:content.userDisplayName}:{})};
+    }));
   }
   async answerReviewDetail(actor:OpsActor,reviewId:string):Promise<AnswerReviewCaseView|undefined>{
     assertAuthorized(actor,"answer_review:read");const stored=await this.store.getAnswerReview(reviewId);if(stored===undefined)return undefined;
-    const content=this.cipher.decrypt<AnswerReviewEncryptedPayload>(stored.encryptedPayload);const{encryptedPayload:_secret,...metadata}=stored;return{...metadata,...content};
+    const content=this.cipher.decrypt<AnswerReviewEncryptedPayload>(stored.encryptedPayload),conversation=await this.conversationRelation(stored.requestId);const{encryptedPayload:_secret,...metadata}=stored;return{...metadata,...content,...(conversation===undefined?{}:{conversation})};
   }
   async triageAnswerReview(actor:OpsActor,reviewId:string,workflowStatus:StoredAnswerReviewCase["workflowStatus"]){
     assertAuthorized(actor,"answer_review:triage");const before=await this.store.getAnswerReview(reviewId);const value=await this.store.updateAnswerReviewWorkflow(reviewId,workflowStatus);
@@ -75,17 +79,17 @@ export class KnowledgeOpsService {
 
   async listFeedback(actor: OpsActor): Promise<readonly FeedbackCaseListView[]> {
     assertAuthorized(actor,"feedback:read");
-    return (await this.store.listFeedback()).map((stored) => {
+    return Promise.all((await this.store.listFeedback()).map(async(stored) => {
       const content=this.cipher.decrypt<{userDisplayName?:string}>(stored.encryptedPayload);
-      const {encryptedPayload:_secret,...metadata}=stored;
-      return {...metadata,...(content.userDisplayName?{userDisplayName:content.userDisplayName}:{})};
-    });
+      const {encryptedPayload:_secret,...metadata}=stored,turn=await this.store.getConversationTurnByRequestId(stored.requestId);
+      return {...metadata,...(turn?.contextUsed?{contextUsed:true}:{}),...(content.userDisplayName?{userDisplayName:content.userDisplayName}:{})};
+    }));
   }
   async feedbackDetail(actor: OpsActor, caseId: string): Promise<FeedbackCaseView|undefined> {
     assertAuthorized(actor,"feedback:read"); const stored=await this.store.getFeedback(caseId); if(!stored)return undefined;
     const content=this.cipher.decrypt<{question:string;answer:string;comment:string;proposedAnswer?:string;userDisplayName?:string;questionId:number;answeredAt:string;answerCardMatch?:Record<string,unknown>}>(stored.encryptedPayload);
     const {encryptedPayload:_secret,...metadata}=stored;
-    return {...metadata,...content};
+    const conversation=await this.conversationRelation(stored.requestId);return {...metadata,...content,...(conversation===undefined?{}:{conversation})};
   }
   async triageFeedback(actor: OpsActor,caseId:string,patch:Pick<Partial<StoredFeedbackCase>,"status"|"classification">) {
     assertAuthorized(actor,"feedback:triage");const before=await this.store.getFeedback(caseId);
@@ -205,6 +209,7 @@ export class KnowledgeOpsService {
   async auditEvents(actor:OpsActor){assertAuthorized(actor,"audit:read");return this.store.listAudit();}
 
   private timestamp(){return this.clock().toISOString();}
+  private async conversationRelation(requestId:string):Promise<ConversationRelationView|undefined>{const current=await this.store.getConversationTurnByRequestId(requestId);if(current===undefined)return undefined;const session=await this.store.getConversationSession(current.sessionId);if(session===undefined)return undefined;const chain=(await this.store.listConversationTurns(current.sessionId,50)).filter((item)=>item.turnIndex<=current.turnIndex),parent=current.parentRequestId===undefined?undefined:await this.store.getConversationTurnByRequestId(current.parentRequestId);return{session,current,...(parent===undefined?{}:{parent}),chain};}
   private repairDraftView(draft:KnowledgeRepairDraft):KnowledgeRepairDraftView{const payload=this.cipher.decrypt<{proposal?:RepairDraftProposal;evidenceSummary?:KnowledgeRepairDraftView["evidenceSummary"];evidenceIssues?:readonly string[]}>(draft.encryptedPayload),evidenceSummary=payload.evidenceSummary??(payload.evidenceIssues===undefined?undefined:{loadedCount:0,revalidatedReferenceCount:0,issues:payload.evidenceIssues});return{...repairSummary(draft),...(payload.proposal?{proposal:payload.proposal}:{}),...(evidenceSummary===undefined?{}:{evidenceSummary})};}
   private repairValidationView(run:RepairValidationRun):RepairValidationRunView{const payload=this.cipher.decrypt<{result?:Record<string,unknown>}>(run.encryptedPayload);return{...validationSummary(run),...(payload.result?{result:payload.result}:{})};}
   private recordFeedbackIssue(stored:StoredFeedbackCase,payload:FeedbackIssuePayload,linkedReview:StoredAnswerReviewCase|undefined){const conflict=linkedReview?.verdict==="pass";const category=conflict?"judgement_conflict" as const:feedbackIssueCategory(stored.classification as Exclude<StoredFeedbackCase["classification"],"useful">);const priority=conflict||stored.classification==="incorrect"?"p1" as const:"p2" as const;const cardKey=answerCardKey(payload.answerCardMatch),questionKey=hash(normalizeQuestion(payload.question)),groupKey=cardKey??questionKey;return this.store.recordIssue({fingerprint:hash(`${stored.scope??"unknown"}\0${groupKey}\0${category}`),title:`feedback:${category}:${groupKey.slice(0,12)}`,priority,category,...(stored.scope?{scope:stored.scope}:{}),...(cardKey?{answerCardKey:cardKey}:{}),occurredAt:stored.createdAt,occurrence:{sourceType:"feedback",sourceId:stored.caseId,requestId:stored.requestId,pseudonymousUserId:stored.pseudonymousUserId}});}

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  ApprovalRecord, AuditEvent, CatalogCardRevisionInput, CatalogCardSyncResult, CardRevision, DashboardSummary, OpsJob, OpsJobType,
+  ApprovalRecord, AuditEvent, CatalogCardRevisionInput, CatalogCardSyncResult, CardRevision, ConversationContextView, ConversationEndReason, ConversationSession, ConversationTurn, ConversationTurnInput, DashboardSummary, OpsJob, OpsJobType,
   IssueCase, IssueCaseSummary, IssueListQuery, IssueOccurrence, IssuePage, IssueRecordInput, IssueStatus,
   KnowledgeRepairDraft, RepairBatch, RepairBatchView, RepairPublication, RepairValidationRun, RegressionCaseRecord, RegressionRun, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
   StoredAnswerReviewCase,
@@ -36,6 +36,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       "006_single_admin_workflow.sql",
       "007_knowledge_repair_workflow.sql",
       "008_repair_batches.sql",
+      "009_conversation_context.sql",
     ]) {
       if (applied.has(fileName)) continue;
       const migration = await readFile(fileURLToPath(
@@ -52,6 +53,36 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     try { await this.pool.query("SELECT 1"); return true; } catch { return false; }
   }
   async close(): Promise<void> { await this.pool.end(); }
+
+  async getConversationContext(pseudonymousUserId:string,at:string,maxTurns:number):Promise<ConversationContextView>{
+    const session=optional<ConversationSession>(await this.pool.query(`SELECT * FROM conversation_sessions
+      WHERE pseudonymous_user_id=$1 AND ended_at IS NULL AND expires_at>$2 ORDER BY started_at DESC LIMIT 1`,[pseudonymousUserId,at]));
+    if(session===undefined)return{recentTurns:[]};return{session,recentTurns:await this.listConversationTurns(session.sessionId,maxTurns)};
+  }
+  async appendConversationTurn(v:ConversationTurnInput):Promise<ConversationTurn>{
+    const client=await this.pool.connect();
+    try{
+      await client.query("BEGIN");await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[`conversation:${v.pseudonymousUserId}`]);
+      const duplicate=optional<ConversationTurn>(await client.query("SELECT * FROM conversation_turns WHERE request_id=$1",[v.requestId]));if(duplicate!==undefined){await client.query("COMMIT");return duplicate;}
+      await client.query(`UPDATE conversation_sessions SET ended_at=$2,end_reason='idle'
+        WHERE pseudonymous_user_id=$1 AND ended_at IS NULL AND expires_at<=$2`,[v.pseudonymousUserId,v.answeredAt]);
+      let session=optional<ConversationSession>(await client.query(`SELECT * FROM conversation_sessions
+        WHERE pseudonymous_user_id=$1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1 FOR UPDATE`,[v.pseudonymousUserId]));
+      if(session===undefined){session=map<ConversationSession>(await one(client,`INSERT INTO conversation_sessions
+        (session_id,pseudonymous_user_id,source,started_at,last_activity_at,expires_at) VALUES ($1,$2,$3,$4,$4,$5) RETURNING *`,[randomUUID(),v.pseudonymousUserId,v.source,v.answeredAt,v.expiresAt]));}
+      const latest=optional<ConversationTurn>(await client.query("SELECT * FROM conversation_turns WHERE session_id=$1 ORDER BY turn_index DESC LIMIT 1 FOR UPDATE",[session.sessionId]));
+      const parent=v.contextUsed?latest:undefined,turnIndex=(latest?.turnIndex??0)+1;
+      const turn=map<ConversationTurn>(await one(client,`INSERT INTO conversation_turns
+        (turn_id,session_id,turn_index,request_id,question_id,parent_turn_id,parent_request_id,raw_question,resolved_question,context_used,inherited_subjects,answer_outline,answer_status,scope,answer_card_match,answered_at,created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16) RETURNING *`,[v.turnId,session.sessionId,turnIndex,v.requestId,v.questionId,parent?.turnId??null,parent?.requestId??null,v.rawQuestion,v.resolvedQuestion,v.contextUsed,JSON.stringify(v.inheritedSubjects),v.answerOutline??null,v.answerStatus,v.scope??null,v.answerCardMatch??null,v.answeredAt]));
+      await client.query("UPDATE conversation_sessions SET last_activity_at=$2,expires_at=$3 WHERE session_id=$1",[session.sessionId,v.answeredAt,v.expiresAt]);await client.query("COMMIT");return turn;
+    }catch(error){await safeRollback(client);throw error;}finally{client.release();}
+  }
+  async endConversation(pseudonymousUserId:string,reason:ConversationEndReason,endedAt:string){return optional<ConversationSession>(await this.pool.query(`UPDATE conversation_sessions SET ended_at=$3,end_reason=$2
+    WHERE session_id=(SELECT session_id FROM conversation_sessions WHERE pseudonymous_user_id=$1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1) RETURNING *`,[pseudonymousUserId,reason,endedAt]));}
+  async getConversationTurnByRequestId(requestId:string){return optional<ConversationTurn>(await this.pool.query("SELECT * FROM conversation_turns WHERE request_id=$1",[requestId]));}
+  async listConversationTurns(sessionId:string,limit:number){const result=await this.pool.query(`SELECT * FROM (SELECT * FROM conversation_turns WHERE session_id=$1 ORDER BY turn_index DESC LIMIT $2) recent ORDER BY turn_index`,[sessionId,limit]);return rows<ConversationTurn>(result);}
+  async getConversationSession(sessionId:string){return optional<ConversationSession>(await this.pool.query("SELECT * FROM conversation_sessions WHERE session_id=$1",[sessionId]));}
 
   async insertAnswerReviewAndEnqueue(v:StoredAnswerReviewCase):Promise<{readonly review:StoredAnswerReviewCase;readonly enqueued:boolean}>{
     const client=await this.pool.connect();

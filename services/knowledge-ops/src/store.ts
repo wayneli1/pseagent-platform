@@ -6,6 +6,11 @@ import type {
   CatalogCardRevisionInput,
   CatalogCardSyncResult,
   CardRevision,
+  ConversationContextView,
+  ConversationEndReason,
+  ConversationSession,
+  ConversationTurn,
+  ConversationTurnInput,
   DashboardSummary,
   IssueCase,
   IssueCaseSummary,
@@ -29,6 +34,12 @@ import type {
 } from "./types.js";
 
 export interface KnowledgeOpsStore {
+  getConversationContext(pseudonymousUserId: string, at: string, maxTurns: number): Promise<ConversationContextView>;
+  appendConversationTurn(value: ConversationTurnInput): Promise<ConversationTurn>;
+  endConversation(pseudonymousUserId: string, reason: ConversationEndReason, endedAt: string): Promise<ConversationSession | undefined>;
+  getConversationTurnByRequestId(requestId: string): Promise<ConversationTurn | undefined>;
+  listConversationTurns(sessionId: string, limit: number): Promise<readonly ConversationTurn[]>;
+  getConversationSession(sessionId: string): Promise<ConversationSession | undefined>;
   insertAnswerReviewAndEnqueue(value: StoredAnswerReviewCase): Promise<{ readonly review: StoredAnswerReviewCase; readonly enqueued: boolean }>;
   listAnswerReviews(): Promise<readonly StoredAnswerReviewCase[]>;
   getAnswerReview(reviewId: string): Promise<StoredAnswerReviewCase | undefined>;
@@ -94,6 +105,8 @@ export interface KnowledgeOpsStore {
 }
 
 export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
+  private readonly conversationSessions = new Map<string, ConversationSession>();
+  private readonly conversationTurns = new Map<string, ConversationTurn>();
   private readonly answerReviews = new Map<string, StoredAnswerReviewCase>();
   private readonly feedback = new Map<string, StoredFeedbackCase>();
   private readonly issues = new Map<string, IssueCase>();
@@ -111,6 +124,25 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   private readonly releases = new Map<string, ReleaseRecord>();
   private readonly audit: AuditEvent[] = [];
   private readonly resourceLocks = new Map<string,Promise<void>>();
+
+  async getConversationContext(pseudonymousUserId:string,at:string,maxTurns:number):Promise<ConversationContextView>{
+    const session=[...this.conversationSessions.values()].find((item)=>item.pseudonymousUserId===pseudonymousUserId&&item.endedAt===undefined&&item.expiresAt>at);
+    if(session===undefined)return{recentTurns:[]};
+    const turns=(await this.listConversationTurns(session.sessionId,maxTurns));return{session:copy(session),recentTurns:turns};
+  }
+  async appendConversationTurn(value:ConversationTurnInput):Promise<ConversationTurn>{
+    const duplicate=[...this.conversationTurns.values()].find((item)=>item.requestId===value.requestId);if(duplicate!==undefined)return copy(duplicate);
+    for(const [id,session] of this.conversationSessions){if(session.pseudonymousUserId===value.pseudonymousUserId&&session.endedAt===undefined&&session.expiresAt<=value.answeredAt)this.conversationSessions.set(id,{...session,endedAt:value.answeredAt,endReason:"idle"});}
+    let session=[...this.conversationSessions.values()].find((item)=>item.pseudonymousUserId===value.pseudonymousUserId&&item.endedAt===undefined);
+    if(session===undefined){session={sessionId:randomUUID(),pseudonymousUserId:value.pseudonymousUserId,source:value.source,startedAt:value.answeredAt,lastActivityAt:value.answeredAt,expiresAt:value.expiresAt};this.conversationSessions.set(session.sessionId,session);}
+    const existing=[...this.conversationTurns.values()].filter((item)=>item.sessionId===session!.sessionId).sort((a,b)=>a.turnIndex-b.turnIndex),latest=existing.at(-1),parent=value.contextUsed?latest:undefined;
+    const turn:ConversationTurn={turnId:value.turnId,sessionId:session.sessionId,turnIndex:(latest?.turnIndex??0)+1,requestId:value.requestId,questionId:value.questionId,...(parent===undefined?{}:{parentTurnId:parent.turnId,parentRequestId:parent.requestId}),rawQuestion:value.rawQuestion,resolvedQuestion:value.resolvedQuestion,contextUsed:value.contextUsed,inheritedSubjects:[...value.inheritedSubjects],...(value.answerOutline===undefined?{}:{answerOutline:value.answerOutline}),answerStatus:value.answerStatus,...(value.scope===undefined?{}:{scope:value.scope}),...(value.answerCardMatch===undefined?{}:{answerCardMatch:copy(value.answerCardMatch)}),answeredAt:value.answeredAt,createdAt:value.answeredAt};
+    this.conversationTurns.set(turn.turnId,turn);this.conversationSessions.set(session.sessionId,{...session,lastActivityAt:value.answeredAt,expiresAt:value.expiresAt});return copy(turn);
+  }
+  async endConversation(pseudonymousUserId:string,reason:ConversationEndReason,endedAt:string){const session=[...this.conversationSessions.values()].find((item)=>item.pseudonymousUserId===pseudonymousUserId&&item.endedAt===undefined);if(session===undefined)return undefined;const ended={...session,endedAt,endReason:reason};this.conversationSessions.set(session.sessionId,ended);return copy(ended);}
+  async getConversationTurnByRequestId(requestId:string){return maybeCopy([...this.conversationTurns.values()].find((item)=>item.requestId===requestId));}
+  async listConversationTurns(sessionId:string,limit:number){return [...this.conversationTurns.values()].filter((item)=>item.sessionId===sessionId).sort((a,b)=>a.turnIndex-b.turnIndex).slice(-limit).map(copy);}
+  async getConversationSession(sessionId:string){return maybeCopy(this.conversationSessions.get(sessionId));}
 
   async insertAnswerReviewAndEnqueue(value: StoredAnswerReviewCase) {
     const duplicate=[...this.answerReviews.values()].find((item)=>item.requestId===value.requestId);
