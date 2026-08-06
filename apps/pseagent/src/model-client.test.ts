@@ -101,6 +101,24 @@ describe("model client", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("reports its own deadline as a model timeout instead of generic unavailability", async () => {
+    vi.stubGlobal("fetch",vi.fn(async(_url:string|URL|Request,init?:RequestInit)=>new Promise<Response>((_resolve,reject)=>{
+      init?.signal?.addEventListener("abort",()=>reject(init.signal?.reason),{once:true});
+    })));
+    await expect(client({timeoutMs:20}).completeText({messages:[]})).rejects.toMatchObject({code:"model_timeout"});
+  });
+
+  it("keeps a caller cancellation distinct from a provider timeout", async () => {
+    const controller=new AbortController();
+    vi.stubGlobal("fetch",vi.fn(async(_url:string|URL|Request,init?:RequestInit)=>new Promise<Response>((_resolve,reject)=>{
+      if(init?.signal?.aborted)reject(init.signal.reason);
+      else init?.signal?.addEventListener("abort",()=>reject(init.signal?.reason),{once:true});
+    })));
+    const completion=client({timeoutMs:1_000}).completeText({messages:[],signal:controller.signal});
+    controller.abort();
+    await expect(completion).rejects.toMatchObject({code:"model_request_aborted"});
+  });
+
   it("queues model traffic above the process-wide concurrency limit", async () => {
     let active = 0;
     let maximumActive = 0;

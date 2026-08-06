@@ -26,6 +26,8 @@ const ERROR_MESSAGES:Readonly<Record<string,string>>={
   authentication_required:"登录已失效，请重新登录",
   invalid_credentials:"账号或密码错误，请检查后重试",
   model_unavailable:"模型服务暂时不可用，请稍后重新生成",
+  model_timeout:"修订 Agent 生成内容超时，系统会按计划自动重试；若最终失败，请重新生成",
+  model_request_aborted:"模型请求已取消，请重新生成",
   database_unavailable:"知识运营数据库暂时不可用，后台数据尚未刷新；用户问答服务不受此提示影响",
   management_service_timeout:"管理后台等待数据超时，请稍后刷新；用户问答服务仍会独立运行",
   management_service_unavailable:"暂时无法连接管理服务，请检查本地服务后重试",
@@ -52,7 +54,7 @@ export function label(value:string):string{return LABELS[value]??value;}
 export function labelWithCode(value:string):string{return `${label(value)}（${value}）`;}
 export function option(value:string,current?:string):string{return`<option value="${escapeAttribute(value)}"${value===current?" selected":""}>${escapeAttribute(label(value))}</option>`;}
 export function isKnownLabel(value:string):boolean{return Object.hasOwn(LABELS,value);}
-export function errorMessage(value:string):string{if(value.startsWith("model_unavailable"))return ERROR_MESSAGES.model_unavailable!;return ERROR_MESSAGES[value]??`操作失败（${value}）`;}
+export function errorMessage(value:string):string{if(value.startsWith("model_timeout"))return ERROR_MESSAGES.model_timeout!;if(value.startsWith("model_unavailable"))return ERROR_MESSAGES.model_unavailable!;return ERROR_MESSAGES[value]??`操作失败（${value}）`;}
 
 export function issueStatusHelp(value:string):string{return({open:"等待后台管理员处理",in_progress:"后台管理员正在修订答案卡或知识",validating:"修订完成，等待回归验证",resolved:"修复已验证并关闭",dismissed:"误报、重复或无需处理"} as Readonly<Record<string,string>>)[value]??"";}
 

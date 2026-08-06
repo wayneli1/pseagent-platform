@@ -12,6 +12,8 @@ export type {
 } from "./answer-progress.js";
 export type { AnswerResult } from "./contracts.js";
 export {
+  InvalidModelPayloadError,
+  ModelUnavailableError,
   OpenAiCompatibleModelClient,
   type ModelClient,
   type ModelMessage,

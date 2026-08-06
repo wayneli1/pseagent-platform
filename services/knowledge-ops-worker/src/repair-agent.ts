@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ModelClient } from "@pseagent/app/embedded";
+import { InvalidModelPayloadError,type ModelClient } from "@pseagent/app/embedded";
 import type { AnswerCard, FeedbackClassification, KnowledgeDomain } from "@pseagent/knowledge-governance-contracts";
 import {
   repairProposalSchema,
@@ -118,7 +118,7 @@ export class KnowledgeRepairAgent {
     let candidate:z.infer<typeof repairCandidateSchema>|undefined;let lastError:unknown;
     for(let attempt=1;attempt<=2;attempt+=1){
       try{candidate=await this.model.completeJson({messages:attempt===1?messages:[...messages,{role:"user",content:"上一次输出未通过严格 Schema。请只依据 evidence 修正；把 title 等字段直接放在 JSON 根节点；obligations 必须是对象数组，每项含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths；保持五类回归问题各一个。"}],schema:repairCandidateInputSchema,schemaDescription:"knowledge repair draft with answer, structured obligation objects, evidence paths and five regression questions",...(input.signal===undefined?{}:{signal:input.signal})});break;}
-      catch(error){candidate=recoverWrappedRepairCandidate(error);if(candidate!==undefined)break;lastError=error;if(attempt===2)throw error;}
+      catch(error){candidate=recoverWrappedRepairCandidate(error);if(candidate!==undefined)break;lastError=error;if(!(error instanceof InvalidModelPayloadError)||attempt===2)throw error;}
     }
     if(candidate===undefined)throw lastError;
     return enforceRepairCandidate(input,candidate);
@@ -133,7 +133,7 @@ export class KnowledgeRepairAgent {
       "五类必须各返回一项。证据不足、承诺超出资料、缺少必答项或负例仍会误命中时必须为 false。只输出严格 JSON。",
     ].join("\n")},{role:"user" as const,content:JSON.stringify({proposal:input.proposal,evidence:input.evidence})}];
     let result:z.infer<typeof caseAssessmentSchema>|undefined;let firstError:unknown;
-    for(let attempt=1;attempt<=2;attempt+=1){try{result=await this.model.completeJson({messages:attempt===1?messages:[...messages,{role:"user",content:"上一次输出未通过 Schema。请按五类各一项重新输出，不要增加其他字段。"}],schema:caseAssessmentSchema,schemaDescription:"five knowledge repair validation case assessments",...(input.signal===undefined?{}:{signal:input.signal})});break;}catch(error){firstError??=error;if(attempt===2)throw firstError;}}
+    for(let attempt=1;attempt<=2;attempt+=1){try{result=await this.model.completeJson({messages:attempt===1?messages:[...messages,{role:"user",content:"上一次输出未通过 Schema。请按五类各一项重新输出，不要增加其他字段。"}],schema:caseAssessmentSchema,schemaDescription:"five knowledge repair validation case assessments",...(input.signal===undefined?{}:{signal:input.signal})});break;}catch(error){firstError??=error;if(!(error instanceof InvalidModelPayloadError)||attempt===2)throw firstError;}}
     if(result===undefined)throw firstError;return normalizeAssessments(result.cases??result);
   }
 }

@@ -7,7 +7,7 @@ import { SafeGitWorkspace } from "./git-workspace.js";
 import { SnapshotManager } from "./snapshot-manager.js";
 import { KnowledgeOpsWorker } from "./worker.js";
 import { IndependentAnswerReviewer } from "./answer-reviewer.js";
-import { loadAnswerReviewModelConfig } from "./answer-review-config.js";
+import { loadAnswerReviewModelConfig,loadRepairModelConfig } from "./answer-review-config.js";
 import { KnowledgeRepairAgent } from "./repair-agent.js";
 import { HttpKnowledgeRuntimeController } from "./knowledge-runtime-controller.js";
 import { ProcessReleaseQualityRunner } from "./release-quality-runner.js";
@@ -17,15 +17,16 @@ const professional=required("PROFESSIONAL_KB_ROOT"),general=required("GENERAL_KB
 const store=PostgresKnowledgeOpsStore.connect(required("KNOWLEDGE_OPS_DATABASE_URL"));
 await store.migrate();
 const reviewModelConfig=loadAnswerReviewModelConfig(process.env);
-const modelClient=new OpenAiCompatibleModelClient(reviewModelConfig);
+const reviewModelClient=new OpenAiCompatibleModelClient(reviewModelConfig);
+const repairModelClient=new OpenAiCompatibleModelClient(loadRepairModelConfig(process.env));
 const answerContractRevision=process.env.KNOWLEDGE_OPS_ANSWER_CONTRACT_REVISION??(await promisify(execFile)("git",["rev-parse","HEAD"],{cwd:process.cwd(),windowsHide:true})).stdout.trim();
 const dependencies={
   store,sources:[{domain:"coremail-professional",root:professional},{domain:"presales-general",root:general}],
   snapshots:new SnapshotManager(required("KNOWLEDGE_OPS_SNAPSHOT_ROOT")),
   git:new SafeGitWorkspace([professional,general],required("KNOWLEDGE_OPS_WORKTREE_ROOT")),
   cipher:loadContentCipher(process.env),
-  answerReviewer:new IndependentAnswerReviewer(modelClient),
-  repairAgent:new KnowledgeRepairAgent(modelClient),
+  answerReviewer:new IndependentAnswerReviewer(reviewModelClient),
+  repairAgent:new KnowledgeRepairAgent(repairModelClient),
   answerContractRevision,
   runtimeController:new HttpKnowledgeRuntimeController({baseUrl:required("KNOWLEDGE_ENGINE_URL"),token:required("KNOWLEDGE_ENGINE_TOKEN"),timeoutMs:duration("KNOWLEDGE_OPS_ENGINE_RELOAD_TIMEOUT_MS",900_000)}),
   releaseQualityRunner:new ProcessReleaseQualityRunner({command:process.execPath,entryPath:path.resolve(process.env.KNOWLEDGE_OPS_RELEASE_GATE_ENTRY_PATH??"scripts/probe-release-quality.mts"),cwd:process.cwd(),timeoutMs:duration("KNOWLEDGE_OPS_RELEASE_GATE_TIMEOUT_MS",1_800_000)}),

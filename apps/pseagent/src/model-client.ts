@@ -117,8 +117,9 @@ export class OpenAiCompatibleModelClient implements ModelClient {
   ): Promise<{ readonly content: string; readonly finishReason?: string }> {
     const timeout = AbortSignal.timeout(this.config.timeoutMs);
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
-    const releaseModelSlot = await acquireModelSlot(signal);
+    let releaseModelSlot:(()=>void)|undefined;
     try {
+    releaseModelSlot = await acquireModelSlot(signal);
     const body = {
       model: this.config.model,
       temperature: 0,
@@ -197,8 +198,14 @@ export class OpenAiCompatibleModelClient implements ModelClient {
       }
     }
     throw new ModelUnavailableError(lastFailureCode);
+    } catch(error) {
+      if(error instanceof ModelUnavailableError&&signal.aborted){
+        if(callerSignal?.aborted)throw new ModelUnavailableError("model_request_aborted");
+        if(timeout.aborted)throw new ModelUnavailableError("model_timeout");
+      }
+      throw error;
     } finally {
-      releaseModelSlot();
+      releaseModelSlot?.();
     }
   }
 }

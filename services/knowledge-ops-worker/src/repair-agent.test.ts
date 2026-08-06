@@ -1,5 +1,5 @@
 import { describe,expect,it,vi } from "vitest";
-import type { ModelClient } from "@pseagent/app/embedded";
+import { InvalidModelPayloadError,ModelUnavailableError,type ModelClient } from "@pseagent/app/embedded";
 import type { AnswerCard } from "@pseagent/knowledge-governance-contracts";
 import { KnowledgeRepairAgent } from "./repair-agent.js";
 
@@ -7,6 +7,18 @@ const card:AnswerCard={cardSchemaVersion:1,cardId:"PRO-TENCENT-MIGRATION-PREREQU
 const candidate={title:"不要覆盖现有标题",canonicalQuestion:"不要覆盖现有标准问题",aliases:["迁移前要准备什么？"],answerTemplate:"迁移前需要生成客户端专用密码并启用 IMAP。",obligations:[{id:"O1",label:"列出迁移前准备项",evidencePolicy:"direct" as const,requiredConcepts:["客户端专用密码","IMAP"],forbiddenClaims:[],preferredEvidencePaths:["wiki/concepts/腾讯迁移.md"]}],regressionQuestions:[{kind:"canonical" as const,question:"腾讯企业邮箱迁移到Coremail前需要哪些设置？"},{kind:"alias" as const,question:"腾讯企邮搬家前要开什么权限？"},{kind:"colloquial" as const,question:"企邮搬家前得先整啥？"},{kind:"follow_up" as const,question:"那客户端密码怎么准备？"},{kind:"negative" as const,question:"Exchange 密码能直接迁移吗？"}],generationSummary:"根据正式迁移资料补齐前置设置。",publishable:true};
 
 describe("KnowledgeRepairAgent",()=>{
+  it("does not mistake a model timeout for a schema error and call the provider twice",async()=>{
+    const completeJson=vi.fn(async()=>{throw new ModelUnavailableError("model_timeout");});
+    const agent=new KnowledgeRepairAgent(model(completeJson));
+    await expect(agent.generate({issueId:"00000000-0000-4000-8000-000000000010",rootCause:"coverage_gap",records:[{question:"DA 与 MTA 有什么区别？",answer:"原回答不完整"}],evidence:[{title:"投递系统",path:"wiki/entities/投递系统.md",content:"DA 负责安全检查和投递，MTA 负责邮件传输与队列处理。"}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",baseGitRevision:"a".repeat(40),publishableAllowed:true}})).rejects.toMatchObject({code:"model_timeout"});
+    expect(completeJson).toHaveBeenCalledOnce();
+  });
+  it("retries once when the provider returned JSON that failed the repair schema",async()=>{
+    const completeJson=vi.fn().mockRejectedValueOnce(new InvalidModelPayloadError("invalid_schema:title",'{"unexpected":true}',"repair")).mockResolvedValueOnce(candidate);
+    const agent=new KnowledgeRepairAgent(model(completeJson));
+    await expect(agent.generate({issueId:"00000000-0000-4000-8000-000000000011",rootCause:"coverage_gap",records:[{question:"迁移前准备什么？",answer:"原回答"}],evidence:[{title:"腾讯迁移",path:"wiki/concepts/腾讯迁移.md",content:"迁移需要客户端专用密码并开启 IMAP。"}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",baseGitRevision:"a".repeat(40),publishableAllowed:true}})).resolves.toMatchObject({publishable:true});
+    expect(completeJson).toHaveBeenCalledTimes(2);
+  });
   it("generates a customer-neutral evidence-bound draft and preserves governed card constraints",async()=>{
     const completeJson=vi.fn(async()=>candidate);const agent=new KnowledgeRepairAgent(model(completeJson));
     const result=await agent.generate({issueId:"00000000-0000-4000-8000-000000000001",rootCause:"coverage_gap",records:[{question:"腾讯企业邮箱迁移到 Coremail 时，客户端专用密码如何配置？",rawQuestion:"第二点怎么操作？",contextUsed:true,parentQuestion:"Wayne 黎政良问腾讯企业邮箱迁移前要做什么？",parentAnswerOutline:"第二点是生成客户端专用密码",answer:"只开启 IMAP",feedbackClassification:"incorrect",feedback:"Wayne 黎政良说缺少密码说明"}],evidence:[{title:"腾讯迁移",path:"wiki/concepts/腾讯迁移.md",content:"迁移需要客户端专用密码并开启 IMAP。"}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",targetPath:"wiki/queries/腾讯企业邮箱迁移到Coremail前需要哪些设置.md",cardId:card.cardId,baseGitRevision:"a".repeat(40),existingCard:card,publishableAllowed:true},sensitiveTerms:["Wayne 黎政良"]});
