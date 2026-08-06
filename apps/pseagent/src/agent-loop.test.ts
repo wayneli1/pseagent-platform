@@ -3424,6 +3424,40 @@ describe("runKnowledgeAgent", () => {
     expect(model.lastSchemaName()).toBe("pse_final_action");
   });
 
+  it("restores a preferred-evidence answer-card concept removed by verification", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    session.compactPage.mockReturnValue("The governed page requires a migration transition period.");
+    const model = scriptedAgentModel([
+      final("complete", "Use the approved migration boundary [1].", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        requiredConcepts: ["transition period"],
+        preferredEvidencePaths: ["wiki/queries/governed-answer.md"],
+      }],
+      verifyCoverage: async (input) => reportAndReturn(input, {
+        ...input.draft,
+        requirements: input.draft.requirements.map((requirement) => ({
+          ...requirement,
+          answer: "Use the approved migration boundary [1].",
+          citations: [1],
+        })),
+        citations: [1],
+      }),
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.answer).toContain("transition period");
+    expect(model.calls).toBe(1);
+  });
+
   it("fails closed after one final when a required concept has no preferred evidence support", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([

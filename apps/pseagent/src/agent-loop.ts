@@ -495,6 +495,15 @@ async function runKnowledgeAgentCore(
         });
         return unavailableResult(input.scope);
       }
+      // Required answer-card concepts were grounded before model verification.
+      // Re-apply the same deterministic, preferred-evidence-only projection
+      // afterwards so a conservative verifier cannot randomly drop a governed
+      // boundary that has already been proven by a page we actually read.
+      auditedAction = applyGroundedAnswerCardRequiredConcepts(
+        auditedAction,
+        input.requirementBindings,
+        readEvidence(state),
+      );
       const auditedValidation = state.references.validateFinal(
         auditedAction,
         input.plan.requirements,

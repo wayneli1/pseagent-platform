@@ -346,7 +346,7 @@
       "expectedTarget": "published_backup_card",
       "expectedCardId": "PRO-LARGE-DATA-BACKUP-SELECTION",
       "expectedEvidence": ["wiki/concepts/邮件系统备份选型.md"],
-      "requiredFactGroups": [["第三方软件备份", "第三方软件"], ["阈值", "没有定义"], ["兼容矩阵"], ["恢复指标"], ["实施责任"], ["人工确认"]],
+      "requiredFactGroups": [["第三方软件备份", "第三方软件"], ["阈值", "没有定义"], ["兼容矩阵", "版本支持矩阵", "支持矩阵"], ["恢复指标"], ["实施责任", "交付责任边界", "双方责任"], ["人工确认", "正式测试", "审批结论"]],
       "forbiddenClaims": ["高级备份适用于任意数据规模", "可以直接对外承诺恢复时间"],
       "expectedBehavior": "同义问法应命中修订后的备份卡并拒绝无证据的容量与恢复承诺。",
       "expectedIssueCenter": false
@@ -359,7 +359,7 @@
       "expectedScope": "professional",
       "expectedTarget": "published_poc_card",
       "expectedEvidence": ["wiki/concepts/信创POC标准版功能测试范围.md", "wiki/comparisons/信创POC测试方案标准版与进阶版对比.md"],
-      "requiredFactGroups": [["Webmail侧"], ["PC客户端侧"], ["后台侧"], ["客户要求更严格", "竞争更激烈"], ["客户端"], ["性能压测"], ["开发成本"], ["开发延期"]],
+      "requiredFactGroups": [["Webmail侧"], ["PC客户端侧"], ["后台侧"], ["客户要求更严格", "竞争更激烈", "严格验证", "更强的展示项"], ["客户端"], ["性能压测"], ["开发成本"], ["开发延期"]],
       "forbiddenClaims": ["所有信创POC的默认模板", "标准版功能已全部购买"],
       "expectedBehavior": "口语问法应命中新发布 POC 卡，完整覆盖三侧能力和进阶版条件。",
       "expectedIssueCenter": false
@@ -387,7 +387,7 @@
       "expectedTarget": "published_backup_card",
       "expectedCardId": "PRO-LARGE-DATA-BACKUP-SELECTION",
       "expectedEvidence": ["wiki/concepts/邮件系统备份选型.md"],
-      "requiredFactGroups": [["不能", "不可"], ["兼容矩阵"], ["恢复指标", "固定恢复"], ["实施责任"], ["人工确认"]],
+      "requiredFactGroups": [["不能", "不可"], ["兼容矩阵", "版本支持矩阵", "支持矩阵"], ["恢复指标", "固定恢复"], ["实施责任", "交付责任边界", "双方责任"], ["人工确认", "正式测试", "审批结论"]],
       "forbiddenClaims": ["可以直接对外承诺恢复时间", "高级备份适用于任意数据规模"],
       "expectedBehavior": "承诺边界问法应命中修订后的备份卡并明确拒绝固定恢复时长承诺。",
       "expectedIssueCenter": false

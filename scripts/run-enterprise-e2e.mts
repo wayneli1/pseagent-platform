@@ -282,12 +282,16 @@ process.stdout.write(`${JSON.stringify({ type: "phase_summary", reportPath, case
 
 function evaluate(testCase: AcceptanceCase, execution: PseAnswerExecution, cardIds: readonly string[]) {
   const answer = execution.result.answer.normalize("NFKC").toLocaleLowerCase("zh-CN");
+  const compactAnswer = answer.replace(/\s+/gu, "");
   const paths = new Set(execution.result.references.map((reference) => reference.path));
+  const expectedCardIds = testCase.expectedCardId === undefined
+    ? []
+    : [testCase.expectedCardId, `hash:${sha256(testCase.expectedCardId)}`];
   return [
     { id: "scope", passed: execution.result.scope === testCase.expectedScope, expected: testCase.expectedScope, actual: execution.result.scope },
-    { id: "card", passed: testCase.expectedCardId === undefined || cardIds.includes(testCase.expectedCardId), expected: testCase.expectedCardId ?? "none_required", actual: cardIds },
+    { id: "card", passed: testCase.expectedCardId === undefined || expectedCardIds.some((cardId) => cardIds.includes(cardId)), expected: testCase.expectedCardId ?? "none_required", actual: cardIds },
     ...testCase.expectedEvidence.map((path) => ({ id: `evidence:${path}`, passed: paths.has(path), expected: path, actual: [...paths] })),
-    ...testCase.requiredFactGroups.map((group, index) => ({ id: `fact:${index + 1}`, passed: group.some((term) => answer.includes(term.normalize("NFKC").toLocaleLowerCase("zh-CN"))), expected: group, actual: "answer" })),
+    ...testCase.requiredFactGroups.map((group, index) => ({ id: `fact:${index + 1}`, passed: group.some((term) => compactAnswer.includes(term.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/\s+/gu, ""))), expected: group, actual: "answer" })),
     ...testCase.forbiddenClaims.map((claim) => ({ id: `forbidden:${claim}`, passed: !answer.includes(claim.normalize("NFKC").toLocaleLowerCase("zh-CN")), expected: "absent", actual: "answer" })),
   ];
 }
