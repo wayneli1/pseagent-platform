@@ -57,6 +57,8 @@ describe("ScopeRouter", () => {
     "现有知识里关于某项目，哪些是已记录事实，哪些只是可借鉴的经验？",
     "招标要求支持 IPv6 双栈，售前要准备哪些验证证据，能否承诺所有模块都支持？",
     "项目要求各模块适配双栈，应该准备哪些技术验证？",
+    "客户提出 DLP 要扫描正文附件并支持 OCR、移动端审核，售前该如何核验而不是直接承诺？",
+    "客户要求 SAML 和 LDAP 集成，售前应确认哪些接口和版本边界？",
   ])("routes an explicit product boundary without model ambiguity: %s", async (question) => {
     const completeJson = vi.fn();
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
@@ -70,6 +72,17 @@ describe("ScopeRouter", () => {
     expect(isUnambiguouslyProfessionalQuestion(
       "客户在 POC 阶段，信息不足时如何提升赢率？",
     )).toBe(false);
+  });
+
+  it.each([
+    "售前如何用 SPIN 做需求访谈？",
+    "市场活动线索怎样按 MTL 评分、培育和移交？",
+  ])("does not treat a presales-method acronym as a product capability: %s", async (question) => {
+    const completeJson = vi.fn(async () => ({ action: "route", scope: "general" as const }));
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    expect(isUnambiguouslyProfessionalQuestion(question)).toBe(false);
+    await expect(new ScopeRouter(model).route(question)).resolves.toBe("general");
   });
 
   it.each([

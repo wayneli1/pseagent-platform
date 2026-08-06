@@ -81,13 +81,26 @@ const KNOWLEDGE_RECORD_PATTERN =
   /(?:现有知识|知识库|正式资料|已有资料|项目资料|案例资料).{0,32}(?:事实|记录|证据|经验|案例|借鉴|边界)/u;
 const TECHNICAL_CAPABILITY_BOUNDARY_PATTERN =
   /(?:\bIPv[46]\b|(?:支持|兼容|适配|验证|承诺).{0,24}(?:双栈|网络栈|技术协议|技术接口|产品模块|功能模块|全部模块|所有模块|各模块)|(?:双栈|网络栈|技术协议|技术接口|产品模块|功能模块|全部模块|所有模块|各模块).{0,24}(?:支持|兼容|适配|验证|承诺))/iu;
+const TECHNICAL_ACRONYM_PATTERN = /\b[A-Z][A-Z0-9]{1,15}\b/gu;
+const TECHNICAL_IMPLEMENTATION_CUE_PATTERN =
+  /(?:支持|兼容|适配|扫描|审核|放行|集成|接口|协议|引擎|客户端|移动端|服务端|部署|配置|模块|版本)/gu;
+const CAPABILITY_VERIFICATION_PATTERN = /(?:核验|验证|确认|承诺|逐项|能力|需求)/u;
 
 export function isUnambiguouslyProfessionalQuestion(
   question: string,
 ): boolean {
   return PRODUCT_BOUNDARY_PATTERN.test(question) ||
     KNOWLEDGE_RECORD_PATTERN.test(question) ||
-    TECHNICAL_CAPABILITY_BOUNDARY_PATTERN.test(question);
+    TECHNICAL_CAPABILITY_BOUNDARY_PATTERN.test(question) ||
+    hasStructuredTechnicalCapabilityRequirement(question);
+}
+
+function hasStructuredTechnicalCapabilityRequirement(question: string): boolean {
+  if (!CAPABILITY_VERIFICATION_PATTERN.test(question)) return false;
+  const acronyms = new Set(question.match(TECHNICAL_ACRONYM_PATTERN) ?? []);
+  const implementationCues = new Set(question.match(TECHNICAL_IMPLEMENTATION_CUE_PATTERN) ?? []);
+  return acronyms.size >= 2 && implementationCues.size >= 1 ||
+    acronyms.size >= 1 && implementationCues.size >= 3;
 }
 
 export function isUnambiguouslyNormalQuestion(question: string): boolean {
