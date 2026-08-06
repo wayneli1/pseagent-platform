@@ -562,6 +562,15 @@ tr[data-action]:hover {
 .repair-diff > div { display: grid; gap: 7px; }
 .repair-diff span { color: var(--muted); font-size: 12px; font-weight: 600; }
 .repair-answer-preview { border-color: #bbf7d0; background: #f0fdf4; }
+.repair-evidence-state { display: grid; gap: 9px; margin-bottom: 14px; padding: 13px 14px; border: 1px solid #cbd5e1; border-radius: 9px; background: #f8fafc; }
+.repair-evidence-state > div { display: grid; gap: 4px; }
+.repair-evidence-state strong { color: #334155; font-size: 14px; }
+.repair-evidence-state span, .repair-evidence-state li { color: #475569; font-size: 12px; line-height: 1.55; }
+.repair-evidence-state ul { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
+.repair-evidence-state.success { border-color: #bbf7d0; background: #f0fdf4; }
+.repair-evidence-state.success strong { color: #166534; }
+.repair-evidence-state.warning, .repair-evidence-state.blocked { border-color: #fde68a; background: #fffbeb; }
+.repair-evidence-state.warning strong, .repair-evidence-state.blocked strong { color: #92400e; }
 .repair-blocked { display: grid; gap: 10px; padding: 18px; border: 1px solid #fcd34d; border-radius: 9px; background: #fffbeb; color: #78350f; }
 .repair-blocked strong { font-size: 15px; }
 .repair-blocked p { margin: 0; line-height: 1.65; }
