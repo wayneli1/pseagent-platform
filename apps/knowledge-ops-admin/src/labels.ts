@@ -4,7 +4,7 @@ const LABELS: Readonly<Record<string,string>>={
   queued:"等待处理",running:"处理中",completed:"处理完成",errored:"处理异常",pending:"等待处理",pass:"复查通过",needs_review:"需要人工复核",fail:"复查未通过",
   answered:"已完整回答",partially_answered:"部分回答",failed:"处理失败",
   draft:"草稿",approved:"已批准",changes_requested:"需要修改",deprecated:"已停用",release_ready:"待发布",released:"已发布",
-  active:"当前生效",superseded:"已被替代",rolled_back:"已回滚",passed:"已通过",
+  active:"当前生效",superseded:"已被替代",rolled_back:"已回滚",passed:"已通过",validation_case_failed:"未通过",
   generating:"正在生成草稿",draft_ready:"草稿待确认",validation_failed:"验证未通过",ready_to_publish:"验证通过，待发布",publishing:"正在发布",published:"已发布生效",
   answer_card:"答案卡",knowledge_page:"知识页面",retrieval_rule:"检索规则",system_fix:"系统修复",
   canonical:"标准问法",alias:"同义问法",colloquial:"口语问法",follow_up:"上下文追问",negative:"边界负例",

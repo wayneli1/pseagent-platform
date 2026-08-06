@@ -220,7 +220,7 @@ function normalizeAssessments(value:unknown):readonly {readonly kind:z.infer<typ
   if(Array.isArray(value)){for(const item of value)if(typeof item==="object"&&item!==null)entries.push(item as typeof entries[number]);}
   else if(typeof value==="object"&&value!==null){for(const [kind,result] of Object.entries(value)){if(typeof result==="object"&&result!==null)entries.push({kind,...result as Record<string,unknown>});else entries.push({kind,passed:result});}}
   const recognized=new Map<z.infer<typeof regressionKindSchema>,{passed:boolean;explanation:string}>();
-  for(const item of entries){const kind=normalizeRegressionKind(typeof item.kind==="string"?item.kind:"");if(kind===undefined||recognized.has(kind))continue;const passed=item.passed===true||item.passed==="true"||item.passed==="通过";recognized.set(kind,{passed,explanation:textValue(item.explanation)??(passed?"模型判定通过。":"模型未提供可验证的通过说明。")});}
+  for(const item of entries){const kind=normalizeRegressionKind(typeof item.kind==="string"?item.kind:"");if(kind===undefined||recognized.has(kind))continue;const passed=item.passed===true||item.passed==="true"||item.passed==="通过";recognized.set(kind,{passed,explanation:textValue(item.explanation)??(passed?"修订 Agent 检查通过。":"修订 Agent 未提供可验证的通过说明。")});}
   return regressionKindSchema.options.map((kind)=>({kind,...(recognized.get(kind)??{passed:false,explanation:"模型未返回这一类验证结果，按不通过处理。"})}));
 }
 

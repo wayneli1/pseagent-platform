@@ -1,7 +1,9 @@
-import type { RepairDraft } from "./types.js";
+import type { RepairDraft,RepairProposal,RepairValidation } from "./types.js";
 
 export interface RepairAction {readonly id:"generate"|"validate"|"batch"|"retry"|"none";readonly label:string;readonly disabled:boolean;}
 export interface RepairEvidenceState {readonly tone:"success"|"warning"|"blocked"|"unknown";readonly title:string;readonly summary:string;readonly details:readonly string[];}
+export interface RepairValidationCaseState {readonly badge:"passed"|"validation_case_failed";readonly explanation:string;}
+type RepairValidationCase=NonNullable<NonNullable<RepairValidation["result"]>["targeted"]>[number];
 export function repairStep(status:RepairDraft["status"]|undefined):number{if(status===undefined)return 1;if(status==="generating"||status==="draft_ready"||status==="validation_failed"||status==="failed")return 2;if(status==="validating")return 3;if(status==="ready_to_publish"||status==="publishing"||status==="published")return 4;return 2;}
 export function repairPrimaryAction(draft:RepairDraft|undefined):RepairAction{
   if(draft===undefined)return{id:"generate",label:"生成修订草稿",disabled:false};
@@ -18,6 +20,23 @@ export function repairPrimaryAction(draft:RepairDraft|undefined):RepairAction{
 export function isRepairEditable(status:RepairDraft["status"]):boolean{return status==="draft_ready"||status==="validation_failed";}
 export function hasCompleteRepairProposal(draft:RepairDraft|undefined):boolean{return draft?.proposal?.publishable===true&&draft.proposal.answerTemplate.trim()!==""&&draft.proposal.aliases.length>0;}
 export function shouldShowRepairDiff(draft:RepairDraft|undefined,originalAnswer:string|undefined):boolean{return hasCompleteRepairProposal(draft)&&(originalAnswer?.trim()??"")!=="";}
+export function standaloneRepairAliases(proposal:RepairProposal):readonly string[]{
+  const contextual=new Set(proposal.regressionQuestions.filter((item)=>item.kind==="follow_up"||item.kind==="negative").map((item)=>item.question.trim()));
+  return proposal.aliases.filter((item)=>!contextual.has(item.trim()));
+}
+export function repairValidationCaseState(item:RepairValidationCase):RepairValidationCaseState{
+  if(item.kind!=="follow_up"&&item.kind!=="negative"&&!item.exactMatch)return{badge:"validation_case_failed",explanation:"问法命中检查未通过：该问法没有命中候选答案卡。"};
+  if(item.kind==="negative"&&item.exactMatch)return{badge:"validation_case_failed",explanation:"边界检查未通过：无关问题错误命中了候选答案卡。"};
+  if(item.assessment?.passed!==true)return{badge:"validation_case_failed",explanation:`修订 Agent 检查未通过：${item.assessment?.explanation??"未返回可验证的通过结论。"}`};
+  if(item.kind!=="negative"&&item.review?.verdict!=="pass"){
+    const prefix=item.review?.verdict==="needs_review"?"独立内容复查需要人工复核":item.review?.verdict==="fail"?"独立内容复查未通过":"独立内容复查未返回通过结论";
+    return{badge:"validation_case_failed",explanation:`${prefix}：${item.review?.summary??"请修改答案后重新验证。"}`};
+  }
+  if(!item.passed)return{badge:"validation_case_failed",explanation:"综合验证门禁未通过，请修改答案后重新验证。"};
+  if(item.kind==="negative")return{badge:"passed",explanation:"边界检查通过：无关问题没有错误命中答案卡。"};
+  if(item.kind==="follow_up")return{badge:"passed",explanation:"修订 Agent 检查与独立内容复查均通过；上下文追问不要求直接命中答案卡。"};
+  return{badge:"passed",explanation:"问法命中、修订 Agent 检查与独立内容复查均通过。"};
+}
 export function repairEvidenceState(draft:RepairDraft):RepairEvidenceState{
   const evidence=draft.evidenceSummary;if(evidence===undefined)return{tone:"unknown",title:"证据状态待刷新",summary:"这份草稿生成于证据摘要上线前，重新校验后会显示本次实际使用的正式资料。",details:[]};
   const details=evidence.issues.map(evidenceIssueText),rebased=evidence.revalidatedReferenceCount>0?`；其中 ${evidence.revalidatedReferenceCount} 条历史引用已确认正文未变化`:"";

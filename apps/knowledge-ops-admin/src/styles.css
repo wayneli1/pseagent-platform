@@ -301,6 +301,7 @@ tr[data-action]:hover {
   color: #166534;
 }
 .badge-failed,
+.badge-validation-case-failed,
 .badge-rejected,
 .badge-incorrect {
   background: #fee2e2;
