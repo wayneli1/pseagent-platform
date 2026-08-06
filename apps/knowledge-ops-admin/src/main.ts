@@ -2,6 +2,7 @@ import "./styles.css";
 import { ApiError, OpsApiClient } from "./api.js";
 import { badge, h, json, shortId, time } from "./format.js";
 import {errorMessage,issueStatusHelp,label,option} from "./labels.js";
+import {isAnswerReviewActionable} from "./operations-overview.js";
 import {hasCompleteRepairProposal,isRepairEditable,repairEvidenceState,repairPrimaryAction,repairStep,repairValidationCaseState,shouldShowRepairDiff,standaloneRepairAliases} from "./repair-workflow.js";
 import type {
   Audit,
@@ -189,10 +190,10 @@ function repairActionHelp(draft:RepairDraft|undefined){if(!draft)return"只生�
 async function renderFeedback() {
   const [values,reviews] = await Promise.all([api.get<FeedbackMeta[]>("/v1/feedback"),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
   const reviewByRequest=new Map(reviews.map((review)=>[review.requestId,review]));
-  const reviewNeedsAction=reviews.filter((item)=>item.processingStatus==="errored"||item.verdict==="fail"||item.verdict==="needs_review"||item.workflowStatus==="open"||item.workflowStatus==="in_review").length;
+  const reviewNeedsAction=reviews.filter(isAnswerReviewActionable).length;
   const feedbackNeedsAction=values.filter((item)=>item.status!=="resolved"&&item.status!=="rejected"&&item.classification!=="useful").length;
   content(
-    `<div class="notice workflow-note"><strong>反馈仍然有用：</strong>系统用它合并重复问题、判断影响人数、发现“用户反馈与自动复查冲突”，并作为修订 Agent 的问题证据。反馈本身不会直接改写答案，也不要求管理员逐条办理。</div><section class="panel mt-16"><div class="panel-head"><div><h2>自动复查异常</h2><span class="muted">只处理未通过、需要人工复核和执行异常</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部复查记录</option>${["pending","pass","needs_review","fail"].map((x)=>option(x)).join("")}</select><span class="muted">待处理 ${reviewNeedsAction} 条 · 全部 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","执行状态","复查结论","分数","缺陷","时间"],reviews.map((x)=>{const actionable=x.processingStatus==="errored"||x.verdict==="fail"||x.verdict==="needs_review"||x.workflowStatus==="open"||x.workflowStatus==="in_review";return`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}" data-actionable="${actionable}"${actionable?"":" hidden"}><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${h(x.questionPreview)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`;})):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户负面反馈</h2><span class="muted">默认隐藏“回答有帮助”和已关闭记录</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按反馈状态筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部反馈记录</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x)).join("")}</select><span class="muted">待处理 ${feedbackNeedsAction} 条 · 全部 ${values.length} 条；原问原答仅在详情中解密</span></div>${
+    `<div class="notice workflow-note"><strong>反馈仍然有用：</strong>系统用它合并重复问题、判断影响人数、发现“用户反馈与自动复查冲突”，并作为修订 Agent 的问题证据。反馈本身不会直接改写答案，也不要求管理员逐条办理。</div><section class="panel mt-16"><div class="panel-head"><div><h2>自动复查异常</h2><span class="muted">只处理未通过、需要人工复核和执行异常</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部复查记录</option>${["pending","pass","needs_review","fail"].map((x)=>option(x)).join("")}</select><span class="muted">待处理 ${reviewNeedsAction} 条 · 全部 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","执行状态","复查结论","人工状态","分数","缺陷","时间"],reviews.map((x)=>{const actionable=isAnswerReviewActionable(x);return`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}" data-actionable="${actionable}"${actionable?"":" hidden"}><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${h(x.questionPreview)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${badge(x.workflowStatus)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`;})):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户负面反馈</h2><span class="muted">默认隐藏“回答有帮助”和已关闭记录</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按反馈状态筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部反馈记录</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x)).join("")}</select><span class="muted">待处理 ${feedbackNeedsAction} 条 · 全部 ${values.length} 条；原问原答仅在详情中解密</span></div>${
       values.length
         ? table(
             [
@@ -521,7 +522,7 @@ async function answerReviewDrawer(id:string){
   const defects=item.result?.defects??[];
   const obligations=item.result?.obligationChecks??[];
   overlay(
-    `<div class="drawer-head"><div><strong>自动复查 #${item.questionId}</strong> ${badge(item.processingStatus)} ${badge(item.verdict)}</div><button class="button" data-action="close-overlay">关闭</button></div>
+    `<div class="drawer-head"><div><strong>自动复查 #${item.questionId}</strong> <span class="muted">执行</span> ${badge(item.processingStatus)} <span class="muted">结论</span> ${badge(item.verdict)} <span class="muted">人工</span> ${badge(item.workflowStatus)}</div><button class="button" data-action="close-overlay">关闭</button></div>
     <div class="drawer-body">
       <div class="detail-section"><h3>用户与复查状态</h3><div class="content-box">${h(item.userDisplayName??"未获取到聊天名")}</div><div class="muted mt-6">模型：${h(item.model)} · 分数：${h(item.score??"—")} · 缺陷：${item.defectCount}</div></div>
       ${item.errorCode?`<div class="notice error">复查执行异常：${h(item.errorCode)}。该记录不会被当作通过，请安排人工检查或重试。</div>`:""}

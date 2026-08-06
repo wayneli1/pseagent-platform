@@ -7,14 +7,18 @@ export interface OperationsOverview {criticalFailures:number;needsHuman:number;j
 const NEGATIVE=new Set<FeedbackMeta["classification"]>(["incorrect","missing","review_requested","evidence","correction"]);
 const PRIORITY:Record<ActionPriority,number>={p0:0,p1:1,p2:2,p3:3};
 
+export function isAnswerReviewActionable(review:AnswerReviewMeta):boolean{
+  if(review.workflowStatus==="resolved"||review.workflowStatus==="dismissed")return false;
+  return review.processingStatus==="errored"||review.verdict==="fail"||review.verdict==="needs_review"||review.workflowStatus==="in_review";
+}
+
 export function deriveOperationsOverview(feedback:readonly FeedbackMeta[],reviews:readonly AnswerReviewMeta[]):OperationsOverview{
   const reviewByRequest=new Map(reviews.map((item)=>[item.requestId,item]));
   const actionableFeedback=feedback.filter((item)=>NEGATIVE.has(item.classification)&&item.status!=="resolved"&&item.status!=="rejected");
   const judgementConflicts=actionableFeedback.filter((item)=>reviewByRequest.get(item.requestId)?.verdict==="pass").length;
   const actions=new Map<string,OperationsAction>();
   for(const review of reviews){
-    if(review.workflowStatus==="resolved"||review.workflowStatus==="dismissed")continue;
-    if(review.verdict==="pass"&&review.processingStatus!=="errored")continue;
+    if(!isAnswerReviewActionable(review))continue;
     const priority:ActionPriority=review.verdict==="fail"?"p0":review.verdict==="needs_review"?"p1":"p3";
     actions.set(review.requestId,{requestId:review.requestId,priority,reason:review.processingStatus==="errored"?"自动复查执行异常":review.verdict==="fail"?"回答未通过自动复查":"回答需要人工复核",userDisplayName:review.userDisplayName??"未获取到聊天名",questionPreview:review.questionPreview,createdAt:review.createdAt,reviewId:review.reviewId});
   }
@@ -30,7 +34,7 @@ export function deriveOperationsOverview(feedback:readonly FeedbackMeta[],review
     criticalFailures:reviews.filter((item)=>item.verdict==="fail"&&item.workflowStatus!=="resolved"&&item.workflowStatus!=="dismissed").length,
     needsHuman:reviews.filter((item)=>item.verdict==="needs_review"&&item.workflowStatus!=="resolved"&&item.workflowStatus!=="dismissed").length,
     judgementConflicts,
-    reviewErrors:reviews.filter((item)=>item.processingStatus==="errored").length,
+    reviewErrors:reviews.filter((item)=>item.processingStatus==="errored"&&isAnswerReviewActionable(item)).length,
     automaticPasses:reviews.filter((item)=>item.verdict==="pass").length,
     actions:[...actions.values()].sort((left,right)=>PRIORITY[left.priority]-PRIORITY[right.priority]||right.createdAt.localeCompare(left.createdAt)),
   };
