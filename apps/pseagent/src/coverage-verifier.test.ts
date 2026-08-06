@@ -231,7 +231,9 @@ describe("verifyKnowledgeCoverage", () => {
     expect(result.requirements[0]?.answer).toContain("CNAME");
   });
 
-  it("applies a trailing citation to preceding semicolon-separated comparison clauses", async () => {
+  it.each(["；", "。"])(
+    "applies a trailing citation to preceding same-line comparison clauses separated by %s",
+    async (separator) => {
     const plan: KnowledgePlan = {
       subject: "协议对比",
       requirements: [{
@@ -251,7 +253,7 @@ describe("verifyKnowledgeCoverage", () => {
       requirements: [{
         id: "R1",
         coverage: "complete",
-        answer: "**文件夹**：POP3 仅可操作收件箱；IMAP 可操作所有文件夹 [1]。",
+        answer: `**文件夹**：POP3 仅可操作收件箱${separator}IMAP 可操作所有文件夹 [1]。`,
         citations: [1],
       }],
       citations: [1],
@@ -286,7 +288,8 @@ describe("verifyKnowledgeCoverage", () => {
 
     expect(completeJson).toHaveBeenCalledOnce();
     expect(result.requirements[0]).toEqual(draft.requirements[0]);
-  });
+    },
+  );
 
   it("normalizes an accidental synthesized marker for direct-only evidence", async () => {
     const completeJson = vi.fn(async (
@@ -946,6 +949,69 @@ describe("verifyKnowledgeCoverage", () => {
       coveredAspectCount: 2,
       missingAspectCount: 0,
     }]);
+  });
+
+  it("keeps a heavily trimmed answer partial even when one coarse aspect remains covered", async () => {
+    const plan: KnowledgePlan = {
+      subject: "可执行请求",
+      requirements: [{
+        id: "R1",
+        question: "怎样把请求写得可执行",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "可执行请求",
+          terms: ["可执行"],
+        }],
+        queries: [{ text: "可执行请求", aspectIds: ["A1"] }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: [
+          "明确对象 [1]。",
+          "明确动作 [1]。",
+          "明确时间 [1]。",
+          "约定检查点 [1]。",
+        ].join("\n"),
+        citations: [1],
+      }],
+      citations: [1],
+    };
+
+    const result = await verifyKnowledgeCoverage({
+      question: plan.subject,
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "请求与要求的区别",
+        path: "wiki/concepts/request.md",
+        content: "正式资料说明应约定检查点。",
+        aspectIds: ["A1"],
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain_partial",
+          retainedTargetSegmentIndexes: [3],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
+          reason: "partial_support",
+        }],
+      } as CoverageVerificationAction),
+    });
+
+    expect(result.requirements[0]).toMatchObject({
+      coverage: "partial",
+      answer: "约定检查点 [1]。",
+    });
   });
 
   it("does not hide a verifier downgrade of an originally complete structured answer", async () => {

@@ -1243,6 +1243,8 @@ function enforceAspectCoverage(
     if (
       requirement.coverage === "partial" &&
       summary.removedSegmentCount > 0 &&
+      summary.removedSegmentCount <=
+        summary.retainedDirectSegmentCount + summary.retainedSynthesizedSegmentCount &&
       (
         draft.requirements[index]?.coverage === "partial" ||
         !/(?:认证流程|处理流程|操作流程|关键步骤|完整步骤|关键配置|配置项|配置参数)/u.test(
@@ -1387,14 +1389,12 @@ function splitTargetLine(line: string): Array<{
       ),
     }));
   return pieces.map((piece, index) => {
-    if (piece.citations.length > 0 || !/[；;]\s*$/u.test(piece.text)) {
-      return piece;
-    }
-    const inheritedCitations = followingParallelClauseCitations(pieces, index);
+    if (piece.citations.length > 0) return piece;
+    const inheritedCitations = followingLineCitationScope(pieces, index);
     if (inheritedCitations.length === 0) return piece;
     return {
       text: piece.text.replace(
-        /([；;])\s*$/u,
+        /([。！？；!?]+)\s*$/u,
         ` ${inheritedCitations.map((citation) => `[${citation}]`).join("")}$1`,
       ),
       citations: inheritedCitations,
@@ -1402,7 +1402,7 @@ function splitTargetLine(line: string): Array<{
   });
 }
 
-function followingParallelClauseCitations(
+function followingLineCitationScope(
   pieces: readonly { readonly text: string; readonly citations: readonly number[] }[],
   index: number,
 ): readonly number[] {
@@ -1410,7 +1410,6 @@ function followingParallelClauseCitations(
     const candidate = pieces[cursor];
     if (candidate === undefined) return [];
     if (candidate.citations.length > 0) return candidate.citations;
-    if (!/[；;]\s*$/u.test(candidate.text)) return [];
   }
   return [];
 }
