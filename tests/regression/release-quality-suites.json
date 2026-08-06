@@ -65,7 +65,7 @@
           "minimumReferences": 1,
           "requiredConcepts": [
             { "id": "boundary", "anyOf": ["个人配置", "迁移边界", "默认", "不能"] },
-            { "id": "transition", "anyOf": ["旧邮箱", "用户重建", "过渡期", "确认"] }
+            { "id": "transition", "anyOf": ["旧邮箱", "用户重建", "自行重建", "过渡期", "确认"] }
           ],
           "forbiddenPatterns": ["日程规则通讯录默认全部包含"]
         }
