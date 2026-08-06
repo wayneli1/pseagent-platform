@@ -247,6 +247,47 @@ describe("answer card registry and matching", () => {
     expect(partial).toMatchObject({ matchType: "partial", confidence: "high" });
   });
 
+  it("keeps every required obligation from a selected answer card", async () => {
+    const source = catalog();
+    source.cards[0]!.obligations.push({
+      id: "O3",
+      label: "给出迁移后的过渡动作",
+      domains: ["coremail-professional"],
+      evidencePolicy: "direct",
+      requiredConcepts: ["过渡期", "用户重建"],
+      forbiddenClaims: [],
+      preferredEvidencePaths: ["wiki/queries/coremail-migration.md"],
+    });
+    source.families[0]!.bindings.push({
+      obligationId: "O3",
+      cardObligationId: "O3",
+      label: "给出迁移后的过渡动作",
+      domain: "coremail-professional",
+      cardId: "CM-MIGRATION-001",
+    });
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(source),
+      {
+        completeJson: vi.fn(async () => ({
+          familyId: "MIXED-MIGRATION-001",
+          confidence: "high",
+          matchedObligationIds: ["O1"],
+        })),
+      } as unknown as ModelClient,
+    );
+
+    const match = await matcher.match({
+      question: "请说明 Coremail 迁移范围以及过渡动作",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    });
+
+    expect(match).toMatchObject({ matchType: "partial", confidence: "high" });
+    expect(match.matchType === "none" ? [] : match.bindings.map((item) => item.obligationId))
+      .toEqual(["O1", "O3"]);
+  });
+
   it("falls back only to an unambiguous high-similarity family when the model is unavailable", async () => {
     const model = {
       completeJson: vi.fn(async () => {

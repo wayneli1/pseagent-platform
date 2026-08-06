@@ -192,11 +192,14 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
     ) {
       return this.none("family_rejected", candidates.length);
     }
+    const selectedCardIds = new Set(selected.map((binding) => binding.cardId));
+    const completeCardSelection = family.bindings.filter((binding) =>
+      binding.required && selectedCardIds.has(binding.cardId));
     const requiredCount = family.bindings.filter((binding) => binding.required).length;
     return this.hitFromFamily(
       family,
-      selected,
-      selected.length === requiredCount ? "family" : "partial",
+      completeCardSelection,
+      completeCardSelection.length === requiredCount ? "family" : "partial",
       candidates.length,
     );
   }
