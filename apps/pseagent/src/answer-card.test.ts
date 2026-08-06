@@ -748,6 +748,39 @@ describe("answer card TaskSpec adapter", () => {
     expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([]);
   });
 
+  it("preserves the prohibition when a grounded concept comes from a common-error section", () => {
+    const binding = {
+      domain: "presales-general" as const,
+      requirementId: "R1" as const,
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      requiredConcepts: ["供应商推断"],
+      preferredEvidencePaths: ["wiki/concepts/channel.md"],
+    };
+    const grounded = applyGroundedAnswerCardRequiredConcepts({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "若只是供应商推测，应标记为待验证假设 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    }, [binding], [{
+      requirementId: "R1",
+      citation: 1,
+      path: "wiki/concepts/channel.md",
+      title: "渠道协同",
+      content: "## 常见错误\n\n- 在没有客户证据时把供应商推断写成事实\n",
+    }]);
+
+    expect(grounded.requirements[0]?.answer).toContain(
+      "不要在没有客户证据时把供应商推断写成事实 [1]。",
+    );
+    expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([]);
+  });
+
   it("does not repeat a complete fact when another requirement already covers it", () => {
     const bindings = ["R1", "R2"].map((requirementId, order) => ({
       domain: "presales-general" as const,

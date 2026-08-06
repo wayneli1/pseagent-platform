@@ -247,7 +247,13 @@ function groundedConcepts(
 
 function evidenceFactForConcept(content: string, normalizedConcept: string): string | undefined {
   const lines = content.replace(/\r\n?/gu, "\n").split("\n");
+  let sectionHeading = "";
   for (const rawLine of lines) {
+    const heading = rawLine.match(/^\s*#{1,6}\s+(.+?)\s*$/u)?.[1];
+    if (heading !== undefined) {
+      sectionHeading = normalizePolicyText(heading);
+      continue;
+    }
     if (!normalizePolicyText(rawLine).includes(normalizedConcept)) continue;
     const fact = rawLine
       .replace(/^\s*(?:#{1,6}|>|[-*+]\s+|\d+[.)]\s+)/u, "")
@@ -255,9 +261,21 @@ function evidenceFactForConcept(content: string, normalizedConcept: string): str
       .replace(/\s*\|?\s*$/u, "")
       .replace(/\s*\|\s*/gu, "；")
       .trim();
-    if (fact.length >= 4 && !/^[-:;；|\s]+$/u.test(fact)) return fact.slice(0, 500);
+    if (fact.length < 4 || /^[-:;；|\s]+$/u.test(fact)) continue;
+    const bounded = fact.slice(0, 500);
+    return isProhibitedEvidenceSection(sectionHeading) && !startsWithProhibition(bounded)
+      ? `不要${bounded}`
+      : bounded;
   }
   return undefined;
+}
+
+function isProhibitedEvidenceSection(heading: string): boolean {
+  return /(?:常见错误|错误做法|错误示例|禁止事项|禁忌|反例|commonmistakes?|antipatterns?)/iu.test(heading);
+}
+
+function startsWithProhibition(value: string): boolean {
+  return /^(?:不|不要|不得|不能|严禁|禁止|避免|切勿|不可|勿|并非|不应|do\s+not|don't|never|must\s+not)/iu.test(value.trim());
 }
 
 function groundedSentence(fact: string, citation: number): string | undefined {
