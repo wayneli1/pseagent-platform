@@ -56,6 +56,7 @@ import type { DomainRequirementBinding } from "./domain-plan.js";
 import { observeModelCall } from "./model-observability.js";
 import {
   answerCardPolicyObservations,
+  missingAnswerCardRequiredConcepts,
   violatesAnswerCardForbiddenClaims,
 } from "./answer-card-policy.js";
 
@@ -66,6 +67,7 @@ export const MAX_BATCH_READS_PER_REQUIREMENT = 2;
 export const MAX_GRAPH_ACTIONS_PER_REQUIREMENT = 1;
 export const MAX_AGENT_TURNS_PER_REQUIREMENT = 7;
 const MAX_CITATION_REPAIR_ATTEMPTS = 2;
+const MAX_ANSWER_CARD_POLICY_REPAIR_ATTEMPTS = 2;
 const RRF_K = 60;
 const SEED_TOP_K = 10;
 const SYNTHESIS_SEED_TOP_K_LIMIT = 20;
@@ -183,6 +185,7 @@ type AgentState = {
   >;
   citationRepairAttempts: number;
   directAnswerRepairAttempts: number;
+  answerCardPolicyRepairAttempts: number;
   invalidPayloadTurnRetries: number;
   forceFinal: boolean;
   successfulSeedSearches: number;
@@ -267,7 +270,7 @@ async function runKnowledgeAgentCore(
     40,
     2 + input.plan.requirements.length * MAX_AGENT_TURNS_PER_REQUIREMENT,
   );
-  const maxTurns = actionTurnBudget + 2;
+  const maxTurns = actionTurnBudget + 4;
   for (let turn = 1; turn <= maxTurns; turn += 1) {
     if (deadlineReached(input)) state.forceFinal = true;
     const finalOnly = state.forceFinal || turn > actionTurnBudget ||
@@ -496,6 +499,33 @@ async function runKnowledgeAgentCore(
           reason: auditedValidation.reason,
           repairAttempt: 1,
         });
+        return fallbackUnavailable(input, "coverage_verifier_invalid");
+      }
+      const missingCardConcepts = missingAnswerCardRequiredConcepts(
+        auditedAction,
+        input.requirementBindings,
+      );
+      if (missingCardConcepts.length > 0) {
+        recordDiagnostic(input.trace, {
+          event: "validation",
+          result: "rejected",
+          reason: "answer_card_required_concept_missing",
+          repairAttempt: state.answerCardPolicyRepairAttempts + 1,
+        });
+        if (
+          state.answerCardPolicyRepairAttempts < MAX_ANSWER_CARD_POLICY_REPAIR_ATTEMPTS &&
+          turn < maxTurns &&
+          !deadlineReached(input)
+        ) {
+          state.answerCardPolicyRepairAttempts += 1;
+          state.forceFinal = true;
+          observe(state, {
+            type: "answer_card_required_concepts_missing",
+            requirements: missingCardConcepts,
+            instruction: "下一版 final 必须在对应 requirement 的 answer 中原样写出 requiredConcepts 至少一个，并保持正式证据引用。",
+          });
+          continue;
+        }
         return fallbackUnavailable(input, "coverage_verifier_invalid");
       }
       if (violatesAnswerCardForbiddenClaims(
@@ -856,6 +886,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     readProvenanceByCitation: new Map(),
     citationRepairAttempts: 0,
     directAnswerRepairAttempts: 0,
+    answerCardPolicyRepairAttempts: 0,
     invalidPayloadTurnRetries: 0,
     forceFinal: false,
     successfulSeedSearches: 0,

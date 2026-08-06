@@ -3365,7 +3365,7 @@ describe("runKnowledgeAgent", () => {
   it("preloads reviewed answer-card evidence even when lexical seed search misses", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([
-      final("complete", "Reviewed governed evidence [1]", [1]),
+      final("complete", "Reviewed governed migration evidence [1]", [1]),
     ]);
 
     const result = await runKnowledgeAgent({

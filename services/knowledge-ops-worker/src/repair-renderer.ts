@@ -3,11 +3,11 @@ import type { RepairDraftProposal } from "@pseagent/knowledge-ops";
 
 export function renderRepairMarkdown(proposal:RepairDraftProposal,originalMarkdown:string|undefined,timestamp=new Date()):string{
   if(!proposal.publishable||proposal.targetKind!=="answer_card"||proposal.targetDomain===undefined||proposal.cardId===undefined)throw new Error("repair_proposal_not_renderable");
-  const original=originalMarkdown===undefined?{}:frontmatter(originalMarkdown),date=timestamp.toISOString().slice(0,10),contextualCases=new Set(proposal.regressionQuestions.filter((item)=>item.kind==="follow_up"||item.kind==="negative").map((item)=>item.question.trim()));
+  const original=originalMarkdown===undefined?{}:frontmatter(originalMarkdown),date=timestamp.toISOString().slice(0,10),negativeCases=new Set(proposal.regressionQuestions.filter((item)=>item.kind==="negative").map((item)=>item.question.trim()));
   const metadata:Record<string,unknown>={...original,type:"query",title:proposal.title,created:original.created??date,updated:date,
     card_schema_version:1,card_id:proposal.cardId,canonical_question:proposal.canonicalQuestion,
     question_family:original.question_family??`repair_${proposal.cardId.toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/gu,"_").replace(/^_|_$/gu,"")}`,
-    aliases:proposal.aliases.filter((item)=>!contextualCases.has(item.trim())),applicable_product:original.applicable_product??[],applicable_version:original.applicable_version??"*",
+    aliases:proposal.aliases.filter((item)=>!negativeCases.has(item.trim())),applicable_product:original.applicable_product??[],applicable_version:original.applicable_version??"*",
     applicable_scenarios:original.applicable_scenarios??[],exclude_when:original.exclude_when??[],
     obligations:proposal.obligations.map((item)=>({id:item.id,label:item.label,required:true,domains:[proposal.targetDomain],evidence_policy:item.evidencePolicy,
       required_concepts:[...item.requiredConcepts],forbidden_claims:[...item.forbiddenClaims],preferred_evidence_paths:[...item.preferredEvidencePaths]})),

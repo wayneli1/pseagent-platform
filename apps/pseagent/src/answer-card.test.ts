@@ -13,7 +13,10 @@ import {
 import { applyAnswerCardPoliciesToPlan } from "./answer-card-task-spec-adapter.js";
 import { identityResolvedQuestion } from "./question-resolver.js";
 import { taskSpecSchema } from "./task-spec.js";
-import { violatesAnswerCardForbiddenClaims } from "./answer-card-policy.js";
+import {
+  missingAnswerCardRequiredConcepts,
+  violatesAnswerCardForbiddenClaims,
+} from "./answer-card-policy.js";
 
 const professionalRevision = "a".repeat(40);
 const generalRevision = "b".repeat(40);
@@ -541,6 +544,40 @@ describe("answer card TaskSpec adapter", () => {
     expect(governedPlan.requirements[0]?.evidenceAspects[0]?.terms)
       .toEqual(expect.arrayContaining(["Coremail", "迁移能力"]));
     expect(governedPlan.requirements[0]?.queries).toHaveLength(2);
+  });
+
+  it("reports an answer-card obligation when none of its required concepts survive verification", () => {
+    const binding = {
+      domain: "presales-general" as const,
+      requirementId: "R1" as const,
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      requiredConcepts: ["success criteria", "measurement"],
+    };
+    const action = {
+      action: "final" as const,
+      requirements: [{
+        id: "R1" as const,
+        coverage: "complete" as const,
+        answer: "Discuss business value with the customer [1].",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    expect(missingAnswerCardRequiredConcepts(action, [binding])).toEqual([{
+      requirementId: "R1",
+      requiredConcepts: ["success criteria", "measurement"],
+    }]);
+    expect(missingAnswerCardRequiredConcepts({
+      ...action,
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "Agree on measurable success criteria with the customer [1].",
+        citations: [1],
+      }],
+    }, [binding])).toEqual([]);
   });
 
   it("blocks a governed forbidden claim after evidence verification", () => {

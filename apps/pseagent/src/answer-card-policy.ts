@@ -1,6 +1,37 @@
 import type { FinalAction } from "./contracts.js";
 import type { DomainRequirementBinding } from "./domain-plan.js";
 
+export interface MissingAnswerCardConcepts {
+  readonly requirementId: string;
+  readonly requiredConcepts: readonly string[];
+}
+
+export function missingAnswerCardRequiredConcepts(
+  action: FinalAction,
+  bindings: readonly DomainRequirementBinding[] = [],
+): readonly MissingAnswerCardConcepts[] {
+  const answerByRequirement = new Map(action.requirements.map((requirement) => [
+    requirement.id,
+    normalizePolicyText([
+      requirement.answer,
+      ...(requirement.relatedContext ?? []).map((item) => item.statement),
+    ].join(" ")),
+  ] as const));
+  return bindings.flatMap((binding) => {
+    const requiredConcepts = binding.requiredConcepts ?? [];
+    if (requiredConcepts.length === 0) return [];
+    const answer = answerByRequirement.get(binding.requirementId) ?? "";
+    const covered = requiredConcepts.some((concept) => {
+      const normalized = normalizePolicyText(concept);
+      return normalized.length > 0 && answer.includes(normalized);
+    });
+    return covered ? [] : [{
+      requirementId: binding.requirementId,
+      requiredConcepts: Object.freeze([...requiredConcepts]),
+    }];
+  });
+}
+
 export function violatesAnswerCardForbiddenClaims(
   action: FinalAction,
   bindings: readonly DomainRequirementBinding[] = [],
