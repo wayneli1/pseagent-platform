@@ -110,6 +110,72 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
     expect(result.plan.requirements[1]?.evidenceAspects[0]?.terms).toContain("比亚迪");
   });
 
+  it("restores named comparison context when a split obligation only says two sides", () => {
+    const comparisonQuestion =
+      "客户已有共享存储双机热备，为什么还会考虑 Coremail 多活？两者关键差异和限制是什么？";
+    const spec: TaskSpec = {
+      subject: comparisonQuestion,
+      entities: [
+        { id: "E1", label: "共享存储双机热备", role: "reference", sourceText: "共享存储双机热备" },
+        { id: "E2", label: "Coremail 多活", role: "product", sourceText: "Coremail 多活" },
+      ],
+      deliverables: [{
+        id: "D1",
+        label: "两者关键差异和限制",
+        kind: "comparison",
+        required: true,
+        sourceText: "两者关键差异和限制是什么",
+        obligations: [{
+          id: "O1",
+          label: "两者关键差异和限制",
+          targetEntityIds: [],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "两者关键差异和限制是什么",
+        }],
+      }, {
+        id: "D2",
+        label: "考虑 Coremail 多活的理由",
+        kind: "recommendation",
+        required: true,
+        sourceText: "为什么还会考虑 Coremail 多活",
+        obligations: [{
+          id: "O2",
+          label: "考虑 Coremail 多活的理由",
+          targetEntityIds: ["E2"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "为什么还会考虑 Coremail 多活",
+        }],
+      }],
+    };
+
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: {
+        ...resolvedQuestion,
+        rawQuestion: comparisonQuestion,
+        standaloneQuestion: comparisonQuestion,
+      },
+      taskSpec: spec,
+      guardResult: passingGuard,
+    });
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+
+    const requirement = result.plan.requirements[0]!;
+    expect(requirement.queries[0]?.text).toContain("共享存储双机热备");
+    expect(requirement.queries[0]?.text).toContain("Coremail 多活");
+    expect(requirement.evidenceAspects[0]?.terms.join(" "))
+      .toContain("共享存储双机热备");
+    const selectionRequirement = result.plan.requirements[1]!;
+    expect(selectionRequirement.question).toBe("为什么还会考虑 Coremail 多活");
+    expect(selectionRequirement.queries[0]?.text).toContain("共享存储双机热备");
+    expect(selectionRequirement.queries[0]?.text).toContain("两者关键差异和限制");
+  });
+
   it("maps the current general scope to the general knowledge domain", () => {
     const spec = taskSpec();
     spec.deliverables[0]!.obligations[0]!.required = false;

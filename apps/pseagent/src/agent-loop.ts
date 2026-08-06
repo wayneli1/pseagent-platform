@@ -185,6 +185,7 @@ type AgentState = {
   >;
   citationRepairAttempts: number;
   directAnswerRepairAttempts: number;
+  comparisonSubjectRepairAttempts: number;
   invalidPayloadTurnRetries: number;
   forceFinal: boolean;
   successfulSeedSearches: number;
@@ -337,6 +338,24 @@ async function runKnowledgeAgentCore(
         input.requirementBindings,
         readEvidence(state),
       );
+      const comparisonSubjectRepairs = pendingComparisonSubjectRepairs(
+        normalizedAction,
+        state,
+      );
+      if (
+        comparisonSubjectRepairs.length > 0 &&
+        state.comparisonSubjectRepairAttempts === 0 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.comparisonSubjectRepairAttempts += 1;
+        state.forceFinal = true;
+        observe(state, {
+          type: "comparison_subject_repair_required",
+          requirements: comparisonSubjectRepairs,
+        });
+        continue;
+      }
       const directAnswerRepairs = pendingDirectAnswerRepairs(
         normalizedAction,
         state,
@@ -917,6 +936,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     readProvenanceByCitation: new Map(),
     citationRepairAttempts: 0,
     directAnswerRepairAttempts: 0,
+    comparisonSubjectRepairAttempts: 0,
     invalidPayloadTurnRetries: 0,
     forceFinal: false,
     successfulSeedSearches: 0,
@@ -2964,6 +2984,60 @@ function pendingDirectAnswerRepairs(
           citationIndexes: exactCitations,
         }];
   });
+}
+
+const AMBIGUOUS_COMPARISON_CLAIM_PATTERN =
+  /^(?:(?:[-*•]|\d+[.)、])\s*)?(?:\*\*)?(?:(?:其|它(?:们)?|该(?:方案|产品|系统|架构|机制)|这种(?:方案|产品|系统|架构|机制)|前者|后者)(?:\*\*)?(?:[：:，,\s]|$)|(?:不支持|不具备|不提供|不允许|无法|仅支持|只支持|依赖|采用|切换粒度|资源利用率|存在(?:限制|风险)))/u;
+
+function pendingComparisonSubjectRepairs(
+  action: FinalAction,
+  state: AgentState,
+): string[] {
+  return action.requirements.flatMap((result) => {
+    const requirementState = state.requirements.get(result.id);
+    if (
+      requirementState === undefined ||
+      result.coverage === "none" ||
+      !isDirectComparisonRequirement(requirementState.requirement)
+    ) {
+      return [];
+    }
+    return hasAmbiguousComparisonClaim(result.answer) ? [result.id] : [];
+  });
+}
+
+function hasAmbiguousComparisonClaim(answer: string): boolean {
+  let hasExplicitHeadingContext = false;
+  for (const rawLine of normalizeTrailingCitationPlacement(answer).split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line) {
+      hasExplicitHeadingContext = false;
+      continue;
+    }
+    const withoutMarker = line
+      .replace(/^(?:#{1,6}\s+|[-*•]\s+|\d+[.)、]\s*)/u, "")
+      .replace(/^\*\*|\*\*$/gu, "")
+      .trim();
+    if (
+      !/\[\d+\]/u.test(line) &&
+      /[：:]$/u.test(withoutMarker) &&
+      withoutMarker.replace(/[：:]$/u, "").trim().length > 0
+    ) {
+      hasExplicitHeadingContext = true;
+      continue;
+    }
+    const pieces = line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [line];
+    for (const piece of pieces) {
+      if (
+        !hasExplicitHeadingContext &&
+        /\[\d+\]/u.test(piece) &&
+        AMBIGUOUS_COMPARISON_CLAIM_PATTERN.test(piece.trim())
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function sortedCandidates(requirementState: RequirementState): Candidate[] {

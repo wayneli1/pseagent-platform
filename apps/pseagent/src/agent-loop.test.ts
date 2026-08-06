@@ -1688,6 +1688,134 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("rewrites a comparison draft whose cited claims lose their subjects", async () => {
+    const plan: KnowledgePlan = {
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question: "Alpha 和 Beta 有哪些差异与限制",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Alpha 与 Beta 的差异和限制",
+          terms: ["Alpha", "Beta", "差异", "限制"],
+        }],
+        queries: [{
+          text: "Alpha Beta 差异限制",
+          aspectIds: ["A1"],
+        }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Alpha Beta 差异限制": [{
+          path: "wiki/comparison/alpha-vs-beta.md",
+          title: "Alpha vs Beta 对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/alpha-vs-beta.md"),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: "- 不支持多中心部署 [1]。\n- 其切换粒度为整机 [1]。",
+          citations: [1],
+        }],
+        citations: [1],
+      },
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: "Alpha 支持多中心部署 [1]。\nBeta 不支持多中心部署，切换粒度为整机 [1]。",
+          citations: [1],
+        }],
+        citations: [1],
+      },
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "comparison_subject_repair_required",
+    );
+    expect(result.answer).toContain("Beta 不支持多中心部署");
+  });
+
+  it("accepts comparison bullets under an explicit object heading", async () => {
+    const plan: KnowledgePlan = {
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question: "Alpha 和 Beta 有哪些差异",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Alpha 与 Beta 的差异",
+          terms: ["Alpha", "Beta", "差异"],
+        }],
+        queries: [{ text: "Alpha Beta 差异", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Alpha Beta 差异": [{
+          path: "wiki/comparison/alpha-vs-beta.md",
+          title: "Alpha vs Beta 对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/alpha-vs-beta.md"),
+      final("complete", "Alpha：\n- 支持多中心部署 [1]。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(model.calls).toBe(2);
+  });
+
+  it("passes the comparison completeness and formal-name contract to synthesis", async () => {
+    const plan: KnowledgePlan = {
+      subject: "高可用选型",
+      requirements: [{
+        id: "R1",
+        question: "比较方案甲和方案乙的关键差异、限制和选型理由",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "关键差异、限制和选型理由",
+          terms: ["方案甲", "方案乙", "差异", "限制"],
+        }],
+        queries: [{ text: "方案甲 方案乙 对比", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "方案甲 方案乙 对比": [{
+          path: "wiki/comparison/alpha-vs-beta.md",
+          title: "方案甲与方案乙对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/alpha-vs-beta.md"),
+      final("complete", "方案甲与方案乙的主要差异和限制已由正式对比页确认 [1]。", [1]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    const systemPrompt = model.prompts[1]?.[0]?.content ?? "";
+    expect(systemPrompt).toContain("足以改变选型判断的主要对比维度");
+    expect(systemPrompt).toContain("模块全称与缩写");
+  });
+
   it("accepts a verifier-supported partial comparison without another rewrite", async () => {
     const plan: KnowledgePlan = {
       subject: "产品对比",

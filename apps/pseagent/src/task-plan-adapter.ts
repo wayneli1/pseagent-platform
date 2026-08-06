@@ -51,6 +51,10 @@ const DOMAIN_BY_SCOPE: Readonly<Record<
 const MAX_REQUIREMENTS = 6;
 const MAX_ASPECT_TERMS = 8;
 const MAX_QUERY_CHARACTERS = 1_024;
+const DEICTIC_COMPARISON_PATTERN =
+  /(?:两者|二者|这两(?:个|种|类|项|套)?|前者.{0,16}后者|后者.{0,16}前者|它们|各自).{0,32}(?:差异|区别|对比|限制|优劣|异同)/u;
+const CONTEXT_DEPENDENT_SELECTION_PATTERN =
+  /(?:(?:为什么|为何|何以).{0,32}(?:考虑|选择|采用|推荐)|(?:考虑|选择|采用|推荐).{0,32}(?:原因|理由|动因))/u;
 
 export function adaptTaskSpecToKnowledgePlan(
   input: TaskPlanAdapterInput,
@@ -132,10 +136,28 @@ export function adaptTaskSpecToKnowledgePlan(
       item.deliverable.sourceText,
       otherEntitySourceTexts,
     );
+    const obligationContext =
+      `${item.obligation.sourceText} ${item.deliverable.sourceText}`;
+    const comparisonContext = DEICTIC_COMPARISON_PATTERN.test(obligationContext)
+      ? input.resolvedQuestion.standaloneQuestion
+      : "";
+    const selectionContext = CONTEXT_DEPENDENT_SELECTION_PATTERN.test(
+        obligationContext,
+      )
+      ? input.resolvedQuestion.standaloneQuestion
+      : "";
+    const requirementQuestion = buildSemanticQuery([
+      ...entitySourceTexts,
+      obligationSourceText,
+      deliverableSourceText,
+      comparisonContext,
+    ]);
     const primaryQuery = buildSemanticQuery([
       ...entitySourceTexts,
       obligationSourceText,
       deliverableSourceText,
+      comparisonContext,
+      selectionContext,
     ]);
     const safeLabel = safeLabelExpansion(
       item.obligation.label,
@@ -146,6 +168,8 @@ export function adaptTaskSpecToKnowledgePlan(
       entitySourceTexts,
       obligationSourceText,
       deliverableSourceText,
+      comparisonContext,
+      selectionContext,
       safeLabel,
     );
     const queries = [primaryQuery];
@@ -159,7 +183,6 @@ export function adaptTaskSpecToKnowledgePlan(
         queries.push(expanded);
       }
     }
-    const requirementQuestion = primaryQuery;
     if (
       terms === undefined ||
       characterLength(requirementQuestion) === 0 ||
