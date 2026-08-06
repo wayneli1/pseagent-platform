@@ -1,5 +1,5 @@
 const DIRECT_COMPARISON_QUESTION_PATTERN =
-  /(?:对比|比较|相比|较之|区别|差异|不同|(?:各自|分别|各).{0,24}(?:适合|适用|应用场景|使用场景|优劣|限制)|\bvs\.?\b|\bversus\b)/iu;
+  /(?:对比|比较|相比|较之|区别|差(?:异|别)|不同|(?:各自|分别|各).{0,24}(?:适合|适用|应用场景|使用场景|优劣|限制)|\bvs\.?\b|\bversus\b)/iu;
 
 export function isDirectComparisonQuestion(question: string): boolean {
   return DIRECT_COMPARISON_QUESTION_PATTERN.test(question);
@@ -18,7 +18,7 @@ export function missingExplicitComparisonLabels(
       .filter((label) => !/^(?:vs|versus)$/iu.test(label))
       .map((label) => label.toLocaleLowerCase("zh-CN"));
   const pairLabels = [...question.matchAll(
-    /(?<left>[A-Za-z][A-Za-z0-9._+-]*)\s*(?:和|与|及|\bvs\.?\b|\bversus\b)\s*(?<right>[A-Za-z][A-Za-z0-9._+-]*)(?=.{0,120}(?:区别|差异|对比|比较|不同|各自|分别|各))/giu,
+    /(?<left>[A-Za-z][A-Za-z0-9._+-]*)\s*(?:和|与|及|\bvs\.?\b|\bversus\b)\s*(?<right>[A-Za-z][A-Za-z0-9._+-]*)(?=.{0,120}(?:区别|差(?:异|别)|对比|比较|不同|各自|分别|各))/giu,
   )].flatMap((match) => [
     match.groups?.left ?? "",
     match.groups?.right ?? "",

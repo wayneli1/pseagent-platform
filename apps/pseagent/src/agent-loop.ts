@@ -585,6 +585,27 @@ async function runKnowledgeAgentCore(
         projectedAfterVerification = projected !== auditedAction;
         auditedAction = projected;
       }
+      const auditedComparisonSubjectRepairs = pendingComparisonSubjectRepairs(
+        auditedAction,
+        state,
+      );
+      if (
+        auditedComparisonSubjectRepairs.length > 0 &&
+        state.comparisonSubjectRepairAttempts < 2 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.comparisonSubjectRepairAttempts += 1;
+        state.forceFinal = true;
+        observe(state, {
+          type: "comparison_subject_repair_required",
+          requirements: auditedComparisonSubjectRepairs,
+        });
+        continue;
+      }
+      if (auditedComparisonSubjectRepairs.length > 0) {
+        return fallbackUnavailable(input, "coverage_verifier_invalid");
+      }
       const structuredCoverageRepairs = pendingStructuredCoverageRepairs(
         normalizedAction,
         auditedAction,

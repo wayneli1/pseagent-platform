@@ -1953,6 +1953,63 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("rewrites a comparison after verification drops one explicitly named side", async () => {
+    const plan: KnowledgePlan = {
+      subject: "协议对比",
+      requirements: [{
+        id: "R1",
+        question: "POP3 和 IMAP 在文件夹、存储和同步上有什么差别",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "POP3 与 IMAP 的差别",
+          terms: ["POP3", "IMAP", "文件夹", "存储", "同步"],
+        }],
+        queries: [{ text: "POP3 IMAP 协议对比", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "POP3 IMAP 协议对比": [{
+          path: "wiki/comparison/pop3-vs-imap.md",
+          title: "POP3 与 IMAP 协议对比",
+        }],
+      },
+    });
+    const completeComparison =
+      "POP3 仅操作收件箱，邮件下载到本地且不同步 [1]。\n" +
+      "IMAP 可操作所有文件夹，邮件保留在服务器并同步 [1]。";
+    const model = scriptedAgentModel([
+      read("R1", "wiki/comparison/pop3-vs-imap.md"),
+      final("complete", completeComparison, [1]),
+      final("complete", completeComparison, [1]),
+    ]);
+    const verifyCoverage = vi.fn()
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input, {
+          ...input.draft,
+          requirements: input.draft.requirements.map((requirement) => ({
+            ...requirement,
+            answer: "IMAP 可操作所有文件夹，邮件保留在服务器并同步 [1]。",
+          })),
+        }))
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(verifyCoverage).toHaveBeenCalledTimes(2);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "comparison_subject_repair_required",
+    );
+    expect(result.answer).toContain("POP3");
+    expect(result.answer).toContain("IMAP");
+  });
+
   it("accepts a verifier-supported partial comparison without another rewrite", async () => {
     const plan: KnowledgePlan = {
       subject: "产品对比",
