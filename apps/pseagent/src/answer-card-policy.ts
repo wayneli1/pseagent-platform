@@ -90,10 +90,15 @@ export function applyGroundedAnswerCardRequiredConcepts(
           .filter((document) => preferredPaths.has(document.path)),
       );
       if (grounded === undefined) continue;
-      if (normalizedAnswer.includes(normalizePolicyText(grounded.concept))) {
+      const sentence = groundedSentence(grounded.concept, grounded.citation);
+      // The verifier may conservatively remove a model-written segment even
+      // when that segment happened to contain the required concept. Keep one
+      // canonical, directly cited sentence for every governed obligation so
+      // concept survival never depends on the model's phrasing.
+      if (normalizedAnswer.includes(normalizePolicyText(sentence))) {
         continue;
       }
-      answer = `${answer.trim()} ${groundedSentence(grounded.concept, grounded.citation)}`;
+      answer = `${answer.trim()} ${sentence}`;
       if (!citations.includes(grounded.citation)) citations.push(grounded.citation);
       changed = true;
     }
@@ -195,7 +200,7 @@ function groundedConcept(
 }
 
 function groundedSentence(concept: string, citation: number): string {
-  return `还应明确核对“${concept}”这一正式资料要点[${citation}]。`;
+  return `处理原则包括“${concept}”[${citation}]。`;
 }
 
 function stableUnique(values: readonly number[]): number[] {

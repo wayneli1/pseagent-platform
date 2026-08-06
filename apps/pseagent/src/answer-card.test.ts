@@ -626,10 +626,45 @@ describe("answer card TaskSpec adapter", () => {
     }]);
 
     expect(grounded.requirements[0]?.answer).toContain("success criteria");
+    expect(grounded.requirements[0]?.answer).toContain(
+      "处理原则包括“success criteria”[2]。",
+    );
     expect(grounded.requirements[0]?.answer).toContain("[2]");
     expect(grounded.requirements[0]?.citations).toEqual([1, 2]);
     expect(grounded.citations).toEqual([1, 2]);
     expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([]);
+  });
+
+  it("keeps a canonical cited concept sentence even when model text already mentions it", () => {
+    const binding = {
+      domain: "presales-general" as const,
+      requirementId: "R1" as const,
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      requiredConcepts: ["success criteria", "measurement"],
+      preferredEvidencePaths: ["wiki/queries/value.md"],
+    };
+    const grounded = applyGroundedAnswerCardRequiredConcepts({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "Discuss measurable success criteria with the customer [1].",
+        citations: [1],
+      }],
+      citations: [1],
+    }, [binding], [{
+      requirementId: "R1",
+      citation: 1,
+      path: "wiki/queries/value.md",
+      title: "Value discovery",
+      content: "Agree on measurable success criteria before proposing a price.",
+    }]);
+
+    expect(grounded.requirements[0]?.answer).toContain(
+      "处理原则包括“success criteria”[1]。",
+    );
   });
 
   it("does not add an ungrounded concept or turn an uncovered answer into coverage", () => {
