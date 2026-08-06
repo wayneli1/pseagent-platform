@@ -19,34 +19,41 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
 
   async migrate(): Promise<void> {
-    await this.pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
-      version text PRIMARY KEY,
-      applied_at timestamptz NOT NULL DEFAULT now()
-    )`);
-    const applied = new Set(
-      (await this.pool.query("SELECT version FROM schema_migrations")).rows
-        .map((row) => String(row.version)),
-    );
-    for (const fileName of [
-      "001_initial.sql",
-      "002_feedback_correction.sql",
-      "003_feedback_identity_review_request.sql",
-      "004_answer_reviews.sql",
-      "005_issue_center.sql",
-      "006_single_admin_workflow.sql",
-      "007_knowledge_repair_workflow.sql",
-      "008_repair_batches.sql",
-      "009_conversation_context.sql",
-    ]) {
-      if (applied.has(fileName)) continue;
-      const migration = await readFile(fileURLToPath(
-        new URL(`../migrations/${fileName}`, import.meta.url),
-      ), "utf8");
-      await this.pool.query(migration);
-      await this.pool.query(
-        "INSERT INTO schema_migrations(version) VALUES ($1) ON CONFLICT (version) DO NOTHING",
-        [fileName],
+    const client=await this.pool.connect(),lockKey="pseagent:knowledge-ops:migrations";
+    try{
+      await client.query("SELECT pg_advisory_lock(hashtext($1))",[lockKey]);
+      await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+        version text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      )`);
+      const applied = new Set(
+        (await client.query("SELECT version FROM schema_migrations")).rows
+          .map((row) => String(row.version)),
       );
+      for (const fileName of [
+        "001_initial.sql",
+        "002_feedback_correction.sql",
+        "003_feedback_identity_review_request.sql",
+        "004_answer_reviews.sql",
+        "005_issue_center.sql",
+        "006_single_admin_workflow.sql",
+        "007_knowledge_repair_workflow.sql",
+        "008_repair_batches.sql",
+        "009_conversation_context.sql",
+      ]) {
+        if (applied.has(fileName)) continue;
+        const migration = await readFile(fileURLToPath(
+          new URL(`../migrations/${fileName}`, import.meta.url),
+        ), "utf8");
+        await client.query(migration);
+        await client.query(
+          "INSERT INTO schema_migrations(version) VALUES ($1) ON CONFLICT (version) DO NOTHING",
+          [fileName],
+        );
+      }
+    }finally{
+      await client.query("SELECT pg_advisory_unlock(hashtext($1))",[lockKey]).catch(()=>undefined);
+      client.release();
     }
   }
   async ping(): Promise<boolean> {
