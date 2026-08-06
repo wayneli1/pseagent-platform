@@ -92,10 +92,10 @@ export function isUnambiguouslyProfessionalQuestion(
   return PRODUCT_BOUNDARY_PATTERN.test(question) ||
     KNOWLEDGE_RECORD_PATTERN.test(question) ||
     TECHNICAL_CAPABILITY_BOUNDARY_PATTERN.test(question) ||
-    hasStructuredTechnicalCapabilityRequirement(question);
+    isStructuredTechnicalCapabilityRequirement(question);
 }
 
-function hasStructuredTechnicalCapabilityRequirement(question: string): boolean {
+export function isStructuredTechnicalCapabilityRequirement(question: string): boolean {
   if (!CAPABILITY_VERIFICATION_PATTERN.test(question)) return false;
   const acronyms = new Set(question.match(TECHNICAL_ACRONYM_PATTERN) ?? []);
   const implementationCues = new Set(question.match(TECHNICAL_IMPLEMENTATION_CUE_PATTERN) ?? []);

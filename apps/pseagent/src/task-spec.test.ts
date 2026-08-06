@@ -1836,6 +1836,53 @@ describe("ModelTaskCompiler", () => {
       .toEqual(["coremail-professional"]);
   });
 
+  it("keeps structured technical capability verification in professional knowledge", async () => {
+    const question = "客户提出 DLP 要扫描正文附件并支持 OCR、移动端审核，售前该如何核验而不是直接承诺？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "DLP 能力核验",
+      entities: [{ id: "E1", label: "DLP", role: "product", sourceText: "DLP" }],
+      deliverables: [{
+        id: "D1",
+        label: "核验 DLP 扫描和审核能力",
+        kind: "procedure",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "核验扫描范围、高级能力和移动端集成",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "产品安全、内容扫描和集成资料",
+      },
+    });
+
+    expect(result.deliverables[0]?.obligations[0]?.domains)
+      .toEqual(["coremail-professional"]);
+  });
+
   it("keeps a customer premise plus actor-prefixed procedure in synthesis", async () => {
     const question = "客户在 POC 中不断要求免费增加非标项，售前应该怎样控制范围又不伤害关系？";
     const modelTaskSpec = taskSpecSchema.parse({

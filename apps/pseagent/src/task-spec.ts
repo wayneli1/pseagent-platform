@@ -3,6 +3,7 @@ import type { KnowledgePlan, Scope } from "./contracts.js";
 import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { analyzeObligationSource } from "./obligation-semantics.js";
 import type { ResolvedQuestion } from "./question-resolver.js";
+import { isStructuredTechnicalCapabilityRequirement } from "./router.js";
 
 export const knowledgeDomainSchema = z.enum([
   "coremail-professional",
@@ -498,6 +499,7 @@ export class ModelTaskCompiler implements TaskCompiler {
         });
         const taskSpec = repairProfessionalDirectDomains(
           input.scopeHint,
+          input.resolvedQuestion.standaloneQuestion,
           repairExplicitEvidenceConditions(
             input.resolvedQuestion.standaloneQuestion,
             repairNumericOpportunityForecastPolicy(
@@ -690,11 +692,14 @@ function deterministicDomainFor(
 
 function repairProfessionalDirectDomains(
   scopeHint: Exclude<Scope, "normal">,
+  question: string,
   taskSpec: TaskSpec,
 ): TaskSpec {
   if (scopeHint !== "professional") {
     return taskSpec;
   }
+  const structuredTechnicalRequirement =
+    isStructuredTechnicalCapabilityRequirement(question);
   return taskSpecSchema.parse({
     ...taskSpec,
     deliverables: taskSpec.deliverables.map((deliverable) => ({
@@ -703,7 +708,10 @@ function repairProfessionalDirectDomains(
         obligation.evidencePolicy === "direct" ||
             (
               obligation.evidencePolicy === "synthesis" &&
-              !DETERMINISTIC_GENERAL_DOMAIN_PATTERN.test(obligation.sourceText)
+              (
+                structuredTechnicalRequirement ||
+                !DETERMINISTIC_GENERAL_DOMAIN_PATTERN.test(obligation.sourceText)
+              )
             )
           ? { ...obligation, domains: ["coremail-professional"] }
           : obligation),
