@@ -346,7 +346,7 @@
       "expectedTarget": "published_backup_card",
       "expectedCardId": "PRO-LARGE-DATA-BACKUP-SELECTION",
       "expectedEvidence": ["wiki/concepts/邮件系统备份选型.md"],
-      "requiredFactGroups": [["第三方软件备份", "第三方软件"], ["阈值", "没有定义"], ["兼容矩阵", "版本支持矩阵", "支持矩阵"], ["恢复指标"], ["实施责任", "交付责任边界", "双方责任"], ["人工确认", "正式测试", "审批结论"]],
+      "requiredFactGroups": [["第三方软件备份", "第三方软件"], ["阈值", "没有定义"], ["兼容矩阵", "版本支持矩阵", "支持矩阵"], ["恢复指标"], ["实施责任", "交付责任边界", "双方责任"], ["人工确认", "正式测试", "审批结论", "审批"]],
       "forbiddenClaims": ["高级备份适用于任意数据规模", "可以直接对外承诺恢复时间"],
       "expectedBehavior": "同义问法应命中修订后的备份卡并拒绝无证据的容量与恢复承诺。",
       "expectedIssueCenter": false
@@ -387,7 +387,7 @@
       "expectedTarget": "published_backup_card",
       "expectedCardId": "PRO-LARGE-DATA-BACKUP-SELECTION",
       "expectedEvidence": ["wiki/concepts/邮件系统备份选型.md"],
-      "requiredFactGroups": [["不能", "不可"], ["兼容矩阵", "版本支持矩阵", "支持矩阵"], ["恢复指标", "固定恢复"], ["实施责任", "交付责任边界", "双方责任"], ["人工确认", "正式测试", "审批结论"]],
+      "requiredFactGroups": [["不能", "不可"], ["兼容矩阵", "版本支持矩阵", "支持矩阵"], ["恢复指标", "固定恢复"], ["实施责任", "交付责任边界", "双方责任"], ["人工确认", "正式测试", "审批结论", "审批"]],
       "forbiddenClaims": ["可以直接对外承诺恢复时间", "高级备份适用于任意数据规模"],
       "expectedBehavior": "承诺边界问法应命中修订后的备份卡并明确拒绝固定恢复时长承诺。",
       "expectedIssueCenter": false
