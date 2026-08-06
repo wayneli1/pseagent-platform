@@ -231,6 +231,63 @@ describe("verifyKnowledgeCoverage", () => {
     expect(result.requirements[0]?.answer).toContain("CNAME");
   });
 
+  it("applies a trailing citation to preceding semicolon-separated comparison clauses", async () => {
+    const plan: KnowledgePlan = {
+      subject: "协议对比",
+      requirements: [{
+        id: "R1",
+        question: "POP3 和 IMAP 在文件夹上有什么差别",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "POP3 与 IMAP 的文件夹差别",
+          terms: ["POP3", "IMAP", "文件夹"],
+        }],
+        queries: [{ text: "POP3 IMAP 文件夹", aspectIds: ["A1"] }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "**文件夹**：POP3 仅可操作收件箱；IMAP 可操作所有文件夹 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const completeJson = vi.fn(async () => ({
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        targetDecision: "retain",
+        retainedTargetSegmentIndexes: [0, 1],
+        synthesizedTargetSegmentIndexes: [],
+        retainedRelatedContextIndexes: [],
+        coveredAspectIds: ["A1"],
+        reason: "direct_support",
+      }],
+    } as CoverageVerificationAction));
+
+    const result = await verifyKnowledgeCoverage({
+      question: plan.subject,
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "POP3 与 IMAP 协议对比",
+        path: "wiki/comparisons/pop3-vs-imap.md",
+        content: "POP3 仅可操作收件箱，IMAP 可操作所有文件夹。",
+        aspectIds: ["A1"],
+      }],
+      model: modelFromCompleteJson(completeJson),
+    });
+
+    expect(completeJson).toHaveBeenCalledOnce();
+    expect(result.requirements[0]).toEqual(draft.requirements[0]);
+  });
+
   it("normalizes an accidental synthesized marker for direct-only evidence", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],

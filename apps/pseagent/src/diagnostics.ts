@@ -542,6 +542,7 @@ const MODEL_PAYLOAD_REASON_PREFIX_VALUES = [
   "target_segment_citation_not_in_evidence",
   "related_context_index_out_of_range",
   "related_citation_not_in_evidence",
+  "explicit_scenario_choice_omitted",
 ] as const;
 const FINISH_REASON_VALUES = [
   "stop",

@@ -1351,12 +1351,11 @@ function startsWithStructuralMarker(text: string): boolean {
 function splitTargetSegments(answer: string): TargetSegment[] {
   const pieces = normalizeTrailingCitationPlacement(answer)
     .split(/\r?\n+/u)
-    .flatMap((line) => line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [])
-    .map((piece) => piece.trim())
-    .filter(Boolean);
+    .flatMap(splitTargetLine);
   const segments: TargetSegment[] = [];
   const pendingStructuralHeadings: string[] = [];
-  for (const text of pieces) {
+  for (const piece of pieces) {
+    const { text } = piece;
     if (isPureStructuralHeading(text)) {
       pendingStructuralHeadings.push(text);
       continue;
@@ -1365,17 +1364,55 @@ function splitTargetSegments(answer: string): TargetSegment[] {
       ? text
       : `${pendingStructuralHeadings.join("\n")}\n${text}`;
     pendingStructuralHeadings.length = 0;
-    const citations = stableUnique(
-      [...materializedText.matchAll(/\[(\d+)\]/gu)].map((match) =>
-        Number(match[1])),
-    );
     segments.push({
       index: segments.length,
       text: materializedText,
-      citations,
+      citations: piece.citations,
     });
   }
   return segments;
+}
+
+function splitTargetLine(line: string): Array<{
+  readonly text: string;
+  readonly citations: readonly number[];
+}> {
+  const pieces = (line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [])
+    .map((text) => text.trim())
+    .filter(Boolean)
+    .map((text) => ({
+      text,
+      citations: stableUnique(
+        [...text.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+      ),
+    }));
+  return pieces.map((piece, index) => {
+    if (piece.citations.length > 0 || !/[；;]\s*$/u.test(piece.text)) {
+      return piece;
+    }
+    const inheritedCitations = followingParallelClauseCitations(pieces, index);
+    if (inheritedCitations.length === 0) return piece;
+    return {
+      text: piece.text.replace(
+        /([；;])\s*$/u,
+        ` ${inheritedCitations.map((citation) => `[${citation}]`).join("")}$1`,
+      ),
+      citations: inheritedCitations,
+    };
+  });
+}
+
+function followingParallelClauseCitations(
+  pieces: readonly { readonly text: string; readonly citations: readonly number[] }[],
+  index: number,
+): readonly number[] {
+  for (let cursor = index + 1; cursor < pieces.length; cursor += 1) {
+    const candidate = pieces[cursor];
+    if (candidate === undefined) return [];
+    if (candidate.citations.length > 0) return candidate.citations;
+    if (!/[；;]\s*$/u.test(candidate.text)) return [];
+  }
+  return [];
 }
 
 function isPureStructuralHeading(text: string): boolean {

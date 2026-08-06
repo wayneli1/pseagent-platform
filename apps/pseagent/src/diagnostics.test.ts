@@ -327,6 +327,27 @@ describe("development diagnostic trace", () => {
     ]);
   });
 
+  it("preserves the allowlisted comparison completeness failure code", () => {
+    const directory = mkdtempSync(join(tmpdir(), "pseagent-diagnostics-comparison-"));
+    temporaryDirectories.push(directory);
+    const trace = new JsonlDiagnosticTraceFactory(directory).start();
+
+    trace.record({
+      event: "model_payload",
+      result: "rejected",
+      reason: "explicit_scenario_choice_omitted:R1",
+      repairAttempt: 1,
+    });
+
+    const [file] = readdirSync(directory);
+    const record = JSON.parse(readFileSync(join(directory, file ?? ""), "utf8"));
+    expect(record).toMatchObject({
+      event: "model_payload",
+      reason: "explicit_scenario_choice_omitted",
+      repairAttempt: 1,
+    });
+  });
+
   it("never lets a diagnostic sink failure change the answer path", () => {
     const trace = {
       requestId: "test",
