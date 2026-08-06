@@ -1,0 +1,127 @@
+export interface AcceptanceCase {
+  readonly id: string;
+  readonly matrixType: string;
+  readonly question: string;
+  readonly session: string;
+  readonly useConversationContext?: boolean;
+  readonly resetConversationBefore?: boolean;
+  readonly expectedScope: "professional" | "general" | "normal";
+  readonly expectedTarget: string;
+  readonly expectedCardId?: string;
+  readonly expectedEvidence: readonly string[];
+  readonly requiredFactGroups: readonly (readonly string[])[];
+  readonly forbiddenClaims: readonly string[];
+  readonly expectedBehavior: string;
+  readonly baselineAssessment?: string;
+  readonly expectedIssueCenter: boolean;
+}
+
+export interface AcceptanceMatrix {
+  readonly batchId: string;
+  readonly userDisplayName: string;
+  readonly model: "deepseek_v4_flash";
+  readonly cases: readonly AcceptanceCase[];
+  readonly supplementCases: readonly AcceptanceCase[];
+  readonly postPublishCases: readonly AcceptanceCase[];
+}
+
+export type AcceptancePhase = "phase1" | "supplement" | "post_publish";
+
+export function validateAcceptanceMatrix(
+  value: unknown,
+  options: {
+    readonly phase1Count: number;
+    readonly supplementCount: number;
+    readonly postPublishCount: number;
+    readonly forbiddenQuestions?: readonly string[];
+  },
+): AcceptanceMatrix {
+  if (!isRecord(value)) throw new Error("enterprise_e2e_matrix_invalid");
+  const matrix = value as unknown as AcceptanceMatrix;
+  if (
+    typeof matrix.batchId !== "string" || matrix.batchId.trim() === "" ||
+    typeof matrix.userDisplayName !== "string" || matrix.userDisplayName.trim() === "" ||
+    matrix.model !== "deepseek_v4_flash" ||
+    !Array.isArray(matrix.cases) ||
+    !Array.isArray(matrix.supplementCases) ||
+    !Array.isArray(matrix.postPublishCases)
+  ) {
+    throw new Error("enterprise_e2e_matrix_invalid");
+  }
+  if (
+    matrix.cases.length !== options.phase1Count ||
+    matrix.supplementCases.length !== options.supplementCount ||
+    matrix.postPublishCases.length !== options.postPublishCount
+  ) {
+    throw new Error("enterprise_e2e_matrix_case_count_invalid");
+  }
+  const allCases = [...matrix.cases, ...matrix.supplementCases, ...matrix.postPublishCases];
+  for (const testCase of allCases) assertAcceptanceCase(testCase);
+  if (new Set(allCases.map((item) => item.id)).size !== allCases.length) {
+    throw new Error("enterprise_e2e_matrix_duplicate_id");
+  }
+  const questionKeys = allCases.map((item) => normalizeQuestion(item.question));
+  if (new Set(questionKeys).size !== questionKeys.length) {
+    throw new Error("enterprise_e2e_matrix_duplicate_question");
+  }
+  const forbidden = new Set((options.forbiddenQuestions ?? []).map(normalizeQuestion));
+  if (questionKeys.some((question) => forbidden.has(question))) {
+    throw new Error("enterprise_e2e_matrix_reuses_forbidden_question");
+  }
+  return matrix;
+}
+
+export function selectAcceptanceCases(
+  matrix: AcceptanceMatrix,
+  phase: AcceptancePhase,
+  caseId: string | undefined,
+  options: { readonly requireSingleCase: boolean },
+): readonly AcceptanceCase[] {
+  const phaseCases = phase === "supplement"
+    ? matrix.supplementCases
+    : phase === "post_publish"
+      ? matrix.postPublishCases
+      : matrix.cases;
+  const normalizedId = caseId?.trim();
+  if (normalizedId === undefined || normalizedId === "") {
+    if (options.requireSingleCase) throw new Error("enterprise_e2e_case_id_required");
+    return phaseCases;
+  }
+  const selected = phaseCases.find((testCase) => testCase.id === normalizedId);
+  if (selected === undefined) throw new Error(`enterprise_e2e_case_unknown:${normalizedId}`);
+  return [selected];
+}
+
+export function normalizeQuestion(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function assertAcceptanceCase(value: unknown): asserts value is AcceptanceCase {
+  if (!isRecord(value)) throw new Error("enterprise_e2e_case_invalid");
+  const scope = value.expectedScope;
+  if (
+    typeof value.id !== "string" || value.id.trim() === "" ||
+    typeof value.matrixType !== "string" || value.matrixType.trim() === "" ||
+    typeof value.question !== "string" || value.question.trim() === "" ||
+    typeof value.session !== "string" || value.session.trim() === "" ||
+    !["professional", "general", "normal"].includes(String(scope)) ||
+    typeof value.expectedTarget !== "string" || value.expectedTarget.trim() === "" ||
+    typeof value.expectedBehavior !== "string" || value.expectedBehavior.trim() === "" ||
+    typeof value.expectedIssueCenter !== "boolean" ||
+    !isStringArray(value.expectedEvidence) ||
+    !isStringArray(value.forbiddenClaims) ||
+    !Array.isArray(value.requiredFactGroups) ||
+    value.requiredFactGroups.length === 0 ||
+    !value.requiredFactGroups.every((group) => isStringArray(group) && group.length > 0)
+  ) {
+    throw new Error(`enterprise_e2e_case_invalid:${String(value.id ?? "unknown")}`);
+  }
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string" && item.trim() !== "");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

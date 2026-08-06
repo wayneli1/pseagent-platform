@@ -10,45 +10,55 @@ import type { PseAnswerExecution } from "../apps/pseagent/src/answer-service.js"
 import { answerResultSchema } from "../apps/pseagent/src/contracts.js";
 import { createPseMcpServer } from "../apps/pseagent/src/mcp-server.js";
 import {
+  selectAcceptanceCases,
+  validateAcceptanceMatrix,
+  type AcceptanceCase,
+  type AcceptanceMatrix,
+  type AcceptancePhase,
+} from "../apps/pseagent/src/enterprise-e2e-matrix.js";
+import {
   buildAnswerOutline,
   ConversationStore,
   HttpFeedbackClient,
   pseudonymizeFeedbackUser,
 } from "../integrations/lunkr-direct/src/index.js";
 
-interface AcceptanceCase {
-  readonly id: string;
-  readonly matrixType: string;
-  readonly question: string;
-  readonly session: string;
-  readonly useConversationContext?: boolean;
-  readonly resetConversationBefore?: boolean;
-  readonly expectedScope: "professional" | "general" | "normal";
-  readonly expectedTarget: string;
-  readonly expectedCardId?: string;
-  readonly expectedEvidence: readonly string[];
-  readonly requiredFactGroups: readonly (readonly string[])[];
-  readonly forbiddenClaims: readonly string[];
-  readonly expectedBehavior: string;
-  readonly baselineAssessment?: string;
-  readonly expectedIssueCenter: boolean;
-}
-
-interface AcceptanceMatrix {
-  readonly batchId: string;
-  readonly userDisplayName: string;
-  readonly model: "deepseek_v4_flash";
-  readonly cases: readonly AcceptanceCase[];
-  readonly supplementCases: readonly AcceptanceCase[];
-  readonly postPublishCases: readonly AcceptanceCase[];
-}
-
-const matrixPath = new URL("../tests/e2e/enterprise-knowledge-acceptance-20260806.json", import.meta.url);
-const matrix = JSON.parse(await readFile(matrixPath, "utf8")) as AcceptanceMatrix;
+const firstRoundMatrixPath = new URL("../tests/e2e/enterprise-knowledge-acceptance-20260806.json", import.meta.url);
+const configuredMatrixPath = process.env.E2E_MATRIX_PATH?.trim();
+const matrixPath = configuredMatrixPath === undefined || configuredMatrixPath === ""
+  ? firstRoundMatrixPath
+  : configuredMatrixPath;
+const firstRoundMatrix = JSON.parse(await readFile(firstRoundMatrixPath, "utf8")) as AcceptanceMatrix;
+const isStrictSecondRound = matrixPath !== firstRoundMatrixPath;
+const matrix = validateAcceptanceMatrix(JSON.parse(await readFile(matrixPath, "utf8")), {
+  phase1Count: isStrictSecondRound ? 20 : 19,
+  supplementCount: isStrictSecondRound ? 0 : 4,
+  postPublishCount: isStrictSecondRound ? 0 : 5,
+  forbiddenQuestions: isStrictSecondRound
+    ? [...firstRoundMatrix.cases, ...firstRoundMatrix.supplementCases, ...firstRoundMatrix.postPublishCases]
+      .map((testCase) => testCase.question)
+    : [],
+});
 assertEnvironment(matrix);
 const requestedPhase = process.env.E2E_PHASE?.trim();
-const phase = requestedPhase === "supplement" ? "supplement" : requestedPhase === "post_publish" ? "post_publish" : "phase1";
-const selectedCases = phase === "supplement" ? matrix.supplementCases : phase === "post_publish" ? matrix.postPublishCases : matrix.cases;
+const phase: AcceptancePhase = requestedPhase === "supplement"
+  ? "supplement"
+  : requestedPhase === "post_publish"
+    ? "post_publish"
+    : "phase1";
+const selectedCases = selectAcceptanceCases(matrix, phase, process.env.E2E_CASE_ID, {
+  requireSingleCase: isStrictSecondRound,
+});
+if (process.env.E2E_VALIDATE_ONLY === "1") {
+  process.stdout.write(`${JSON.stringify({
+    type: "matrix_validated",
+    batchId: matrix.batchId,
+    phase,
+    selectedCaseIds: selectedCases.map((testCase) => testCase.id),
+    strictSingleCase: isStrictSecondRound,
+  })}\n`);
+  process.exit(0);
+}
 
 const runtime = await createPseAgentRuntime(process.env);
 const feedback = new HttpFeedbackClient({
@@ -318,15 +328,5 @@ function assertEnvironment(value: AcceptanceMatrix): void {
   ];
   if (value.model !== "deepseek_v4_flash" || models.some((model) => model !== value.model)) {
     throw new Error("enterprise_e2e_requires_deepseek_v4_flash");
-  }
-  const allCases = [...value.cases, ...value.supplementCases, ...value.postPublishCases];
-  if (
-    value.cases.length !== 19 ||
-    value.supplementCases.length !== 4 ||
-    value.postPublishCases.length !== 5 ||
-    new Set(allCases.map((item) => item.id)).size !== allCases.length ||
-    new Set(allCases.map((item) => item.question)).size !== allCases.length
-  ) {
-    throw new Error("enterprise_e2e_phase1_matrix_invalid");
   }
 }
