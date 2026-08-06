@@ -579,6 +579,16 @@ describe("answer card TaskSpec adapter", () => {
         citations: [1],
       }],
     }, [binding])).toEqual([]);
+    expect(missingAnswerCardRequiredConcepts({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "The reviewed material does not cover this requirement.",
+        citations: [],
+      }],
+      citations: [],
+    }, [binding])).toEqual([]);
   });
 
   it("adds only a concept grounded in the binding's preferred evidence", () => {

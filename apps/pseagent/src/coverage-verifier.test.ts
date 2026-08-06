@@ -415,7 +415,7 @@ describe("verifyKnowledgeCoverage", () => {
     expect(result.requirements[0]?.answer).not.toContain("额外断言");
   });
 
-  it("rejects a verifier decision that retains an uncited factual segment", async () => {
+  it("conservatively removes an uncited segment from a retain decision", async () => {
     const completeJson = vi.fn(async (
       _input: Parameters<ModelClient["completeJson"]>[0],
     ) => ({
@@ -431,7 +431,7 @@ describe("verifyKnowledgeCoverage", () => {
       }],
     } as CoverageVerificationAction));
 
-    await expect(verifyKnowledgeCoverage({
+    const result = await verifyKnowledgeCoverage({
       question: "是否支持目标协议",
       plan: singleRequirementPlan,
       draft: {
@@ -443,11 +443,14 @@ describe("verifyKnowledgeCoverage", () => {
       },
       evidence,
       model: modelFromCompleteJson(completeJson),
-    })).rejects.toBeInstanceOf(InvalidCoverageVerificationError);
+    });
 
-    expect(completeJson).toHaveBeenCalledTimes(5);
-    expect(completeJson.mock.calls[1]?.[0].messages.at(-1)?.content)
-      .toContain("retained_target_segment_without_citation:R1:1");
+    expect(completeJson).toHaveBeenCalledOnce();
+    expect(result.requirements[0]).toMatchObject({
+      coverage: "complete",
+      answer: "正文直接确认目标协议[1]。",
+      citations: [1],
+    });
   });
 
   it("downgrades complete when cited pages do not cover every dynamic aspect", async () => {
@@ -2137,7 +2140,7 @@ describe("verifyKnowledgeCoverage", () => {
     expect(result.requirements[0]).toMatchObject({ coverage: "partial" });
     expect(result.requirements[0]?.answer).toContain("有引用的结论");
     expect(result.requirements[0]?.answer).not.toContain("补充断言");
-    expect(completeJson).toHaveBeenCalledTimes(4);
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 
   it("still propagates model unavailability instead of claiming not covered", async () => {

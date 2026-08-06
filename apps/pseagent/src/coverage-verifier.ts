@@ -156,6 +156,7 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
       const normalizedCandidate = normalizeEvidenceModeDecisions(
         candidate,
         input.plan,
+        targetSegments,
       );
       const invalidReason = validateVerification(
         input,
@@ -296,21 +297,58 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
 function normalizeEvidenceModeDecisions(
   candidate: CoverageVerificationAction,
   plan: KnowledgePlan,
+  targetSegments: readonly {
+    readonly id: string;
+    readonly segments: readonly TargetSegment[];
+  }[],
 ): CoverageVerificationAction {
   return {
     ...candidate,
     requirements: candidate.requirements.map((requirement, index) => {
+      const segments = targetSegments[index]?.segments ?? [];
+      const citedRetainedIndexes = requirement.retainedTargetSegmentIndexes
+        .filter((segmentIndex) => {
+          const segment = segments[segmentIndex];
+          // Preserve an out-of-range index so strict validation still reports
+          // the malformed decision instead of hiding it.
+          return segment === undefined || segment.citations.length > 0;
+        });
+      const removedUncited = citedRetainedIndexes.length !==
+        requirement.retainedTargetSegmentIndexes.length;
+      const directOnly = plan.requirements[index]?.evidenceMode === "direct_only";
+      const clearedDirectOnlySynthesis = directOnly &&
+        requirement.synthesizedTargetSegmentIndexes.length > 0 &&
+        requirement.reason !== "synthesized_support";
+      const synthesizedTargetSegmentIndexes = clearedDirectOnlySynthesis
+        ? []
+        : removedUncited
+          ? requirement.synthesizedTargetSegmentIndexes.filter((segmentIndex) =>
+              citedRetainedIndexes.includes(segmentIndex))
+          : requirement.synthesizedTargetSegmentIndexes;
+      const targetDecision = removedUncited
+        ? citedRetainedIndexes.length === 0
+          ? "not_covered" as const
+          : citedRetainedIndexes.length === segments.length
+            ? "retain" as const
+            : "retain_partial" as const
+        : requirement.targetDecision;
       if (
-        plan.requirements[index]?.evidenceMode !== "direct_only" ||
-        requirement.synthesizedTargetSegmentIndexes.length === 0 ||
-        requirement.reason === "synthesized_support"
-      ) {
-        return requirement;
-      }
+        !removedUncited &&
+        !clearedDirectOnlySynthesis
+      ) return requirement;
       return {
         ...requirement,
-        synthesizedTargetSegmentIndexes: [],
-        reason: requirement.reason,
+        targetDecision,
+        retainedTargetSegmentIndexes: citedRetainedIndexes,
+        synthesizedTargetSegmentIndexes,
+        ...(targetDecision === "not_covered" ? { coveredAspectIds: [] } : {}),
+        reason: targetDecision === "not_covered"
+          ? "unsupported_claim_removed"
+          : targetDecision === "retain_partial"
+            ? "partial_support"
+            : synthesizedTargetSegmentIndexes.length > 0
+              ? "synthesized_support"
+              : "direct_support",
       };
     }),
   };

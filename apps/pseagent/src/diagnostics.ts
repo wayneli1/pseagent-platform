@@ -498,6 +498,7 @@ const COVERAGE_GAP_REASON_VALUES = [
   "unsupported_claim_removed",
 ] as const;
 const VALIDATION_REASON_VALUES = [
+  "answer_card_required_concept_missing",
   "answer_card_forbidden_claim",
   "requirement_coverage_mismatch",
   "duplicate_requirement_coverage",

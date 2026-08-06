@@ -20,15 +20,23 @@ export function missingAnswerCardRequiredConcepts(
 ): readonly MissingAnswerCardConcepts[] {
   const answerByRequirement = new Map(action.requirements.map((requirement) => [
     requirement.id,
-    normalizePolicyText([
-      requirement.answer,
-      ...(requirement.relatedContext ?? []).map((item) => item.statement),
-    ].join(" ")),
+    {
+      coverage: requirement.coverage,
+      text: normalizePolicyText([
+        requirement.answer,
+        ...(requirement.relatedContext ?? []).map((item) => item.statement),
+      ].join(" ")),
+    },
   ] as const));
   return bindings.flatMap((binding) => {
     const requiredConcepts = binding.requiredConcepts ?? [];
     if (requiredConcepts.length === 0) return [];
-    const answer = answerByRequirement.get(binding.requirementId) ?? "";
+    const requirement = answerByRequirement.get(binding.requirementId);
+    // A not-covered obligation must remain evidence-safe. Requiring a governed
+    // concept here would force the final answer to imply support that the
+    // verifier explicitly did not retain.
+    if (requirement?.coverage === "none") return [];
+    const answer = requirement?.text ?? "";
     const covered = requiredConcepts.some((concept) => {
       const normalized = normalizePolicyText(concept);
       return normalized.length > 0 && answer.includes(normalized);
@@ -74,12 +82,6 @@ export function applyGroundedAnswerCardRequiredConcepts(
       .join(" ");
     for (const binding of bindingsByRequirement.get(requirement.id) ?? []) {
       const normalizedAnswer = normalizePolicyText(`${answer} ${relatedText}`);
-      if ((binding.requiredConcepts ?? []).some((concept) => {
-        const normalized = normalizePolicyText(concept);
-        return normalized.length > 0 && normalizedAnswer.includes(normalized);
-      })) {
-        continue;
-      }
       const preferredPaths = new Set(binding.preferredEvidencePaths ?? []);
       if (preferredPaths.size === 0) continue;
       const grounded = groundedConcept(
@@ -88,6 +90,9 @@ export function applyGroundedAnswerCardRequiredConcepts(
           .filter((document) => preferredPaths.has(document.path)),
       );
       if (grounded === undefined) continue;
+      if (normalizedAnswer.includes(normalizePolicyText(grounded.concept))) {
+        continue;
+      }
       answer = `${answer.trim()} ${groundedSentence(grounded.concept, grounded.citation)}`;
       if (!citations.includes(grounded.citation)) citations.push(grounded.citation);
       changed = true;

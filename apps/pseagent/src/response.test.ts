@@ -319,6 +319,7 @@ describe("knowledge response", () => {
       caseAssessability: "insufficient",
     });
     expect(result.answer).toContain("尚未确认的部分：");
+    expect(result.answer).toContain("下一步验证：");
     expect(result.answer).toContain("当前 POC 机会");
     expect(result.answer).toContain("客户决策链、预算与 POC 评价结果");
     expect(result.answer).not.toContain("知识库尚未覆盖问题的其余部分");

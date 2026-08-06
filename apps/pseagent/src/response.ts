@@ -338,7 +338,7 @@ function formatGapSection(gaps: readonly CoverageGap[]): string {
       `${index + 1}. 对象：${subjects.join("、")}`,
       `缺失信息：${missing.join("、")}`,
       boundaries.length === 0 ? "" : `已确认边界：${boundaries.join("；")}`,
-      nextActions.length === 0 ? "" : `下一步：${nextActions.join("；")}`,
+      nextActions.length === 0 ? "" : `下一步验证：${nextActions.join("；")}`,
     ].filter(Boolean).join("；");
   });
   return ["尚未确认的部分：", ...lines].join("\n");
