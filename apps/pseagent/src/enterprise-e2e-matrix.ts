@@ -96,6 +96,38 @@ export function normalizeQuestion(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu, "");
 }
 
+export function acceptanceFactGroupCovered(
+  answer: string,
+  question: string,
+  alternatives: readonly string[],
+): boolean {
+  const compactAnswer = normalizeQuestion(answer);
+  return alternatives.some((term) => {
+    const compactTerm = normalizeQuestion(term);
+    if (compactAnswer.includes(compactTerm)) return true;
+    const termWords = wordTokens(term);
+    if (termWords.length !== 2 || termWords[0] === termWords[1]) return false;
+    const questionWords = wordTokens(question);
+    for (let index = 0; index + 1 < questionWords.length; index += 1) {
+      if (
+        questionWords[index] === termWords[1] &&
+        questionWords[index + 1] === termWords[0] &&
+        compactAnswer.includes(normalizeQuestion(`${questionWords[index]}${questionWords[index + 1]}`))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+function wordTokens(value: string): string[] {
+  const segmenter = new Intl.Segmenter("zh-CN", { granularity: "word" });
+  return [...segmenter.segment(value.normalize("NFKC"))]
+    .filter((segment) => segment.isWordLike)
+    .map((segment) => segment.segment.toLocaleLowerCase("zh-CN"));
+}
+
 function assertAcceptanceCase(value: unknown): asserts value is AcceptanceCase {
   if (!isRecord(value)) throw new Error("enterprise_e2e_case_invalid");
   const scope = value.expectedScope;

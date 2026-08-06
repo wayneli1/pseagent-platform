@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  acceptanceFactGroupCovered,
   normalizeQuestion,
   selectAcceptanceCases,
   validateAcceptanceMatrix,
@@ -30,6 +31,19 @@ const matrix = {
 };
 
 describe("enterprise E2E matrix", () => {
+  it("accepts a two-action inversion only when the user question uses that wording", () => {
+    expect(acceptanceFactGroupCovered(
+      "应先修复异常发信，再提交申请解除流程。",
+      "邮件出口 IP 进了 RBL，怎么检测、申请解除并防止再次被拉黑？",
+      ["解除申请"],
+    )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "先梳理关系客户，再安排拜访。",
+      "客户关系应该怎样分层管理？",
+      ["客户关系"],
+    )).toBe(false);
+  });
+
   it("accepts a complete 20-case second-round matrix", () => {
     expect(validateAcceptanceMatrix(matrix, {
       phase1Count: 20,
