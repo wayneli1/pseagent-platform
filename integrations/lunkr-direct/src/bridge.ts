@@ -67,6 +67,24 @@ export type BridgeDeliveryMode =
   | "standalone_post"
   | "segmented_text";
 
+export type BridgeAnswerProgressStage =
+  | "understanding"
+  | "planning"
+  | "retrieving"
+  | "reviewing_evidence"
+  | "composing"
+  | "verifying"
+  | "preparing_delivery";
+
+export interface BridgeAnswerProgress {
+  readonly stage: BridgeAnswerProgressStage;
+  readonly requirementCount?: number;
+  readonly retrievalCompletedCount?: number;
+  readonly evidenceReadCount?: number;
+  readonly coveredRequirementCount?: number;
+  readonly coverageRequirementCount?: number;
+}
+
 export type BridgeHistoricalGateReason =
   | "eligible"
   | "question_not_explicit_coremail"
@@ -141,6 +159,7 @@ export interface LunkrBridgeDependencies<Result> {
     question: string,
     conversationContext?: string,
     signal?: AbortSignal,
+    progressObserver?: (progress: BridgeAnswerProgress) => void,
   ) => Promise<Result>;
   readonly formatAnswer: (result: Result) => string;
   /** @deprecated Answer bodies are intentionally excluded from conversation context. */
@@ -181,6 +200,7 @@ export class LunkrPseBridge<Result> {
   private readonly feedbackReceipts: FeedbackReceiptStore;
   private readonly lastAcceptedQuestionAt = new Map<string, number>();
   private readonly forceNewSessionPeers = new Set<string>();
+  private readonly activeProgress = new Map<string, ActiveQuestionProgress>();
 
   constructor(
     private readonly config: LunkrDirectConfig,
@@ -244,7 +264,11 @@ export class LunkrPseBridge<Result> {
     if (receipt.questionId !== undefined) {
       this.lastAcceptedQuestionAt.set(message.peerUid, receivedAt);
     }
-    return receipt.completion;
+    const questionId = receipt.questionId;
+    if (questionId === undefined) return receipt.completion;
+    return receipt.completion.finally(() => {
+      this.clearProgress(message.peerUid, receipt.epoch, questionId);
+    });
   }
 
   private async sendAdmissionReply(
@@ -280,9 +304,14 @@ export class LunkrPseBridge<Result> {
       );
       return;
     }
+    const now = this.now();
     const lines = statuses.map((status) => {
       if (status.state === "processing") {
-        return `问题 #${status.questionId}：处理中`;
+        const progress = this.activeProgress.get(peerUid);
+        if (progress?.questionId !== status.questionId) {
+          return `问题 #${status.questionId}：处理中`;
+        }
+        return formatProcessingStatus(progress, now);
       }
       if (status.waitingForCapacity) {
         return `问题 #${status.questionId}：排队中，正在等待可用处理位`;
@@ -313,6 +342,7 @@ export class LunkrPseBridge<Result> {
     receivedAt: number,
     pendingAtAdmission: number,
   ): Promise<void> {
+    this.beginProgress(start);
     if (start.startedFromQueue) {
       if (!this.isCurrent(start)) return;
       await this.sendWithRetry(
@@ -344,7 +374,12 @@ export class LunkrPseBridge<Result> {
         AbortSignal.timeout(Math.max(1, remainingMs)),
       ]);
       try {
-        result = await this.dependencies.answer(question, context, signal);
+        result = await this.dependencies.answer(
+          question,
+          context,
+          signal,
+          (progress) => this.updateProgress(start, progress),
+        );
       } catch {
         if (!this.isCurrent(start)) return;
         await this.sendFailure(
@@ -696,6 +731,7 @@ export class LunkrPseBridge<Result> {
     this.conversations.clear(peerUid);
     this.feedbackReceipts.clearPeer(peerUid);
     this.lastAcceptedQuestionAt.delete(peerUid);
+    this.activeProgress.delete(peerUid);
     this.emit({
       type: "cancelled",
       peerUid,
@@ -722,6 +758,64 @@ export class LunkrPseBridge<Result> {
       !start.signal.aborted &&
       this.scheduler.isCurrent(start.peerUid, start.epoch)
     );
+  }
+
+  private beginProgress(start: QuestionStart): void {
+    const timestamp = this.now();
+    this.activeProgress.set(start.peerUid, {
+      questionId: start.questionId,
+      epoch: start.epoch,
+      startedAt: timestamp,
+      lastUpdatedAt: timestamp,
+      stage: "understanding",
+    });
+  }
+
+  private updateProgress(
+    start: QuestionStart,
+    progress: BridgeAnswerProgress,
+  ): void {
+    if (!this.isCurrent(start) || !isProgressStage(progress.stage)) return;
+    const current = this.activeProgress.get(start.peerUid);
+    if (
+      current === undefined ||
+      current.questionId !== start.questionId ||
+      current.epoch !== start.epoch
+    ) {
+      return;
+    }
+    this.activeProgress.set(start.peerUid, {
+      questionId: current.questionId,
+      epoch: current.epoch,
+      startedAt: current.startedAt,
+      lastUpdatedAt: this.now(),
+      stage: progress.stage,
+      ...safeOptionalCount("requirementCount", progress.requirementCount),
+      ...safeOptionalCount(
+        "retrievalCompletedCount",
+        progress.retrievalCompletedCount,
+      ),
+      ...safeOptionalCount("evidenceReadCount", progress.evidenceReadCount),
+      ...safeOptionalCount(
+        "coveredRequirementCount",
+        progress.coveredRequirementCount,
+      ),
+      ...safeOptionalCount(
+        "coverageRequirementCount",
+        progress.coverageRequirementCount,
+      ),
+    });
+  }
+
+  private clearProgress(
+    peerUid: string,
+    epoch: number,
+    questionId: number,
+  ): void {
+    const current = this.activeProgress.get(peerUid);
+    if (current?.epoch === epoch && current.questionId === questionId) {
+      this.activeProgress.delete(peerUid);
+    }
   }
 
   private emit(event: BridgeQuestionEvent): void {
@@ -780,6 +874,89 @@ export class LunkrPseBridge<Result> {
     }
     throw lastError;
   }
+}
+
+interface ActiveQuestionProgress extends BridgeAnswerProgress {
+  readonly questionId: number;
+  readonly epoch: number;
+  readonly startedAt: number;
+  readonly lastUpdatedAt: number;
+}
+
+const PROGRESS_STAGE_LABELS: Readonly<Record<BridgeAnswerProgressStage, string>> = {
+  understanding: "理解问题",
+  planning: "拆解问题",
+  retrieving: "检索资料",
+  reviewing_evidence: "核对证据",
+  composing: "组织回答",
+  verifying: "核验答案",
+  preparing_delivery: "准备发送",
+};
+
+function formatProcessingStatus(
+  progress: ActiveQuestionProgress,
+  now: number,
+): string {
+  const lines = [
+    `问题 #${progress.questionId}：处理中 · 已用时 ${formatElapsed(now - progress.startedAt)}`,
+    `当前阶段：${PROGRESS_STAGE_LABELS[progress.stage]}`,
+  ];
+  const facts: string[] = [];
+  if (progress.requirementCount !== undefined) {
+    facts.push(`需求拆解：${progress.requirementCount} 项`);
+  }
+  if (progress.retrievalCompletedCount !== undefined) {
+    facts.push(`资料检索：已完成 ${progress.retrievalCompletedCount} 项`);
+  }
+  if (progress.evidenceReadCount !== undefined) {
+    facts.push(`证据读取：${progress.evidenceReadCount} 份`);
+  }
+  if (
+    progress.coveredRequirementCount !== undefined &&
+    progress.coverageRequirementCount !== undefined
+  ) {
+    facts.push(
+      `覆盖核验：${progress.coveredRequirementCount}/${progress.coverageRequirementCount} 项完成`,
+    );
+  }
+  if (facts.length > 0) lines.push("", ...facts);
+  lines.push(`最后更新：${formatShanghaiClock(progress.lastUpdatedAt)}`);
+  return lines.join("\n");
+}
+
+function formatElapsed(elapsedMs: number): string {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes === 0) return `${remainingSeconds}秒`;
+  if (remainingSeconds === 0) return `${minutes}分`;
+  return `${minutes}分${remainingSeconds}秒`;
+}
+
+function formatShanghaiClock(timestamp: number): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(timestamp));
+}
+
+function isProgressStage(value: unknown): value is BridgeAnswerProgressStage {
+  return typeof value === "string" &&
+    Object.hasOwn(PROGRESS_STAGE_LABELS, value);
+}
+
+function safeOptionalCount<Key extends keyof BridgeAnswerProgress>(
+  key: Key,
+  value: BridgeAnswerProgress[Key],
+): Partial<Pick<BridgeAnswerProgress, Key>> {
+  return Number.isSafeInteger(value) &&
+      (value as number) >= 0 &&
+      (value as number) <= 1_000_000_000
+    ? { [key]: value } as Partial<Pick<BridgeAnswerProgress, Key>>
+    : {};
 }
 
 function historicalNoticeMetadata(

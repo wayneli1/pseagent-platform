@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  AnswerProgressTracker,
+  type AnswerProgressObserver,
+} from "./answer-progress.js";
 import type {
   AnswerStatus,
   AnswerResult,
@@ -18,6 +22,7 @@ import {
   type DiagnosticEvent,
   type DiagnosticTrace,
   type DiagnosticTraceFactory,
+  type DiagnosticProgressEvent,
   type HistoricalGateReason,
   type PseStopReason,
 } from "./diagnostics.js";
@@ -194,6 +199,7 @@ export class AnswerService {
     question: string,
     conversationContext?: string,
     signal?: AbortSignal,
+    progressObserver?: AnswerProgressObserver,
   ): Promise<PseAnswerExecution> {
     const startedAt = Date.now();
     const deadlineAt =
@@ -207,6 +213,7 @@ export class AnswerService {
       : AbortSignal.any([signal, timeoutSignal]);
     const trace = new OutcomeTrace(
       startDiagnosticTrace(this.dependencies.diagnostics),
+      progressObserver,
     );
     let scope: Scope | undefined;
     let questionResolution = identityResolvedQuestion(question);
@@ -1265,7 +1272,16 @@ class OutcomeTrace implements DiagnosticTrace {
   answerCardMatch?: AnswerCardExecutionSummary;
   answerCardActivation?: AnswerCardActivationSummary;
 
-  constructor(private readonly delegate: DiagnosticTrace) {}
+  private readonly progressTracker: AnswerProgressTracker | undefined;
+
+  constructor(
+    private readonly delegate: DiagnosticTrace,
+    progressObserver?: AnswerProgressObserver,
+  ) {
+    this.progressTracker = progressObserver === undefined
+      ? undefined
+      : new AnswerProgressTracker(progressObserver);
+  }
 
   get requestId(): string {
     return this.delegate.requestId;
@@ -1332,7 +1348,19 @@ class OutcomeTrace implements DiagnosticTrace {
     if (event.event === "historical_gate") {
       this.historicalGateReason = event.reason;
     }
-    this.delegate.record(event);
+    try {
+      this.delegate.record(event);
+    } finally {
+      this.progressTracker?.record(event);
+    }
+  }
+
+  progress(event: DiagnosticProgressEvent): void {
+    try {
+      this.delegate.progress?.(event);
+    } finally {
+      this.progressTracker?.recordProgress(event);
+    }
   }
 }
 

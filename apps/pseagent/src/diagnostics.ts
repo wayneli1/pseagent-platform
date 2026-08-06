@@ -300,9 +300,19 @@ export type DiagnosticEvent =
       readonly historicalRejectedReason?: HistoricalRejectionReason;
     };
 
+export type DiagnosticProgressEvent = {
+  readonly event: "model_call_started";
+  readonly role: ModelRole;
+  readonly operation: Extract<
+    DiagnosticEvent,
+    { event: "model_call" }
+  >["operation"];
+};
+
 export interface DiagnosticTrace {
   readonly requestId: string;
   record(event: DiagnosticEvent): void;
+  progress?(event: DiagnosticProgressEvent): void;
 }
 
 export interface DiagnosticTraceFactory {
@@ -334,6 +344,17 @@ export function recordDiagnostic(
     trace?.record(event);
   } catch {
     // Development diagnostics must never change the answer path.
+  }
+}
+
+export function recordDiagnosticProgress(
+  trace: DiagnosticTrace | undefined,
+  event: DiagnosticProgressEvent,
+): void {
+  try {
+    trace?.progress?.(event);
+  } catch {
+    // User-visible progress is best effort and must never change the answer path.
   }
 }
 

@@ -167,3 +167,16 @@ git diff --check -- docs/superpowers/specs/2026-08-05-answer-card-knowledge-ops-
 - 格式错误、过期、重复和反馈服务失败均给出可恢复提示，且不影响在线问答。
 
 验证：共享契约测试、Lunkr 命令与 Bridge 测试、Knowledge Ops 服务与迁移测试、管理后台类型检查和构建、全量 TypeScript 类型检查。
+
+## 阶段137：Lunkr 真实任务进度
+
+交付：
+
+- 从现有脱敏 `DiagnosticEvent` 派生独立的用户可见进度快照，不读取或转发问题、答案、查询词、知识路径、正文和模型原始载荷；
+- `AnswerService.answerDetailed` 增加可选的进度观察器，观察器异常不得改变诊断或回答路径；
+- Bridge 以用户、会话代次和问题编号保存处理耗时、流程阶段、需求数、检索完成数、证据读取数、覆盖核验数和最后更新时间；
+- `/status` 合并 PeerScheduler 的真实处理/排队状态与回答管线快照，尚未知的计数不展示；
+- `/new`、完成、失败、取消和重试正确重置或清理快照，进度不跨 Bridge 重启持久化；
+- 不展示无法证明的百分比和预计完成时间，不展示模型思维链。
+
+验证：进度转换单元测试、Bridge 状态与并发/取消测试、Lunkr Direct 与 PSEAgent 定向测试、全量 TypeScript 类型检查和测试、`git diff --check`。

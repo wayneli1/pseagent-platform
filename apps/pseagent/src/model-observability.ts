@@ -1,5 +1,6 @@
 import {
   recordDiagnostic,
+  recordDiagnosticProgress,
   type DiagnosticTrace,
 } from "./diagnostics.js";
 import {
@@ -24,6 +25,11 @@ export async function observeModelCall<T>(input: {
   readonly signal?: AbortSignal;
   readonly call: () => Promise<T>;
 }): Promise<T> {
+  recordDiagnosticProgress(input.trace, {
+    event: "model_call_started",
+    role: input.role,
+    operation: input.operation,
+  });
   const startedAt = Date.now();
   try {
     const result = await input.call();
