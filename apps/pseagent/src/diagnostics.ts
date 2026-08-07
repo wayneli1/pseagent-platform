@@ -110,10 +110,12 @@ export type DiagnosticEvent =
         | "shadow_only"
         | "analysis_unavailable"
         | "match_not_active"
+        | "binding_unmapped"
         | "requirement_limit_exceeded"
         | "task_spec_contract_exceeded"
         | "guard_rejected";
       readonly obligationCount: number;
+      readonly issueCodes?: readonly TaskSpecIssueCode[];
     }
   | {
       readonly event: "domain_execution";
@@ -426,6 +428,7 @@ const ANSWER_CARD_ACTIVATION_REASON_VALUES = [
   "shadow_only",
   "analysis_unavailable",
   "match_not_active",
+  "binding_unmapped",
   "requirement_limit_exceeded",
   "task_spec_contract_exceeded",
   "guard_rejected",
@@ -654,6 +657,14 @@ function allowlistDiagnosticEvent(
           ANSWER_CARD_ACTIVATION_REASON_VALUES,
         ),
         obligationCount: safeCount(event.obligationCount),
+        ...(event.issueCodes === undefined
+          ? {}
+          : {
+              issueCodes: safeArray(
+                event.issueCodes,
+                (item) => safeEnum(item, TASK_SPEC_ISSUE_VALUES),
+              ),
+            }),
       };
     case "domain_execution":
       return {

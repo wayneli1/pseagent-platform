@@ -180,3 +180,15 @@ git diff --check -- docs/superpowers/specs/2026-08-05-answer-card-knowledge-ops-
 - 不展示无法证明的百分比和预计完成时间，不展示模型思维链。
 
 验证：进度转换单元测试、Bridge 状态与并发/取消测试、Lunkr Direct 与 PSEAgent 定向测试、全量 TypeScript 类型检查和测试、`git diff --check`。
+
+## 阶段145：答案卡问题族映射与复查纠偏
+
+交付：
+
+- `family/partial` 保留用户 TaskSpec 的证据类型、客户输入状态、来源文本和知识域；
+- 仅在主题、证据角色和知识域能够唯一解释时绑定卡片义务，消除零相似度首任务兜底；
+- 不兼容或重复卡片义务使用独立 obligation，映射仍不唯一时安全返回 `binding_unmapped`；
+- 激活摘要携带脱敏 Guard issue code；
+- 独立复查按真实 `exact/family/partial` 类型展示治理链路告警，不再把问题族命中称为精确命中。
+
+验证：答案卡适配、在线集成、诊断脱敏、独立复查和 Worker 定向测试，PSEAgent 与 Worker 类型检查，全量 TypeScript 测试及 `git diff --check`。

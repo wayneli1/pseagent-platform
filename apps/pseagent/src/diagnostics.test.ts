@@ -78,8 +78,9 @@ describe("development diagnostic trace", () => {
     trace.record({
       event: "answer_card_activation",
       activated: false,
-      reason: "shadow_only",
+      reason: "guard_rejected",
       obligationCount: 2,
+      issueCodes: ["customer_input_request_unmapped", "protected_fact_not_direct"],
     });
     trace.record({
       event: "plan",
@@ -186,6 +187,11 @@ describe("development diagnostic trace", () => {
       knowledgeCoverage: "complete",
       caseAssessability: "insufficient",
     });
+    expect(records.find((record) => record.event === "answer_card_activation"))
+      .toMatchObject({
+        reason: "guard_rejected",
+        issueCodes: ["customer_input_request_unmapped", "protected_fact_not_direct"],
+      });
     expect(content.length).toBeLessThan(10_000);
   });
 

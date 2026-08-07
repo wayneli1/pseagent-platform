@@ -10,6 +10,7 @@ import {
   taskSpecSchema,
   type TaskSpec,
   type TaskSpecGuardResult,
+  type TaskSpecIssueCode,
 } from "./task-spec.js";
 
 export interface AnswerCardObligationPolicy {
@@ -33,9 +34,11 @@ export type AnswerCardTaskSpecAdapterResult =
       readonly activated: false;
       readonly reason:
         | "match_not_active"
+        | "binding_unmapped"
         | "requirement_limit_exceeded"
         | "task_spec_contract_exceeded"
         | "guard_rejected";
+      readonly issueCodes?: readonly TaskSpecIssueCode[];
     };
 
 /**
@@ -132,6 +135,13 @@ export function compileExactAnswerCardTaskSpec(input: {
 interface DraftObligation {
   value: TaskSpec["deliverables"][number]["obligations"][number];
   cardBinding?: AnswerCardMatchBinding;
+  cardBindingIndex?: number;
+}
+
+interface DraftObligationLocation {
+  readonly deliverableIndex: number;
+  readonly obligationIndex: number;
+  readonly obligation: DraftObligation;
 }
 
 export function adaptAnswerCardToTaskSpec(input: {
@@ -141,6 +151,12 @@ export function adaptAnswerCardToTaskSpec(input: {
 }): AnswerCardTaskSpecAdapterResult {
   if (input.match.matchType === "none") {
     return { activated: false, reason: "match_not_active" };
+  }
+  if (input.match.matchType === "exact") {
+    return compileExactAnswerCardTaskSpec({
+      match: input.match,
+      resolvedQuestion: input.resolvedQuestion,
+    });
   }
 
   const draftDeliverables = input.taskSpec.deliverables.map((deliverable) => ({
@@ -158,55 +174,34 @@ export function adaptAnswerCardToTaskSpec(input: {
             : []));
   const used = new Set<DraftObligation>();
 
-  for (const binding of input.match.bindings) {
-    const ranked = requiredLocations
-      .filter((location) => !used.has(location.obligation))
-      .map((location) => ({
-        ...location,
-        score: obligationSimilarity(binding, location.obligation.value),
-      }))
-      .sort((left, right) =>
-        right.score - left.score ||
-        left.deliverableIndex - right.deliverableIndex ||
-        left.obligationIndex - right.obligationIndex);
-    const selected = binding.required
-      ? ranked.find((candidate) => candidate.score > 0) ??
-        (input.match.matchType === "partial" ? undefined : ranked[0])
-      : undefined;
+  for (const [bindingIndex, binding] of input.match.bindings.entries()) {
+    if (!binding.required) continue;
+    const selected = selectBindingLocation(
+      binding,
+      requiredLocations.filter((location) =>
+        !used.has(location.obligation) &&
+        bindingCanOverlay(binding, location.obligation.value)),
+    );
     if (selected !== undefined) {
-      selected.obligation.value = applyBinding(selected.obligation.value, binding);
       selected.obligation.cardBinding = binding;
+      selected.obligation.cardBindingIndex = bindingIndex;
       used.add(selected.obligation);
       continue;
     }
 
-    const targetDeliverable = draftDeliverables.find((deliverable) => deliverable.required);
-    const base = requiredLocations[0]?.obligation.value;
-    if (targetDeliverable === undefined || base === undefined) {
-      return { activated: false, reason: "task_spec_contract_exceeded" };
+    const source = selectBindingLocation(binding, requiredLocations);
+    if (source === undefined) {
+      return { activated: false, reason: "binding_unmapped" };
     }
-    const sourceText = boundedSourceText(
-      targetDeliverable.sourceText,
-      input.resolvedQuestion.standaloneQuestion,
-    );
+    const targetDeliverable = draftDeliverables[source.deliverableIndex]!;
     targetDeliverable.obligations.push({
-      value: applyBinding({
-        ...base,
-        sourceText,
-      }, binding),
+      value: createCardObligation(source.obligation.value, binding),
       cardBinding: binding,
+      cardBindingIndex: bindingIndex,
     });
   }
 
-  const governedDeliverables = input.match.matchType === "exact"
-    ? draftDeliverables
-        .map((deliverable) => ({
-          ...deliverable,
-          obligations: deliverable.obligations.filter((draft) =>
-            draft.cardBinding !== undefined),
-        }))
-        .filter((deliverable) => deliverable.obligations.length > 0)
-    : draftDeliverables;
+  const governedDeliverables = draftDeliverables;
   const requiredCount = governedDeliverables.reduce((count, deliverable) =>
     count + (deliverable.required
       ? deliverable.obligations.filter((obligation) => obligation.value.required).length
@@ -215,7 +210,10 @@ export function adaptAnswerCardToTaskSpec(input: {
     return { activated: false, reason: "requirement_limit_exceeded" };
   }
 
-  const policies: AnswerCardObligationPolicy[] = [];
+  const policyEntries: Array<{
+    readonly bindingIndex: number;
+    readonly policy: AnswerCardObligationPolicy;
+  }> = [];
   let obligationIndex = 0;
   const candidate = {
     ...input.taskSpec,
@@ -225,19 +223,22 @@ export function adaptAnswerCardToTaskSpec(input: {
         obligationIndex += 1;
         const id = `O${obligationIndex}`;
         if (draft.cardBinding !== undefined) {
-          policies.push(Object.freeze({
-            obligationId: id,
-            cardId: draft.cardBinding.cardId,
-            cardObligationId: draft.cardBinding.cardObligationId,
-            requiredConcepts: Object.freeze([...draft.cardBinding.requiredConcepts]),
-            forbiddenClaims: Object.freeze([...draft.cardBinding.forbiddenClaims]),
-            preferredEvidencePaths: Object.freeze([
-              ...draft.cardBinding.preferredEvidencePaths,
-            ]),
-            ...(draft.cardBinding.answerTemplate === undefined
-              ? {}
-              : { answerTemplate: draft.cardBinding.answerTemplate }),
-          }));
+          policyEntries.push({
+            bindingIndex: draft.cardBindingIndex ?? Number.MAX_SAFE_INTEGER,
+            policy: Object.freeze({
+              obligationId: id,
+              cardId: draft.cardBinding.cardId,
+              cardObligationId: draft.cardBinding.cardObligationId,
+              requiredConcepts: Object.freeze([...draft.cardBinding.requiredConcepts]),
+              forbiddenClaims: Object.freeze([...draft.cardBinding.forbiddenClaims]),
+              preferredEvidencePaths: Object.freeze([
+                ...draft.cardBinding.preferredEvidencePaths,
+              ]),
+              ...(draft.cardBinding.answerTemplate === undefined
+                ? {}
+                : { answerTemplate: draft.cardBinding.answerTemplate }),
+            }),
+          });
         }
         return { ...draft.value, id };
       }),
@@ -251,7 +252,16 @@ export function adaptAnswerCardToTaskSpec(input: {
     resolvedQuestion: input.resolvedQuestion,
     taskSpec: parsed.data,
   });
-  if (!guard.ok) return { activated: false, reason: "guard_rejected" };
+  if (!guard.ok) {
+    return {
+      activated: false,
+      reason: "guard_rejected",
+      issueCodes: Object.freeze([...new Set(guard.issues.map((issue) => issue.code))]),
+    };
+  }
+  const policies = policyEntries
+    .sort((left, right) => left.bindingIndex - right.bindingIndex)
+    .map((entry) => entry.policy);
   return {
     activated: true,
     taskSpec: parsed.data,
@@ -310,18 +320,18 @@ export function applyAnswerCardPoliciesToPlan(input: {
     : input.plan;
 }
 
-function applyBinding(
-  obligation: TaskSpec["deliverables"][number]["obligations"][number],
+function createCardObligation(
+  source: TaskSpec["deliverables"][number]["obligations"][number],
   binding: AnswerCardMatchBinding,
 ): TaskSpec["deliverables"][number]["obligations"][number] {
   return {
-    ...obligation,
+    ...source,
     label: binding.label,
     required: binding.required,
     evidencePolicy: binding.evidencePolicy,
     evidenceCondition: binding.evidencePolicy === "customer_input"
-      ? obligation.evidenceCondition?.inputState === "available"
-        ? obligation.evidenceCondition
+      ? source.evidenceCondition?.inputState === "available"
+        ? source.evidenceCondition
         : {
             inputState: "missing",
             ambiguous: false,
@@ -330,12 +340,70 @@ function applyBinding(
           }
       : {
           inputState: "not_applicable",
-          ambiguous: obligation.evidenceCondition?.ambiguous ?? false,
-          conflictDetected: obligation.evidenceCondition?.conflictDetected ?? false,
-          freshness: obligation.evidenceCondition?.freshness ?? "not_assessed",
+          ambiguous: source.evidenceCondition?.ambiguous ?? false,
+          conflictDetected: source.evidenceCondition?.conflictDetected ?? false,
+          freshness: source.evidenceCondition?.freshness ?? "not_assessed",
         },
     domains: taskDomainsForBinding(binding),
   };
+}
+
+function bindingCanOverlay(
+  binding: AnswerCardMatchBinding,
+  obligation: TaskSpec["deliverables"][number]["obligations"][number],
+): boolean {
+  const bindingDomains = taskDomainsForBinding(binding);
+  return binding.evidencePolicy === obligation.evidencePolicy &&
+    bindingDomains.every((domain) => obligation.domains.includes(domain));
+}
+
+function selectBindingLocation(
+  binding: AnswerCardMatchBinding,
+  locations: readonly DraftObligationLocation[],
+): DraftObligationLocation | undefined {
+  const ranked = locations.map((location) => ({
+    location,
+    semanticScore: obligationSimilarity(binding, location.obligation.value),
+    evidenceRoleScore: evidenceRoleSimilarity(binding, location.obligation.value),
+    domainScore: domainSimilarity(binding, location.obligation.value),
+  })).sort((left, right) =>
+    right.semanticScore - left.semanticScore ||
+    right.evidenceRoleScore - left.evidenceRoleScore ||
+    right.domainScore - left.domainScore);
+  const first = ranked[0];
+  if (first === undefined) return undefined;
+  if (first.semanticScore > 0) {
+    const second = ranked[1];
+    return second !== undefined &&
+        second.semanticScore === first.semanticScore &&
+        second.evidenceRoleScore === first.evidenceRoleScore &&
+        second.domainScore === first.domainScore
+      ? undefined
+      : first.location;
+  }
+  const roleCompatible = ranked.filter((candidate) =>
+    candidate.evidenceRoleScore >= 2 && candidate.domainScore > 0);
+  return roleCompatible.length === 1 ? roleCompatible[0]!.location : undefined;
+}
+
+function evidenceRoleSimilarity(
+  binding: AnswerCardMatchBinding,
+  obligation: TaskSpec["deliverables"][number]["obligations"][number],
+): number {
+  if (binding.evidencePolicy === obligation.evidencePolicy) return 2;
+  return binding.evidencePolicy === "direct" &&
+      obligation.evidencePolicy === "customer_input"
+    ? 1
+    : 0;
+}
+
+function domainSimilarity(
+  binding: AnswerCardMatchBinding,
+  obligation: TaskSpec["deliverables"][number]["obligations"][number],
+): number {
+  const domains = taskDomainsForBinding(binding);
+  if (domains.every((domain) => obligation.domains.includes(domain))) return 2;
+  return domains.some((domain) => obligation.domains.includes(domain)) ? 1 : 0;
 }
 
 function taskDomainsForBinding(
@@ -357,8 +425,34 @@ function obligationSimilarity(
   const terms = [binding.label, ...binding.requiredConcepts]
     .map(normalizeText)
     .filter((term) => term.length >= 2);
-  return terms.reduce((score, term) =>
-    score + (candidate.includes(term) || term.includes(candidate) ? term.length : 0), 0);
+  return terms.reduce((score, term) => {
+    if (candidate.includes(term) || term.includes(candidate)) {
+      return score + term.length * 2;
+    }
+    const candidateBigrams = meaningfulBigrams(candidate);
+    const termBigrams = meaningfulBigrams(term);
+    const overlap = [...termBigrams].filter((item) => candidateBigrams.has(item)).length;
+    return score + overlap;
+  }, 0);
+}
+
+const GENERIC_SEMANTIC_BIGRAMS = new Set([
+  "如何",
+  "什么",
+  "哪些",
+  "说明",
+  "给出",
+  "当前",
+  "问题",
+  "相关",
+]);
+
+function meaningfulBigrams(value: string): ReadonlySet<string> {
+  const characters = [...value];
+  if (characters.length < 2) return new Set();
+  return new Set(characters.slice(0, -1)
+    .map((character, index) => `${character}${characters[index + 1] ?? ""}`)
+    .filter((bigram) => !GENERIC_SEMANTIC_BIGRAMS.has(bigram)));
 }
 
 function normalizeText(value: string): string {
@@ -375,11 +469,6 @@ function stableSemanticText(values: readonly string[]): string[] {
     seen.add(key);
     return true;
   });
-}
-
-function boundedSourceText(primary: string, fallback: string): string {
-  const value = primary.trim() || fallback.trim();
-  return [...value].slice(0, 512).join("");
 }
 
 function boundedText(value: string, limit: number, fallback: string): string {

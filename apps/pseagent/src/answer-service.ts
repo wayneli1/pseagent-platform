@@ -53,6 +53,7 @@ import { formatKnowledgeFinal } from "./response.js";
 import {
   extractExplicitQuestionSignals,
   type KnowledgeDomain,
+  type TaskSpecIssueCode,
 } from "./task-spec.js";
 import { analyzeObligationSource } from "./obligation-semantics.js";
 import type {
@@ -149,6 +150,7 @@ export interface AnswerCardActivationSummary {
     { event: "answer_card_activation" }
   >["reason"];
   readonly obligationCount: number;
+  readonly issueCodes?: readonly TaskSpecIssueCode[];
 }
 
 export interface FeedbackSafeExecutionContext {
@@ -348,6 +350,9 @@ export class AnswerService {
                 ? "analysis_unavailable"
                 : adapted.reason,
             obligationCount: adapted.activated ? adapted.policies.length : 0,
+            ...(adapted.activated || adapted.issueCodes === undefined
+              ? {}
+              : { issueCodes: adapted.issueCodes }),
           });
           if (adapted.activated) {
             taskAnalysis = {
@@ -1306,6 +1311,9 @@ class OutcomeTrace implements DiagnosticTrace {
         activated: event.activated,
         reason: event.reason,
         obligationCount: event.obligationCount,
+        ...(event.issueCodes === undefined
+          ? {}
+          : { issueCodes: [...event.issueCodes] }),
       };
     }
     if (event.event === "coverage") {

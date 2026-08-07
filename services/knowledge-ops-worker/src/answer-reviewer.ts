@@ -25,7 +25,7 @@ export interface IndependentAnswerReviewInput {
   readonly answerStatus: string;
   readonly evidence: readonly ReviewEvidenceDocument[];
   readonly evidenceIssues: readonly string[];
-  readonly exactCard?: AnswerCard;
+  readonly governedCard?: AnswerCard;
   readonly answerCardMatch?: Record<string, unknown>;
   readonly answerCardActivation?: Record<string, unknown>;
   readonly signal?: AbortSignal;
@@ -41,7 +41,7 @@ export class IndependentAnswerReviewer {
           "只能依据输入中的已批准答案卡和正式知识页面判断，不得使用外部知识补足。",
           "受评对象只能是 input.answer。evidence 只是判定基准；正式资料写了某项，不代表回答已经写了该项。",
           "逐项检查正确性、完整性、逻辑、引用和表达；证据不足时选择 needs_review，不得猜测 pass。",
-          "exactCard 存在时，必须为每个 required obligation 返回且只返回一个 obligationChecks 项。",
+          "governedCard 存在时，必须为每个 required obligation 返回且只返回一个 obligationChecks 项。",
           "发现与正式证据冲突的关键结论时选择 fail；缺项或证据不足选择 needs_review。",
           "not_covered 是有效的安全交付状态：当正式证据确实不覆盖目标、回答明确说明边界且没有无依据主张时，可以判为 pass；不得只因没有给出资料外的目标答案而降级。",
           "正式证据直接支持的项目用户数、授权量、服务器数、节点数和部署规模允许出现。重点检查项目归属、数据口径、跨项目套用、历史数据实时化、产品上限化和对新客户的承诺，不得仅因答案包含具体数字而失败。",
@@ -57,10 +57,10 @@ export class IndependentAnswerReviewer {
           answer:input.answer,
           answerStatus:input.answerStatus,
           evidenceIssues:input.evidenceIssues,
-          exactCard:input.exactCard===undefined?null:{
-            cardId:input.exactCard.cardId,
-            canonicalQuestion:input.exactCard.canonicalQuestion,
-            obligations:input.exactCard.obligations.filter((item)=>item.required).map((item)=>({
+          governedCard:input.governedCard===undefined?null:{
+            cardId:input.governedCard.cardId,
+            canonicalQuestion:input.governedCard.canonicalQuestion,
+            obligations:input.governedCard.obligations.filter((item)=>item.required).map((item)=>({
               id:item.id,label:item.label,requiredConcepts:item.requiredConcepts,forbiddenClaims:item.forbiddenClaims,
             })),
           },
@@ -101,8 +101,8 @@ export function enforceDeterministicReview(
   if(input.evidence.length===0){
     defects.push({category:"citation_gap",severity:"major",summary:"没有可供独立复查的正式知识页面",evidence:"复查证据包为空"});
   }
-  const required=input.exactCard?.obligations.filter((item)=>item.required)??[];
-  const ruleConflicts=input.exactCard===undefined?[]:inspectAnswerCardRuleConflicts({answerTemplate:input.answer,obligations:required,evidence:input.evidence}).filter((item)=>item.code!=="unverifiable_required_concept");
+  const required=input.governedCard?.obligations.filter((item)=>item.required)??[];
+  const ruleConflicts=input.governedCard===undefined?[]:inspectAnswerCardRuleConflicts({answerTemplate:input.answer,obligations:required,evidence:input.evidence}).filter((item)=>item.code!=="unverifiable_required_concept");
   for(const conflict of ruleConflicts){forceFail=true;defects.push({category:"logic_gap",severity:"critical",summary:`答案卡规则冲突（${conflict.obligationId}）`,evidence:`${conflict.message} 规则：${conflict.rule}`.slice(0,1_000)});}
   const checks=new Map(modelResult.obligationChecks.map((check)=>[check.obligationId,check] as const));
   const normalizedAnswer=normalize(input.answer);
@@ -127,8 +127,8 @@ export function enforceDeterministicReview(
     const forbidden=obligation.forbiddenClaims.find((claim)=>normalizedAnswer.includes(normalize(claim)));
     if(forbidden!==undefined){forceFail=true;defects.push({category:"logic_gap",severity:"critical",summary:`回答包含答案卡禁答主张（${obligation.id}）`,evidence:forbidden});}
   }
-  if(input.exactCard!==undefined&&input.answerCardActivation?.activated===false){
-    defects.push({category:"planning_gap",severity:"major",summary:"精确命中已批准答案卡但在线回答未激活卡片约束",evidence:String(input.answerCardActivation.reason??"activation_disabled")});
+  if(input.governedCard!==undefined&&input.answerCardActivation?.activated===false){
+    defects.push({category:"planning_gap",severity:"major",summary:activationWarningSummary(input.answerCardMatch),evidence:activationWarningEvidence(input.answerCardActivation)});
   }
   const unique=uniqueDefects(defects);
   const hasMajor=unique.some((defect)=>defect.severity==="major"||defect.severity==="critical");
@@ -175,4 +175,19 @@ function containsGovernedConcept(answer:string,concept:string):boolean{
 
 function hasUnavailableGovernedFamily(match:Record<string,unknown>|undefined):boolean{
   return match?.matchType==="none"&&match.reason==="family_match_unavailable"&&typeof match.candidateCount==="number"&&Number.isInteger(match.candidateCount)&&match.candidateCount>0;
+}
+
+function activationWarningSummary(match:Record<string,unknown>|undefined):string{
+  if(match?.matchType==="exact")return"答案卡治理链路异常：精确命中已批准答案卡，但在线回答未激活卡片约束";
+  if(match?.matchType==="family")return"答案卡治理链路异常：高置信匹配已批准答案卡问题族，但在线回答未激活卡片约束";
+  if(match?.matchType==="partial")return"答案卡治理链路异常：部分匹配已批准答案卡问题族，但在线回答未激活卡片约束";
+  return"答案卡治理链路异常：已定位已批准答案卡，但在线回答未激活卡片约束";
+}
+
+function activationWarningEvidence(activation:Record<string,unknown>):string{
+  const reason=typeof activation.reason==="string"?activation.reason:"activation_disabled";
+  const issueCodes=Array.isArray(activation.issueCodes)
+    ? activation.issueCodes.filter((item):item is string=>typeof item==="string"&&/^[a-z][a-z0-9_]{0,79}$/u.test(item)).slice(0,20)
+    : [];
+  return issueCodes.length===0?reason:`${reason}; issueCodes=${issueCodes.join(",")}`;
 }

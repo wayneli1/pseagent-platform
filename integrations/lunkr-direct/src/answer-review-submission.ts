@@ -14,6 +14,7 @@ export interface BridgeAnswerCardActivationSummary {
   readonly activated: boolean;
   readonly reason: string;
   readonly obligationCount: number;
+  readonly issueCodes?: readonly string[];
 }
 
 export interface BridgeAnswerReviewSubmission {

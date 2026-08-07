@@ -5,7 +5,10 @@ import {
   AnswerCardRegistryError,
   normalizeQuestion,
 } from "./answer-card-registry.js";
-import { DefaultAnswerCardMatcher } from "./answer-card-matcher.js";
+import {
+  DefaultAnswerCardMatcher,
+  type AnswerCardMatch,
+} from "./answer-card-matcher.js";
 import {
   adaptAnswerCardToTaskSpec,
   compileExactAnswerCardTaskSpec,
@@ -552,7 +555,7 @@ describe("answer card TaskSpec adapter", () => {
     expect(adapted.taskSpec.deliverables[0]?.obligations).toHaveLength(2);
     expect(adapted.taskSpec.deliverables[0]?.obligations[0]).toMatchObject({
       id: "O1",
-      label: "说明 Coremail 迁移能力",
+      label: "迁移能力",
       evidencePolicy: "direct",
       domains: ["coremail-professional"],
     });
@@ -571,6 +574,190 @@ describe("answer card TaskSpec adapter", () => {
     expect(governedPlan.requirements[0]?.evidenceAspects[0]?.terms)
       .toEqual(expect.arrayContaining(["Coremail", "迁移能力"]));
     expect(governedPlan.requirements[0]?.queries).toHaveLength(2);
+  });
+
+  it("preserves customer-input semantics while activating a family answer card", () => {
+    const question = "客户在 POC 阶段，拿不到客户信息，我们的赢率如何，怎样提升？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{
+        id: "E1",
+        label: "当前商机",
+        role: "subject",
+        sourceText: "客户在 POC 阶段",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: "判断赢率并给出提升建议",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "判断我们的赢率",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "customer_input",
+          evidenceCondition: {
+            inputState: "missing",
+            ambiguous: false,
+            conflictDetected: false,
+            freshness: "not_assessed",
+          },
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "我们的赢率如何",
+        }, {
+          id: "O2",
+          label: "给出提升赢率建议",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          evidenceCondition: {
+            inputState: "not_applicable",
+            ambiguous: false,
+            conflictDetected: false,
+            freshness: "not_assessed",
+          },
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "怎样提升",
+        }],
+      }],
+    });
+    const binding = (
+      obligationId: string,
+      label: string,
+      evidencePolicy: "direct" | "synthesis",
+      requiredConcepts: readonly string[],
+    ) => ({
+      obligationId,
+      cardObligationId: obligationId,
+      cardId: "PS-WIN-RATE-001",
+      label,
+      domain: "presales-general" as const,
+      domains: ["presales-general" as const],
+      required: true,
+      evidencePolicy,
+      requiredConcepts,
+      forbiddenClaims: [],
+      preferredEvidencePaths: ["wiki/queries/win-rate.md"],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "c".repeat(64),
+      familyId: "WIN-RATE-FAMILY",
+      bindings: [
+        binding("O1", "拒绝伪精确赢率", "direct", ["赢率"]),
+        binding("O2", "最小验证动作", "synthesis", ["验证动作"]),
+        binding("O3", "核验业务决策资源", "synthesis", ["业务决策资源"]),
+      ],
+      cardIdHashes: ["d".repeat(64)],
+      expectedRevisions: { "presales-general": generalRevision },
+      candidateCount: 1,
+    };
+
+    const adapted = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    });
+
+    expect(adapted).toMatchObject({ activated: true });
+    if (!adapted.activated) return;
+    expect(adapted.guard.ok).toBe(true);
+    expect(adapted.taskSpec.deliverables[0]?.obligations.slice(0, 2)).toEqual(
+      taskSpec.deliverables[0]?.obligations,
+    );
+    expect(adapted.taskSpec.deliverables[0]?.obligations).toHaveLength(4);
+    expect(adapted.taskSpec.deliverables[0]?.obligations[0]).toMatchObject({
+      evidencePolicy: "customer_input",
+      evidenceCondition: { inputState: "missing" },
+      sourceText: "我们的赢率如何",
+      domains: ["presales-general"],
+    });
+    expect(adapted.taskSpec.deliverables[0]?.obligations.slice(2)).toEqual([
+      expect.objectContaining({
+        label: "拒绝伪精确赢率",
+        evidencePolicy: "direct",
+        sourceText: "我们的赢率如何",
+      }),
+      expect.objectContaining({
+        label: "核验业务决策资源",
+        evidencePolicy: "synthesis",
+        sourceText: "怎样提升",
+      }),
+    ]);
+    expect(adapted.policies).toHaveLength(3);
+    expect(adapted.policies.map((policy) => policy.cardObligationId)).toEqual([
+      "O1",
+      "O2",
+      "O3",
+    ]);
+  });
+
+  it("rejects an ambiguous family binding instead of attaching it to the first task", () => {
+    const question = "比较甲方案和乙方案的部署差异。";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "甲方案", role: "subject", sourceText: "甲方案" }, {
+        id: "E2",
+        label: "乙方案",
+        role: "subject",
+        sourceText: "乙方案",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: "部署差异",
+        kind: "comparison",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "甲方案部署",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "甲方案",
+        }, {
+          id: "O2",
+          label: "乙方案部署",
+          targetEntityIds: ["E2"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "乙方案",
+        }],
+      }],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "c".repeat(64),
+      familyId: "DEPLOYMENT-FAMILY",
+      bindings: [{
+        obligationId: "O1",
+        cardObligationId: "O1",
+        cardId: "CM-DEPLOYMENT-001",
+        label: "核验容量边界",
+        domain: "coremail-professional",
+        domains: ["coremail-professional"],
+        required: true,
+        evidencePolicy: "direct",
+        requiredConcepts: ["容量边界"],
+        forbiddenClaims: [],
+        preferredEvidencePaths: [],
+      }],
+      cardIdHashes: ["d".repeat(64)],
+      expectedRevisions: { "coremail-professional": professionalRevision },
+      candidateCount: 1,
+    };
+
+    expect(adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    })).toEqual({ activated: false, reason: "binding_unmapped" });
   });
 
   it("reports every answer-card concept missing after verification", () => {
