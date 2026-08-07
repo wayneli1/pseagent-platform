@@ -27,7 +27,7 @@ const config: LunkrDirectConfig = {
   questionBudgetMs: 300_000,
   maxActivePeers: 4,
   maxPendingPerPeer: 5,
-  sessionIdleMs: 86_400_000,
+  sessionIdleMs: 10 * 60_000,
   feedbackReceiptTtlMs: 30 * 60_000,
   feedbackReceiptMax: 2_000,
 };
@@ -513,21 +513,21 @@ describe("LunkrPseBridge", () => {
     expect(sentTexts(sendText)).toContain("已记录问题 #2 的反馈，感谢你的帮助。");
   });
 
-  it("silently starts at #1 when accepted-question inactivity reaches the limit", async () => {
+  it("silently starts at #1 when accepted-question inactivity reaches ten minutes", async () => {
     let now = 1_000;
     const answer = vi.fn<Answer>(async () => answered("回答"));
     const sendText = vi.fn(async () => undefined);
     const bridge = createBridge({
       answer,
       sendText,
-      config: { sessionIdleMs: 1_000 },
+      config: { sessionIdleMs: 10 * 60_000 },
       now: () => now,
     });
 
     await bridge.handle(message("m1", "#a#U", "第一问"));
-    now = 1_999;
+    now = 600_999;
     await bridge.handle(message("m2", "#a#U", "第二问"));
-    now = 2_999;
+    now = 1_200_999;
     await bridge.handle(message("m3", "#a#U", "第三问"));
 
     expect(sentTexts(sendText)).toContain(

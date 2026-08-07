@@ -58,7 +58,7 @@ export function loadLunkrConfig(
     ),
     maxActivePeers: positiveInteger(env, "LUNKR_MAX_ACTIVE_PEERS", 4),
     maxPendingPerPeer: positiveInteger(env, "LUNKR_MAX_PENDING_PER_PEER", 5),
-    sessionIdleMs: positiveInteger(env, "LUNKR_SESSION_IDLE_MS", 86_400_000),
+    sessionIdleMs: positiveInteger(env, "LUNKR_SESSION_IDLE_MS", 10 * 60_000),
     feedbackReceiptTtlMs: boundedInteger(
       env,
       "LUNKR_FEEDBACK_RECEIPT_TTL_MS",

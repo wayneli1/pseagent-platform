@@ -202,3 +202,14 @@ git diff --check -- docs/superpowers/specs/2026-08-05-answer-card-knowledge-ops-
 - 保持 `/status`、`/new`、`/help` 原有命令语义和顺序不变。
 
 验证：Bridge 即时回执测试、Lunkr Direct 类型检查和全量测试、`git diff --check`。
+
+## 阶段147：缩短会话闲置清理时限
+
+交付：
+
+- 将 `LUNKR_SESSION_IDLE_MS` 的默认值和示例配置由 24 小时改为 10 分钟；
+- 最近一次成功接收普通问题后达到或超过 10 分钟时，下一题静默清除旧上下文并从 `#1` 开始；
+- 保持 `/new`、用户隔离、队列拒绝、非问题消息和环境变量覆盖语义不变；
+- 同步上下文持久化和会话编号设计文档。
+
+验证：Lunkr Direct 配置测试、Bridge 闲置边界测试、类型检查、全量测试及 `git diff --check`。

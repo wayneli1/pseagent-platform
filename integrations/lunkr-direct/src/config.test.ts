@@ -12,7 +12,7 @@ describe("loadLunkrConfig", () => {
     expect(config.questionBudgetMs).toBe(300_000);
     expect(config.maxActivePeers).toBe(4);
     expect(config.maxPendingPerPeer).toBe(5);
-    expect(config.sessionIdleMs).toBe(86_400_000);
+    expect(config.sessionIdleMs).toBe(10 * 60_000);
     expect(config.feedbackReceiptTtlMs).toBe(30 * 60_000);
     expect(config.feedbackReceiptMax).toBe(2_000);
   });
