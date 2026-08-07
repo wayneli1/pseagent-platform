@@ -133,7 +133,7 @@ export class KnowledgeOpsService {
   }
   async saveRepairDraft(actor:OpsActor,draftId:string,proposalSource:unknown){
     assertAuthorized(actor,"repair:edit");const draft=await this.store.getRepairDraft(draftId);if(draft===undefined)throw new OpsNotFoundError("repair_draft_not_found");
-    if(!["draft_ready","validation_failed"].includes(draft.status))throw new Error("repair_draft_not_editable");const proposal=repairProposalSchema.parse(proposalSource) as RepairDraftProposal;
+    if(!["draft_ready","validation_failed","ready_to_publish"].includes(draft.status))throw new Error("repair_draft_not_editable");const proposal=repairProposalSchema.parse(proposalSource) as RepairDraftProposal;
     const existingPayload=this.cipher.decrypt<{evidenceSummary?:KnowledgeRepairDraftView["evidenceSummary"]}>(draft.encryptedPayload);
     const updated=await this.store.updateRepairDraft(draftId,{status:"draft_ready",targetKind:proposal.targetKind,...(proposal.targetDomain?{targetDomain:proposal.targetDomain}:{}),...(proposal.targetPath?{targetPath:proposal.targetPath}:{}),encryptedPayload:this.cipher.encrypt({proposal,...(existingPayload.evidenceSummary===undefined?{}:{evidenceSummary:existingPayload.evidenceSummary})})});
     await this.store.updateIssue(draft.issueId,isEvidenceBlockedProposal(proposal)?"awaiting_evidence":"in_progress");await this.audit(actor,"repair.draft.update","repair_draft",draftId,{issueId:draft.issueId,targetKind:proposal.targetKind,targetDomain:proposal.targetDomain,publishable:proposal.publishable});return updated===undefined?undefined:this.repairDraftView(updated);
