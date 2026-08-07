@@ -33,12 +33,13 @@ const projectMetricPattern=/(?:用户(?:数|量|基数)?|授权(?:量|数)?|服�
 const scopedBoundaryPattern=/(?:描述为|视为|套用|扩大|推断|承诺|当前|实时|上限|超过|不少于|至少|其他客户|所有客户|所有项目|通用|标准配置)/u;
 const broadBanVerbPattern=/(?:禁止|不得|不能|不应|不要).{0,16}(?:出现|回答|提供|披露|包含)/u;
 const generalizationPattern=/(?:所有客户|其他客户|所有项目|通用配置|标准配置|产品(?:容量)?上限|容量上限|保证|承诺|新项目.{0,8}(?:一定|必须|均)|一定采用相同配置)/u;
+const safeBoundaryPattern=/(?:不(?:代表|等于|作为|视为|是|应|可)|不得|不能|不应|不可|禁止).{0,24}(?:所有客户|其他客户|所有项目|通用配置|标准配置|产品(?:容量)?上限|容量上限|保证|承诺|套用|新项目)/u;
 const currentClaimPattern=/(?:当前|目前|现在|实时)(?:的|项目|系统|用户|规模|容量|授权|部署)?/u;
 const abstractRequiredConceptPattern=/(?:核心功能|主要功能|功能概述|功能介绍|职责区分|职责区别|职责对比|职责说明|角色区别|角色差异|角色说明|协作关系|区别与联系|差异说明|相关内容|关键信息|具体说明)$/u;
 const countedCollectionConceptPattern=/(?:\d+|[一二三四五六七八九十两]+)\s*个?(?:步骤|环节|阶段|流程|配置项|参数|字段|要点|事项)$/u;
 const compoundConceptLabelPattern=/[：:]/u;
 const compoundConceptSeparatorPattern=/[，,、；;]/gu;
-export const PROJECT_DATA_POLICY_VERSION="2026-08-07.1";
+export const PROJECT_DATA_POLICY_VERSION="2026-08-07.2";
 
 export function isUnverifiableRequiredConcept(concept:string):boolean{
   const normalized=concept.normalize("NFKC").trim();
@@ -116,7 +117,7 @@ export function evaluateProjectDataAnswer(input:{readonly answer:string;readonly
   for(const fact of answerFacts.filter((item)=>item.projects.length>0)){
     const sameData=evidenceFacts.filter((source)=>factsReferToSameData(fact,source));
     const supported=sameData.find((source)=>comparatorSupported(source.comparator,fact.comparator));
-    if(generalizationPattern.test(fact.context)){
+    if(hasUnsafeProjectDataGeneralization(fact.context)){
       diagnostics.push(diagnostic("forbidden_claim",fact,"项目案例数据不得扩大为所有客户的通用配置、产品上限或新项目承诺。","modify_answer",supported?.path));continue;
     }
     if(currentClaimPattern.test(fact.context)&&sameData.some((source)=>source.comparator==="approx"||/(?:历史|案例|预测|预计)/u.test(source.context))){
@@ -130,6 +131,10 @@ export function evaluateProjectDataAnswer(input:{readonly answer:string;readonly
   }
   const uniqueDiagnostics=uniqueDiagnosticsByKey(diagnostics),defects=uniqueDiagnostics.map((item):AnswerReviewDefect=>({category:item.stage==="evidence_support"?"citation_gap":"logic_gap",severity:"critical",summary:item.message,evidence:[item.triggerText,...item.evidencePaths].filter(Boolean).join("；").slice(0,1_000)}));
   return{defects,diagnostics:uniqueDiagnostics};
+}
+
+function hasUnsafeProjectDataGeneralization(context:string):boolean{
+  return context.split(/[，,；;。！？!?]/u).some((clause)=>generalizationPattern.test(clause)&&!safeBoundaryPattern.test(clause));
 }
 
 export function conflictDiagnostics(conflicts:readonly AnswerCardRuleConflict[]):readonly RepairValidationDiagnostic[]{

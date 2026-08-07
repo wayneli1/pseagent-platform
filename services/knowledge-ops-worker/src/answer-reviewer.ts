@@ -3,7 +3,14 @@ import {
   type AnswerCard,
   type AnswerReviewResult,
 } from "@pseagent/knowledge-governance-contracts";
-import type { ModelClient } from "@pseagent/app/embedded";
+import {
+  AnswerCardRegistry,
+  DefaultAnswerCardMatcher,
+  hashAnswerCardIdentifier,
+  type AnswerCardCatalog,
+  type AnswerCardMatch,
+  type ModelClient,
+} from "@pseagent/app/embedded";
 import { evaluateProjectDataAnswer, inspectAnswerCardRuleConflicts, isUnverifiableRequiredConcept } from "./project-data-policy.js";
 
 export interface ReviewEvidenceDocument {
@@ -31,8 +38,29 @@ export interface IndependentAnswerReviewInput {
   readonly signal?: AbortSignal;
 }
 
+export interface CandidateCardMatchResult {
+  readonly matched: boolean;
+  readonly exact: boolean;
+  readonly matchType: AnswerCardMatch["matchType"];
+  readonly reason?: string;
+}
+
 export class IndependentAnswerReviewer {
   constructor(private readonly model:ModelClient){}
+
+  async matchCandidate(input:{
+    readonly catalog:AnswerCardCatalog;
+    readonly cardId:string;
+    readonly question:string;
+    readonly domain:AnswerCard["domain"];
+    readonly revision:string;
+    readonly signal?:AbortSignal;
+  }):Promise<CandidateCardMatchResult>{
+    const matcher=new DefaultAnswerCardMatcher(new AnswerCardRegistry(input.catalog),this.model);
+    const match=await matcher.match({question:input.question,currentDomain:input.domain,currentRevision:input.revision,familyEnabled:true,...(input.signal===undefined?{}:{signal:input.signal})});
+    const matched=match.matchType!=="none"&&match.cardIdHashes.includes(hashAnswerCardIdentifier(input.cardId));
+    return{matched,exact:matched&&match.matchType==="exact",matchType:match.matchType,...(match.matchType==="none"?{reason:match.reason}:{})};
+  }
 
   async review(input:IndependentAnswerReviewInput):Promise<AnswerReviewResult>{
     const messages=[
@@ -153,7 +181,7 @@ function isRuntimeCitationNumberingDefect(defect:AnswerReviewResult["defects"][n
 function isSupportedProjectDataFalsePositive(defect:AnswerReviewResult["defects"][number],deterministicIssueCount:number):boolean{
   if(deterministicIssueCount>0)return false;
   const text=`${defect.summary} ${defect.evidence}`;
-  return /(?:具体数字|具体数据|具体用户数|具体授权量|项目数据)/u.test(text)&&!/(?:跨项目|其他客户|产品上限|容量上限|承诺|当前|实时|无证据|证据不足|口径)/u.test(text);
+  return defect.category==="logic_gap"&&/(?:项目(?:案例)?数据|项目案例|项目用户数|项目授权量|项目服务器数|项目节点数|项目部署规模)/u.test(text);
 }
 
 function uniqueDefects(defects:AnswerReviewResult["defects"]):AnswerReviewResult["defects"]{

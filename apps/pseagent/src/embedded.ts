@@ -18,3 +18,12 @@ export {
   type ModelClient,
   type ModelMessage,
 } from "./model-client.js";
+export {
+  AnswerCardRegistry,
+  hashAnswerCardIdentifier,
+  type AnswerCardCatalog,
+} from "./answer-card-registry.js";
+export {
+  DefaultAnswerCardMatcher,
+  type AnswerCardMatch,
+} from "./answer-card-matcher.js";
