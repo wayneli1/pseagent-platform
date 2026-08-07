@@ -17,7 +17,7 @@ export class CatalogCompiler {
     for(const source of sources){
       const queryRoot=path.join(source.root,"wiki","queries"); const files=(await markdownFiles(queryRoot)).sort();
       const contentHasher=createHash("sha256");
-      for(const file of files){const relative=path.relative(source.root,file).split(path.sep).join("/");const content=await readFile(file,"utf8");contentHasher.update(relative).update("\0").update(content).update("\0");const card=parseAnswerCard(content,source.domain);if(card)cards.push(card);}
+      for(const file of files){const relative=path.relative(source.root,file).split(path.sep).join("/");const content=await readFile(file,"utf8");contentHasher.update(relative).update("\0").update(content).update("\0");const card=parseAnswerCard(content,source.domain,relative);if(card)cards.push(card);}
       domains.push({domain:source.domain,revision:source.revision??await gitRevision(source.root),contentHash:contentHasher.digest("hex")});
     }
     const configuredFamilies=await loadFamilies(sources);
@@ -31,14 +31,14 @@ export class CatalogCompiler {
   }
 }
 
-export function parseAnswerCard(markdown:string,domain:KnowledgeDomain):AnswerCard|undefined{
+export function parseAnswerCard(markdown:string,domain:KnowledgeDomain,sourcePath?:string):AnswerCard|undefined{
   const normalized=markdown.replace(/\r\n?|\n/gu,"\n"); if(!normalized.startsWith("---\n"))return undefined;
   const end=normalized.indexOf("\n---\n",4);if(end<0)return undefined;
   let meta:Record<string,unknown>;try{meta=parse(normalized.slice(4,end)) as Record<string,unknown>;}catch{return undefined;}
   if(meta.card_schema_version!==1)return undefined;
   const body=normalized.slice(end+5).trim();
   const obligations=asRecords(meta.obligations).map(item=>({id:item.id,label:item.label,required:item.required??true,domains:item.domains,
-    evidencePolicy:item.evidence_policy,requiredConcepts:item.required_concepts??[],forbiddenClaims:item.forbidden_claims??[],preferredEvidencePaths:item.preferred_evidence_paths??[]}));
+    evidencePolicy:item.evidence_policy,requiredConcepts:item.required_concepts??[],forbiddenClaims:item.forbidden_claims??[],preferredEvidencePaths:uniqueStrings([...(sourcePath===undefined?[]:[sourcePath]),...array(item.preferred_evidence_paths)]).slice(0,20)}));
   return answerCardSchema.parse({cardSchemaVersion:1,cardId:meta.card_id,domain,title:meta.title,canonicalQuestion:meta.canonical_question,
     questionFamily:meta.question_family,aliases:array(meta.aliases),applicability:{products:array(meta.applicable_product),versions:array(meta.applicable_version,"*"),
       scenarios:array(meta.applicable_scenarios),excludeWhen:array(meta.exclude_when)},obligations,answerTemplate:body,owner:meta.owner,
