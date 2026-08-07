@@ -90,6 +90,37 @@ impl ProjectRegistry {
         }
         Ok(revision)
     }
+
+    pub fn switch_revision(
+        &self,
+        project: ProjectKey,
+        expected_revision: &str,
+    ) -> Result<String, EngineError> {
+        if expected_revision.len() != 40
+            || !expected_revision
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(EngineError::InvalidRevision);
+        }
+        let previous_revision = self.head_revision(project)?;
+        if previous_revision == expected_revision {
+            return Ok(previous_revision);
+        }
+        let root = self.root(project)?;
+        run_git(
+            root,
+            &["cat-file", "-e", &format!("{expected_revision}^{{commit}}")],
+        )?;
+        run_git(
+            root,
+            &["checkout", "--detach", "--quiet", expected_revision],
+        )?;
+        if self.head_revision(project)? != expected_revision {
+            return Err(EngineError::InvalidRevision);
+        }
+        Ok(previous_revision)
+    }
 }
 
 pub fn canonical_relative_path(path: &str) -> Result<String, EngineError> {
@@ -121,6 +152,8 @@ fn run_git(root: &Path, args: &[&str]) -> Result<String, EngineError> {
     let output = Command::new("git")
         .arg("-c")
         .arg(format!("safe.directory={}", root.display()))
+        .arg("-c")
+        .arg("core.longpaths=true")
         .arg("-C")
         .arg(root)
         .args(args)

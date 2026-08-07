@@ -243,7 +243,7 @@ async fn atomically_reloads_both_projects_and_keeps_the_previous_version_on_fail
                 Catalog::load(
                     ProjectKey::CoremailProfessional,
                     &professional,
-                    initial_professional,
+                    initial_professional.clone(),
                 )
                 .unwrap(),
                 load_planning_context(&professional).unwrap(),
@@ -274,6 +274,10 @@ async fn atomically_reloads_both_projects_and_keeps_the_previous_version_on_fail
     git(&professional, &["add", "."]);
     git(&professional, &["commit", "-m", "update"]);
     let professional_revision = git(&professional, &["rev-parse", "HEAD"]);
+    git(
+        &professional,
+        &["checkout", "--detach", &initial_professional],
+    );
     let body = serde_json::json!({
         "releaseId":"KR-2026-08-RELOAD",
         "professionalRevision":professional_revision,
@@ -297,10 +301,14 @@ async fn atomically_reloads_both_projects_and_keeps_the_previous_version_on_fail
     let payload: serde_json::Value =
         serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(payload["oldVersionServedDuringReload"], true);
+    assert_eq!(
+        git(&professional, &["rev-parse", "HEAD"]),
+        professional_revision
+    );
     let failed = serde_json::json!({
         "releaseId":"KR-2026-08-BAD",
-        "professionalRevision":"f".repeat(40),
-        "generalRevision":general_revision
+        "professionalRevision":initial_professional,
+        "generalRevision":"f".repeat(40)
     })
     .to_string();
     assert_ne!(
@@ -322,6 +330,10 @@ async fn atomically_reloads_both_projects_and_keeps_the_previous_version_on_fail
         serde_json::from_slice(&health.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(payload["projects"][0]["revision"], professional_revision);
     assert_eq!(payload["deployment"]["servingPreviousVersion"], true);
+    assert_eq!(
+        git(&professional, &["rev-parse", "HEAD"]),
+        professional_revision
+    );
     for root in [professional, general, indexes, configuration] {
         if root.exists() {
             if root.is_dir() {

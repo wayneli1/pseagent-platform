@@ -218,22 +218,7 @@ async fn reload(
     let build_input = input.clone();
     let task = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let professional = bootstrap_project(
-            &registry,
-            ProjectKey::CoremailProfessional,
-            &build_input.professional_revision,
-            &index_root,
-        )?;
-        let general = bootstrap_project(
-            &registry,
-            ProjectKey::PresalesGeneral,
-            &build_input.general_revision,
-            &index_root,
-        )?;
-        KnowledgeService::new([
-            (ProjectKey::CoremailProfessional, professional),
-            (ProjectKey::PresalesGeneral, general),
-        ])
+        build_reloaded_service(&registry, &build_input, &index_root)
     });
     let next = match tokio::time::timeout(Duration::from_secs(900), task).await {
         Ok(Ok(Ok(service))) => service,
@@ -263,6 +248,52 @@ async fn reload(
         projects,
         old_version_served_during_reload: true,
     }))
+}
+
+fn build_reloaded_service(
+    registry: &ProjectRegistry,
+    input: &ReloadInput,
+    index_root: &std::path::Path,
+) -> Result<KnowledgeService, EngineError> {
+    let previous_professional = registry.head_revision(ProjectKey::CoremailProfessional)?;
+    let previous_general = registry.head_revision(ProjectKey::PresalesGeneral)?;
+    let result = (|| {
+        registry.switch_revision(
+            ProjectKey::CoremailProfessional,
+            &input.professional_revision,
+        )?;
+        registry.switch_revision(ProjectKey::PresalesGeneral, &input.general_revision)?;
+        let professional = bootstrap_project(
+            registry,
+            ProjectKey::CoremailProfessional,
+            &input.professional_revision,
+            index_root,
+        )?;
+        let general = bootstrap_project(
+            registry,
+            ProjectKey::PresalesGeneral,
+            &input.general_revision,
+            index_root,
+        )?;
+        KnowledgeService::new([
+            (ProjectKey::CoremailProfessional, professional),
+            (ProjectKey::PresalesGeneral, general),
+        ])
+    })();
+    if let Err(error) = result {
+        let professional_restored = registry
+            .switch_revision(ProjectKey::CoremailProfessional, &previous_professional)
+            .is_ok();
+        let general_restored = registry
+            .switch_revision(ProjectKey::PresalesGeneral, &previous_general)
+            .is_ok();
+        return if professional_restored && general_restored {
+            Err(error)
+        } else {
+            Err(EngineError::RuntimeUnavailable)
+        };
+    }
+    result
 }
 
 async fn mark_reload_failed(state: &HttpState, input: &ReloadInput, code: &'static str) {
