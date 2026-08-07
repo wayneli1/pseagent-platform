@@ -36,11 +36,18 @@ const generalizationPattern=/(?:所有客户|其他客户|所有项目|通用配
 const currentClaimPattern=/(?:当前|目前|现在|实时)(?:的|项目|系统|用户|规模|容量|授权|部署)?/u;
 const abstractRequiredConceptPattern=/(?:核心功能|主要功能|功能概述|功能介绍|职责区分|职责区别|职责对比|职责说明|角色区别|角色差异|角色说明|协作关系|区别与联系|差异说明|相关内容|关键信息|具体说明)$/u;
 const countedCollectionConceptPattern=/(?:\d+|[一二三四五六七八九十两]+)\s*个?(?:步骤|环节|阶段|流程|配置项|参数|字段|要点|事项)$/u;
+const compoundConceptLabelPattern=/[：:]/u;
+const compoundConceptSeparatorPattern=/[，,、；;]/gu;
 export const PROJECT_DATA_POLICY_VERSION="2026-08-07.1";
 
 export function isUnverifiableRequiredConcept(concept:string):boolean{
   const normalized=concept.normalize("NFKC").trim();
-  return abstractRequiredConceptPattern.test(normalized)||countedCollectionConceptPattern.test(normalized);
+  const semanticLength=[...normalized.replace(/[\s\p{P}\p{S}]+/gu,"")].length;
+  const separatorCount=[...normalized.matchAll(compoundConceptSeparatorPattern)].length;
+  return abstractRequiredConceptPattern.test(normalized)||
+    countedCollectionConceptPattern.test(normalized)||
+    (semanticLength>28&&compoundConceptLabelPattern.test(normalized))||
+    (semanticLength>24&&separatorCount>=2);
 }
 
 export function isBroadProjectDataForbiddenClaim(claim:string):boolean{
@@ -81,7 +88,7 @@ export function inspectAnswerCardRuleConflicts(input:{
       conflicts.push(answerCardRuleConflictSchema.parse({
         code:"unverifiable_required_concept",obligationId:obligation.id,field:"requiredConcepts",
         triggerText:concept,rule:concept,
-        message:`${obligation.id} 的必答概念“${concept}”是抽象或集合标签，无法用确定性规则验证。请拆成正式证据和答案正文中实际出现的原子事实、动作或配置项。`,
+        message:`${obligation.id} 的必答概念“${concept}”是抽象、集合或复合陈述，无法用确定性规则稳定验证。请拆成正式证据和答案正文中实际出现的原子事实、动作或配置项。`,
         suggestedAction:"modify_rule",evidencePaths:obligation.preferredEvidencePaths,
       }));
     }

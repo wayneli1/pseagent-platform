@@ -77,6 +77,26 @@ describe("ModelQuestionResolver", () => {
     expect(completeJson).toHaveBeenCalledTimes(2);
   });
 
+  it("repairs a corrective follow-up that drops answer-changing parent constraints",async()=>{
+    const context=JSON.stringify({version:3,recentTurns:[{question:"有一个客户要购买邮件系统，他们有5000用户，需要多活高可用，建议如何设计架构？",answerOutline:"推荐两台前端、两台后端和一台仲裁服务器。"}]});
+    const incomplete={action:"resolve",standaloneQuestion:"Coremail 邮件系统架构需要几台前端服务器和几台后端服务器？",contextUsed:true,inheritedSubjects:["邮件系统"],corrections:[]};
+    const completeJson=vi.fn()
+      .mockResolvedValueOnce(incomplete)
+      .mockResolvedValueOnce({...incomplete,standaloneQuestion:"5000用户、需要多活高可用的 Coremail 邮件系统架构，需要几台前端和几台后端？",inheritedSubjects:["邮件系统","5000用户","多活高可用"]});
+    const model={completeJson,completeText:vi.fn()} as unknown as ModelClient;
+
+    await expect(new ModelQuestionResolver(model).resolve({
+      question:"你并没有答复我应该如何设计架构，几台前端几台后端",
+      conversationContext:context,
+    })).resolves.toMatchObject({
+      standaloneQuestion:expect.stringContaining("5000用户"),
+      contextUsed:true,
+      inheritedSubjects:expect.arrayContaining(["多活高可用"]),
+    });
+    expect(completeJson).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(completeJson.mock.calls[1])).toContain("丢失了最近问题中会改变答案的数量");
+  });
+
   it("rejects corrections that cannot be traced to the current question", async () => {
     const model = {
       completeJson: vi.fn(async () => ({
