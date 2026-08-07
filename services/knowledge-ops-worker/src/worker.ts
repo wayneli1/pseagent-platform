@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AnswerReviewEncryptedPayload, AnswerReviewReference, IssueCategory, IssuePriority, KnowledgeOpsStore, OpsJob, OpsJobType, RegressionCaseRecord, RegressionRun, RepairDraftProposal, RepairPublication, ReleaseRecord, StoredAnswerReviewCase } from "@pseagent/knowledge-ops";
-import { ContentCipher, repairProposalSchema } from "@pseagent/knowledge-ops";
+import { ContentCipher, isEvidenceBlockedProposal, repairProposalSchema } from "@pseagent/knowledge-ops";
 import type { AnswerCard, AnswerCardCatalog, AnswerReviewResult, KnowledgeDomain, ReleaseManifest, RepairValidationDiagnostic } from "@pseagent/knowledge-governance-contracts";
 import { CatalogCompiler, type KnowledgeSource } from "./catalog-compiler.js";
 import { SafeGitWorkspace, type GitFileChange } from "./git-workspace.js";
@@ -8,7 +8,7 @@ import { SnapshotManager } from "./snapshot-manager.js";
 import { IndependentAnswerReviewer } from "./answer-reviewer.js";
 import { loadReviewEvidence } from "./review-evidence.js";
 import { KnowledgeRepairAgent, type RepairRecord, type RepairRoute } from "./repair-agent.js";
-import { catalogRevision, domainForIssueScope, findCardByHashedKey, loadRepairEvidence, locateAnswerCard, readKnowledgeFileAtRevision, type LocatedAnswerCard } from "./repair-evidence.js";
+import { catalogRevision, discoverRepairEvidencePaths, domainForIssueScope, findCardByHashedKey, loadRepairEvidence, locateAnswerCard, readKnowledgeFileAtRevision, type LocatedAnswerCard } from "./repair-evidence.js";
 import { renderRepairMarkdown } from "./repair-renderer.js";
 import { PROJECT_DATA_POLICY_VERSION, conflictDiagnostics, inspectAnswerCardRuleConflicts } from "./project-data-policy.js";
 import type { KnowledgeRuntimeController } from "./knowledge-runtime-controller.js";
@@ -63,7 +63,8 @@ export class KnowledgeOpsWorker {
       case "compile_catalog":{
         const catalog=await this.compile();
         const synced=await this.syncCatalog(catalog);
-        return{catalogHash:hashCatalog(catalog),cardCount:catalog.cards.length,familyCount:catalog.families.length,syncedCardCount:synced.created,existingCardCount:synced.existing};
+        const requeuedEvidenceDraftCount=await this.requeueEvidenceBlockedDrafts(catalog);
+        return{catalogHash:hashCatalog(catalog),cardCount:catalog.cards.length,familyCount:catalog.families.length,syncedCardCount:synced.created,existingCardCount:synced.existing,requeuedEvidenceDraftCount};
       }
       case "reconcile_runtime":return this.reconcileRuntime();
       case "regression_run":return this.regression(job);
@@ -86,6 +87,20 @@ export class KnowledgeOpsWorker {
       if(result.created)created++;else existing++;
     }
     return{created,existing};
+  }
+  private async requeueEvidenceBlockedDrafts(catalog:AnswerCardCatalog):Promise<number>{
+    const cipher=this.dependencies.cipher;if(cipher===undefined)return 0;let count=0;const issues=[];
+    for(let offset=0;;offset+=100){const page=await this.dependencies.store.listIssues({status:"awaiting_evidence",limit:100,offset});issues.push(...page.items);if(offset+page.items.length>=page.total)break;}
+    for(const issue of issues){
+      const draft=(await this.dependencies.store.listRepairDrafts(issue.issueId)).find((item)=>item.status==="draft_ready");if(draft===undefined)continue;
+      let proposal:RepairDraftProposal;try{proposal=repairProposalSchema.parse(cipher.decrypt<{proposal?:unknown}>(draft.encryptedPayload).proposal) as RepairDraftProposal;}catch{continue;}
+      if(!isEvidenceBlockedProposal(proposal))continue;const domain=proposal.targetDomain??draft.targetDomain??domainForIssueScope(issue.scope);if(domain===undefined)continue;
+      const revision=catalogRevision(catalog,domain);if(revision===undefined||draft.baseGitRevision===revision)continue;
+      const updated=await this.dependencies.store.updateRepairDraft(draft.draftId,{status:"generating",targetDomain:domain,baseGitRevision:revision,encryptedPayload:cipher.encrypt({}),errorCode:""});if(updated===undefined)continue;
+      const job=await this.dependencies.store.enqueueJob("generate_repair_draft",{draftId:draft.draftId});await this.dependencies.store.updateIssue(issue.issueId,"in_progress");count+=1;
+      await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.evidence.recheck_scheduled",resourceType:"repair_draft",resourceId:draft.draftId,metadata:{issueId:issue.issueId,targetDomain:domain,previousRevision:draft.baseGitRevision??null,currentRevision:revision,jobId:job.jobId},createdAt:new Date().toISOString()});
+    }
+    return count;
   }
   private async reviewAnswer(reviewId:string):Promise<Record<string,unknown>>{
     const cipher=this.dependencies.cipher,reviewer=this.dependencies.answerReviewer;if(cipher===undefined||reviewer===undefined)throw new Error("answer_reviewer_not_configured");
@@ -115,9 +130,10 @@ export class KnowledgeOpsWorker {
       const context=await this.loadRepairRecords(issue.issueId,cipher),catalog=await this.compile();
       const catalogCard=findCardByHashedKey(catalog,issue.answerCardKey)??findCardByCurrentQuestion(catalog,context.records),located=catalogCard===undefined?undefined:await locateAnswerCard(this.dependencies.sources,catalog,catalogCard.cardId);
       const domain=located?.card.domain??catalogCard?.domain??domainForIssueScope(issue.scope),source=domain===undefined?undefined:this.dependencies.sources.find((item)=>item.domain===domain),revision=domain===undefined?undefined:catalogRevision(catalog,domain);
-      const paths=located===undefined?[]:[located.path,...located.card.obligations.flatMap((item)=>item.preferredEvidencePaths)];
+      const discoveredPaths=source===undefined||revision===undefined||located!==undefined?[]:await discoverRepairEvidencePaths({source,revision,queries:repairEvidenceQueries(context.records)});
+      const paths=located===undefined?discoveredPaths:[located.path,...located.card.obligations.flatMap((item)=>item.preferredEvidencePaths)];
       const evidence=source===undefined||revision===undefined?{documents:[],issues:["repair_domain_or_revision_missing"],revalidatedReferenceCount:0}:await loadRepairEvidence({source,revision,paths,references:context.references});
-      const route=repairRoute({category:issue.category,domain,revision,located,hasEvidence:evidence.documents.length>0});
+      const route=resolveRepairRoute({category:issue.category,domain,revision,located,hasEvidence:evidence.documents.length>0});
       const proposal=await agent.generate({issueId:issue.issueId,rootCause:issue.category,records:context.records,evidence:evidence.documents,route,sensitiveTerms:context.sensitiveTerms});
       const currentIssue=await this.dependencies.store.getIssue(issue.issueId);if(currentIssue?.status==="dismissed"||currentIssue?.status==="resolved")throw new Error("repair_issue_closed");
       const updated=await this.dependencies.store.updateRepairDraft(draftId,{status:"draft_ready",targetKind:proposal.targetKind,
@@ -432,14 +448,15 @@ function findCardByCurrentQuestion(catalog:AnswerCardCatalog,records:readonly Re
   const questions=new Set(records.map((record)=>normalize(record.question)).filter(Boolean));
   return catalog.cards.find((card)=>isActiveCard(card.reviewStatus)&&[card.canonicalQuestion,...card.aliases].some((question)=>questions.has(normalize(question))));
 }
-function repairRoute(input:{readonly category:IssueCategory;readonly domain:KnowledgeDomain|undefined;readonly revision:string|undefined;readonly located:LocatedAnswerCard|undefined;readonly hasEvidence:boolean}):RepairRoute{
+export function resolveRepairRoute(input:{readonly category:IssueCategory;readonly domain:KnowledgeDomain|undefined;readonly revision:string|undefined;readonly located:LocatedAnswerCard|undefined;readonly hasEvidence:boolean}):RepairRoute{
   if(input.category==="logic_gap"||input.category==="judgement_conflict"||input.category==="review_error")return{targetKind:"system_fix",publishableAllowed:false,blockingReason:input.category==="judgement_conflict"?"用户反馈与自动复查结论冲突，需要管理员裁决，不能自动写入知识库。":"该问题属于逻辑或程序链路，不应通过改写企业知识掩盖，需要创建系统修复任务。"};
-  if(input.category==="knowledge_gap")return{targetKind:"knowledge_page",...(input.domain===undefined?{}:{targetDomain:input.domain}),publishableAllowed:false,blockingReason:"正式资料存在缺口，请先由管理员补充和确认知识来源，再生成答案卡。"};
+  if(input.category==="knowledge_gap"&&!input.hasEvidence)return{targetKind:"knowledge_page",...(input.domain===undefined?{}:{targetDomain:input.domain}),...(input.revision===undefined?{}:{baseGitRevision:input.revision}),publishableAllowed:false,blockingReason:"正式资料存在缺口，请先由管理员补充和确认知识来源，再生成答案卡。"};
   if(input.domain===undefined||input.revision===undefined)return{targetKind:"knowledge_page",publishableAllowed:false,blockingReason:"无法确定问题属于专业知识库还是通用售前知识库，需要管理员判断。"};
   if(input.located!==undefined)return{targetKind:"answer_card",targetDomain:input.domain,targetPath:input.located.path,cardId:input.located.card.cardId,baseGitRevision:input.revision,existingCard:input.located.card,publishableAllowed:true};
   if(!input.hasEvidence)return{targetKind:"knowledge_page",targetDomain:input.domain,baseGitRevision:input.revision,publishableAllowed:false,blockingReason:"没有已校验的正式证据，不能把用户反馈直接固化为企业答案。"};
   return{targetKind:"answer_card",targetDomain:input.domain,baseGitRevision:input.revision,publishableAllowed:true};
 }
+function repairEvidenceQueries(records:readonly RepairRecord[]):string[]{return records.flatMap((record)=>[record.question,record.rawQuestion,record.reviewSummary,...(record.defects??[]).flatMap((defect)=>[defect.summary,defect.evidence])].filter((value):value is string=>typeof value==="string"&&value.trim()!==""));}
 function uniqueReferences(references:readonly AnswerReviewReference[]):AnswerReviewReference[]{const seen=new Set<string>();return references.filter((item)=>{const key=`${item.project}\0${item.path}\0${item.revision}\0${item.contentHash}`;if(seen.has(key))return false;seen.add(key);return true;});}
 function runCatalogCases(catalog:AnswerCardCatalog,cases:readonly RegressionCaseRecord[]){return cases.filter((item)=>item.enabled).map((test)=>{const exact=catalog.cards.find((card)=>isActiveCard(card.reviewStatus)&&[card.canonicalQuestion,...card.aliases].some((question)=>normalize(question)===normalize(test.question))),negative=(test.kind==="negative"||test.kind==="stale")&&test.expectedCardId===undefined;const expected=negative?exact===undefined:test.expectedCardId===undefined||exact?.cardId===test.expectedCardId,domain=exact===undefined||exact.domain===test.domain,obligations=test.requiredObligationIds.every((id)=>exact?.obligations.some((item)=>item.id===id)),forbidden=test.forbiddenClaims.every((claim)=>!exact?.answerTemplate.includes(claim));return{caseId:test.caseId,passed:expected&&domain&&obligations&&forbidden,...(exact===undefined?{}:{actualCardId:exact.cardId})};});}
 function repairReleaseId(timestamp:string,kind:string,seed:string):string{const date=new Date(timestamp),year=String(date.getUTCFullYear()),month=String(date.getUTCMonth()+1).padStart(2,"0"),suffix=createHash("sha256").update(seed).digest("hex").slice(0,10).toUpperCase();return`KR-${year}-${month}-${kind}-${suffix}`;}

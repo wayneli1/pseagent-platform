@@ -9,6 +9,10 @@ import type { RepairEvidence } from "./repair-agent.js";
 const MAX_FILE_BYTES=256*1024;
 const MAX_DOCUMENT_CHARS=12_000;
 const MAX_TOTAL_CHARS=48_000;
+const MAX_DISCOVERY_TERM_BYTES=2*1024*1024;
+const MAX_DISCOVERED_PATHS=3;
+const DISCOVERY_TERM_CONCURRENCY=4;
+const DISCOVERY_STOP_TERMS=new Set(["一个","什么","可以","如何","怎么","是否","我们","这个","客户","问题","功能","使用","需要","支持","系统","进行","邮件"]);
 
 export interface LocatedAnswerCard {
   readonly card: AnswerCard;
@@ -61,6 +65,21 @@ export async function loadRepairEvidence(input:{
   return{documents:Object.freeze(documents),issues:Object.freeze(issues),revalidatedReferenceCount};
 }
 
+export async function discoverRepairEvidencePaths(input:{
+  readonly source:KnowledgeSource;
+  readonly revision:string;
+  readonly queries:readonly string[];
+}):Promise<readonly string[]>{
+  if(!/^[a-f0-9]{40}$/u.test(input.revision))throw new Error("repair_evidence_revision_invalid");
+  const terms=repairDiscoveryTerms(input.queries);if(terms.length===0)return[];
+  const matches:Array<{term:string;paths:readonly string[]}>=[];
+  for(let index=0;index<terms.length;index+=DISCOVERY_TERM_CONCURRENCY){
+    matches.push(...await Promise.all(terms.slice(index,index+DISCOVERY_TERM_CONCURRENCY).map(async(term)=>({term,paths:await gitGrepPaths(input.source.root,input.revision,term)}))));
+  }
+  const scores=new Map<string,{terms:Set<string>;score:number}>();for(const match of matches){if(match.paths.length===0)continue;const weight=1+Math.log1p(1_000/(match.paths.length+1));for(const relativePath of match.paths){const current=scores.get(relativePath)??{terms:new Set<string>(),score:0};current.terms.add(match.term);current.score+=weight;scores.set(relativePath,current);}}
+  return[...scores.entries()].map(([relativePath,value])=>{const normalizedPath=normalizeDiscoveryText(relativePath),pathHits=[...value.terms].filter((term)=>normalizedPath.includes(normalizeDiscoveryText(term))).length,identifierHit=[...value.terms].some((term)=>/[a-z0-9][a-z0-9._-]{2,}/iu.test(term)),directoryBoost=/^wiki\/(?:concepts|entities|comparisons?|synthesis)\//u.test(relativePath)?3:0;return{relativePath,termCount:value.terms.size,identifierHit,score:value.score+pathHits*3+directoryBoost};}).filter((item)=>item.termCount>=2||item.identifierHit).sort((left,right)=>right.score-left.score||left.relativePath.localeCompare(right.relativePath,"zh-CN")).slice(0,MAX_DISCOVERED_PATHS).map((item)=>item.relativePath);
+}
+
 export function domainForIssueScope(scope:string|undefined):KnowledgeDomain|undefined{
   if(scope==="professional"||scope==="coremail-professional")return"coremail-professional";
   if(scope==="general"||scope==="presales-general")return"presales-general";
@@ -72,6 +91,11 @@ function contentHashMatches(content:string,expected:string):boolean{
   const hash=(value:string)=>createHash("sha256").update(Buffer.from(value,"utf8")).digest("hex");
   return hash(content)===expected||hash(content.replace(/\r?\n/gu,"\r\n"))===expected;
 }
+function repairDiscoveryTerms(queries:readonly string[]):string[]{
+  const terms:string[]=[];for(const query of queries){for(const value of query.match(/[A-Za-z][A-Za-z0-9._-]{1,}/gu)??[])terms.push(value);for(const segment of query.match(/[\p{Script=Han}]{2,}/gu)??[]){if(segment.length<=6)terms.push(segment);for(let index=0;index<segment.length-1;index+=1)terms.push(segment.slice(index,index+2));}}
+  const seen=new Set<string>();return terms.map((term)=>term.trim()).filter((term)=>term.length>=2&&!DISCOVERY_STOP_TERMS.has(term)).filter((term)=>{const key=normalizeDiscoveryText(term);if(key===""||seen.has(key))return false;seen.add(key);return true;}).slice(0,20);
+}
+function normalizeDiscoveryText(value:string):string{return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/\s+/gu,"");}
 async function readGitFile(root:string,revision:string,relativePath:string):Promise<string>{
   if(!/^[a-f0-9]{40}$/u.test(revision))throw new Error("repair_evidence_revision_invalid");
   const content=await git(root,["show",`${revision}:${relativePath}`],MAX_FILE_BYTES);return content;
@@ -80,6 +104,15 @@ function git(cwd:string,args:string[],maxBytes=2*1024*1024):Promise<string>{retu
   const child=spawn("git",["-c",`safe.directory=${cwd}`,"-c","core.quotepath=false","-C",cwd,...args],{shell:false,windowsHide:true,stdio:["ignore","pipe","pipe"]});const output:Buffer[]=[];let bytes=0,error="";
   child.stdout.on("data",(chunk:Buffer)=>{bytes+=chunk.byteLength;if(bytes<=maxBytes)output.push(chunk);else child.kill();});child.stderr.setEncoding("utf8").on("data",(chunk)=>error+=chunk);
   child.once("error",reject);child.once("exit",(code)=>code===0&&bytes<=maxBytes?resolve(Buffer.concat(output).toString("utf8")):reject(new Error(bytes>maxBytes?"repair_evidence_too_large":`git_failed:${error.trim().slice(0,200)}`)));
+});}
+async function gitGrepPaths(cwd:string,revision:string,term:string):Promise<readonly string[]>{
+  const output=await gitGrep(cwd,["grep","-I","-l","-i","-e",term,revision,"--","wiki"]);return output.split(/\r?\n/gu).map((line)=>line.startsWith(`${revision}:`)?line.slice(revision.length+1):"").filter(isDiscoverableEvidencePath);
+}
+function isDiscoverableEvidencePath(relativePath:string):boolean{return safeWikiPath(relativePath)&&!relativePath.startsWith("wiki/queries/")&&relativePath!=="wiki/index.md"&&relativePath!=="wiki/log.md";}
+function gitGrep(cwd:string,args:string[]):Promise<string>{return new Promise((resolve,reject)=>{
+  const child=spawn("git",["-c",`safe.directory=${cwd}`,"-c","core.quotepath=false","-C",cwd,...args],{shell:false,windowsHide:true,stdio:["ignore","pipe","pipe"]});const output:Buffer[]=[];let bytes=0,error="";
+  child.stdout.on("data",(chunk:Buffer)=>{bytes+=chunk.byteLength;if(bytes<=MAX_DISCOVERY_TERM_BYTES)output.push(chunk);else child.kill();});child.stderr.setEncoding("utf8").on("data",(chunk)=>error+=chunk);
+  child.once("error",reject);child.once("exit",(code)=>bytes>MAX_DISCOVERY_TERM_BYTES?resolve(""):code===1&&bytes===0?resolve(""):code===0?resolve(Buffer.concat(output).toString("utf8")):reject(new Error(`git_failed:${error.trim().slice(0,200)}`)));
 });}
 
 export function findCardByHashedKey(catalog:AnswerCardCatalog,key:string|undefined):AnswerCard|undefined{
