@@ -112,7 +112,7 @@ export function enforceDeterministicReview(
   input:IndependentAnswerReviewInput,
   modelResult:AnswerReviewResult,
 ):AnswerReviewResult{
-  const projectData=evaluateProjectDataAnswer({answer:input.answer,evidence:input.evidence});
+  const projectData=evaluateProjectDataAnswer({question:input.question,answer:input.answer,evidence:input.evidence});
   const modelDefects=modelResult.defects.filter((defect)=>!isRuntimeCitationNumberingDefect(defect)&&!isSupportedProjectDataFalsePositive(defect,projectData.diagnostics.length));
   const defects=[...modelDefects,...projectData.defects];
   let forceFail=false;

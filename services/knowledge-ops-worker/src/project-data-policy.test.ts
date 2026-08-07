@@ -23,6 +23,11 @@ describe("项目数据证据边界",()=>{
     expect(result.diagnostics.some((item)=>item.stage==="forbidden_claim")).toBe(true);
   });
 
+  it("允许答案复述用户问题中给定的客户规模",()=>{
+    const result=evaluateProjectDataAnswer({question:"客户有 5000 用户，需要多活高可用，服务器怎么配？",answer:"对于 5000 用户场景，仍需结合并发量和数据量测算，不能把其他项目配置直接承诺给该客户。",evidence:[]});
+    expect(result.diagnostics).toEqual([]);
+  });
+
   it("在模型调用前指出必答项与宽泛禁答项的规则冲突",()=>{
     const conflicts=inspectAnswerCardRuleConflicts({answerTemplate:"**华为项目**\n东莞节点预测10万用户。",evidence,obligations:[{id:"O1",label:"项目规模",evidencePolicy:"direct",requiredConcepts:["华为项目规模"],forbiddenClaims:["华为项目具体用户数"],preferredEvidencePaths:["wiki/entities/东莞节点.md"]}]});
     expect(conflicts).toEqual([expect.objectContaining({code:"evidence_supported_project_data_forbidden",obligationId:"O1",field:"forbiddenClaims",suggestedAction:"modify_rule"})]);

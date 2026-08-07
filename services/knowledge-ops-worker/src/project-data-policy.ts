@@ -39,7 +39,7 @@ const abstractRequiredConceptPattern=/(?:核心功能|主要功能|功能概述|
 const countedCollectionConceptPattern=/(?:\d+|[一二三四五六七八九十两]+)\s*个?(?:步骤|环节|阶段|流程|配置项|参数|字段|要点|事项)$/u;
 const compoundConceptLabelPattern=/[：:]/u;
 const compoundConceptSeparatorPattern=/[，,、；;]/gu;
-export const PROJECT_DATA_POLICY_VERSION="2026-08-07.2";
+export const PROJECT_DATA_POLICY_VERSION="2026-08-07.3";
 
 export function isUnverifiableRequiredConcept(concept:string):boolean{
   const normalized=concept.normalize("NFKC").trim();
@@ -108,11 +108,11 @@ export function inspectAnswerCardRuleConflicts(input:{
   return uniqueConflicts(conflicts);
 }
 
-export function evaluateProjectDataAnswer(input:{readonly answer:string;readonly evidence:readonly ProjectDataEvidence[]}):{
+export function evaluateProjectDataAnswer(input:{readonly question?:string;readonly answer:string;readonly evidence:readonly ProjectDataEvidence[]}):{
   readonly defects:readonly AnswerReviewDefect[];
   readonly diagnostics:readonly RepairValidationDiagnostic[];
 }{
-  const projects=collectProjectNames(input.answer,input.evidence),answerFacts=extractFacts(input.answer,projects),evidenceFacts=input.evidence.flatMap((item)=>extractFacts(item.content,projects,item.path,item.title));
+  const projects=collectProjectNames([input.question??"",input.answer].join("\n"),input.evidence),answerFacts=extractFacts(input.answer,projects),questionFacts=input.question===undefined?[]:extractFacts(input.question,projects),evidenceFacts=input.evidence.flatMap((item)=>extractFacts(item.content,projects,item.path,item.title));
   const diagnostics:RepairValidationDiagnostic[]=[];
   for(const fact of answerFacts.filter((item)=>item.projects.length>0)){
     const sameData=evidenceFacts.filter((source)=>factsReferToSameData(fact,source));
@@ -123,6 +123,7 @@ export function evaluateProjectDataAnswer(input:{readonly answer:string;readonly
     if(currentClaimPattern.test(fact.context)&&sameData.some((source)=>source.comparator==="approx"||/(?:历史|案例|预测|预计)/u.test(source.context))){
       diagnostics.push(diagnostic("forbidden_claim",fact,"历史或预测项目数据不得描述为当前实时规模。","modify_answer",supported?.path));continue;
     }
+    if(questionFacts.some((source)=>source.value===fact.value&&metricCompatible(source.metric,fact.metric)&&comparatorSupported(source.comparator,fact.comparator)))continue;
     if(supported!==undefined)continue;
     if(sameData.length>0){diagnostics.push(diagnostic("evidence_support",fact,`答案使用“${comparatorText(fact.comparator)}${fact.raw}”，但正式证据的数值口径不支持该比较关系。`,`modify_answer`,sameData[0]?.path));continue;}
     const sameValue=evidenceFacts.filter((source)=>source.value===fact.value&&metricCompatible(source.metric,fact.metric));
