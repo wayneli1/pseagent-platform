@@ -172,8 +172,9 @@ export function adaptAnswerCardToTaskSpec(input: {
             ? [{ deliverableIndex, obligationIndex, obligation }]
             : []));
   const used = new Set<DraftObligation>();
-  const singleRequiredBinding = input.match.bindings.filter((binding) =>
-    binding.required).length === 1;
+  const requiredBindingCount = input.match.bindings.filter((binding) =>
+    binding.required).length;
+  const singleRequiredBinding = requiredBindingCount === 1;
 
   for (const [bindingIndex, binding] of input.match.bindings.entries()) {
     if (!binding.required) continue;
@@ -196,7 +197,10 @@ export function adaptAnswerCardToTaskSpec(input: {
     }
 
     const source = selectBindingLocation(binding, requiredLocations) ??
-      (requiredLocations.length === 1 ? requiredLocations[0] : undefined);
+      (requiredLocations.length === 1 ? requiredLocations[0] : undefined) ??
+      (input.match.matchType === "family" && input.match.confidence === "high" && requiredBindingCount > 1
+        ? selectSingleDeliverableGovernedAnchor(binding, requiredLocations)
+        : undefined);
     if (source === undefined) {
       return { activated: false, reason: "binding_unmapped" };
     }
@@ -427,6 +431,21 @@ function selectBindingLocation(
   const roleCompatible = ranked.filter((candidate) =>
     candidate.evidenceRoleScore >= 2 && candidate.domainScore > 0);
   return roleCompatible.length === 1 ? roleCompatible[0]!.location : undefined;
+}
+
+function selectSingleDeliverableGovernedAnchor(
+  binding: AnswerCardMatchBinding,
+  locations: readonly DraftObligationLocation[],
+): DraftObligationLocation | undefined {
+  if (binding.evidencePolicy === "customer_input") return undefined;
+  const bindingDomains = taskDomainsForBinding(binding);
+  const eligible = locations.filter((location) =>
+    location.obligation.value.evidencePolicy !== "customer_input" &&
+    bindingDomains.some((domain) => location.obligation.value.domains.includes(domain)));
+  if (eligible.length === 0 || new Set(eligible.map((item) => item.deliverableIndex)).size !== 1) {
+    return undefined;
+  }
+  return eligible[0];
 }
 
 function deduplicateEquivalentModelObligations(

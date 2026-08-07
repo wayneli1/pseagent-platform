@@ -878,6 +878,71 @@ describe("answer card TaskSpec adapter", () => {
     })).toEqual({ activated: false, reason: "binding_unmapped" });
   });
 
+  it("anchors multiple governed family obligations to one explicit follow-up deliverable", () => {
+    const question = "5000 用户多活方案到底几台前端、几台后端？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "5000 用户多活方案", role: "subject", sourceText: question }],
+      deliverables: [{
+        id: "D1",
+        label: "服务器数量",
+        kind: "fact",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "给出前后端数量",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const makeBinding = (
+      id: string,
+      label: string,
+      evidencePolicy: "direct" | "synthesis",
+    ): Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] => ({
+      obligationId: id,
+      cardObligationId: id,
+      cardId: "PRO-MULTI-ACTIVE-001",
+      label,
+      domain: "coremail-professional",
+      domains: ["coremail-professional"],
+      required: true,
+      evidencePolicy,
+      requiredConcepts: [label],
+      forbiddenClaims: [],
+      preferredEvidencePaths: [],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "e".repeat(64),
+      familyId: "MULTI-ACTIVE-FAMILY",
+      bindings: [
+        makeBinding("O1", "服务器数量", "direct"),
+        makeBinding("O2", "一致性组件", "direct"),
+        makeBinding("O3", "容量边界", "synthesis"),
+      ],
+      cardIdHashes: ["f".repeat(64)],
+      expectedRevisions: { "coremail-professional": professionalRevision },
+      candidateCount: 1,
+    };
+
+    const result = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    });
+    expect(result.activated).toBe(true);
+    if (!result.activated) throw new Error("expected activation");
+    expect(result.policies).toHaveLength(3);
+    expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
+  });
+
   it("reports every answer-card concept missing after verification", () => {
     const binding = {
       domain: "presales-general" as const,
