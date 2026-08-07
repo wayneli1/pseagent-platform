@@ -142,18 +142,36 @@ export class AnswerCardRegistry {
     currentDomain: KnowledgeDomain,
     limit = 5,
   ): readonly QuestionFamily[] {
-    return this.activeFamilies
+    const applicable = this.activeFamilies
       .filter((family) => family.bindings.some((binding) =>
         binding.domain === currentDomain))
       .filter((family) => family.bindings
         .filter((binding) => binding.required)
-        .every((binding) => this.familyCardApplicable(binding.cardId, question)))
-      .map((family) => ({ family, score: familySimilarity(question, family) }))
+        .every((binding) => this.familyCardApplicable(binding.cardId, question)));
+    const surfaceCandidates = applicable.map((family) => ({
+      family,
+      score: familySurfaceSimilarity(question, family),
+    }))
       .filter((candidate) => candidate.score >= 0.12)
       .sort((left, right) =>
-        right.score - left.score || left.family.familyId.localeCompare(right.family.familyId))
-      .slice(0, limit)
-      .map((candidate) => candidate.family);
+        right.score - left.score || left.family.familyId.localeCompare(right.family.familyId));
+    const selected = surfaceCandidates.slice(0, limit).map((candidate) => candidate.family);
+    if (selected.length >= limit) return selected;
+
+    const selectedIds = new Set(selected.map((family) => family.familyId));
+    const conceptCandidates = applicable.map((family) => ({
+      family,
+      score: familyConceptSimilarity(question, family, this.cardById),
+    }))
+      .filter((candidate) =>
+        candidate.score >= 0.12 && !selectedIds.has(candidate.family.familyId))
+      .sort((left, right) =>
+        right.score - left.score || left.family.familyId.localeCompare(right.family.familyId));
+    for (const candidate of conceptCandidates) {
+      selected.push(candidate.family);
+      if (selected.length >= limit) break;
+    }
+    return selected;
   }
 
   deterministicFamilyCandidate(
@@ -166,7 +184,10 @@ export class AnswerCardRegistry {
       .filter((family) => family.bindings
         .filter((binding) => binding.required)
         .every((binding) => this.familyCardApplicable(binding.cardId, question)))
-      .map((family) => ({ family, score: familySimilarity(question, family) }))
+      .map((family) => ({
+        family,
+        score: familySurfaceSimilarity(question, family),
+      }))
       .sort((left, right) =>
         right.score - left.score || left.family.familyId.localeCompare(right.family.familyId));
     const best = ranked[0];
@@ -288,7 +309,24 @@ function isReviewStatusActive(status: string): boolean {
   return status === "approved" || status === "release_ready" || status === "released";
 }
 
-function familySimilarity(question: string, family: QuestionFamily): number {
+function familyConceptSimilarity(
+  question: string,
+  family: QuestionFamily,
+  cards: ReadonlyMap<string, AnswerCard>,
+): number {
+  const governedConcepts = family.bindings.flatMap((binding) => {
+    const card = cards.get(binding.cardId);
+    const obligation = card?.obligations.find((candidate) =>
+      candidate.id === binding.cardObligationId);
+    return obligation === undefined
+      ? []
+      : [obligation.label, ...obligation.requiredConcepts];
+  });
+  return Math.max(0, ...governedConcepts.map((candidate) =>
+    ngramSimilarity(question, candidate)));
+}
+
+function familySurfaceSimilarity(question: string, family: QuestionFamily): number {
   return Math.max(...[
     family.canonicalQuestion,
     family.title,

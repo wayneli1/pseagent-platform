@@ -255,6 +255,48 @@ describe("answer card registry and matching", () => {
     expect(partial).toMatchObject({ matchType: "partial", confidence: "high" });
   });
 
+  it("recalls colloquial families from governed obligation concepts", async () => {
+    const source = catalog();
+    source.cards[1]!.obligations[0]!.requiredConcepts = ["谁能调动跨部门资源"];
+    const model = {
+      completeJson: vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) => {
+        const payload = JSON.parse(input.messages[1]!.content) as {
+          candidates: Array<{
+            familyId: string;
+            obligations: Array<{ requiredConcepts: string[] }>;
+          }>;
+        };
+        expect(payload.candidates.find((candidate) =>
+          candidate.familyId === "MIXED-MIGRATION-001")?.obligations)
+          .toEqual(expect.arrayContaining([
+            expect.objectContaining({ requiredConcepts: ["谁能调动跨部门资源"] }),
+          ]));
+        return {
+          familyId: "MIXED-MIGRATION-001",
+          confidence: "high",
+          matchedObligationIds: ["O2"],
+        };
+      }),
+    } as unknown as ModelClient;
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(source),
+      model,
+    );
+
+    await expect(matcher.match({
+      question: "这人到底能不能拍板出钱、还能拉动别的部门，怎么看才靠谱？",
+      currentDomain: "presales-general",
+      currentRevision: generalRevision,
+      familyEnabled: true,
+    })).resolves.toMatchObject({
+      matchType: "partial",
+      confidence: "high",
+      familyId: "MIXED-MIGRATION-001",
+      bindings: [expect.objectContaining({ cardId: "PS-RISK-001" })],
+    });
+    expect(model.completeJson).toHaveBeenCalledOnce();
+  });
+
   it("treats a structured no-match decision as a rejection instead of matcher unavailability", async () => {
     const model = {
       completeJson: vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
@@ -692,6 +734,82 @@ describe("answer card TaskSpec adapter", () => {
       "O1",
       "O2",
       "O3",
+    ]);
+  });
+
+  it("deduplicates one intent and trusts its governed synthesis policy", () => {
+    const question = "客户自称能批预算也能协调资源，售前应该核对哪些可验证的动作？";
+    const duplicate = (id: string) => ({
+      id,
+      label: "核实客户的预算和资源权限",
+      targetEntityIds: ["E1"],
+      evidencePolicy: "direct" as const,
+      domains: ["presales-general" as const],
+      required: true,
+      sourceText: question,
+    });
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{
+        id: "E1",
+        label: question,
+        role: "subject",
+        sourceText: question,
+      }],
+      deliverables: [{
+        id: "D1",
+        label: question,
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: [duplicate("O1"), duplicate("O2"), duplicate("O3")],
+      }],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "c".repeat(64),
+      familyId: "BUDGET-RESOURCE-FAMILY",
+      bindings: [{
+        obligationId: "O1",
+        cardObligationId: "O1",
+        cardId: "GEN-BUDGET-RESOURCE-001",
+        label: "核验预算与资源调动行为",
+        domain: "presales-general",
+        domains: ["presales-general"],
+        required: true,
+        evidencePolicy: "synthesis",
+        requiredConcepts: ["预算来自哪里，谁可以调整", "谁能调动跨部门资源"],
+        forbiddenClaims: ["不得把口头承诺作为权限证明"],
+        preferredEvidencePaths: ["wiki/queries/budget-resource.md"],
+      }],
+      cardIdHashes: ["d".repeat(64)],
+      expectedRevisions: { "presales-general": generalRevision },
+      candidateCount: 1,
+    };
+
+    const adapted = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    });
+
+    expect(adapted).toMatchObject({ activated: true });
+    if (!adapted.activated) return;
+    expect(adapted.guard).toMatchObject({ ok: true, issues: [] });
+    expect(adapted.taskSpec.deliverables[0]!.obligations).toEqual([
+      expect.objectContaining({
+        id: "O1",
+        label: "核验预算与资源调动行为",
+        evidencePolicy: "synthesis",
+        domains: ["presales-general"],
+      }),
+    ]);
+    expect(adapted.policies).toEqual([
+      expect.objectContaining({
+        obligationId: "O1",
+        cardId: "GEN-BUDGET-RESOURCE-001",
+      }),
     ]);
   });
 

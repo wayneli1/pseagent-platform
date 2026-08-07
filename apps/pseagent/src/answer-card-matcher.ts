@@ -154,6 +154,9 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
                   obligationId: binding.obligationId,
                   label: binding.label,
                   domain: binding.domain,
+                  requiredConcepts: this.registry.card(binding.cardId)?.obligations.find(
+                    (obligation) => obligation.id === binding.cardObligationId,
+                  )?.requiredConcepts ?? [],
                 })),
               })),
             }),

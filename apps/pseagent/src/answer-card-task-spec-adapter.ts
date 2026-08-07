@@ -161,9 +161,8 @@ export function adaptAnswerCardToTaskSpec(input: {
 
   const draftDeliverables = input.taskSpec.deliverables.map((deliverable) => ({
     ...deliverable,
-    obligations: deliverable.obligations.map((obligation): DraftObligation => ({
-      value: obligation,
-    })),
+    obligations: deduplicateEquivalentModelObligations(deliverable.obligations)
+      .map((obligation): DraftObligation => ({ value: obligation })),
   }));
   const requiredLocations = draftDeliverables.flatMap((deliverable, deliverableIndex) =>
     !deliverable.required
@@ -173,25 +172,45 @@ export function adaptAnswerCardToTaskSpec(input: {
             ? [{ deliverableIndex, obligationIndex, obligation }]
             : []));
   const used = new Set<DraftObligation>();
+  const singleRequiredBinding = input.match.bindings.filter((binding) =>
+    binding.required).length === 1;
 
   for (const [bindingIndex, binding] of input.match.bindings.entries()) {
     if (!binding.required) continue;
-    const selected = selectBindingLocation(
-      binding,
-      requiredLocations.filter((location) =>
-        !used.has(location.obligation) &&
-        bindingCanOverlay(binding, location.obligation.value)),
-    );
+    const overlayLocations = requiredLocations.filter((location) =>
+      !used.has(location.obligation) &&
+      bindingCanOverlay(binding, location.obligation.value));
+    const selected = selectBindingLocation(binding, overlayLocations) ??
+      (requiredLocations.length === 1 ? overlayLocations[0] : undefined);
     if (selected !== undefined) {
+      if (!bindingPolicyMatches(binding, selected.obligation.value)) {
+        selected.obligation.value = createCardObligation(
+          selected.obligation.value,
+          binding,
+        );
+      }
       selected.obligation.cardBinding = binding;
       selected.obligation.cardBindingIndex = bindingIndex;
       used.add(selected.obligation);
       continue;
     }
 
-    const source = selectBindingLocation(binding, requiredLocations);
+    const source = selectBindingLocation(binding, requiredLocations) ??
+      (requiredLocations.length === 1 ? requiredLocations[0] : undefined);
     if (source === undefined) {
       return { activated: false, reason: "binding_unmapped" };
+    }
+    if (
+      singleRequiredBinding &&
+      !used.has(source.obligation) &&
+      binding.evidencePolicy !== "customer_input" &&
+      source.obligation.value.evidencePolicy !== "customer_input"
+    ) {
+      source.obligation.value = createCardObligation(source.obligation.value, binding);
+      source.obligation.cardBinding = binding;
+      source.obligation.cardBindingIndex = bindingIndex;
+      used.add(source.obligation);
+      continue;
     }
     const targetDeliverable = draftDeliverables[source.deliverableIndex]!;
     targetDeliverable.obligations.push({
@@ -248,10 +267,24 @@ export function adaptAnswerCardToTaskSpec(input: {
   if (!parsed.success) {
     return { activated: false, reason: "task_spec_contract_exceeded" };
   }
-  const guard = new DeterministicTaskSpecGuard().validate({
+  const rawGuard = new DeterministicTaskSpecGuard().validate({
     resolvedQuestion: input.resolvedQuestion,
     taskSpec: parsed.data,
   });
+  const governedObligationIds = new Set(
+    policyEntries.map((entry) => entry.policy.obligationId),
+  );
+  const trustedIssues = rawGuard.issues.filter((issue) =>
+    issue.code !== "protected_fact_not_direct" ||
+    issue.obligationId === undefined ||
+    !governedObligationIds.has(issue.obligationId));
+  const guard: TaskSpecGuardResult = trustedIssues.length === rawGuard.issues.length
+    ? rawGuard
+    : Object.freeze({
+        ...rawGuard,
+        ok: !trustedIssues.some((issue) => issue.severity === "error"),
+        issues: Object.freeze(trustedIssues),
+      });
   if (!guard.ok) {
     return {
       activated: false,
@@ -357,6 +390,16 @@ function bindingCanOverlay(
     bindingDomains.every((domain) => obligation.domains.includes(domain));
 }
 
+function bindingPolicyMatches(
+  binding: AnswerCardMatchBinding,
+  obligation: TaskSpec["deliverables"][number]["obligations"][number],
+): boolean {
+  const bindingDomains = taskDomainsForBinding(binding);
+  return binding.evidencePolicy === obligation.evidencePolicy &&
+    bindingDomains.length === obligation.domains.length &&
+    bindingDomains.every((domain) => obligation.domains.includes(domain));
+}
+
 function selectBindingLocation(
   binding: AnswerCardMatchBinding,
   locations: readonly DraftObligationLocation[],
@@ -384,6 +427,24 @@ function selectBindingLocation(
   const roleCompatible = ranked.filter((candidate) =>
     candidate.evidenceRoleScore >= 2 && candidate.domainScore > 0);
   return roleCompatible.length === 1 ? roleCompatible[0]!.location : undefined;
+}
+
+function deduplicateEquivalentModelObligations(
+  obligations: readonly TaskSpec["deliverables"][number]["obligations"][number][],
+): TaskSpec["deliverables"][number]["obligations"][number][] {
+  const seenRequired = new Set<string>();
+  return obligations.filter((obligation) => {
+    if (!obligation.required) return true;
+    const key = JSON.stringify({
+      sourceText: normalizeText(obligation.sourceText),
+      evidencePolicy: obligation.evidencePolicy,
+      domains: [...obligation.domains].sort(),
+      targetEntityIds: [...obligation.targetEntityIds].sort(),
+    });
+    if (seenRequired.has(key)) return false;
+    seenRequired.add(key);
+    return true;
+  });
 }
 
 function evidenceRoleSimilarity(
