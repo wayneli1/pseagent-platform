@@ -192,3 +192,13 @@ git diff --check -- docs/superpowers/specs/2026-08-05-answer-card-knowledge-ops-
 - 独立复查按真实 `exact/family/partial` 类型展示治理链路告警，不再把问题族命中称为精确命中。
 
 验证：答案卡适配、在线集成、诊断脱敏、独立复查和 Worker 定向测试，PSEAgent 与 Worker 类型检查，全量 TypeScript 测试及 `git diff --check`。
+
+## 阶段146：补充独立问题会话提示
+
+交付：
+
+- 在问题即时回执的 `/new` 命令下方增加紧邻帮助文案；
+- 明确提示独立问题可先使用 `/new` 清除上下文，以减少旧会话干扰并提高回答准确率；
+- 保持 `/status`、`/new`、`/help` 原有命令语义和顺序不变。
+
+验证：Bridge 即时回执测试、Lunkr Direct 类型检查和全量测试、`git diff --check`。

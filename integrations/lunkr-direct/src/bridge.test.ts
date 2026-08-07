@@ -1298,6 +1298,7 @@ function withProcessingGuide(message: string): string {
     "处理期间可以：",
     "/status  查看问题状态",
     "/new     取消当前及排队问题，开始新会话",
+    "         独立问题建议先用 /new，可清除上下文并提高回答准确率",
     "/help    查看全部使用说明",
   ].join("\n");
 }
