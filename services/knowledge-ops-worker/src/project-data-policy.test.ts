@@ -24,7 +24,7 @@ describe("项目数据证据边界",()=>{
   });
 
   it("允许答案复述用户问题中给定的客户规模",()=>{
-    const result=evaluateProjectDataAnswer({question:"客户有 5000 用户，需要多活高可用，服务器怎么配？",answer:"对于 5000 用户场景，仍需结合并发量和数据量测算，不能把其他项目配置直接承诺给该客户。",evidence:[]});
+    const result=evaluateProjectDataAnswer({question:"客户有五千用户，需要多活高可用，服务器怎么配？",answer:"对于 5000 用户场景，仍需结合并发量和数据量测算，不能把其他项目配置直接承诺给该客户。",evidence:[]});
     expect(result.diagnostics).toEqual([]);
   });
 

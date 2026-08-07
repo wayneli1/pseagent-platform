@@ -39,7 +39,7 @@ const abstractRequiredConceptPattern=/(?:核心功能|主要功能|功能概述|
 const countedCollectionConceptPattern=/(?:\d+|[一二三四五六七八九十两]+)\s*个?(?:步骤|环节|阶段|流程|配置项|参数|字段|要点|事项)$/u;
 const compoundConceptLabelPattern=/[：:]/u;
 const compoundConceptSeparatorPattern=/[，,、；;]/gu;
-export const PROJECT_DATA_POLICY_VERSION="2026-08-07.3";
+export const PROJECT_DATA_POLICY_VERSION="2026-08-07.4";
 
 export function isUnverifiableRequiredConcept(concept:string):boolean{
   const normalized=concept.normalize("NFKC").trim();
@@ -153,9 +153,9 @@ function extractFacts(text:string,projects:readonly string[],path?:string,title?
     if(/^#{1,6}\s/u.test(line)){heading=line.replace(/^#{1,6}\s*/u,"");continue;}
     if(line.length<=100&&/(?:项目|案例)/u.test(line)&&!(/\d/u.test(line))&&/^\*\*/u.test(line)){heading=line.replace(/^\*\*|\*\*[：:]?$/gu,"");continue;}
     const context=`${heading} ${line}`.replace(/\s+/gu," ").trim();
-    const pattern=/\d+(?:\.\d+)?\s*(?:(?:万|千|亿|[wW])\s*(?:用户|授权|套(?:系统)?|台(?:服务器)?|个?节点|服务器)?|(?:用户|授权|套(?:系统)?|台(?:服务器)?|个?节点|服务器))/gu;
+    const pattern=/(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万亿]+)\s*(?:(?:万|千|亿|[wW])\s*(?:用户|授权|套(?:系统)?|台(?:服务器)?|个?节点|服务器)?|(?:用户|授权|套(?:系统)?|台(?:服务器)?|个?节点|服务器))/gu;
     for(const match of context.matchAll(pattern)){
-      const raw=match[0],number=Number.parseFloat(raw),multiplier=/亿/u.test(raw)?100_000_000:/(?:万|[wW])/u.test(raw)?10_000:/千/u.test(raw)?1_000:1;
+      const raw=match[0],arabic=raw.match(/^\d+(?:\.\d+)?/u)?.[0],chinese=arabic===undefined?raw.match(/^[零〇一二两三四五六七八九十百千万亿]+/u)?.[0]:undefined,number=arabic===undefined?parseChineseInteger(chinese??""):Number.parseFloat(arabic),multiplier=arabic===undefined?1:/亿/u.test(raw)?100_000_000:/(?:万|[wW])/u.test(raw)?10_000:/千/u.test(raw)?1_000:1;
       const before=context.slice(Math.max(0,(match.index??0)-10),match.index??0),window=context.slice(Math.max(0,(match.index??0)-18),(match.index??0)+raw.length+18);
       const comparator=/(?:超过|超出|大于|高于)\s*$/u.test(before)?"gt":/(?:不少于|至少|不低于)\s*$/u.test(before)?"gte":/(?:约|大约|左右|预测|预计)[^，。；]{0,8}$/u.test(before)?"approx":"exact";
       const metric=/授权/u.test(raw)||(!/(?:用户|服务器|节点|套|台)/u.test(raw)&&/授权/u.test(window))?"authorizations":/用户|户/u.test(raw)||(!/(?:授权|服务器|节点|套|台)/u.test(raw)&&/用户|户/u.test(window))?"users":/服务器|台/u.test(raw)||(!/(?:授权|用户|节点|套)/u.test(raw)&&/服务器|台/u.test(window))?"servers":/节点/u.test(raw)||(!/(?:授权|用户|服务器|套|台)/u.test(raw)&&/节点/u.test(window))?"nodes":/套/u.test(raw)||/套/u.test(window)?"systems":"scale";
@@ -163,6 +163,19 @@ function extractFacts(text:string,projects:readonly string[],path?:string,title?
     }
   }
   return result;
+}
+
+function parseChineseInteger(value:string):number{
+  const digits:Readonly<Record<string,number>>={零:0,"〇":0,一:1,二:2,两:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9};
+  const smallUnits:Readonly<Record<string,number>>={十:10,百:100,千:1_000};
+  let total=0,section=0,digit=0;
+  for(const character of value){
+    const numeric=digits[character];if(numeric!==undefined){digit=numeric;continue;}
+    const small=smallUnits[character];if(small!==undefined){section+=(digit||1)*small;digit=0;continue;}
+    const large=character==="万"?10_000:character==="亿"?100_000_000:undefined;
+    if(large!==undefined){section+=digit;total+=section*large;section=0;digit=0;}
+  }
+  return total+section+digit;
 }
 
 function collectProjectNames(answer:string,evidence:readonly ProjectDataEvidence[]):string[]{
