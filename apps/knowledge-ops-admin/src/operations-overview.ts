@@ -12,9 +12,13 @@ export function isAnswerReviewActionable(review:AnswerReviewMeta):boolean{
   return review.processingStatus==="errored"||review.verdict==="fail"||review.verdict==="needs_review"||review.workflowStatus==="in_review";
 }
 
+export function isFeedbackActionable(item:FeedbackMeta):boolean{
+  return NEGATIVE.has(item.classification)&&item.status!=="resolved"&&item.status!=="rejected";
+}
+
 export function deriveOperationsOverview(feedback:readonly FeedbackMeta[],reviews:readonly AnswerReviewMeta[]):OperationsOverview{
   const reviewByRequest=new Map(reviews.map((item)=>[item.requestId,item]));
-  const actionableFeedback=feedback.filter((item)=>NEGATIVE.has(item.classification)&&item.status!=="resolved"&&item.status!=="rejected");
+  const actionableFeedback=feedback.filter(isFeedbackActionable);
   const judgementConflicts=actionableFeedback.filter((item)=>reviewByRequest.get(item.requestId)?.verdict==="pass").length;
   const actions=new Map<string,OperationsAction>();
   for(const review of reviews){

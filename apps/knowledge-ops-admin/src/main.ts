@@ -3,6 +3,7 @@ import { ApiError, OpsApiClient } from "./api.js";
 import { badge, h, json, shortId, time } from "./format.js";
 import {errorMessage,issueStatusHelp,label,option} from "./labels.js";
 import {conversationPresentation} from "./conversation-view.js";
+import {isAnswerReviewActionable,isFeedbackActionable} from "./operations-overview.js";
 import {deploymentStageLabel,runtimeStatusPresentation} from "./runtime-status-view.js";
 import {regressionRunView,summarizeProgress} from "./regression-view.js";
 import {boundedPageOffset,paginationView} from "./pagination-view.js";
@@ -23,7 +24,6 @@ import type {
   IssuePriority,
   IssueStatus,
   KnowledgeRuntimeStatus,
-  ListPage,
   OpsJob,
   RegressionPlan,
   RegressionRun,
@@ -156,7 +156,7 @@ async function renderDashboard() {
   const [summary, issues, releases, jobs] = await Promise.all([
     api.get<Dashboard>("/v1/dashboard"),
     api.get<IssuePage>("/v1/issues?actionable=true&limit=12&offset=0"),
-    api.get<ListPage<Release>>("/v1/releases?limit=1&offset=0"),
+    api.getPage<Release>("/v1/releases?limit=1&offset=0",0,1),
     api.get<OpsJob[]>("/v1/jobs"),
   ]);
   const automated=summary.answerReviews.total===0?0:Math.round((summary.answerReviews.passed/summary.answerReviews.total)*100),latestRelease=releases.items[0];
@@ -192,7 +192,7 @@ async function renderEvidenceNeeds(){
 }
 async function renderRepairBatches(){
   await Promise.all([...selectedRepairDraftIds].map(async(id)=>{try{const draft=await api.get<RepairDraft>(`/v1/repair-drafts/${encodeURIComponent(id)}`);if(draft.status!=="ready_to_publish")selectedRepairDraftIds.delete(id);}catch{selectedRepairDraftIds.delete(id);}}));
-  const [readyPage,batchPage]=await Promise.all([api.get<ListPage<RepairDraft>>(`/v1/repair-drafts/ready?limit=${ADMIN_PAGE_SIZE}&offset=${readyDraftOffset}`),api.get<ListPage<RepairBatch>>(`/v1/repair-batches?limit=${ADMIN_PAGE_SIZE}&offset=${repairBatchOffset}`)]);
+  const [readyPage,batchPage]=await Promise.all([api.getPage<RepairDraft>(`/v1/repair-drafts/ready?limit=${ADMIN_PAGE_SIZE}&offset=${readyDraftOffset}`,readyDraftOffset,ADMIN_PAGE_SIZE),api.getPage<RepairBatch>(`/v1/repair-batches?limit=${ADMIN_PAGE_SIZE}&offset=${repairBatchOffset}`,repairBatchOffset,ADMIN_PAGE_SIZE)]);
   const boundedReady=boundedPageOffset(readyPage.total,readyDraftOffset,ADMIN_PAGE_SIZE),boundedBatch=boundedPageOffset(batchPage.total,repairBatchOffset,ADMIN_PAGE_SIZE);
   if(boundedReady!==readyDraftOffset||boundedBatch!==repairBatchOffset){readyDraftOffset=boundedReady;repairBatchOffset=boundedBatch;return renderRepairBatches();}
   const readyPaging=paginationView(readyPage.total,readyDraftOffset,readyPage.items.length,ADMIN_PAGE_SIZE),batchPaging=paginationView(batchPage.total,repairBatchOffset,batchPage.items.length,ADMIN_PAGE_SIZE);
@@ -244,7 +244,7 @@ async function renderFeedback() {
   const reviewParameters=new URLSearchParams({limit:String(ADMIN_PAGE_SIZE),offset:String(reviewOffset)}),feedbackParameters=new URLSearchParams({limit:String(ADMIN_PAGE_SIZE),offset:String(feedbackOffset)});
   if(reviewFilter==="actionable")reviewParameters.set("actionable","true");else if(reviewFilter!=="all")reviewParameters.set("verdict",reviewFilter);
   if(feedbackFilter==="actionable")feedbackParameters.set("actionable","true");else if(feedbackFilter!=="all")feedbackParameters.set("status",feedbackFilter);
-  const [feedbackPage,reviewPage] = await Promise.all([api.get<ListPage<FeedbackMeta>>(`/v1/feedback?${feedbackParameters}`),api.get<ListPage<AnswerReviewMeta>>(`/v1/answer-reviews?${reviewParameters}`)]);
+  const [feedbackPage,reviewPage] = await Promise.all([api.getPage<FeedbackMeta>(`/v1/feedback?${feedbackParameters}`,feedbackOffset,ADMIN_PAGE_SIZE,matchesLegacyFeedbackFilter),api.getPage<AnswerReviewMeta>(`/v1/answer-reviews?${reviewParameters}`,reviewOffset,ADMIN_PAGE_SIZE,matchesLegacyReviewFilter)]);
   const boundedReview=boundedPageOffset(reviewPage.total,reviewOffset,ADMIN_PAGE_SIZE),boundedFeedback=boundedPageOffset(feedbackPage.total,feedbackOffset,ADMIN_PAGE_SIZE);
   if(boundedReview!==reviewOffset||boundedFeedback!==feedbackOffset){reviewOffset=boundedReview;feedbackOffset=boundedFeedback;return renderFeedback();}
   const reviewPaging=paginationView(reviewPage.total,reviewOffset,reviewPage.items.length,ADMIN_PAGE_SIZE),feedbackPaging=paginationView(feedbackPage.total,feedbackOffset,feedbackPage.items.length,ADMIN_PAGE_SIZE);
@@ -299,7 +299,7 @@ async function renderCards() {
   );
 }
 async function renderRegressions() {
-  const [plan,jobs,latestRunPage,runPage]=await Promise.all([api.get<RegressionPlan>("/v1/regression-plan"),api.get<OpsJob[]>("/v1/jobs"),api.get<ListPage<RegressionRun>>(`/v1/regression-runs?limit=${ADMIN_PAGE_SIZE}&offset=0`),api.get<ListPage<RegressionRun>>(`/v1/regression-runs?limit=${ADMIN_PAGE_SIZE}&offset=${regressionRunOffset}`)]);
+  const [plan,jobs,latestRunPage,runPage]=await Promise.all([api.get<RegressionPlan>("/v1/regression-plan"),api.get<OpsJob[]>("/v1/jobs"),api.getPage<RegressionRun>(`/v1/regression-runs?limit=${ADMIN_PAGE_SIZE}&offset=0`,0,ADMIN_PAGE_SIZE),api.getPage<RegressionRun>(`/v1/regression-runs?limit=${ADMIN_PAGE_SIZE}&offset=${regressionRunOffset}`,regressionRunOffset,ADMIN_PAGE_SIZE)]);
   const runView=regressionRunView(plan,jobs),progress=runView.progress,active=runView.activeJob;
   const boundedCases=boundedPageOffset(progress.totalCases,regressionCaseOffset,REGRESSION_CASE_PAGE_SIZE),boundedRuns=boundedPageOffset(runPage.total,regressionRunOffset,ADMIN_PAGE_SIZE);
   if(boundedCases!==regressionCaseOffset||boundedRuns!==regressionRunOffset){regressionCaseOffset=boundedCases;regressionRunOffset=boundedRuns;return renderRegressions();}
@@ -318,7 +318,7 @@ async function renderRegressions() {
   if(active)repairRefreshTimer=setTimeout(()=>{if(current==="regressions")void renderRegressions().catch(handleApiError);},1_800);
 }
 async function renderReleases() {
-  const page = await api.get<ListPage<Release>>(`/v1/releases?limit=${ADMIN_PAGE_SIZE}&offset=${releaseOffset}`),bounded=boundedPageOffset(page.total,releaseOffset,ADMIN_PAGE_SIZE);
+  const page = await api.getPage<Release>(`/v1/releases?limit=${ADMIN_PAGE_SIZE}&offset=${releaseOffset}`,releaseOffset,ADMIN_PAGE_SIZE),bounded=boundedPageOffset(page.total,releaseOffset,ADMIN_PAGE_SIZE);
   if(bounded!==releaseOffset){releaseOffset=bounded;return renderReleases();}
   const paging=paginationView(page.total,releaseOffset,page.items.length,ADMIN_PAGE_SIZE);
   content(
@@ -344,7 +344,7 @@ async function renderReleases() {
   );
 }
 async function renderAudit() {
-  const page = await api.get<ListPage<Audit>>(`/v1/audit?limit=${ADMIN_PAGE_SIZE}&offset=${auditOffset}`),bounded=boundedPageOffset(page.total,auditOffset,ADMIN_PAGE_SIZE);
+  const page = await api.getPage<Audit>(`/v1/audit?limit=${ADMIN_PAGE_SIZE}&offset=${auditOffset}`,auditOffset,ADMIN_PAGE_SIZE),bounded=boundedPageOffset(page.total,auditOffset,ADMIN_PAGE_SIZE);
   if(bounded!==auditOffset){auditOffset=bounded;return renderAudit();}
   const paging=paginationView(page.total,auditOffset,page.items.length,ADMIN_PAGE_SIZE);
   content(
@@ -790,6 +790,9 @@ function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open
 
 function reviewQuestionSummary(item:AnswerReviewMeta){return`<div class="question-summary">${item.contextUsed?'<span class="context-kind follow_up">上下文追问</span>':""}${item.rawQuestionPreview?`<span class="question-raw">${h(item.rawQuestionPreview)}</span><small>补全为：${h(item.questionPreview)}</small>`:`<span>${h(item.questionPreview)}</span>`}</div>`;}
 function conversationContextHtml(question:string,conversation?:ConversationRelation){const view=conversationPresentation(question,conversation),changed=view.rawQuestion.trim()!==view.resolvedQuestion.trim();if(view.kind==="history")return`<div class="context-card history"><div class="context-head"><strong>用户原始问题</strong><span class="context-kind history">${h(view.label)}</span></div><div class="context-question">${h(view.rawQuestion)}</div><p>历史记录没有持久化上下文关系，按原问题处理。</p></div>`;if(view.kind==="independent")return`<div class="context-card independent"><div class="context-head"><strong>本轮问题</strong><span class="context-kind independent">${h(view.label)}</span></div><div class="context-question">${h(view.rawQuestion)}</div>${changed?`<div class="context-resolved"><span>系统用于检索、复查和归并的问题</span><strong>${h(view.resolvedQuestion)}</strong></div>`:""}</div>`;return`<div class="context-card follow-up"><div class="context-head"><strong>已绑定上一轮上下文</strong><span class="context-kind follow_up">${h(view.label)}</span></div>${view.parentQuestion?`<div class="context-node parent"><span>上一问</span><strong>${h(view.parentQuestion)}</strong>${view.parentAnswerOutline?`<small>上一答提纲：${h(view.parentAnswerOutline)}</small>`:""}</div><div class="context-connector" aria-hidden="true">↓</div>`:""}<div class="context-node current"><span>用户本轮原话</span><strong>${h(view.rawQuestion)}</strong></div><div class="context-resolved"><span>补全后用于检索、复查、修订和问题归并</span><strong>${h(view.resolvedQuestion)}</strong>${view.inheritedSubjects.length?`<small>继承主题：${view.inheritedSubjects.map(h).join("、")}</small>`:""}</div></div>`;}
+
+function matchesLegacyReviewFilter(item:AnswerReviewMeta):boolean{return reviewFilter==="all"?true:reviewFilter==="actionable"?isAnswerReviewActionable(item):item.verdict===reviewFilter;}
+function matchesLegacyFeedbackFilter(item:FeedbackMeta):boolean{return feedbackFilter==="all"?true:feedbackFilter==="actionable"?isFeedbackActionable(item):item.status===feedbackFilter;}
 
 function pagination(prefix:string,view:ReturnType<typeof paginationView>,total:number){return`<nav class="pagination" aria-label="列表分页"><span class="muted">显示 ${view.start}–${view.end} / ${total}</span><div class="pagination-actions"><button class="button small" data-action="${prefix}-page-prev"${view.hasPrevious?"":" disabled"}>上一页</button><button class="button small" data-action="${prefix}-page-next"${view.hasNext?"":" disabled"}>下一页</button></div></nav>`;}
 

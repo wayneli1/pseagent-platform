@@ -31,6 +31,7 @@ const ERROR_MESSAGES:Readonly<Record<string,string>>={
   database_unavailable:"知识运营数据库暂时不可用，后台数据尚未刷新；用户问答服务不受此提示影响",
   management_service_timeout:"管理后台等待数据超时，请稍后刷新；用户问答服务仍会独立运行",
   management_service_unavailable:"暂时无法连接管理服务，请检查本地服务后重试",
+  invalid_paginated_response:"管理服务返回了不兼容的列表数据，请刷新页面或重启管理服务",
   knowledge_revision_changed:"知识库在验证后发生了变化，请重新生成并验证草稿",
   knowledge_repository_dirty:"知识库存在未提交修改，系统为避免覆盖已停止发布",
   repair_draft_not_publishable:"当前草稿缺少正式证据或属于系统问题，不能发布为知识",

@@ -13,4 +13,14 @@ describe("management session API client",()=>{
     api.setSessionToken(session.sessionToken);await api.get("/v1/dashboard");expect(fetchMock.mock.calls[1]?.[1]?.headers).toEqual({authorization:"Bearer session-token"});
   });
   it("turns an aborted management request into an actionable timeout",async()=>{vi.stubGlobal("fetch",vi.fn().mockRejectedValue(new DOMException("timed out","TimeoutError")));await expect(new OpsApiClient("session").get("/v1/jobs")).rejects.toMatchObject({status:503,code:"management_service_timeout"});});
+  it("supports paginated and legacy array responses without leaving the page loading",async()=>{
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(["first","second","third"]),{status:200,headers:{"content-type":"application/json"}}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({items:["third"],total:3}),{status:200,headers:{"content-type":"application/json"}}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({items:"invalid",total:3}),{status:200,headers:{"content-type":"application/json"}}));
+    vi.stubGlobal("fetch",fetchMock);const api=new OpsApiClient("session");
+    await expect(api.getPage<string>("/v1/audit?limit=1&offset=1",1,1,(item)=>item!=="first")).resolves.toEqual({items:["third"],total:2});
+    await expect(api.getPage<string>("/v1/audit?limit=1&offset=2",2,1)).resolves.toEqual({items:["third"],total:3});
+    await expect(api.getPage<string>("/v1/audit?limit=1&offset=0",0,1)).rejects.toMatchObject({status:502,code:"invalid_paginated_response"});
+  });
 });

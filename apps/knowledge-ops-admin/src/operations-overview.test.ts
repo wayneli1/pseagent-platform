@@ -1,5 +1,5 @@
 import {describe,expect,it} from "vitest";
-import {deriveOperationsOverview,isAnswerReviewActionable} from "./operations-overview.js";
+import {deriveOperationsOverview,isAnswerReviewActionable,isFeedbackActionable} from "./operations-overview.js";
 import type {AnswerReviewMeta,FeedbackMeta} from "./types.js";
 
 describe("行动导向总览",()=>{
@@ -11,6 +11,7 @@ describe("行动导向总览",()=>{
     expect(result.actions.map((item)=>[item.requestId,item.priority])).toEqual([["b","p0"],["a","p1"],["c","p1"],["d","p2"]]);
   });
   it("不把有帮助或已关闭反馈加入人工待办",()=>expect(deriveOperationsOverview([feedbackItem("a","useful"),{...feedbackItem("b","incorrect"),status:"resolved"}],[]).actions).toEqual([]));
+  it("与服务端使用相同的待处理反馈判定",()=>{expect(isFeedbackActionable(feedbackItem("a","incorrect"))).toBe(true);expect(isFeedbackActionable(feedbackItem("b","useful"))).toBe(false);expect(isFeedbackActionable({...feedbackItem("c","missing"),status:"rejected"})).toBe(false);});
   it("人工关闭后不再把自动复查列为待处理",()=>{
     expect(isAnswerReviewActionable(review("dismissed","needs_review","dismissed"))).toBe(false);
     expect(isAnswerReviewActionable(review("resolved","fail","resolved"))).toBe(false);
