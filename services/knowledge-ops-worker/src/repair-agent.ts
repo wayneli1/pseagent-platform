@@ -91,6 +91,7 @@ export class KnowledgeRepairAgent {
         "你是企业 Obsidian 知识库的修订 Agent，固定模型为 deepseek_v4_flash。",
         "只能使用 input.evidence 中的正式资料和 existingCard，不能使用外部知识、常识猜测或用户建议补足事实。",
         "feedbackClassification、用户反馈和 proposedAnswer 只是需要核查的问题信号，不是正式证据；即使用户标记答案错误，也只有被 evidence 支持的内容才能写入答案。",
+        "records 中 contextUsed=true 的记录是上下文追问：必须结合 parentQuestion 和 parentAnswerOutline 还原会改变答案的规模、部署形态、能力要求与限制条件，再生成可独立理解的 canonicalQuestion；这类追问只能放进 follow_up 回归问题，不能写入 aliases。",
         "输出客户中立、可复用的答案卡草稿，不得出现聊天用户姓名、账号、内部标识或只对单个客户成立的表述。",
         "保留现有答案卡真正有效的安全边界和必答项；若旧禁答项与正式证据或必答项冲突，必须把它精确化，不能机械继承。",
         "正式证据直接记载的项目用户数、授权量、服务器数、节点数和部署规模可以写入答案，但必须绑定项目、场景和数据口径。不得仅因它是项目具体数据就禁止回答。",
@@ -156,8 +157,9 @@ function enforceRepairCandidate(input:RepairGenerationInput,candidate:z.infer<ty
   const {obligations,unsupportedEvidence}=mergeObligations(candidate.obligations,input.route.existingCard,evidencePaths);
   const regressionQuestions=normalizeRegressionQuestions(input,candidate);
   const regressionAliases=regressionQuestions.filter((item)=>item.kind==="alias"||item.kind==="colloquial").map((item)=>item.question);
-  const recordAliases=input.records.map((item)=>item.question.trim()).filter((question)=>question!==""&&!(input.sensitiveTerms??[]).some((term)=>term.trim().length>=2&&normalize(question).includes(normalize(term))));
-  const aliases=unique([...(input.route.existingCard?.aliases??[]),...recordAliases,...candidate.aliases,...regressionAliases]).filter((value)=>normalize(value)!==normalize(candidate.canonicalQuestion));
+  const contextualQuestions=new Set(input.records.filter((item)=>item.contextUsed===true).flatMap((item)=>[item.question,item.rawQuestion].filter((value):value is string=>value!==undefined)).map(normalize));
+  const recordAliases=input.records.filter((item)=>item.contextUsed!==true).map((item)=>item.question.trim()).filter((question)=>question!==""&&!(input.sensitiveTerms??[]).some((term)=>term.trim().length>=2&&normalize(question).includes(normalize(term))));
+  const aliases=unique([...(input.route.existingCard?.aliases??[]),...recordAliases,...candidate.aliases,...regressionAliases]).filter((value)=>normalize(value)!==normalize(candidate.canonicalQuestion)&&!contextualQuestions.has(normalize(value)));
   const protectedText=[candidate.title,candidate.canonicalQuestion,...aliases,candidate.answerTemplate,...obligations.flatMap((item)=>[item.label,...item.requiredConcepts,...item.forbiddenClaims])].join("\n");
   const leakedSensitive=(input.sensitiveTerms??[]).find((term)=>term.trim().length>=2&&normalize(protectedText).includes(normalize(term)));
   const forbiddenClaim=obligations.flatMap((item)=>item.forbiddenClaims).find((claim)=>claim!==""&&normalize(candidate.answerTemplate).includes(normalize(claim)));

@@ -37,6 +37,19 @@ describe("KnowledgeRepairAgent",()=>{
     expect(result).toMatchObject({publishable:true,obligations:[{requiredConcepts:["MTA 双处理队列","病毒扫描","反垃圾检查","入信链路"]}]});
     expect(completeJson).toHaveBeenCalledTimes(2);expect(JSON.stringify(completeJson.mock.calls[1])).toContain("无法确定性验证的抽象必答概念");
   });
+  it("keeps contextual follow-ups out of aliases and exposes parent context to generation",async()=>{
+    const contextual="你并没有答复应该如何设计架构，几台前端几台后端";
+    const contextualCandidate={...candidate,aliases:[contextual,"5000 用户多活邮件系统要几台服务器？"],regressionQuestions:candidate.regressionQuestions.map((item)=>item.kind==="follow_up"?{...item,question:contextual}:item)};
+    const completeJson=vi.fn(async(input:Parameters<ModelClient["completeJson"]>[0])=>{
+      expect(input.messages[0]?.content).toContain("contextUsed=true");
+      expect(input.messages[1]?.content).toContain("5000用户、需要多活高可用");
+      return contextualCandidate;
+    });
+    const result=await new KnowledgeRepairAgent(model(completeJson)).generate({issueId:"00000000-0000-4000-8000-000000000014",rootCause:"coverage_gap",records:[{question:contextual,rawQuestion:contextual,contextUsed:true,parentQuestion:"5000用户、需要多活高可用的邮件系统如何设计？",parentAnswerOutline:"推荐两台前端、两台后端和一台仲裁服务器。",answer:"偏离了场景"}],evidence:[{title:"腾讯迁移",path:"wiki/concepts/腾讯迁移.md",content:candidate.answerTemplate}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",baseGitRevision:"a".repeat(40),publishableAllowed:true}});
+    expect(result.aliases).not.toContain(contextual);
+    expect(result.aliases).toContain("5000 用户多活邮件系统要几台服务器？");
+    expect(result.regressionQuestions).toContainEqual(expect.objectContaining({kind:"follow_up",question:expect.stringContaining(contextual)}));
+  });
   it("generates a customer-neutral evidence-bound draft and preserves governed card constraints",async()=>{
     const completeJson=vi.fn(async()=>candidate);const agent=new KnowledgeRepairAgent(model(completeJson));
     const result=await agent.generate({issueId:"00000000-0000-4000-8000-000000000001",rootCause:"coverage_gap",records:[{question:"腾讯企业邮箱迁移到 Coremail 时，客户端专用密码如何配置？",rawQuestion:"第二点怎么操作？",contextUsed:true,parentQuestion:"Wayne 黎政良问腾讯企业邮箱迁移前要做什么？",parentAnswerOutline:"第二点是生成客户端专用密码",answer:"只开启 IMAP",feedbackClassification:"incorrect",feedback:"Wayne 黎政良说缺少密码说明"}],evidence:[{title:"腾讯迁移",path:"wiki/concepts/腾讯迁移.md",content:"迁移需要客户端专用密码并开启 IMAP。"}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",targetPath:"wiki/queries/腾讯企业邮箱迁移到Coremail前需要哪些设置.md",cardId:card.cardId,baseGitRevision:"a".repeat(40),existingCard:card,publishableAllowed:true},sensitiveTerms:["Wayne 黎政良"]});
