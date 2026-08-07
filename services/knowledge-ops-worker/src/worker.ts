@@ -290,6 +290,7 @@ export class KnowledgeOpsWorker {
     }catch(error){
       await this.dependencies.store.updateRepairBatch(batchId,{deploymentStage:"compensating",servingPreviousVersion:true});
       let compensationFailed=false;
+      let gitCompensationFailed=false;
       const compensatedRevisions=new Map<KnowledgeDomain,string>();
       for(const item of [...applied].reverse()){
         try{
@@ -297,17 +298,17 @@ export class KnowledgeOpsWorker {
           compensatedRevisions.set(item.source.domain,reverted.revision);
           if(item.pushed)await this.dependencies.git.pushCurrent(item.source.root,reverted.revision);
           for(const publication of item.publications)await this.dependencies.store.updateRepairPublication(publication.publicationId,{remoteSyncStatus:item.pushed?"compensated":"failed"});
-        }catch{compensationFailed=true;}
+        }catch{compensationFailed=true;gitCompensationFailed=true;}
       }
       if(applied.length>0){try{await this.activateRecoveryCatalog(batch.createdBy,batchId,"COMP");}catch{compensationFailed=true;}}
       const code=safeCode(error),batchCode=compensationFailed?`repair_batch_compensation_failed:${code}`:code;
       for(const publication of batch.publications){
         await this.dependencies.store.updateRepairPublication(publication.publicationId,{status:"failed",errorCode:batchCode,...(applied.some((item)=>item.publications.some((entry)=>entry.publicationId===publication.publicationId))?{}:{remoteSyncStatus:"failed"})});
-        await this.dependencies.store.updateRepairDraft(publication.draftId,{status:compensationFailed?"failed":"validation_failed",errorCode:batchCode,...(compensatedRevisions.get(publication.targetDomain)?{baseGitRevision:compensatedRevisions.get(publication.targetDomain)!}:{})});
+        await this.dependencies.store.updateRepairDraft(publication.draftId,{status:gitCompensationFailed?"failed":"validation_failed",errorCode:batchCode,...(compensatedRevisions.get(publication.targetDomain)?{baseGitRevision:compensatedRevisions.get(publication.targetDomain)!}:{})});
         await this.dependencies.store.updateIssue(publication.issueId,"in_progress");
       }
       await this.dependencies.store.updateRepairBatch(batchId,{status:"failed",deploymentStage:"failed",servingPreviousVersion:true,errorCode:batchCode});
-      await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.batch.failed",resourceType:"repair_batch",resourceId:batchId,metadata:{publicationIds:batch.publications.map((item)=>item.publicationId),domains:batch.domains,errorCode:batchCode,appliedDomains:applied.map((item)=>item.source.domain),pushedDomains:applied.filter((item)=>item.pushed).map((item)=>item.source.domain),compensationFailed},createdAt:new Date().toISOString()});
+      await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.batch.failed",resourceType:"repair_batch",resourceId:batchId,metadata:{publicationIds:batch.publications.map((item)=>item.publicationId),domains:batch.domains,errorCode:batchCode,appliedDomains:applied.map((item)=>item.source.domain),pushedDomains:applied.filter((item)=>item.pushed).map((item)=>item.source.domain),compensationFailed,gitCompensationFailed},createdAt:new Date().toISOString()});
       throw error;
     }
   }
