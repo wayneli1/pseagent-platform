@@ -375,6 +375,7 @@ tr[data-action]:hover {
 .danger-text { color: var(--danger); font-weight: 700; }
 .issue-toolbar { align-items: center; padding: 14px 18px 0; }
 .pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; }
+.pagination-actions { display: flex; gap: 8px; }
 .evidence-policy-note { border-color: #fed7aa; background: #fff7ed; color: #7c2d12; }
 .evidence-need-list { display: grid; gap: 14px; padding: 18px; }
 .evidence-need-card { border: 1px solid #dbe4ee; border-left: 4px solid #d97706; border-radius: 9px; background: #fff; overflow: hidden; }
@@ -827,6 +828,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   }
   .page-intro { align-items: flex-start; flex-direction: column; }
   .pagination,.evidence-need-card header,.evidence-need-card footer { align-items: stretch; flex-direction: column; }
+  .pagination-actions .button { flex: 1; }
   .repair-header { align-items: stretch; flex-direction: column; }
   .repair-header-status { min-width: 0; }
   .repair-stepper span { display: none; }

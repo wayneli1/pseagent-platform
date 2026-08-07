@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  ApprovalRecord, AuditEvent, CatalogCardRevisionInput, CatalogCardSyncResult, CardRevision, CardRevisionListQuery, CardRevisionPage, ConversationContextView, ConversationEndReason, ConversationSession, ConversationTurn, ConversationTurnInput, DashboardSummary, OpsJob, OpsJobType,
+  AnswerReviewListQuery, ApprovalRecord, AuditEvent, CatalogCardRevisionInput, CatalogCardSyncResult, CardRevision, CardRevisionListQuery, CardRevisionPage, ConversationContextView, ConversationEndReason, ConversationSession, ConversationTurn, ConversationTurnInput, DashboardSummary, FeedbackListQuery, ListPage, OpsJob, OpsJobType,
   IssueCase, IssueCaseSummary, IssueListQuery, IssueOccurrence, IssuePage, IssueRecordInput, IssueStatus,
   KnowledgeRepairDraft, RepairBatch, RepairBatchView, RepairPublication, RepairValidationRun, RegressionCaseRecord, RegressionRun, ReleaseRecord, ReviewRecord, StoredFeedbackCase,
   StoredAnswerReviewCase,
@@ -112,6 +112,15 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     }catch(error){await safeRollback(client);throw error;}finally{client.release();}
   }
   async listAnswerReviews(){return rows<StoredAnswerReviewCase>(await this.pool.query("SELECT * FROM answer_review_cases ORDER BY created_at DESC"));}
+  async listAnswerReviewPage(query:AnswerReviewListQuery):Promise<ListPage<StoredAnswerReviewCase>>{
+    const values=[query.verdict??null,query.actionableOnly??false,query.limit,query.offset],where=`
+      WHERE ($1::text IS NULL OR verdict=$1)
+        AND (NOT $2::boolean OR (workflow_status NOT IN ('resolved','dismissed') AND (processing_status='errored' OR verdict IN ('fail','needs_review') OR workflow_status='in_review')))`;
+    const [items,total]=await Promise.all([
+      this.pool.query(`SELECT * FROM answer_review_cases ${where} ORDER BY created_at DESC,review_id DESC LIMIT $3 OFFSET $4`,values),
+      this.pool.query(`SELECT count(*)::int AS count FROM answer_review_cases ${where}`,values.slice(0,2)),
+    ]);return{items:rows<StoredAnswerReviewCase>(items),total:rowCount(total)};
+  }
   async getAnswerReview(id:string){return optional<StoredAnswerReviewCase>(await this.pool.query("SELECT * FROM answer_review_cases WHERE review_id=$1",[id]));}
   async getAnswerReviewByRequestId(requestId:string){return optional<StoredAnswerReviewCase>(await this.pool.query("SELECT * FROM answer_review_cases WHERE request_id=$1",[requestId]));}
   async updateAnswerReviewWorkflow(id:string,workflowStatus:StoredAnswerReviewCase["workflowStatus"]){return optional<StoredAnswerReviewCase>(await this.pool.query("UPDATE answer_review_cases SET workflow_status=$2,updated_at=now() WHERE review_id=$1 RETURNING *",[id,workflowStatus]));}
@@ -131,6 +140,15 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
     return map<StoredFeedbackCase>(row);
   }
   async listFeedback() { return rows<StoredFeedbackCase>(await this.pool.query("SELECT * FROM feedback_cases ORDER BY created_at DESC")); }
+  async listFeedbackPage(query:FeedbackListQuery):Promise<ListPage<StoredFeedbackCase>>{
+    const values=[query.status??null,query.actionableOnly??false,query.limit,query.offset],where=`
+      WHERE ($1::text IS NULL OR status=$1)
+        AND (NOT $2::boolean OR (status NOT IN ('resolved','rejected') AND classification<>'useful'))`;
+    const [items,total]=await Promise.all([
+      this.pool.query(`SELECT * FROM feedback_cases ${where} ORDER BY created_at DESC,case_id DESC LIMIT $3 OFFSET $4`,values),
+      this.pool.query(`SELECT count(*)::int AS count FROM feedback_cases ${where}`,values.slice(0,2)),
+    ]);return{items:rows<StoredFeedbackCase>(items),total:rowCount(total)};
+  }
   async getFeedback(id: string) { return optional<StoredFeedbackCase>(await this.pool.query("SELECT * FROM feedback_cases WHERE case_id=$1",[id])); }
   async getFeedbackByRequestId(requestId:string){return optional<StoredFeedbackCase>(await this.pool.query("SELECT * FROM feedback_cases WHERE request_id=$1",[requestId]));}
   async updateFeedback(id: string,patch: Pick<Partial<StoredFeedbackCase>,"status"|"classification">) {
@@ -199,6 +217,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   async getRepairDraft(id:string){return optional<KnowledgeRepairDraft>(await this.pool.query("SELECT * FROM knowledge_repair_drafts WHERE draft_id=$1",[id]));}
   async listRepairDrafts(issueId:string){return rows<KnowledgeRepairDraft>(await this.pool.query("SELECT * FROM knowledge_repair_drafts WHERE issue_id=$1 ORDER BY created_at DESC",[issueId]));}
   async listRepairDraftsByStatus(status:KnowledgeRepairDraft["status"]){return rows<KnowledgeRepairDraft>(await this.pool.query("SELECT * FROM knowledge_repair_drafts WHERE status=$1 ORDER BY created_at DESC",[status]));}
+  async listRepairDraftPageByStatus(status:KnowledgeRepairDraft["status"],query:CardRevisionListQuery):Promise<ListPage<KnowledgeRepairDraft>>{const [items,total]=await Promise.all([this.pool.query("SELECT * FROM knowledge_repair_drafts WHERE status=$1 ORDER BY created_at DESC,draft_id DESC LIMIT $2 OFFSET $3",[status,query.limit,query.offset]),this.pool.query("SELECT count(*)::int AS count FROM knowledge_repair_drafts WHERE status=$1",[status])]);return{items:rows<KnowledgeRepairDraft>(items),total:rowCount(total)};}
   async updateRepairDraft(id:string,patch:Partial<Pick<KnowledgeRepairDraft,"status"|"targetKind"|"targetDomain"|"targetPath"|"baseGitRevision"|"encryptedPayload"|"errorCode">>){const current=await this.getRepairDraft(id);if(current===undefined)return undefined;return optional<KnowledgeRepairDraft>(await this.pool.query(`UPDATE knowledge_repair_drafts SET
     status=$2,target_kind=$3,target_domain=$4,target_path=$5,base_git_revision=$6,encrypted_payload=$7,error_code=$8,updated_at=now()
     WHERE draft_id=$1 RETURNING *`,[id,patch.status??current.status,patch.targetKind??current.targetKind??null,patch.targetDomain??current.targetDomain??null,patch.targetPath??current.targetPath??null,patch.baseGitRevision??current.baseGitRevision??null,patch.encryptedPayload??current.encryptedPayload,patch.errorCode??current.errorCode??null]));}
@@ -237,6 +256,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async getRepairBatch(id:string):Promise<RepairBatchView|undefined>{const batch=optional<RepairBatch>(await this.pool.query("SELECT * FROM repair_batches WHERE batch_id=$1",[id]));return batch===undefined?undefined:{...batch,publications:await this.listRepairPublicationsByBatch(id)};}
   async listRepairBatches(){return rows<RepairBatch>(await this.pool.query("SELECT * FROM repair_batches ORDER BY created_at DESC"));}
+  async listRepairBatchPage(query:CardRevisionListQuery):Promise<ListPage<RepairBatch>>{const [items,total]=await Promise.all([this.pool.query("SELECT * FROM repair_batches ORDER BY created_at DESC,batch_id DESC LIMIT $1 OFFSET $2",[query.limit,query.offset]),this.pool.query("SELECT count(*)::int AS count FROM repair_batches")]);return{items:rows<RepairBatch>(items),total:rowCount(total)};}
   async updateRepairBatch(id:string,patch:Partial<Pick<RepairBatch,"status"|"deploymentStage"|"servingPreviousVersion"|"targetProfessionalRevision"|"targetGeneralRevision"|"qualityRunId"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const current=optional<RepairBatch>(await this.pool.query("SELECT * FROM repair_batches WHERE batch_id=$1",[id]));if(current===undefined)return undefined;return optional<RepairBatch>(await this.pool.query(`UPDATE repair_batches SET
     status=$2,deployment_stage=$3,serving_previous_version=$4,target_professional_revision=$5,target_general_revision=$6,quality_run_id=$7,catalog_hash=$8,snapshot_release_id=$9,previous_release_id=$10,error_code=$11,published_at=$12,rolled_back_at=$13 WHERE batch_id=$1 RETURNING *`,[id,patch.status??current.status,patch.deploymentStage??current.deploymentStage,patch.servingPreviousVersion??current.servingPreviousVersion,patch.targetProfessionalRevision??current.targetProfessionalRevision??null,patch.targetGeneralRevision??current.targetGeneralRevision??null,patch.qualityRunId??current.qualityRunId??null,patch.catalogHash??current.catalogHash??null,patch.snapshotReleaseId??current.snapshotReleaseId??null,patch.previousReleaseId??current.previousReleaseId??null,patch.errorCode??current.errorCode??null,patch.publishedAt??current.publishedAt??null,patch.rolledBackAt??current.rolledBackAt??null]));}
   async listRepairPublicationsByBatch(id:string){return rows<RepairPublication>(await this.pool.query("SELECT * FROM repair_publications WHERE batch_id=$1 ORDER BY created_at",[id]));}
@@ -307,6 +327,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async getRegressionRun(id: string) { return optional<RegressionRun>(await this.pool.query("SELECT * FROM regression_runs WHERE run_id=$1",[id])); }
   async listRegressionRuns() { return rows<RegressionRun>(await this.pool.query("SELECT * FROM regression_runs ORDER BY created_at DESC")); }
+  async listRegressionRunPage(query:CardRevisionListQuery):Promise<ListPage<RegressionRun>>{const [items,total]=await Promise.all([this.pool.query("SELECT * FROM regression_runs ORDER BY created_at DESC,run_id DESC LIMIT $1 OFFSET $2",[query.limit,query.offset]),this.pool.query("SELECT count(*)::int AS count FROM regression_runs")]);return{items:rows<RegressionRun>(items),total:rowCount(total)};}
   async updateRegressionRun(v: RegressionRun) { return map<RegressionRun>(await one(this.pool,"UPDATE regression_runs SET status=$2,total_cases=$3,passed_cases=$4,report=$5,completed_at=$6 WHERE run_id=$1 RETURNING *",[v.runId,v.status,v.totalCases,v.passedCases,v.report ?? null,v.completedAt ?? null])); }
 
   async enqueueJob(type: OpsJobType,payload: Record<string,unknown>,availableAt=new Date().toISOString()) {
@@ -347,6 +368,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       [v.releaseId,v.professionalRevision,v.generalRevision,v.answerContractRevision,v.cardCatalogHash,v.regressionRunId,v.manifest,v.status,v.createdBy,JSON.stringify(v.approvedBy),v.createdAt,v.activatedAt ?? null]));
   }
   async listReleases() { return rows<ReleaseRecord>(await this.pool.query("SELECT * FROM releases ORDER BY created_at DESC")); }
+  async listReleasePage(query:CardRevisionListQuery):Promise<ListPage<ReleaseRecord>>{const [items,total]=await Promise.all([this.pool.query("SELECT * FROM releases ORDER BY created_at DESC,release_id DESC LIMIT $1 OFFSET $2",[query.limit,query.offset]),this.pool.query("SELECT count(*)::int AS count FROM releases")]);return{items:rows<ReleaseRecord>(items),total:rowCount(total)};}
   async activateRelease(id: string) { return this.changeActiveRelease(id,"superseded"); }
   async rollbackRelease(id: string) { return this.changeActiveRelease(id,"rolled_back"); }
   async appendAudit(v: AuditEvent) {
@@ -355,6 +377,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
       [v.auditId,v.actorId,v.action,v.resourceType,v.resourceId,v.metadata,v.createdAt]));
   }
   async listAudit() { return rows<AuditEvent>(await this.pool.query("SELECT * FROM audit_events ORDER BY created_at DESC")); }
+  async listAuditPage(query:CardRevisionListQuery):Promise<ListPage<AuditEvent>>{const [items,total]=await Promise.all([this.pool.query("SELECT * FROM audit_events ORDER BY created_at DESC,audit_id DESC LIMIT $1 OFFSET $2",[query.limit,query.offset]),this.pool.query("SELECT count(*)::int AS count FROM audit_events")]);return{items:rows<AuditEvent>(items),total:rowCount(total)};}
   async dashboard(): Promise<DashboardSummary> {
     const [issueRows,evidenceNeeds,feedback,reviews,cards,jobs,release,readyDrafts,batches] = await Promise.all([
       this.pool.query(`SELECT priority,count(*)::int AS count,
@@ -396,6 +419,7 @@ export class PostgresKnowledgeOpsStore implements KnowledgeOpsStore {
 async function safeRollback(client: PoolClient) { try { await client.query("ROLLBACK"); } catch { /* preserve original error */ } }
 async function one(client:{query:(sql:string,values?:unknown[])=>Promise<{rows:QueryResultRow[]}>},sql:string,values:unknown[]) { const result=await client.query(sql,values); if(!result.rows[0]) throw new Error("database_write_failed"); return result.rows[0]; }
 function rows<T>(result:{rows:QueryResultRow[]}):T[]{return result.rows.map((row)=>map<T>(row));}
+function rowCount(result:{rows:QueryResultRow[]}):number{return Number(result.rows[0]?.count??0);}
 function optional<T>(result:{rows:QueryResultRow[]}):T|undefined{return result.rows[0]===undefined?undefined:map<T>(result.rows[0]);}
 function map<T>(row:QueryResultRow):T { const output:Record<string,unknown>={}; for(const [key,value] of Object.entries(row)){if(value===null)continue;output[key.replace(/_([a-z])/gu,(_,letter:string)=>letter.toUpperCase())]=value instanceof Date?value.toISOString():value;} return output as T; }
 function stableJson(value: unknown): string {

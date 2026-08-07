@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  answerReviewVerdictSchema,
   answerReviewWorkflowStatusSchema,
   feedbackClassificationSchema,
   governanceReviewStatusSchema,
@@ -164,6 +165,13 @@ export const issuePatchSchema=z.object({status:z.enum(["open","dismissed"])}).st
 export const paginatedListQuerySchema=z.object({
   limit:z.coerce.number().int().min(1).max(100).default(25),offset:z.coerce.number().int().min(0).default(0),
 }).strict();
+const actionableQuerySchema=z.enum(["true","false"]).transform((value)=>value==="true").optional();
+export const answerReviewListQuerySchema=paginatedListQuerySchema.extend({
+  verdict:answerReviewVerdictSchema.optional(),actionable:actionableQuerySchema,
+}).superRefine((value,context)=>{if(value.verdict!==undefined&&value.actionable===true)context.addIssue({code:"custom",path:["actionable"],message:"conflicting_list_filters"});});
+export const feedbackListQuerySchema=paginatedListQuerySchema.extend({
+  status:feedbackStatusSchema.optional(),actionable:actionableQuerySchema,
+}).superRefine((value,context)=>{if(value.status!==undefined&&value.actionable===true)context.addIssue({code:"custom",path:["actionable"],message:"conflicting_list_filters"});});
 
 export const repairBatchRequestSchema=z.object({
   draftIds:z.array(z.string().uuid()).min(1).max(50),

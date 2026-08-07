@@ -7,8 +7,8 @@ import { releaseQualityPlan } from "./regression-plan.js";
 import { answerReviewIntakeSchema, conversationContextQuerySchema, conversationEndSchema, conversationTurnIntakeSchema, feedbackIntakeSchema, releaseQualityReportImportSchema, repairProposalSchema } from "./schemas.js";
 import type { KnowledgeOpsStore } from "./store.js";
 import type {
-  AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, CardRevision, CardRevisionListQuery, CardRevisionPage, ConversationRelationView, EvidenceNeedPage,
-  FeedbackCaseListView, FeedbackCaseView, IssueCategory, IssueListQuery, IssuePriority, IssueStatus, OpsActor, RegressionCaseRecord,
+  AnswerReviewCaseListView, AnswerReviewCaseView, AnswerReviewEncryptedPayload, AnswerReviewListQuery, CardRevision, CardRevisionListQuery, CardRevisionPage, ConversationRelationView, EvidenceNeedPage,
+  FeedbackCaseListView, FeedbackCaseView, FeedbackListQuery, IssueCategory, IssueListQuery, IssuePriority, IssueStatus, ListPage, OpsActor, RegressionCaseRecord,
   KnowledgeRepairDraft, KnowledgeRepairDraftSummary, KnowledgeRepairDraftView, RepairBatch, RepairDraftProposal, RepairPublication,
   RepairValidationRun, RepairValidationRunView, ReleaseRecord, ReviewRecord, StoredAnswerReviewCase, StoredFeedbackCase,
   KnowledgeRuntimeStatus,
@@ -44,11 +44,11 @@ export class KnowledgeOpsService {
     if(result.enqueued)await this.audit(actor,"answer_review.ingest","answer_review",result.review.reviewId,{source:result.review.source,model:result.review.model});
     return{reviewId:result.review.reviewId,processingStatus:result.review.processingStatus,enqueued:result.enqueued};
   }
-  async listAnswerReviews(actor:OpsActor):Promise<readonly AnswerReviewCaseListView[]>{
-    assertAuthorized(actor,"answer_review:read");return Promise.all((await this.store.listAnswerReviews()).map(async(stored)=>{
+  async listAnswerReviews(actor:OpsActor,query:AnswerReviewListQuery):Promise<ListPage<AnswerReviewCaseListView>>{
+    assertAuthorized(actor,"answer_review:read");const page=await this.store.listAnswerReviewPage(query),items=await Promise.all(page.items.map(async(stored)=>{
       const content=this.cipher.decrypt<{question:string;userDisplayName?:string}>(stored.encryptedPayload),turn=await this.store.getConversationTurnByRequestId(stored.requestId);const{encryptedPayload:_secret,...metadata}=stored;
       const preview=turn?.resolvedQuestion??content.question;return{...metadata,questionPreview:[...preview].slice(0,160).join(""),...(turn?.contextUsed?{rawQuestionPreview:[...turn.rawQuestion].slice(0,160).join(""),contextUsed:true}:{}),...(content.userDisplayName?{userDisplayName:content.userDisplayName}:{})};
-    }));
+    }));return{items,total:page.total};
   }
   async answerReviewDetail(actor:OpsActor,reviewId:string):Promise<AnswerReviewCaseView|undefined>{
     assertAuthorized(actor,"answer_review:read");const stored=await this.store.getAnswerReview(reviewId);if(stored===undefined)return undefined;
@@ -83,19 +83,19 @@ export class KnowledgeOpsService {
     return result;
   }
 
-  async listFeedback(actor: OpsActor): Promise<readonly FeedbackCaseListView[]> {
-    assertAuthorized(actor,"feedback:read");
-    return Promise.all((await this.store.listFeedback()).map(async(stored) => {
+  async listFeedback(actor: OpsActor,query:FeedbackListQuery): Promise<ListPage<FeedbackCaseListView>> {
+    assertAuthorized(actor,"feedback:read");const page=await this.store.listFeedbackPage(query);
+    const items=await Promise.all(page.items.map(async(stored) => {
       const content=this.cipher.decrypt<{userDisplayName?:string}>(stored.encryptedPayload);
-      const {encryptedPayload:_secret,...metadata}=stored,turn=await this.store.getConversationTurnByRequestId(stored.requestId);
-      return {...metadata,...(turn?.contextUsed?{contextUsed:true}:{}),...(content.userDisplayName?{userDisplayName:content.userDisplayName}:{})};
-    }));
+      const {encryptedPayload:_secret,...metadata}=stored,[turn,linkedReview]=await Promise.all([this.store.getConversationTurnByRequestId(stored.requestId),this.store.getAnswerReviewByRequestId(stored.requestId)]);
+      return {...metadata,...(turn?.contextUsed?{contextUsed:true}:{}),...(content.userDisplayName?{userDisplayName:content.userDisplayName}:{}),...(linkedReview===undefined?{}:{linkedReviewId:linkedReview.reviewId,linkedReviewVerdict:linkedReview.verdict})};
+    }));return{items,total:page.total};
   }
   async feedbackDetail(actor: OpsActor, caseId: string): Promise<FeedbackCaseView|undefined> {
     assertAuthorized(actor,"feedback:read"); const stored=await this.store.getFeedback(caseId); if(!stored)return undefined;
     const content=this.cipher.decrypt<{question:string;answer:string;comment:string;proposedAnswer?:string;userDisplayName?:string;questionId:number;answeredAt:string;answerCardMatch?:Record<string,unknown>}>(stored.encryptedPayload);
     const {encryptedPayload:_secret,...metadata}=stored;
-    const conversation=await this.conversationRelation(stored.requestId);return {...metadata,...content,...(conversation===undefined?{}:{conversation})};
+    const [conversation,linkedReview]=await Promise.all([this.conversationRelation(stored.requestId),this.store.getAnswerReviewByRequestId(stored.requestId)]);return {...metadata,...content,...(conversation===undefined?{}:{conversation}),...(linkedReview===undefined?{}:{linkedReviewId:linkedReview.reviewId,linkedReviewVerdict:linkedReview.verdict})};
   }
   async triageFeedback(actor: OpsActor,caseId:string,patch:Pick<Partial<StoredFeedbackCase>,"status"|"classification">) {
     assertAuthorized(actor,"feedback:triage");const before=await this.store.getFeedback(caseId);
@@ -113,7 +113,7 @@ export class KnowledgeOpsService {
 
   async listRepairDrafts(actor:OpsActor,issueId:string):Promise<readonly KnowledgeRepairDraftView[]>{assertAuthorized(actor,"repair:read");if(await this.store.getIssue(issueId)===undefined)throw new OpsNotFoundError("issue_not_found");return Promise.all((await this.store.listRepairDrafts(issueId)).map((draft)=>this.repairDraftView(draft)));}
   async repairDraftDetail(actor:OpsActor,draftId:string):Promise<KnowledgeRepairDraftView|undefined>{assertAuthorized(actor,"repair:read");const draft=await this.store.getRepairDraft(draftId);return draft===undefined?undefined:this.repairDraftView(draft);}
-  async listReadyRepairDrafts(actor:OpsActor):Promise<readonly KnowledgeRepairDraftView[]>{assertAuthorized(actor,"repair:read");return Promise.all((await this.store.listRepairDraftsByStatus("ready_to_publish")).map((draft)=>this.repairDraftView(draft)));}
+  async listReadyRepairDrafts(actor:OpsActor,query:CardRevisionListQuery):Promise<ListPage<KnowledgeRepairDraftView>>{assertAuthorized(actor,"repair:read");const page=await this.store.listRepairDraftPageByStatus("ready_to_publish",query);return{items:page.items.map((draft)=>this.repairDraftView(draft)),total:page.total};}
   async requestRepairDraft(actor:OpsActor,issueId:string){
     assertAuthorized(actor,"repair:edit");const issue=await this.store.getIssue(issueId);if(issue===undefined)throw new OpsNotFoundError("issue_not_found");
     if(issue.status==="resolved"||issue.status==="dismissed")throw new Error("issue_not_open_for_repair");
@@ -159,7 +159,7 @@ export class KnowledgeOpsService {
     const created=await this.store.createRepairBatch(batch,publications),job=await this.store.enqueueJob("publish_repair_batch",{batchId});
     await this.audit(actor,"repair.batch.request","repair_batch",batchId,{draftIds:[...draftIds],issueIds:drafts.map((draft)=>draft.issueId),domains,itemCount:drafts.length,jobId:job.jobId});return{batch:created,job};
   }
-  async listRepairBatches(actor:OpsActor){assertAuthorized(actor,"repair:read");return this.store.listRepairBatches();}
+  async listRepairBatches(actor:OpsActor,query:CardRevisionListQuery){assertAuthorized(actor,"repair:read");return this.store.listRepairBatchPage(query);}
   async repairBatchDetail(actor:OpsActor,batchId:string){assertAuthorized(actor,"repair:read");return this.store.getRepairBatch(batchId);}
   async listRepairPublications(actor:OpsActor,draftId:string){assertAuthorized(actor,"repair:read");return this.store.listRepairPublications(draftId);}
   async requestRepairRollback(actor:OpsActor,publicationId:string){assertAuthorized(actor,"repair:rollback");const publication=await this.store.getRepairPublication(publicationId);if(publication===undefined)throw new OpsNotFoundError("repair_publication_not_found");if(publication.status!=="published")throw new Error("repair_publication_not_rollbackable");if(publication.batchId!==undefined){const batch=await this.store.getRepairBatch(publication.batchId);if(batch?.status!=="published")throw new Error("repair_batch_not_rollbackable");const job=await this.store.enqueueJob("rollback_repair_batch",{batchId:batch.batchId});await this.audit(actor,"repair.batch.rollback.request","repair_batch",batch.batchId,{publicationIds:batch.publications.map((item)=>item.publicationId),jobId:job.jobId});return job;}const job=await this.store.enqueueJob("rollback_repair",{publicationId});await this.audit(actor,"repair.rollback.request","repair_publication",publicationId,{draftId:publication.draftId,issueId:publication.issueId,jobId:job.jobId});return job;}
@@ -206,7 +206,7 @@ export class KnowledgeOpsService {
 
   async listRegressionCases(actor:OpsActor){assertAuthorized(actor,"regression:read");return this.store.listRegressionCases();}
   async regressionPlan(actor:OpsActor){assertAuthorized(actor,"regression:read");return releaseQualityPlan;}
-  async listRegressionRuns(actor:OpsActor){assertAuthorized(actor,"regression:read");return this.store.listRegressionRuns();}
+  async listRegressionRuns(actor:OpsActor,query:CardRevisionListQuery){assertAuthorized(actor,"regression:read");return this.store.listRegressionRunPage(query);}
   async recordRegressionRun(actor:OpsActor,source:unknown){
     assertAuthorized(actor,"regression:run");const report=releaseQualityReportImportSchema.parse(source);const timestamp=this.timestamp();
     const run={runId:randomUUID(),status:report.passed?"passed" as const:"failed" as const,totalCases:report.summary.total,passedCases:report.summary.passedCases,report,createdAt:timestamp,completedAt:timestamp};
@@ -215,7 +215,7 @@ export class KnowledgeOpsService {
   async saveRegressionCase(actor:OpsActor,value:RegressionCaseRecord){assertAuthorized(actor,"regression:run");const result=await this.store.upsertRegressionCase(value);await this.audit(actor,"regression.case.save","regression_case",result.caseId,{});return result;}
   async enqueueRegression(actor:OpsActor,payload:Record<string,unknown>={}){assertAuthorized(actor,"regression:run");const job=await this.store.enqueueJob("regression_run",payload);await this.audit(actor,"regression.enqueue","job",job.jobId,{});return job;}
 
-  async listReleases(actor:OpsActor){assertAuthorized(actor,"release:read");return this.store.listReleases();}
+  async listReleases(actor:OpsActor,query:CardRevisionListQuery){assertAuthorized(actor,"release:read");return this.store.listReleasePage(query);}
   async requestRelease(actor:OpsActor,manifestSource:unknown){
     assertAuthorized(actor,"release:publish");const manifest=releaseManifestSchema.parse(manifestSource);
     const run=await this.store.getRegressionRun(manifest.regressionRunId);const qualityGate=releaseQualityReportImportSchema.safeParse(run?.report);
@@ -226,7 +226,7 @@ export class KnowledgeOpsService {
   }
   async requestRollback(actor:OpsActor,releaseId:string){assertAuthorized(actor,"release:rollback");const job=await this.store.enqueueJob("rollback_release",{releaseId});await this.audit(actor,"release.rollback.request","release",releaseId,{jobId:job.jobId});return job;}
   async jobs(actor:OpsActor){assertAuthorized(actor,"job:read");return this.store.listJobs();}
-  async auditEvents(actor:OpsActor){assertAuthorized(actor,"audit:read");return this.store.listAudit();}
+  async auditEvents(actor:OpsActor,query:CardRevisionListQuery){assertAuthorized(actor,"audit:read");return this.store.listAuditPage(query);}
 
   private timestamp(){return this.clock().toISOString();}
   private async conversationRelation(requestId:string):Promise<ConversationRelationView|undefined>{const current=await this.store.getConversationTurnByRequestId(requestId);if(current===undefined)return undefined;const session=await this.store.getConversationSession(current.sessionId);if(session===undefined)return undefined;const chain=(await this.store.listConversationTurns(current.sessionId,50)).filter((item)=>item.turnIndex<=current.turnIndex),parent=current.parentRequestId===undefined?undefined:await this.store.getConversationTurnByRequestId(current.parentRequestId);return{session,current,...(parent===undefined?{}:{parent}),chain};}

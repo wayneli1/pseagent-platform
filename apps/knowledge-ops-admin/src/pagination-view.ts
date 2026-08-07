@@ -13,3 +13,8 @@ export function paginationView(total:number,offset:number,itemCount:number,pageS
     hasNext: offset+pageSize<total,
   };
 }
+
+export function boundedPageOffset(total:number,offset:number,pageSize:number):number {
+  if(total<=0)return 0;
+  return Math.min(Math.max(0,offset),Math.floor((total-1)/pageSize)*pageSize);
+}

@@ -24,6 +24,16 @@ export interface OpsActor {
   readonly roles: readonly OpsRole[];
 }
 
+export interface PaginatedListQuery {
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface ListPage<T> {
+  readonly items: readonly T[];
+  readonly total: number;
+}
+
 export type ConversationEndReason = "manual" | "idle";
 
 export interface ConversationSession {
@@ -140,12 +150,21 @@ export interface FeedbackCaseView extends Omit<StoredFeedbackCase, "encryptedPay
   readonly questionId: number;
   readonly answeredAt: string;
   readonly answerCardMatch?: Record<string, unknown>;
+  readonly linkedReviewId?: string;
+  readonly linkedReviewVerdict?: AnswerReviewVerdict;
   readonly conversation?: ConversationRelationView;
 }
 
 export interface FeedbackCaseListView extends Omit<StoredFeedbackCase, "encryptedPayload"> {
   readonly userDisplayName?: string;
   readonly contextUsed?: boolean;
+  readonly linkedReviewId?: string;
+  readonly linkedReviewVerdict?: AnswerReviewVerdict;
+}
+
+export interface FeedbackListQuery extends PaginatedListQuery {
+  readonly status?: StoredFeedbackCase["status"];
+  readonly actionableOnly?: boolean;
 }
 
 export interface AnswerReviewReference {
@@ -214,6 +233,11 @@ export interface AnswerReviewCaseListView extends Omit<StoredAnswerReviewCase, "
   readonly contextUsed?: boolean;
 }
 
+export interface AnswerReviewListQuery extends PaginatedListQuery {
+  readonly verdict?: AnswerReviewVerdict;
+  readonly actionableOnly?: boolean;
+}
+
 export interface AnswerReviewCaseView extends Omit<StoredAnswerReviewCase, "encryptedPayload"> {
   readonly userDisplayName?: AnswerReviewEncryptedPayload["userDisplayName"];
   readonly questionId: AnswerReviewEncryptedPayload["questionId"];
@@ -240,15 +264,9 @@ export interface CardRevision {
   readonly updatedAt: string;
 }
 
-export interface CardRevisionListQuery {
-  readonly limit: number;
-  readonly offset: number;
-}
+export interface CardRevisionListQuery extends PaginatedListQuery {}
 
-export interface CardRevisionPage {
-  readonly items: readonly CardRevision[];
-  readonly total: number;
-}
+export interface CardRevisionPage extends ListPage<CardRevision> {}
 
 export interface CatalogCardRevisionInput {
   readonly cardId: string;

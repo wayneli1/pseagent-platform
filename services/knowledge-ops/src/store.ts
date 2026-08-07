@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   StoredAnswerReviewCase,
+  AnswerReviewListQuery,
   AuditEvent,
   ApprovalRecord,
   CatalogCardRevisionInput,
@@ -22,6 +23,7 @@ import type {
   IssueRecordInput,
   IssueStatus,
   KnowledgeRepairDraft,
+  ListPage,
   OpsJob,
   OpsJobType,
   RepairBatch,
@@ -33,6 +35,7 @@ import type {
   ReleaseRecord,
   ReviewRecord,
   StoredFeedbackCase,
+  FeedbackListQuery,
 } from "./types.js";
 
 export interface KnowledgeOpsStore {
@@ -44,12 +47,14 @@ export interface KnowledgeOpsStore {
   getConversationSession(sessionId: string): Promise<ConversationSession | undefined>;
   insertAnswerReviewAndEnqueue(value: StoredAnswerReviewCase): Promise<{ readonly review: StoredAnswerReviewCase; readonly enqueued: boolean }>;
   listAnswerReviews(): Promise<readonly StoredAnswerReviewCase[]>;
+  listAnswerReviewPage(query: AnswerReviewListQuery): Promise<ListPage<StoredAnswerReviewCase>>;
   getAnswerReview(reviewId: string): Promise<StoredAnswerReviewCase | undefined>;
   getAnswerReviewByRequestId(requestId: string): Promise<StoredAnswerReviewCase | undefined>;
   updateAnswerReviewWorkflow(reviewId: string, workflowStatus: StoredAnswerReviewCase["workflowStatus"]): Promise<StoredAnswerReviewCase | undefined>;
   updateAnswerReviewMachine(reviewId: string, patch: Partial<Pick<StoredAnswerReviewCase,"processingStatus"|"verdict"|"workflowStatus"|"encryptedPayload"|"score"|"defectCount"|"errorCode">>): Promise<StoredAnswerReviewCase | undefined>;
   insertFeedback(value: StoredFeedbackCase): Promise<StoredFeedbackCase>;
   listFeedback(): Promise<readonly StoredFeedbackCase[]>;
+  listFeedbackPage(query: FeedbackListQuery): Promise<ListPage<StoredFeedbackCase>>;
   getFeedback(caseId: string): Promise<StoredFeedbackCase | undefined>;
   getFeedbackByRequestId(requestId: string): Promise<StoredFeedbackCase | undefined>;
   updateFeedback(caseId: string, patch: Pick<Partial<StoredFeedbackCase>, "status" | "classification">): Promise<StoredFeedbackCase | undefined>;
@@ -62,6 +67,7 @@ export interface KnowledgeOpsStore {
   getRepairDraft(draftId: string): Promise<KnowledgeRepairDraft | undefined>;
   listRepairDrafts(issueId: string): Promise<readonly KnowledgeRepairDraft[]>;
   listRepairDraftsByStatus(status: KnowledgeRepairDraft["status"]): Promise<readonly KnowledgeRepairDraft[]>;
+  listRepairDraftPageByStatus(status: KnowledgeRepairDraft["status"], query: CardRevisionListQuery): Promise<ListPage<KnowledgeRepairDraft>>;
   updateRepairDraft(draftId: string, patch: Partial<Pick<KnowledgeRepairDraft,"status"|"targetKind"|"targetDomain"|"targetPath"|"baseGitRevision"|"encryptedPayload"|"errorCode">>): Promise<KnowledgeRepairDraft | undefined>;
   createRepairValidation(value: RepairValidationRun): Promise<RepairValidationRun>;
   getRepairValidation(validationId: string): Promise<RepairValidationRun | undefined>;
@@ -74,6 +80,7 @@ export interface KnowledgeOpsStore {
   createRepairBatch(value: RepairBatch, publications: readonly RepairPublication[]): Promise<RepairBatchView>;
   getRepairBatch(batchId: string): Promise<RepairBatchView | undefined>;
   listRepairBatches(): Promise<readonly RepairBatch[]>;
+  listRepairBatchPage(query: CardRevisionListQuery): Promise<ListPage<RepairBatch>>;
   updateRepairBatch(batchId: string, patch: Partial<Pick<RepairBatch,"status"|"deploymentStage"|"servingPreviousVersion"|"targetProfessionalRevision"|"targetGeneralRevision"|"qualityRunId"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>): Promise<RepairBatch | undefined>;
   listRepairPublicationsByBatch(batchId: string): Promise<readonly RepairPublication[]>;
   createCardRevision(value: CardRevision): Promise<CardRevision>;
@@ -91,6 +98,7 @@ export interface KnowledgeOpsStore {
   createRegressionRun(value: RegressionRun): Promise<RegressionRun>;
   getRegressionRun(runId: string): Promise<RegressionRun | undefined>;
   listRegressionRuns(): Promise<readonly RegressionRun[]>;
+  listRegressionRunPage(query: CardRevisionListQuery): Promise<ListPage<RegressionRun>>;
   updateRegressionRun(value: RegressionRun): Promise<RegressionRun>;
   enqueueJob(type: OpsJobType, payload: Record<string, unknown>, availableAt?: string): Promise<OpsJob>;
   claimJob(workerId: string, types?: readonly OpsJobType[]): Promise<OpsJob | undefined>;
@@ -104,10 +112,12 @@ export interface KnowledgeOpsStore {
   listJobs(): Promise<readonly OpsJob[]>;
   createRelease(value: ReleaseRecord): Promise<ReleaseRecord>;
   listReleases(): Promise<readonly ReleaseRecord[]>;
+  listReleasePage(query: CardRevisionListQuery): Promise<ListPage<ReleaseRecord>>;
   activateRelease(releaseId: string): Promise<ReleaseRecord | undefined>;
   rollbackRelease(releaseId: string): Promise<ReleaseRecord | undefined>;
   appendAudit(value: AuditEvent): Promise<AuditEvent>;
   listAudit(): Promise<readonly AuditEvent[]>;
+  listAuditPage(query: CardRevisionListQuery): Promise<ListPage<AuditEvent>>;
   dashboard(): Promise<DashboardSummary>;
 }
 
@@ -160,6 +170,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     return{review:copy(value),enqueued:true};
   }
   async listAnswerReviews(){return newest([...this.answerReviews.values()].map(copy));}
+  async listAnswerReviewPage(query:AnswerReviewListQuery){const filtered=newest([...this.answerReviews.values()].filter((item)=>(query.verdict===undefined||item.verdict===query.verdict)&&(!query.actionableOnly||isActionableAnswerReview(item))).map(copy));return page(filtered,query);}
   async getAnswerReview(id:string){return maybeCopy(this.answerReviews.get(id));}
   async getAnswerReviewByRequestId(requestId:string){return maybeCopy([...this.answerReviews.values()].find((item)=>item.requestId===requestId));}
   async updateAnswerReviewWorkflow(id:string,workflowStatus:StoredAnswerReviewCase["workflowStatus"]){
@@ -176,6 +187,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
     this.feedback.set(value.caseId, copy(value)); return copy(value);
   }
   async listFeedback() { return newest([...this.feedback.values()].map(copy)); }
+  async listFeedbackPage(query:FeedbackListQuery){const filtered=newest([...this.feedback.values()].filter((item)=>(query.status===undefined||item.status===query.status)&&(!query.actionableOnly||isActionableFeedback(item))).map(copy));return page(filtered,query);}
   async getFeedback(id: string) { return maybeCopy(this.feedback.get(id)); }
   async getFeedbackByRequestId(requestId:string){return maybeCopy([...this.feedback.values()].find((item)=>item.requestId===requestId));}
   async updateFeedback(id: string, patch: Pick<Partial<StoredFeedbackCase>, "status" | "classification">) {
@@ -203,6 +215,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async getRepairDraft(id:string){return maybeCopy(this.repairDrafts.get(id));}
   async listRepairDrafts(issueId:string){return newest([...this.repairDrafts.values()].filter((item)=>item.issueId===issueId).map(copy));}
   async listRepairDraftsByStatus(status:KnowledgeRepairDraft["status"]){return newest([...this.repairDrafts.values()].filter((item)=>item.status===status).map(copy));}
+  async listRepairDraftPageByStatus(status:KnowledgeRepairDraft["status"],query:CardRevisionListQuery){return page(newest([...this.repairDrafts.values()].filter((item)=>item.status===status).map(copy)),query);}
   async updateRepairDraft(id:string,patch:Partial<Pick<KnowledgeRepairDraft,"status"|"targetKind"|"targetDomain"|"targetPath"|"baseGitRevision"|"encryptedPayload"|"errorCode">>){const old=this.repairDrafts.get(id);if(old===undefined)return undefined;const next={...old,...patch,updatedAt:now()};this.repairDrafts.set(id,next);return copy(next);}
   async createRepairValidation(value:RepairValidationRun){this.repairValidations.set(value.validationId,copy(value));return copy(value);}
   async getRepairValidation(id:string){return maybeCopy(this.repairValidations.get(id));}
@@ -222,6 +235,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async getRepairBatch(id:string):Promise<RepairBatchView|undefined>{const batch=this.repairBatches.get(id);return batch===undefined?undefined:{...copy(batch),publications:await this.listRepairPublicationsByBatch(id)};}
   async listRepairBatches(){return newest([...this.repairBatches.values()].map(copy));}
+  async listRepairBatchPage(query:CardRevisionListQuery){return page(newest([...this.repairBatches.values()].map(copy)),query);}
   async updateRepairBatch(id:string,patch:Partial<Pick<RepairBatch,"status"|"deploymentStage"|"servingPreviousVersion"|"targetProfessionalRevision"|"targetGeneralRevision"|"qualityRunId"|"catalogHash"|"snapshotReleaseId"|"previousReleaseId"|"errorCode"|"publishedAt"|"rolledBackAt">>){const old=this.repairBatches.get(id);if(old===undefined)return undefined;const next={...old,...patch};this.repairBatches.set(id,next);return copy(next);}
   async listRepairPublicationsByBatch(id:string){return [...this.repairPublications.values()].filter((item)=>item.batchId===id).map(copy).sort((a,b)=>a.createdAt.localeCompare(b.createdAt));}
   async createCardRevision(value: CardRevision) { this.revisions.set(value.revisionId, copy(value)); return copy(value); }
@@ -267,6 +281,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async createRegressionRun(value: RegressionRun) { this.regressionRuns.set(value.runId, copy(value)); return copy(value); }
   async getRegressionRun(id: string) { return maybeCopy(this.regressionRuns.get(id)); }
   async listRegressionRuns() { return newest([...this.regressionRuns.values()].map(copy)); }
+  async listRegressionRunPage(query:CardRevisionListQuery){return page(newest([...this.regressionRuns.values()].map(copy)),query);}
   async updateRegressionRun(value: RegressionRun) { this.regressionRuns.set(value.runId, copy(value)); return copy(value); }
   async enqueueJob(type: OpsJobType, payload: Record<string, unknown>, availableAt = now()) {
     const timestamp = now();
@@ -294,6 +309,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   async listJobs() { return newest([...this.jobs.values()].map(copy)); }
   async createRelease(value: ReleaseRecord) { this.releases.set(value.releaseId, copy(value)); return copy(value); }
   async listReleases() { return newest([...this.releases.values()].map(copy)); }
+  async listReleasePage(query:CardRevisionListQuery){return page(newest([...this.releases.values()].map(copy)),query);}
   async activateRelease(id: string) {
     const target = this.releases.get(id); if (!target) return undefined;
     for (const [key, release] of this.releases) if (release.status === "active") this.releases.set(key, { ...release, status: "superseded" });
@@ -306,6 +322,7 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
   }
   async appendAudit(value: AuditEvent) { this.audit.push(copy(value)); return copy(value); }
   async listAudit() { return newest(this.audit.map(copy)); }
+  async listAuditPage(query:CardRevisionListQuery){return page(newest(this.audit.map(copy)),query);}
   async dashboard(): Promise<DashboardSummary> {
     const byPriority={p0:0,p1:0,p2:0,p3:0};let actionable=0,awaitingEvidence=0,urgent=0,overdue=0,validating=0;const timestamp=Date.now();
     for(const issue of this.issues.values())if(issue.status==="awaiting_evidence")awaitingEvidence++;
@@ -337,7 +354,11 @@ export class InMemoryKnowledgeOpsStore implements KnowledgeOpsStore {
 function now(): string { return new Date().toISOString(); }
 function copy<T>(value: T): T { return structuredClone(value); }
 function maybeCopy<T>(value: T | undefined): T | undefined { return value === undefined ? undefined : copy(value); }
-function newest<T extends { createdAt: string }>(values: T[]): T[] { return values.sort((a,b) => b.createdAt.localeCompare(a.createdAt)); }
+function newest<T extends { createdAt: string }>(values: T[]): T[] { return values.sort((a,b) => b.createdAt.localeCompare(a.createdAt)||stableRecordId(b).localeCompare(stableRecordId(a))); }
+function page<T>(values:readonly T[],query:CardRevisionListQuery):ListPage<T>{return{items:values.slice(query.offset,query.offset+query.limit),total:values.length};}
+function stableRecordId(value:object):string{const record=value as Record<string,unknown>;for(const key of ["reviewId","caseId","draftId","batchId","revisionId","runId","jobId","releaseId","auditId","createdAt"]){const candidate=record[key];if(typeof candidate==="string")return candidate;}return"";}
+function isActionableAnswerReview(review:StoredAnswerReviewCase):boolean{return review.workflowStatus!=="resolved"&&review.workflowStatus!=="dismissed"&&(review.processingStatus==="errored"||review.verdict==="fail"||review.verdict==="needs_review"||review.workflowStatus==="in_review");}
+function isActionableFeedback(item:StoredFeedbackCase):boolean{return item.status!=="resolved"&&item.status!=="rejected"&&item.classification!=="useful";}
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value !== null && typeof value === "object") {

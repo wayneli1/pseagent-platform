@@ -2,11 +2,10 @@ import "./styles.css";
 import { ApiError, OpsApiClient } from "./api.js";
 import { badge, h, json, shortId, time } from "./format.js";
 import {errorMessage,issueStatusHelp,label,option} from "./labels.js";
-import {isAnswerReviewActionable} from "./operations-overview.js";
 import {conversationPresentation} from "./conversation-view.js";
 import {deploymentStageLabel,runtimeStatusPresentation} from "./runtime-status-view.js";
 import {regressionRunView,summarizeProgress} from "./regression-view.js";
-import {paginationView} from "./pagination-view.js";
+import {boundedPageOffset,paginationView} from "./pagination-view.js";
 import {hasCompleteRepairProposal,isRepairEditable,repairEvidenceState,repairPrimaryAction,repairStep,repairSuggestedActionLabel,repairValidationCaseState,repairValidationFieldLabel,repairValidationIsUnchanged,repairValidationStageLabel,shouldShowRepairDiff,standaloneRepairAliases} from "./repair-workflow.js";
 import type {
   Audit,
@@ -24,6 +23,7 @@ import type {
   IssuePriority,
   IssueStatus,
   KnowledgeRuntimeStatus,
+  ListPage,
   OpsJob,
   RegressionPlan,
   RegressionRun,
@@ -33,7 +33,9 @@ import type {
   RepairProposal,
   RepairPublication,
   RepairValidation,
+  ReviewVerdict,
   Release,
+  FeedbackStatus,
   ViewName,
 } from "./types.js";
 
@@ -65,9 +67,21 @@ const selectedRepairDraftIds=new Set<string>();
 const ISSUE_PAGE_SIZE=25;
 const EVIDENCE_PAGE_SIZE=25;
 const CARD_PAGE_SIZE=25;
+const ADMIN_PAGE_SIZE=25;
+const REGRESSION_CASE_PAGE_SIZE=10;
 let issueFilters:{status:"actionable"|"all"|IssueStatus;priority:"all"|IssuePriority;offset:number}={status:"actionable",priority:"all",offset:0};
 let evidenceOffset=0;
 let cardOffset=0;
+let reviewFilter:"all"|"actionable"|ReviewVerdict="all";
+let feedbackFilter:"all"|"actionable"|FeedbackStatus="actionable";
+let reviewOffset=0;
+let feedbackOffset=0;
+let readyDraftOffset=0;
+let repairBatchOffset=0;
+let regressionCaseOffset=0;
+let regressionRunOffset=0;
+let releaseOffset=0;
+let auditOffset=0;
 
 if (sessionToken) void showApp();
 else showLogin();
@@ -142,13 +156,13 @@ async function renderDashboard() {
   const [summary, issues, releases, jobs] = await Promise.all([
     api.get<Dashboard>("/v1/dashboard"),
     api.get<IssuePage>("/v1/issues?actionable=true&limit=12&offset=0"),
-    api.get<Release[]>("/v1/releases"),
+    api.get<ListPage<Release>>("/v1/releases?limit=1&offset=0"),
     api.get<OpsJob[]>("/v1/jobs"),
   ]);
-  const automated=summary.answerReviews.total===0?0:Math.round((summary.answerReviews.passed/summary.answerReviews.total)*100);
+  const automated=summary.answerReviews.total===0?0:Math.round((summary.answerReviews.passed/summary.answerReviews.total)*100),latestRelease=releases.items[0];
   const actionRows=issues.items.map((item)=>issueRow(item,true));
   content(
-    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>正常回答由系统自动收敛；管理员重点确认高风险问题、资料缺口、修订质量和待发布批次。</p></div><div><button class="button" data-nav="issues">进入问题中心</button> <button class="button" data-nav="evidence">资料待补 ${summary.issues.awaitingEvidence}</button> <button class="button primary" data-nav="batches">查看待发布</button></div></div><div class="grid metrics operations-metrics">${metric("紧急问题",summary.issues.urgent,"P0 / P1 优先处理",summary.issues.urgent?"danger":"neutral")}${metric("待补正式资料",summary.issues.awaitingEvidence,"资料不足，已停止发布",summary.issues.awaitingEvidence?"warning":"neutral")}${metric("待发布修订",summary.issues.readyToPublish,"已验证，可组成批次",summary.issues.readyToPublish?"warning":"neutral")}${metric("正在验证",summary.issues.validating,"可同时处理其他修订",summary.issues.validating?"warning":"neutral")}${metric("发布失败批次",summary.repairBatches.failed,"需要检查 Git 或回归结果",summary.repairBatches.failed?"danger":"neutral")}${metric("自动复查通过",summary.answerReviews.passed,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${issues.total} 个问题组，已按风险和最近发生时间排序</span></div><button class="button small" data-nav="issues">查看全部</button></div>${actionRows.length?table(["优先级","问题类型","状态","影响","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>问题优先级</h2><span class="muted">一个问题组可包含多位用户的重复反馈</span></div></div><div class="panel-body stack">${bars(summary.issues.byPriority)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${releases[0] ? `${badge(releases[0].status)} ${h(releases[0].releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
+    `<div class="page-intro"><div><h2>今天需要处理什么</h2><p>正常回答由系统自动收敛；管理员重点确认高风险问题、资料缺口、修订质量和待发布批次。</p></div><div><button class="button" data-nav="issues">进入问题中心</button> <button class="button" data-nav="evidence">资料待补 ${summary.issues.awaitingEvidence}</button> <button class="button primary" data-nav="batches">查看待发布</button></div></div><div class="grid metrics operations-metrics">${metric("紧急问题",summary.issues.urgent,"P0 / P1 优先处理",summary.issues.urgent?"danger":"neutral")}${metric("待补正式资料",summary.issues.awaitingEvidence,"资料不足，已停止发布",summary.issues.awaitingEvidence?"warning":"neutral")}${metric("待发布修订",summary.issues.readyToPublish,"已验证，可组成批次",summary.issues.readyToPublish?"warning":"neutral")}${metric("正在验证",summary.issues.validating,"可同时处理其他修订",summary.issues.validating?"warning":"neutral")}${metric("发布失败批次",summary.repairBatches.failed,"需要检查 Git 或回归结果",summary.repairBatches.failed?"danger":"neutral")}${metric("自动复查通过",summary.answerReviews.passed,`自动处理率 ${automated}%`,"success")}</div><section class="panel"><div class="panel-head"><div><h2>优先处理</h2><span class="muted">${issues.total} 个问题组，已按风险和最近发生时间排序</span></div><button class="button small" data-nav="issues">查看全部</button></div>${actionRows.length?table(["优先级","问题类型","状态","影响","下一步"],actionRows):empty("当前没有需要人工处理的异常")}</section><div class="grid two-col mt-16"><section class="panel"><div class="panel-head"><div><h2>问题优先级</h2><span class="muted">一个问题组可包含多位用户的重复反馈</span></div></div><div class="panel-body stack">${bars(summary.issues.byPriority)}</div></section><section class="panel"><div class="panel-head"><h2>系统与发布状态</h2></div><div class="panel-body stack"><div><span class="muted">当前活动版本</span><div class="mono mt-6">${h(summary.activeReleaseId ?? "尚未发布")}</div></div><div><span class="muted">最近发布</span><div class="mt-6">${latestRelease ? `${badge(latestRelease.status)} ${h(latestRelease.releaseId)}` : "—"}</div></div><div><span class="muted">后台作业</span><div class="mt-6">${
       jobs
         .slice(0, 3)
         .map((x) => `${badge(x.status)} ${h(label(x.type))}`)
@@ -177,15 +191,18 @@ async function renderEvidenceNeeds(){
   content(`<div class="page-intro"><div><h2>正式资料待补</h2><p>这里专门承接“不是答案没写好，而是正式资料库没有足够依据”的问题，避免它们一直显示为修订中。</p></div><button class="button" data-nav="issues">返回普通问题队列</button></div><div class="notice evidence-policy-note"><strong>处理原则：</strong>没有正式证据就不生成猜测答案、不进入验证、更不会发布。资料负责人需按下列清单补齐正式页面；后台管理员随后回到关联问题重新生成草稿。</div><section class="panel mt-16"><div class="panel-head"><div><h2>待补清单</h2><span class="muted">共 ${page.total} 个问题组，按最近更新时间排列</span></div></div><div class="evidence-need-list">${cards||empty("当前没有等待补充正式资料的问题")}</div><div class="pagination"><span class="muted">显示 ${paging.start}–${paging.end} / ${page.total}</span><div><button class="button small" data-action="evidence-page-prev"${paging.hasPrevious?"":" disabled"}>上一页</button> <button class="button small" data-action="evidence-page-next"${paging.hasNext?"":" disabled"}>下一页</button></div></div></section>`);
 }
 async function renderRepairBatches(){
-  const [ready,batches]=await Promise.all([api.get<RepairDraft[]>("/v1/repair-drafts/ready"),api.get<RepairBatch[]>("/v1/repair-batches")]),readyIds=new Set(ready.map((item)=>item.draftId));
-  for(const id of selectedRepairDraftIds)if(!readyIds.has(id))selectedRepairDraftIds.delete(id);
-  const rows=ready.map((draft)=>`<tr><td><input type="checkbox" data-batch-draft="${h(draft.draftId)}" aria-label="选择 ${h(draft.proposal?.title??draft.draftId)}"${selectedRepairDraftIds.has(draft.draftId)?" checked":""}></td><td><strong>${h(draft.proposal?.title??"未命名修订")}</strong><br><span class="muted">${h(draft.proposal?.canonicalQuestion??"—")}</span></td><td>${h(domainName(draft.targetDomain??draft.proposal?.targetDomain??"—"))}</td><td class="mono">${h(draft.targetPath??draft.proposal?.targetPath??"—")}</td><td>${time(draft.updatedAt)}</td><td><button class="button small" data-action="open-repair" data-id="${h(draft.issueId)}">查看修订</button></td></tr>`);
-  const batchRows=batches.map((batch)=>`<tr data-action="repair-batch-detail" data-id="${h(batch.batchId)}"><td class="mono">${shortId(batch.batchId,12)}</td><td>${badge(batch.status)}<br><span class="muted">${h(deploymentStageLabel(batch.deploymentStage))}</span></td><td>${batch.itemCount} 项</td><td>${batch.domains.map(domainName).map(h).join("<br>")}</td><td>${batch.errorCode?`<span class="danger-text">${h(errorMessage(batch.errorCode))}</span>`:batch.status==="published"?"GitHub、Knowledge Engine 与答案卡均已生效":batch.servingPreviousVersion?"旧版本仍正常回答":"正在核对新版本"}</td><td>${time(batch.createdAt)}</td></tr>`);
+  await Promise.all([...selectedRepairDraftIds].map(async(id)=>{try{const draft=await api.get<RepairDraft>(`/v1/repair-drafts/${encodeURIComponent(id)}`);if(draft.status!=="ready_to_publish")selectedRepairDraftIds.delete(id);}catch{selectedRepairDraftIds.delete(id);}}));
+  const [readyPage,batchPage]=await Promise.all([api.get<ListPage<RepairDraft>>(`/v1/repair-drafts/ready?limit=${ADMIN_PAGE_SIZE}&offset=${readyDraftOffset}`),api.get<ListPage<RepairBatch>>(`/v1/repair-batches?limit=${ADMIN_PAGE_SIZE}&offset=${repairBatchOffset}`)]);
+  const boundedReady=boundedPageOffset(readyPage.total,readyDraftOffset,ADMIN_PAGE_SIZE),boundedBatch=boundedPageOffset(batchPage.total,repairBatchOffset,ADMIN_PAGE_SIZE);
+  if(boundedReady!==readyDraftOffset||boundedBatch!==repairBatchOffset){readyDraftOffset=boundedReady;repairBatchOffset=boundedBatch;return renderRepairBatches();}
+  const readyPaging=paginationView(readyPage.total,readyDraftOffset,readyPage.items.length,ADMIN_PAGE_SIZE),batchPaging=paginationView(batchPage.total,repairBatchOffset,batchPage.items.length,ADMIN_PAGE_SIZE);
+  const rows=readyPage.items.map((draft)=>`<tr><td><input type="checkbox" data-batch-draft="${h(draft.draftId)}" aria-label="选择 ${h(draft.proposal?.title??draft.draftId)}"${selectedRepairDraftIds.has(draft.draftId)?" checked":""}></td><td><strong>${h(draft.proposal?.title??"未命名修订")}</strong><br><span class="muted">${h(draft.proposal?.canonicalQuestion??"—")}</span></td><td>${h(domainName(draft.targetDomain??draft.proposal?.targetDomain??"—"))}</td><td class="mono">${h(draft.targetPath??draft.proposal?.targetPath??"—")}</td><td>${time(draft.updatedAt)}</td><td><button class="button small" data-action="open-repair" data-id="${h(draft.issueId)}">查看修订</button></td></tr>`);
+  const batchRows=batchPage.items.map((batch)=>`<tr data-action="repair-batch-detail" data-id="${h(batch.batchId)}"><td class="mono">${shortId(batch.batchId,12)}</td><td>${badge(batch.status)}<br><span class="muted">${h(deploymentStageLabel(batch.deploymentStage))}</span></td><td>${batch.itemCount} 项</td><td>${batch.domains.map(domainName).map(h).join("<br>")}</td><td>${batch.errorCode?`<span class="danger-text">${h(errorMessage(batch.errorCode))}</span>`:batch.status==="published"?"GitHub、Knowledge Engine 与答案卡均已生效":batch.servingPreviousVersion?"旧版本仍正常回答":"正在核对新版本"}</td><td>${time(batch.createdAt)}</td></tr>`);
   content(`<div class="page-intro"><div><h2>把已验证修订组成一次发布</h2><p>草稿生成和验证可以并行；这里只汇总已经通过验证、等待管理员最终发布的内容。</p></div><button class="button" data-nav="issues">继续处理问题</button></div>
     <div class="notice workflow-note"><strong>发布规则：</strong>先用 deepseek_v4_flash 运行 4 组 × 5 类真实问题；全部通过后才合并 Git 提交并同步 GitHub，再后台构建新索引并切换答案卡。准备期间旧版本持续回答，失败时保留或恢复上一稳定版本。</div>
-    <section class="panel mt-16"><div class="panel-head"><div><h2>待发布池</h2><span class="muted">已选择 <strong id="batch-selected-count">${selectedRepairDraftIds.size}</strong> / ${ready.length} 项</span></div><button class="button primary" data-action="publish-repair-batch"${selectedRepairDraftIds.size===0?" disabled":""}>发布所选并同步 GitHub</button></div>${rows.length?table(["选择","标准答案","知识库","写入页面","验证完成","操作"],rows):empty("暂无待发布修订；先在问题中心完成草稿生成和自动验证")}</section>
-    <section class="panel mt-16"><div class="panel-head"><div><h2>最近发布批次</h2><span class="muted">点击一行查看回归、GitHub、引擎热切换和线上核对进度</span></div></div>${batchRows.length?table(["批次","状态与阶段","修订数","知识库","线上结果","创建时间"],batchRows):empty("尚无发布批次")}</section>`);
-  if(batches.some((batch)=>batch.status==="queued"||batch.status==="publishing"))repairRefreshTimer=setTimeout(()=>{if(current==="batches")void renderRepairBatches().catch(handleApiError);},1_800);
+    <section class="panel mt-16"><div class="panel-head"><div><h2>待发布池</h2><span class="muted">已选择 <strong id="batch-selected-count">${selectedRepairDraftIds.size}</strong> 项 · 全部 ${readyPage.total} 项</span></div><button class="button primary" data-action="publish-repair-batch"${selectedRepairDraftIds.size===0?" disabled":""}>发布所选并同步 GitHub</button></div>${rows.length?table(["选择","标准答案","知识库","写入页面","验证完成","操作"],rows):empty("暂无待发布修订；先在问题中心完成草稿生成和自动验证")}${pagination("ready-draft",readyPaging,readyPage.total)}</section>
+    <section class="panel mt-16"><div class="panel-head"><div><h2>最近发布批次</h2><span class="muted">点击一行查看回归、GitHub、引擎热切换和线上核对进度</span></div></div>${batchRows.length?table(["批次","状态与阶段","修订数","知识库","线上结果","创建时间"],batchRows):empty("尚无发布批次")}${pagination("repair-batch",batchPaging,batchPage.total)}</section>`);
+  if(batchPage.items.some((batch)=>batch.status==="queued"||batch.status==="publishing"))repairRefreshTimer=setTimeout(()=>{if(current==="batches")void renderRepairBatches().catch(handleApiError);},1_800);
 }
 async function renderRepairWorkbench(){
   if(!repairIssueId){location.hash="issues";return;}
@@ -224,13 +241,16 @@ function renderRepairValidation(validation:RepairValidation|undefined){
 }
 function repairActionHelp(draft:RepairDraft|undefined,validation?:RepairValidation){if(!draft)return"只生成运营草稿，不会直接改写知识库";if((draft.status==="draft_ready"||draft.status==="validation_failed")&&draft.proposal?.publishable===false)return draft.evidenceSummary?.loadedCount?"重新校验证据并再次调用修订 Agent，不会写入正式知识库":"重新读取当前知识版本；正式资料没有变化时仍会保持阻塞";if(repairValidationIsUnchanged(draft,validation))return"草稿自上次验证后未修改；再次验证会复用原结果，不会自动修复答案或规则冲突";if(draft.status==="draft_ready"||draft.status==="validation_failed")return"修改会自动保存；验证期间可离开页面继续处理其他问题";if(draft.status==="ready_to_publish")return"先进入待发布池，可与其他已验证修订合并后一次推送 GitHub";if(draft.status==="published")return"本次修订已写入正式知识库、同步 GitHub 并切换活动快照";return"后台作业执行中，可离开页面后再回来查看";}
 async function renderFeedback() {
-  const [values,reviews] = await Promise.all([api.get<FeedbackMeta[]>("/v1/feedback"),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
-  const reviewByRequest=new Map(reviews.map((review)=>[review.requestId,review]));
-  const reviewNeedsAction=reviews.filter(isAnswerReviewActionable).length;
-  const feedbackNeedsAction=values.filter((item)=>item.status!=="resolved"&&item.status!=="rejected"&&item.classification!=="useful").length;
+  const reviewParameters=new URLSearchParams({limit:String(ADMIN_PAGE_SIZE),offset:String(reviewOffset)}),feedbackParameters=new URLSearchParams({limit:String(ADMIN_PAGE_SIZE),offset:String(feedbackOffset)});
+  if(reviewFilter==="actionable")reviewParameters.set("actionable","true");else if(reviewFilter!=="all")reviewParameters.set("verdict",reviewFilter);
+  if(feedbackFilter==="actionable")feedbackParameters.set("actionable","true");else if(feedbackFilter!=="all")feedbackParameters.set("status",feedbackFilter);
+  const [feedbackPage,reviewPage] = await Promise.all([api.get<ListPage<FeedbackMeta>>(`/v1/feedback?${feedbackParameters}`),api.get<ListPage<AnswerReviewMeta>>(`/v1/answer-reviews?${reviewParameters}`)]);
+  const boundedReview=boundedPageOffset(reviewPage.total,reviewOffset,ADMIN_PAGE_SIZE),boundedFeedback=boundedPageOffset(feedbackPage.total,feedbackOffset,ADMIN_PAGE_SIZE);
+  if(boundedReview!==reviewOffset||boundedFeedback!==feedbackOffset){reviewOffset=boundedReview;feedbackOffset=boundedFeedback;return renderFeedback();}
+  const reviewPaging=paginationView(reviewPage.total,reviewOffset,reviewPage.items.length,ADMIN_PAGE_SIZE),feedbackPaging=paginationView(feedbackPage.total,feedbackOffset,feedbackPage.items.length,ADMIN_PAGE_SIZE);
   content(
-    `<div class="notice workflow-note"><strong>全部问答都已留痕：</strong>这里展示正常回答、待复核回答和执行异常；问题中心只接收需要管理员处理的异常。用户反馈仍用于合并重复问题、判断影响人数和为修订 Agent 提供问题信号，但不会直接改写答案。</div><section class="panel mt-16"><div class="panel-head"><div><h2>问答与自动复查记录</h2><span class="muted">默认显示全部记录；可筛选为只看需要处理</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="all" selected>全部复查记录</option><option value="actionable">只看需要处理</option>${["pending","pass","needs_review","fail"].map((x)=>option(x)).join("")}</select><span class="muted">待处理 ${reviewNeedsAction} 条 · 全部 ${reviews.length} 条</span></div>${reviews.length?table(["论客聊天名","问题摘要","执行状态","复查结论","人工状态","分数","缺陷","时间"],reviews.map((x)=>{const actionable=isAnswerReviewActionable(x);return`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}" data-verdict="${h(x.verdict)}" data-actionable="${actionable}"><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${reviewQuestionSummary(x)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${badge(x.workflowStatus)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`;})):empty("尚无自动复查记录")}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户负面反馈</h2><span class="muted">默认隐藏“回答有帮助”和已关闭记录</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按反馈状态筛选"><option value="actionable" selected>只看需要处理</option><option value="all">全部反馈记录</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x)).join("")}</select><span class="muted">待处理 ${feedbackNeedsAction} 条 · 全部 ${values.length} 条；原问原答仅在详情中解密</span></div>${
-      values.length
+    `<div class="notice workflow-note"><strong>全部问答都已留痕：</strong>这里展示正常回答、待复核回答和执行异常；问题中心只接收需要管理员处理的异常。用户反馈仍用于合并重复问题、判断影响人数和为修订 Agent 提供问题信号，但不会直接改写答案。</div><section class="panel mt-16"><div class="panel-head"><div><h2>问答与自动复查记录</h2><span class="muted">默认显示全部记录；可筛选为只看需要处理</span></div></div><div class="toolbar"><select id="review-verdict" class="button" aria-label="按复查结论筛选"><option value="all"${reviewFilter==="all"?" selected":""}>全部复查记录</option><option value="actionable"${reviewFilter==="actionable"?" selected":""}>只看需要处理</option>${["pending","pass","needs_review","fail"].map((x)=>option(x,reviewFilter)).join("")}</select><span class="muted">当前筛选共 ${reviewPage.total} 条</span></div>${reviewPage.items.length?table(["论客聊天名","问题摘要","执行状态","复查结论","人工状态","分数","缺陷","时间"],reviewPage.items.map((x)=>`<tr data-action="answer-review-detail" data-id="${h(x.reviewId)}"><td>${h(x.userDisplayName??"未获取到聊天名")}</td><td>${reviewQuestionSummary(x)}</td><td>${badge(x.processingStatus)}</td><td>${badge(x.verdict)}</td><td>${badge(x.workflowStatus)}</td><td>${h(x.score??"—")}</td><td>${x.defectCount}</td><td>${time(x.createdAt)}</td></tr>`)):empty("当前筛选条件下没有自动复查记录")}${pagination("review",reviewPaging,reviewPage.total)}</section><section class="panel mt-16"><div class="panel-head"><div><h2>用户负面反馈</h2><span class="muted">默认隐藏“回答有帮助”和已关闭记录</span></div></div><div class="toolbar"><select id="feedback-status" class="button" aria-label="按反馈状态筛选"><option value="actionable"${feedbackFilter==="actionable"?" selected":""}>只看需要处理</option><option value="all"${feedbackFilter==="all"?" selected":""}>全部反馈记录</option>${["new", "triaged", "in_review", "resolved", "rejected"].map((x) => option(x,feedbackFilter)).join("")}</select><span class="muted">当前筛选共 ${feedbackPage.total} 条；原问原答仅在详情中解密</span></div>${
+      feedbackPage.items.length
         ? table(
             [
               "反馈类型",
@@ -242,16 +262,14 @@ async function renderFeedback() {
               "论客聊天名",
               "提交时间",
             ],
-            values.map(
+            feedbackPage.items.map(
               (x) => {
-                const linked=reviewByRequest.get(x.requestId);
-                const actionable=x.status!=="resolved"&&x.status!=="rejected"&&x.classification!=="useful";
-                return `<tr data-action="feedback-detail" data-id="${h(x.caseId)}" data-status="${h(x.status)}" data-actionable="${actionable}"${actionable?"":" hidden"}><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${linked?badge(linked.verdict):'<span class="muted">尚无关联复查</span>'}</td><td>${badge(x.answerStatus)}</td><td>${h(label(x.scope ?? "—"))}</td><td>${x.referenceCount}</td><td>${h(x.userDisplayName ?? "未获取到聊天名")}</td><td>${time(x.createdAt)}</td></tr>`;
+                return `<tr data-action="feedback-detail" data-id="${h(x.caseId)}"><td>${badge(x.classification)}</td><td>${badge(x.status)}</td><td>${x.linkedReviewVerdict?badge(x.linkedReviewVerdict):'<span class="muted">尚无关联复查</span>'}</td><td>${badge(x.answerStatus)}</td><td>${h(label(x.scope ?? "—"))}</td><td>${x.referenceCount}</td><td>${h(x.userDisplayName ?? "未获取到聊天名")}</td><td>${time(x.createdAt)}</td></tr>`;
               },
             ),
           )
-        : empty("尚未收到用户反馈")
-    }</section>`,
+        : empty("当前筛选条件下没有用户反馈")
+    }${pagination("feedback",feedbackPaging,feedbackPage.total)}</section>`,
   );
 }
 async function renderCards() {
@@ -281,9 +299,12 @@ async function renderCards() {
   );
 }
 async function renderRegressions() {
-  const [plan,jobs,qualityRuns]=await Promise.all([api.get<RegressionPlan>("/v1/regression-plan"),api.get<OpsJob[]>("/v1/jobs"),api.get<RegressionRun[]>("/v1/regression-runs")]);
+  const [plan,jobs,latestRunPage,runPage]=await Promise.all([api.get<RegressionPlan>("/v1/regression-plan"),api.get<OpsJob[]>("/v1/jobs"),api.get<ListPage<RegressionRun>>(`/v1/regression-runs?limit=${ADMIN_PAGE_SIZE}&offset=0`),api.get<ListPage<RegressionRun>>(`/v1/regression-runs?limit=${ADMIN_PAGE_SIZE}&offset=${regressionRunOffset}`)]);
   const runView=regressionRunView(plan,jobs),progress=runView.progress,active=runView.activeJob;
-  const regressionJobs=jobs.filter((job)=>job.type==="regression_run"),latestQuality=qualityRuns.find((run)=>run.totalCases===20&&run.report?.model==="deepseek_v4_flash");
+  const boundedCases=boundedPageOffset(progress.totalCases,regressionCaseOffset,REGRESSION_CASE_PAGE_SIZE),boundedRuns=boundedPageOffset(runPage.total,regressionRunOffset,ADMIN_PAGE_SIZE);
+  if(boundedCases!==regressionCaseOffset||boundedRuns!==regressionRunOffset){regressionCaseOffset=boundedCases;regressionRunOffset=boundedRuns;return renderRegressions();}
+  const casePaging=paginationView(progress.totalCases,regressionCaseOffset,Math.min(REGRESSION_CASE_PAGE_SIZE,Math.max(0,progress.totalCases-regressionCaseOffset)),REGRESSION_CASE_PAGE_SIZE),runPaging=paginationView(runPage.total,regressionRunOffset,runPage.items.length,ADMIN_PAGE_SIZE);
+  const latestQuality=latestRunPage.items.find((run)=>run.totalCases===20&&run.report?.model==="deepseek_v4_flash");
   const reportCases=new Map((latestQuality?.report?.cases??[]).map((item)=>[item.caseId,item])),suiteStats=summarizeProgress(progress.cases,"suiteId"),kindStats=summarizeProgress(progress.cases,"kind");
   const currentQuestions=progress.cases.filter((item)=>item.status==="running").map((item)=>item.question);
   const stateBanner=active
@@ -291,41 +312,18 @@ async function renderRegressions() {
     : latestQuality===undefined?'<div class="notice"><strong>尚未运行完整回归</strong><span>下面已经列出本次会执行的四组二十题；点击运行后可逐题查看状态。</span></div>':`<div class="notice ${latestQuality.status==="passed"?"":"error"}"><strong>最近一次回归${latestQuality.status==="passed"?"已通过":"未通过"}</strong><span>${latestQuality.passedCases} / 20 题通过 · P95 ${h(latestQuality.report?.summary?.p95LatencyMs??"—")} ms</span></div>`;
   const suiteRows=plan.suites.map((suite)=>{const stats=suiteStats.get(suite.suiteId)!;return`<tr><td><strong>${h(suite.title)}</strong><br><span class="mono muted">${h(suite.suiteId)}</span></td><td>${stats.completed}/${stats.total}</td><td>${stats.running?badge("running"):stats.failed?badge("failed"):stats.passed===stats.total?badge("passed"):badge("queued")}</td></tr>`;});
   const kindRows=(["canonical","alias","colloquial","follow_up","negative"] as const).map((kind)=>{const stats=kindStats.get(kind)!;return`<tr><td>${h(label(kind))}</td><td>${stats.completed}/${stats.total}</td><td>${stats.running?badge("running"):stats.failed?badge("failed"):stats.passed===stats.total?badge("passed"):badge("queued")}</td></tr>`;});
-  const questionRows=progress.cases.map((testCase)=>{const report=reportCases.get(testCase.caseId),failedChecks=(report?.checks??[]).filter((check)=>check.passed===false),detail=testCase.failure??failedChecks.map((check)=>`${check.category??"检查"}/${check.id??"未知"}：${check.detail??"未说明"}`).join("；");return`<tr class="${testCase.status==="running"?"regression-row-running":""}"><td><strong>${h(testCase.suiteTitle)}</strong><br><span class="muted">第 ${testCase.turn} 轮</span></td><td>${badge(testCase.kind)}</td><td class="regression-question">${h(testCase.question)}</td><td>${badge(testCase.status)}${testCase.answerStatus?`<br><span class="muted">回答：${h(label(testCase.answerStatus))}</span>`:""}</td><td>${testCase.latencyMs===undefined?"—":`${testCase.latencyMs} ms`}</td><td>${detail?`<span class="danger-text">${h(detail)}</span>`:testCase.status==="passed"?"所有门禁检查通过":"—"}</td></tr>`;});
-  content(`${stateBanner}<div class="toolbar mt-14"><button class="button primary" data-action="run-regression"${active?' disabled aria-disabled="true"':''}>${active?`回归执行中（${progress.completedCases}/20）`:"运行 4 组 × 5 类真实回归"}</button><span class="muted">固定模型 deepseek_v4_flash；四个会话并行、每组五轮连续执行，线上旧版本继续回答用户。</span></div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>四组场景</h2><span class="muted">每组 5 轮连续对话</span></div>${table(["场景","进度","状态"],suiteRows)}</section><section class="panel"><div class="panel-head"><h2>五类问法</h2><span class="muted">标准、同义、口语、追问、边界</span></div>${table(["问题类型","进度","状态"],kindRows)}</section></div><section class="panel mt-16"><div class="panel-head"><div><h2>本次实际测试题目</h2><span class="muted">题目在运行前即可核对；执行中行会高亮，结果逐题更新。</span></div><span class="muted">${progress.completedCases} / ${progress.totalCases} 已完成</span></div><div class="regression-table-wrap">${table(["场景与轮次","类型","完整题目","执行状态","耗时","结果说明"],questionRows)}</div></section><section class="panel mt-16"><div class="panel-head"><h2>运行记录</h2></div>${regressionJobs.length?table(["作业","状态","尝试","更新时间"],regressionJobs.map((job)=>`<tr><td class="mono">${shortId(job.jobId)}</td><td>${badge(job.status)}</td><td>${job.attempts}</td><td>${time(job.updatedAt)}</td></tr>`)):empty("暂无回归运行")}</section>`);
+  const questionRows=progress.cases.slice(regressionCaseOffset,regressionCaseOffset+REGRESSION_CASE_PAGE_SIZE).map((testCase)=>{const report=reportCases.get(testCase.caseId),failedChecks=(report?.checks??[]).filter((check)=>check.passed===false),detail=testCase.failure??failedChecks.map((check)=>`${check.category??"检查"}/${check.id??"未知"}：${check.detail??"未说明"}`).join("；");return`<tr class="${testCase.status==="running"?"regression-row-running":""}"><td><strong>${h(testCase.suiteTitle)}</strong><br><span class="muted">第 ${testCase.turn} 轮</span></td><td>${badge(testCase.kind)}</td><td class="regression-question">${h(testCase.question)}</td><td>${badge(testCase.status)}${testCase.answerStatus?`<br><span class="muted">回答：${h(label(testCase.answerStatus))}</span>`:""}</td><td>${testCase.latencyMs===undefined?"—":`${testCase.latencyMs} ms`}</td><td>${detail?`<span class="danger-text">${h(detail)}</span>`:testCase.status==="passed"?"所有门禁检查通过":"—"}</td></tr>`;});
+  const runRows=runPage.items.map((run)=>`<tr><td class="mono">${shortId(run.runId)}</td><td>${badge(run.status)}</td><td>${run.passedCases} / ${run.totalCases}</td><td>${time(run.createdAt)}</td><td>${run.completedAt?time(run.completedAt):"尚未完成"}</td></tr>`);
+  content(`${stateBanner}<div class="toolbar mt-14"><button class="button primary" data-action="run-regression"${active?' disabled aria-disabled="true"':''}>${active?`回归执行中（${progress.completedCases}/20）`:"运行 4 组 × 5 类真实回归"}</button><span class="muted">固定模型 deepseek_v4_flash；四个会话并行、每组五轮连续执行，线上旧版本继续回答用户。</span></div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>四组场景</h2><span class="muted">每组 5 轮连续对话</span></div>${table(["场景","进度","状态"],suiteRows)}</section><section class="panel"><div class="panel-head"><h2>五类问法</h2><span class="muted">标准、同义、口语、追问、边界</span></div>${table(["问题类型","进度","状态"],kindRows)}</section></div><section class="panel mt-16"><div class="panel-head"><div><h2>本次实际测试题目</h2><span class="muted">题目在运行前即可核对；执行中行会高亮，结果逐题更新。</span></div><span class="muted">${progress.completedCases} / ${progress.totalCases} 已完成</span></div><div class="regression-table-wrap">${table(["场景与轮次","类型","完整题目","执行状态","耗时","结果说明"],questionRows)}</div>${pagination("regression-case",casePaging,progress.totalCases)}</section><section class="panel mt-16"><div class="panel-head"><h2>运行记录</h2></div>${runRows.length?table(["运行","状态","通过","开始时间","完成时间"],runRows):empty("暂无回归运行")}${pagination("regression-run",runPaging,runPage.total)}</section>`);
   if(active)repairRefreshTimer=setTimeout(()=>{if(current==="regressions")void renderRegressions().catch(handleApiError);},1_800);
 }
-async function renderRegressionsLegacy() {
-  const [jobs, qualityRuns] = await Promise.all([
-    api.get<OpsJob[]>("/v1/jobs"),
-    api.get<RegressionRun[]>("/v1/regression-runs"),
-  ]);
-  const runs = jobs.filter((x) => x.type === "regression_run");
-  const latestQuality = qualityRuns.find((run)=>run.totalCases===20&&run.report?.model==="deepseek_v4_flash");
-  const failedCases=(latestQuality?.report?.cases??[]).filter((item)=>item.passed===false);
-  const gateBanner = latestQuality === undefined
-    ? '<div class="notice">尚无真实全量回归报告。发布前必须用 deepseek_v4_flash 完成 4 个连续会话，每个会话覆盖标准、同义、口语、上下文追问和边界负例。</div>'
-    : `<div class="notice ${latestQuality.status === "passed" ? "" : "error"}"><strong>最新 4×5 发布门禁：</strong>${badge(latestQuality.status)} · ${latestQuality.passedCases}/20 题通过 · 完成 ${h(latestQuality.report?.summary?.completed??"—")}/20 · 安全失败 ${h(latestQuality.report?.summary?.safetyFailures??"—")} · 可用性失败 ${h(latestQuality.report?.summary?.availabilityFailures??"—")} · P95 ${h(latestQuality.report?.summary?.p95LatencyMs ?? "—")} ms</div>`;
-  content(
-    gateBanner + `<div class="toolbar mt-14"><button class="button primary" data-action="run-regression">运行 4 组 × 5 类真实回归</button><span class="muted">使用固定模型 deepseek_v4_flash；独立 Worker 并行处理四个会话，旧线上版本持续回答用户</span></div><div class="grid two-col"><section class="panel"><div class="panel-head"><h2>四组场景结果</h2><span class="muted">每组 5 类问题</span></div>${latestQuality?.report?.suites?.length?table(["场景组","通过","平均分","结论"],latestQuality.report.suites.map((item)=>`<tr><td class="mono">${h(item.suiteId)}</td><td>${item.passedCases}/5</td><td>${h(item.averageScore)}</td><td>${badge(item.passed?"passed":"failed")}</td></tr>`)):empty("运行后显示四组场景结果")}</section><section class="panel"><div class="panel-head"><h2>五类问法结果</h2><span class="muted">每类跨 4 个场景</span></div>${latestQuality?.report?.kinds?.length?table(["问题类型","通过","平均分","结论"],latestQuality.report.kinds.map((item)=>`<tr><td>${h(label(item.kind))}</td><td>${item.passedCases}/4</td><td>${h(item.averageScore)}</td><td>${badge(item.passed?"passed":"failed")}</td></tr>`)):empty("运行后显示五类问法结果")}</section></div><section class="panel mt-16"><div class="panel-head"><div><h2>未通过项</h2><span class="muted">直接查看失败检查，不用翻原始日志</span></div></div>${failedCases.length?table(["用例","场景","类型","失败检查"],failedCases.map((item)=>`<tr><td class="mono">${h(item.caseId??"—")}</td><td>${h(item.suiteId??"—")}</td><td>${h(label(item.kind??"—"))}</td><td>${h((item.checks??[]).filter((check)=>check.passed===false).map((check)=>`${check.category??"检查"}/${check.id??"未知"}：${check.detail??"未说明"}`).join("；")||"未记录")}</td></tr>`)):empty(latestQuality?"本轮 20 题全部通过":"尚未运行真实全量回归")}</section><section class="panel mt-16"><div class="panel-head"><h2>运行队列</h2></div>${
-      runs.length
-        ? table(
-            ["作业", "状态", "尝试", "更新时间"],
-            runs.map(
-              (x) =>
-                `<tr><td class="mono">${shortId(x.jobId)}</td><td>${badge(x.status)}</td><td>${x.attempts}</td><td>${time(x.updatedAt)}</td></tr>`,
-            ),
-          )
-        : empty("暂无回归运行")
-    }</section>`,
-  );
-  if(runs.some((run)=>run.status==="queued"||run.status==="running"))repairRefreshTimer=setTimeout(()=>{if(current==="regressions")void renderRegressions().catch(handleApiError);},1_800);
-}
 async function renderReleases() {
-  const releases = await api.get<Release[]>("/v1/releases");
+  const page = await api.get<ListPage<Release>>(`/v1/releases?limit=${ADMIN_PAGE_SIZE}&offset=${releaseOffset}`),bounded=boundedPageOffset(page.total,releaseOffset,ADMIN_PAGE_SIZE);
+  if(bounded!==releaseOffset){releaseOffset=bounded;return renderReleases();}
+  const paging=paginationView(page.total,releaseOffset,page.items.length,ADMIN_PAGE_SIZE);
   content(
     `<div class="notice">管理员确认后仍必须通过自动回归。发布会生成不可变目录快照，所有写入和回滚都有审计记录。</div><div class="toolbar mt-14"><button class="button primary" data-action="new-release">创建发布</button></div>${
-      releases.length
+      page.items.length
         ? table(
             [
               "发布版本",
@@ -336,27 +334,29 @@ async function renderReleases() {
               "创建时间",
               "操作",
             ],
-            releases.map(
+            page.items.map(
               (x) =>
                 `<tr><td><strong>${h(x.releaseId)}</strong></td><td>${badge(x.status)}</td><td class="mono">${shortId(x.professionalRevision)}</td><td class="mono">${shortId(x.generalRevision)}</td><td>${h(x.approvedBy.join("、"))}</td><td>${time(x.createdAt)}</td><td>${x.status !== "active" ? `<button class="button small danger" data-action="rollback" data-id="${h(x.releaseId)}">回滚到此版本</button>` : "当前版本"}</td></tr>`,
             ),
           )
         : empty("尚无发布记录")
-    }`,
+    }${pagination("release",paging,page.total)}`,
   );
 }
 async function renderAudit() {
-  const events = await api.get<Audit[]>("/v1/audit");
+  const page = await api.get<ListPage<Audit>>(`/v1/audit?limit=${ADMIN_PAGE_SIZE}&offset=${auditOffset}`),bounded=boundedPageOffset(page.total,auditOffset,ADMIN_PAGE_SIZE);
+  if(bounded!==auditOffset){auditOffset=bounded;return renderAudit();}
+  const paging=paginationView(page.total,auditOffset,page.items.length,ADMIN_PAGE_SIZE);
   content(
-    events.length
+    (page.items.length
       ? table(
           ["时间", "操作者", "动作", "资源", "资源 ID", "元数据"],
-          events.map(
+          page.items.map(
             (x) =>
               `<tr><td>${time(x.createdAt)}</td><td>${h(x.actorId)}</td><td class="mono">${h(x.action)}</td><td>${h(x.resourceType)}</td><td class="mono">${shortId(x.resourceId, 18)}</td><td><button class="button small" data-action="show-json" data-json="${h(JSON.stringify(x.metadata))}">查看</button></td></tr>`,
           ),
         )
-      : empty("暂无审计事件"),
+      : empty("暂无审计事件"))+pagination("audit",paging,page.total),
   );
 }
 
@@ -418,7 +418,7 @@ async function handleClick(event: MouseEvent) {
       const draftIds=[...selectedRepairDraftIds];if(draftIds.length===0)break;
       if(!window.confirm(`确认发布所选 ${draftIds.length} 项修订？系统会先运行 4×5 真实回归；全部通过后才写入知识库、同步 GitHub 并热切换到后续回答。准备期间旧版本持续服务。`))break;
       target.setAttribute("disabled","");
-      try{await api.post("/v1/repair-batches",{draftIds});selectedRepairDraftIds.clear();toast("发布批次已创建，系统正在运行 4×5 真实回归；旧版本继续服务");await renderRepairBatches();await renderRuntimeStatus();}catch(error){target.removeAttribute("disabled");toast(message(error),true);}
+      try{await api.post("/v1/repair-batches",{draftIds});selectedRepairDraftIds.clear();readyDraftOffset=0;repairBatchOffset=0;toast("发布批次已创建，系统正在运行 4×5 真实回归；旧版本继续服务");await renderRepairBatches();await renderRuntimeStatus();}catch(error){target.removeAttribute("disabled");toast(message(error),true);}
       break;
     }
     case "repair-batch-detail":
@@ -453,6 +453,54 @@ async function handleClick(event: MouseEvent) {
     case "card-page-next":
       cardOffset+=CARD_PAGE_SIZE;
       await renderCards();
+      break;
+    case "review-page-prev":
+      reviewOffset=Math.max(0,reviewOffset-ADMIN_PAGE_SIZE);await renderFeedback();
+      break;
+    case "review-page-next":
+      reviewOffset+=ADMIN_PAGE_SIZE;await renderFeedback();
+      break;
+    case "feedback-page-prev":
+      feedbackOffset=Math.max(0,feedbackOffset-ADMIN_PAGE_SIZE);await renderFeedback();
+      break;
+    case "feedback-page-next":
+      feedbackOffset+=ADMIN_PAGE_SIZE;await renderFeedback();
+      break;
+    case "ready-draft-page-prev":
+      readyDraftOffset=Math.max(0,readyDraftOffset-ADMIN_PAGE_SIZE);await renderRepairBatches();
+      break;
+    case "ready-draft-page-next":
+      readyDraftOffset+=ADMIN_PAGE_SIZE;await renderRepairBatches();
+      break;
+    case "repair-batch-page-prev":
+      repairBatchOffset=Math.max(0,repairBatchOffset-ADMIN_PAGE_SIZE);await renderRepairBatches();
+      break;
+    case "repair-batch-page-next":
+      repairBatchOffset+=ADMIN_PAGE_SIZE;await renderRepairBatches();
+      break;
+    case "regression-case-page-prev":
+      regressionCaseOffset=Math.max(0,regressionCaseOffset-REGRESSION_CASE_PAGE_SIZE);await renderRegressions();
+      break;
+    case "regression-case-page-next":
+      regressionCaseOffset+=REGRESSION_CASE_PAGE_SIZE;await renderRegressions();
+      break;
+    case "regression-run-page-prev":
+      regressionRunOffset=Math.max(0,regressionRunOffset-ADMIN_PAGE_SIZE);await renderRegressions();
+      break;
+    case "regression-run-page-next":
+      regressionRunOffset+=ADMIN_PAGE_SIZE;await renderRegressions();
+      break;
+    case "release-page-prev":
+      releaseOffset=Math.max(0,releaseOffset-ADMIN_PAGE_SIZE);await renderReleases();
+      break;
+    case "release-page-next":
+      releaseOffset+=ADMIN_PAGE_SIZE;await renderReleases();
+      break;
+    case "audit-page-prev":
+      auditOffset=Math.max(0,auditOffset-ADMIN_PAGE_SIZE);await renderAudit();
+      break;
+    case "audit-page-next":
+      auditOffset+=ADMIN_PAGE_SIZE;await renderAudit();
       break;
     case "card-detail":
       await cardDrawer(target.dataset.id!);
@@ -530,6 +578,7 @@ async function handleSubmit(event: SubmitEvent) {
       await loadCurrent();
     } else if (form.id === "release-form") {
       await api.post("/v1/releases", JSON.parse(String(data.get("manifest"))));
+      releaseOffset=0;
       toast("发布作业已进入队列");
       closeOverlay();
       await loadCurrent();
@@ -546,10 +595,10 @@ async function handleChange(event: Event) {
   if(select instanceof HTMLInputElement&&select.dataset.batchDraft){if(select.checked)selectedRepairDraftIds.add(select.dataset.batchDraft);else selectedRepairDraftIds.delete(select.dataset.batchDraft);const count=document.querySelector("#batch-selected-count"),publish=document.querySelector<HTMLButtonElement>('[data-action="publish-repair-batch"]');if(count)count.textContent=String(selectedRepairDraftIds.size);if(publish)publish.disabled=selectedRepairDraftIds.size===0;return;}
   if (!(select instanceof HTMLSelectElement)) return;
   if(select.id==="feedback-status"){
-    for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="feedback-detail"]')) row.hidden=select.value==="actionable"?row.dataset.actionable!=="true":select.value!=="all"&&row.dataset.status!==select.value;
+    feedbackFilter=select.value as typeof feedbackFilter;feedbackOffset=0;await renderFeedback();return;
   }
   if(select.id==="review-verdict"){
-    for (const row of document.querySelectorAll<HTMLTableRowElement>('tr[data-action="answer-review-detail"]')) row.hidden=select.value==="actionable"?row.dataset.actionable!=="true":select.value!=="all"&&row.dataset.verdict!==select.value;
+    reviewFilter=select.value as typeof reviewFilter;reviewOffset=0;await renderFeedback();return;
   }
   if(select.id==="issue-status"){
     issueFilters={...issueFilters,status:select.value as typeof issueFilters.status,offset:0};
@@ -605,8 +654,7 @@ async function answerReviewDrawer(id:string){
 }
 
 async function feedbackDrawer(id: string) {
-  const [item,reviews] = await Promise.all([api.get<FeedbackDetail>(`/v1/feedback/${id}`),api.get<AnswerReviewMeta[]>("/v1/answer-reviews")]);
-  const linkedReview=reviews.find((review)=>review.requestId===item.requestId);
+  const item=await api.get<FeedbackDetail>(`/v1/feedback/${id}`);
   const classifications = [
     "useful",
     "incorrect",
@@ -618,7 +666,7 @@ async function feedbackDrawer(id: string) {
   overlay(
     `<div class="drawer-head"><div><strong>反馈 #${item.questionId}</strong> ${badge(item.classification)} ${badge(item.status)}</div><button class="button" data-action="close-overlay">关闭</button></div>
     <div class="drawer-body">
-      <div class="notice"><strong>运营处理建议：</strong>先核对同一回答的自动复查，再判断是知识缺口、检索问题还是表达问题。用户反馈不会自动改写答案。${linkedReview?` <button class="button small" data-action="answer-review-detail" data-id="${h(linkedReview.reviewId)}">查看关联自动复查 ${badge(linkedReview.verdict)}</button>`:" 当前请求尚无自动复查记录，请人工核对原问原答。"}</div>
+      <div class="notice"><strong>运营处理建议：</strong>先核对同一回答的自动复查，再判断是知识缺口、检索问题还是表达问题。用户反馈不会自动改写答案。${item.linkedReviewId?` <button class="button small" data-action="answer-review-detail" data-id="${h(item.linkedReviewId)}">查看关联自动复查 ${badge(item.linkedReviewVerdict??"pending")}</button>`:" 当前请求尚无自动复查记录，请人工核对原问原答。"}</div>
       <div class="detail-section"><h3>反馈用户</h3><div class="content-box">${h(item.userDisplayName ?? "未获取到聊天名")}</div><div class="muted mt-6">技术关联标识：<span class="mono">${shortId(item.pseudonymousUserId, 16)}</span></div></div>
       ${item.proposedAnswer ? `<div class="detail-section"><h3>用户提交的候选答案</h3><div class="notice">该内容仅供人工审核，不会自动进入线上知识。</div><div class="content-box mt-6">${h(item.proposedAnswer)}</div></div>` : ""}
       <div class="detail-section"><h3>用户补充</h3><div class="content-box">${h(item.comment || "（未填写补充说明）")}</div></div>
@@ -695,6 +743,7 @@ function releaseDrawer() {
 }
 async function runRegression() {
   await api.post("/v1/regressions/run", {});
+  regressionCaseOffset=0;regressionRunOffset=0;
   toast("4 组 × 5 类真实回归已进入独立队列，线上旧版本继续服务");
   await loadCurrent();
 }
@@ -741,6 +790,8 @@ function nextIssueAction(item:IssuePage["items"][number]){if(item.status==="open
 
 function reviewQuestionSummary(item:AnswerReviewMeta){return`<div class="question-summary">${item.contextUsed?'<span class="context-kind follow_up">上下文追问</span>':""}${item.rawQuestionPreview?`<span class="question-raw">${h(item.rawQuestionPreview)}</span><small>补全为：${h(item.questionPreview)}</small>`:`<span>${h(item.questionPreview)}</span>`}</div>`;}
 function conversationContextHtml(question:string,conversation?:ConversationRelation){const view=conversationPresentation(question,conversation),changed=view.rawQuestion.trim()!==view.resolvedQuestion.trim();if(view.kind==="history")return`<div class="context-card history"><div class="context-head"><strong>用户原始问题</strong><span class="context-kind history">${h(view.label)}</span></div><div class="context-question">${h(view.rawQuestion)}</div><p>历史记录没有持久化上下文关系，按原问题处理。</p></div>`;if(view.kind==="independent")return`<div class="context-card independent"><div class="context-head"><strong>本轮问题</strong><span class="context-kind independent">${h(view.label)}</span></div><div class="context-question">${h(view.rawQuestion)}</div>${changed?`<div class="context-resolved"><span>系统用于检索、复查和归并的问题</span><strong>${h(view.resolvedQuestion)}</strong></div>`:""}</div>`;return`<div class="context-card follow-up"><div class="context-head"><strong>已绑定上一轮上下文</strong><span class="context-kind follow_up">${h(view.label)}</span></div>${view.parentQuestion?`<div class="context-node parent"><span>上一问</span><strong>${h(view.parentQuestion)}</strong>${view.parentAnswerOutline?`<small>上一答提纲：${h(view.parentAnswerOutline)}</small>`:""}</div><div class="context-connector" aria-hidden="true">↓</div>`:""}<div class="context-node current"><span>用户本轮原话</span><strong>${h(view.rawQuestion)}</strong></div><div class="context-resolved"><span>补全后用于检索、复查、修订和问题归并</span><strong>${h(view.resolvedQuestion)}</strong>${view.inheritedSubjects.length?`<small>继承主题：${view.inheritedSubjects.map(h).join("、")}</small>`:""}</div></div>`;}
+
+function pagination(prefix:string,view:ReturnType<typeof paginationView>,total:number){return`<nav class="pagination" aria-label="列表分页"><span class="muted">显示 ${view.start}–${view.end} / ${total}</span><div class="pagination-actions"><button class="button small" data-action="${prefix}-page-prev"${view.hasPrevious?"":" disabled"}>上一页</button><button class="button small" data-action="${prefix}-page-next"${view.hasNext?"":" disabled"}>下一页</button></div></nav>`;}
 
 function content(value: string) {
   const element = document.querySelector("#content");

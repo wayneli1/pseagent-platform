@@ -15,7 +15,8 @@ describe("release quality report import", () => {
     expect(run).toMatchObject({ status: "passed", totalCases: 20, passedCases: 20 });
     expect((await service.listRegressionRuns(
       { actorId: "viewer", roles: ["viewer"] },
-    ))[0]?.runId).toBe(run.runId);
+      { limit: 25, offset: 0 },
+    )).items[0]?.runId).toBe(run.runId);
   });
 
   it("rejects a report whose headline contradicts its failures", async () => {

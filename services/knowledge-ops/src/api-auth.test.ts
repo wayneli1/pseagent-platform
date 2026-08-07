@@ -17,8 +17,8 @@ describe("knowledge ops administrator login",()=>{
     const response=await api.handle({method:"POST",path:"/v1/auth/login",body:{username:"admin",password:"test-admin-password"}});expect(response).toMatchObject({status:200,body:{sessionToken:expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),expiresAt:expect.any(String),user:{username:"admin"}}});
     const sessionToken=(response.body as {sessionToken:string}).sessionToken,authorization=`Bearer ${sessionToken}`;
     expect((await api.handle({method:"GET",path:"/v1/dashboard",authorization})).status).toBe(200);
-    await expect(api.handle({method:"GET",path:"/v1/repair-drafts/ready",authorization})).resolves.toEqual({status:200,body:[]});
-    await expect(api.handle({method:"GET",path:"/v1/repair-batches",authorization})).resolves.toEqual({status:200,body:[]});
+    await expect(api.handle({method:"GET",path:"/v1/repair-drafts/ready",authorization})).resolves.toEqual({status:200,body:{items:[],total:0}});
+    await expect(api.handle({method:"GET",path:"/v1/repair-batches",authorization})).resolves.toEqual({status:200,body:{items:[],total:0}});
     await expect(api.handle({method:"GET",path:"/v1/regression-plan",authorization})).resolves.toMatchObject({status:200,body:{model:"deepseek_v4_flash",suiteCount:4,caseCount:20}});
     expect((await api.handle({method:"POST",path:"/v1/repair-batches",authorization,body:{draftIds:[]}})).status).toBe(400);
     await expect(api.handle({method:"POST",path:"/v1/auth/logout",authorization,body:{}})).resolves.toEqual({status:200,body:{status:"logged_out"}});

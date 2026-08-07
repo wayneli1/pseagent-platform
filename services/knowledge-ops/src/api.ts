@@ -2,7 +2,7 @@ import { ZodError } from "zod";
 import { knowledgeDomainSchema } from "@pseagent/knowledge-governance-contracts";
 import { OpsAuthorizationError } from "./rbac.js";
 import type { OpsAuthenticator } from "./rbac.js";
-import { adminLoginSchema, answerReviewWorkflowPatchSchema, emptyActionSchema, feedbackPatchSchema, issueListQuerySchema, issuePatchSchema, paginatedListQuerySchema, repairBatchRequestSchema, repairDraftUpdateSchema, reviewInputSchema } from "./schemas.js";
+import { adminLoginSchema, answerReviewListQuerySchema, answerReviewWorkflowPatchSchema, emptyActionSchema, feedbackListQuerySchema, feedbackPatchSchema, issueListQuerySchema, issuePatchSchema, paginatedListQuerySchema, repairBatchRequestSchema, repairDraftUpdateSchema, reviewInputSchema } from "./schemas.js";
 import { KnowledgeOpsService, OpsNotFoundError } from "./service.js";
 
 export interface OpsApiRequest { readonly method:string; readonly path:string; readonly authorization?:string; readonly body?:unknown; }
@@ -27,13 +27,13 @@ export class KnowledgeOpsApi {
       if(request.method==="POST"&&pathname==="/v1/conversations/turns")return created(await this.service.appendConversationTurn(actor,request.body));
       if(request.method==="POST"&&pathname==="/v1/conversations/end")return ok(await this.service.endConversation(actor,request.body));
       if(request.method==="POST"&&pathname==="/v1/answer-reviews")return created(await this.service.ingestAnswerReview(actor,request.body));
-      if(request.method==="GET"&&pathname==="/v1/answer-reviews")return ok(await this.service.listAnswerReviews(actor));
+      if(request.method==="GET"&&pathname==="/v1/answer-reviews"){const input=answerReviewListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listAnswerReviews(actor,{limit:input.limit,offset:input.offset,...(input.verdict===undefined?{}:{verdict:input.verdict}),...(input.actionable===undefined?{}:{actionableOnly:input.actionable})}));}
       if(segments[0]==="v1"&&segments[1]==="answer-reviews"&&segments[2]){
         if(request.method==="GET"){const value=await this.service.answerReviewDetail(actor,segments[2]);return value?ok(value):notFound();}
         if(request.method==="PATCH"){const input=answerReviewWorkflowPatchSchema.parse(request.body);const value=await this.service.triageAnswerReview(actor,segments[2],input.workflowStatus);return value?ok(value):notFound();}
       }
       if(request.method==="POST"&&pathname==="/v1/feedback")return created(await this.service.ingestFeedback(actor,request.body));
-      if(request.method==="GET"&&pathname==="/v1/feedback")return ok(await this.service.listFeedback(actor));
+      if(request.method==="GET"&&pathname==="/v1/feedback"){const input=feedbackListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listFeedback(actor,{limit:input.limit,offset:input.offset,...(input.status===undefined?{}:{status:input.status}),...(input.actionable===undefined?{}:{actionableOnly:input.actionable})}));}
       if(segments[0]==="v1"&&segments[1]==="feedback"&&segments[2]){
         if(request.method==="GET"){const value=await this.service.feedbackDetail(actor,segments[2]);return value?ok(value):notFound();}
         if(request.method==="PATCH"){const input=feedbackPatchSchema.parse(request.body);const patch={...(input.status===undefined?{}:{status:input.status}),...(input.classification===undefined?{}:{classification:input.classification})};const value=await this.service.triageFeedback(actor,segments[2],patch);return value?ok(value):notFound();}
@@ -50,8 +50,8 @@ export class KnowledgeOpsApi {
         if(request.method==="GET"){const value=await this.service.issueDetail(actor,segments[2]);return value?ok(value):notFound();}
         if(request.method==="PATCH"){const input=issuePatchSchema.parse(request.body);const value=await this.service.triageIssue(actor,segments[2],input.status);return value?ok(value):notFound();}
       }
-      if(request.method==="GET"&&pathname==="/v1/repair-drafts/ready")return ok(await this.service.listReadyRepairDrafts(actor));
-      if(request.method==="GET"&&pathname==="/v1/repair-batches")return ok(await this.service.listRepairBatches(actor));
+      if(request.method==="GET"&&pathname==="/v1/repair-drafts/ready"){const input=paginatedListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listReadyRepairDrafts(actor,input));}
+      if(request.method==="GET"&&pathname==="/v1/repair-batches"){const input=paginatedListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listRepairBatches(actor,input));}
       if(request.method==="POST"&&pathname==="/v1/repair-batches"){const input=repairBatchRequestSchema.parse(request.body);return created(await this.service.requestRepairBatch(actor,input.draftIds));}
       if(segments[0]==="v1"&&segments[1]==="repair-batches"&&segments[2]&&request.method==="GET"){const value=await this.service.repairBatchDetail(actor,segments[2]);return value?ok(value):notFound();}
       if(segments[0]==="v1"&&segments[1]==="repair-drafts"&&segments[2]){
@@ -74,14 +74,14 @@ export class KnowledgeOpsApi {
       if(segments[0]==="v1"&&segments[1]==="revisions"&&segments[2]&&segments.length===3&&request.method==="GET"){const value=await this.service.cardRevisionDetail(actor,segments[2]);return value?ok(value):notFound();}
       if(request.method==="GET"&&pathname==="/v1/regressions")return ok(await this.service.listRegressionCases(actor));
       if(request.method==="GET"&&pathname==="/v1/regression-plan")return ok(await this.service.regressionPlan(actor));
-      if(request.method==="GET"&&pathname==="/v1/regression-runs")return ok(await this.service.listRegressionRuns(actor));
+      if(request.method==="GET"&&pathname==="/v1/regression-runs"){const input=paginatedListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listRegressionRuns(actor,input));}
       if(request.method==="POST"&&pathname==="/v1/regression-runs")return created(await this.service.recordRegressionRun(actor,request.body));
       if(request.method==="POST"&&pathname==="/v1/regressions/run")return created(await this.service.enqueueRegression(actor,record(request.body)));
-      if(request.method==="GET"&&pathname==="/v1/releases")return ok(await this.service.listReleases(actor));
+      if(request.method==="GET"&&pathname==="/v1/releases"){const input=paginatedListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.listReleases(actor,input));}
       if(request.method==="POST"&&pathname==="/v1/releases")return created(await this.service.requestRelease(actor,request.body));
       if(segments[0]==="v1"&&segments[1]==="releases"&&segments[2]&&segments[3]==="rollback"&&request.method==="POST")return created(await this.service.requestRollback(actor,segments[2]));
       if(request.method==="GET"&&pathname==="/v1/jobs")return ok(await this.service.jobs(actor));
-      if(request.method==="GET"&&pathname==="/v1/audit")return ok(await this.service.auditEvents(actor));
+      if(request.method==="GET"&&pathname==="/v1/audit"){const input=paginatedListQuerySchema.parse(Object.fromEntries(url.searchParams));return ok(await this.service.auditEvents(actor,input));}
       return {status:404,body:{error:"route_not_found"}};
     }catch(error){return errorResponse(error);}
   }
