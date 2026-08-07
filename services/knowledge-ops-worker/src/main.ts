@@ -11,6 +11,7 @@ import { loadAnswerReviewModelConfig,loadRepairModelConfig } from "./answer-revi
 import { KnowledgeRepairAgent } from "./repair-agent.js";
 import { HttpKnowledgeRuntimeController } from "./knowledge-runtime-controller.js";
 import { ProcessReleaseQualityRunner } from "./release-quality-runner.js";
+import { workerPoolConcurrency } from "./worker-pool-config.js";
 
 const required=(name:string)=>{const value=process.env[name];if(!value)throw new Error(`${name}_required`);return value;};
 const professional=required("PROFESSIONAL_KB_ROOT"),general=required("GENERAL_KB_ROOT");
@@ -31,19 +32,18 @@ const dependencies={
   runtimeController:new HttpKnowledgeRuntimeController({baseUrl:required("KNOWLEDGE_ENGINE_URL"),token:required("KNOWLEDGE_ENGINE_TOKEN"),timeoutMs:duration("KNOWLEDGE_OPS_ENGINE_RELOAD_TIMEOUT_MS",900_000)}),
   releaseQualityRunner:new ProcessReleaseQualityRunner({command:process.execPath,entryPath:path.resolve(process.env.KNOWLEDGE_OPS_RELEASE_GATE_ENTRY_PATH??"scripts/probe-release-quality.mts"),cwd:process.cwd(),timeoutMs:duration("KNOWLEDGE_OPS_RELEASE_GATE_TIMEOUT_MS",1_800_000)}),
 } as const;
+const maintenanceConcurrency=workerPoolConcurrency(process.env,"KNOWLEDGE_OPS_MAINTENANCE_CONCURRENCY",1);
 await store.recoverStaleJobs();
-await store.enqueueJob("compile_catalog",{trigger:"worker_startup"});
-await store.enqueueJob("reconcile_runtime",{trigger:"worker_startup"});
+if(maintenanceConcurrency>0){await store.enqueueJob("compile_catalog",{trigger:"worker_startup"});await store.enqueueJob("reconcile_runtime",{trigger:"worker_startup"});}
 let stopping=false;process.once("SIGINT",()=>{stopping=true;});process.once("SIGTERM",()=>{stopping=true;});
 const workerId=process.env.KNOWLEDGE_OPS_WORKER_ID??`worker-${process.pid}`,pools:readonly WorkerPool[]=[
-  {name:"review",concurrency:concurrency("KNOWLEDGE_OPS_REVIEW_CONCURRENCY",4),types:["answer_review"]},
-  {name:"draft",concurrency:concurrency("KNOWLEDGE_OPS_DRAFT_CONCURRENCY",3),types:["generate_repair_draft"]},
-  {name:"validation",concurrency:concurrency("KNOWLEDGE_OPS_VALIDATION_CONCURRENCY",2),types:["validate_repair_draft"]},
-  {name:"maintenance",concurrency:concurrency("KNOWLEDGE_OPS_MAINTENANCE_CONCURRENCY",1),types:["compile_catalog","reconcile_runtime","regression_run","publish_release","rollback_release","git_writeback","publish_repair","publish_repair_batch","rollback_repair","rollback_repair_batch"]},
+  {name:"review",concurrency:workerPoolConcurrency(process.env,"KNOWLEDGE_OPS_REVIEW_CONCURRENCY",4),types:["answer_review"]},
+  {name:"draft",concurrency:workerPoolConcurrency(process.env,"KNOWLEDGE_OPS_DRAFT_CONCURRENCY",3),types:["generate_repair_draft"]},
+  {name:"validation",concurrency:workerPoolConcurrency(process.env,"KNOWLEDGE_OPS_VALIDATION_CONCURRENCY",2),types:["validate_repair_draft"]},
+  {name:"maintenance",concurrency:maintenanceConcurrency,types:["compile_catalog","reconcile_runtime","regression_run","publish_release","rollback_release","git_writeback","publish_repair","publish_repair_batch","rollback_repair","rollback_repair_batch"]},
 ];
 try{await Promise.all(pools.flatMap((pool)=>Array.from({length:pool.concurrency},(_,index)=>runPool(new KnowledgeOpsWorker(`${workerId}-${pool.name}-${index+1}`,dependencies),pool.types))));}finally{await store.close();}
 
 interface WorkerPool{readonly name:string;readonly concurrency:number;readonly types:readonly OpsJobType[];}
 async function runPool(worker:KnowledgeOpsWorker,types:readonly OpsJobType[]){while(!stopping){const worked=await worker.runOnce(types);if(!worked)await new Promise(resolve=>setTimeout(resolve,1_000));}}
-function concurrency(name:string,fallback:number){const raw=process.env[name];if(raw===undefined)return fallback;const value=Number(raw);if(!Number.isInteger(value)||value<1||value>16)throw new Error(`${name}_invalid`);return value;}
 function duration(name:string,fallback:number){const raw=process.env[name];if(raw===undefined)return fallback;const value=Number(raw);if(!Number.isInteger(value)||value<1_000||value>1_800_000)throw new Error(`${name}_invalid`);return value;}
