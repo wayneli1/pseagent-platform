@@ -34,6 +34,21 @@ export class KnowledgeOpsWorker {
       }
       if(draft!==undefined){await this.dependencies.store.updateRepairDraft(draftId,{status:"failed",errorCode:code});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.failed",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:draft.issueId,errorCode:code,attempt:job.attempts,maxAttempts:3},createdAt:new Date().toISOString()});}
     }
+    if(job.type==="validate_repair_draft"){
+      const draftId=requireString(job.payload,"draftId"),validationId=requireString(job.payload,"validationId"),draft=await this.dependencies.store.getRepairDraft(draftId);
+      if(draft!==undefined&&isTransientModelError(code)&&job.attempts<3){
+        const delayMs=job.attempts===1?15_000:45_000,availableAt=new Date(Date.now()+delayMs).toISOString();
+        await this.dependencies.store.updateRepairValidation(validationId,{status:"queued",errorCode:code});
+        await this.dependencies.store.updateRepairDraft(draftId,{status:"validating",errorCode:code});
+        await this.dependencies.store.updateIssue(draft.issueId,"validating");
+        await this.dependencies.store.retryJob(job.jobId,code,availableAt);
+        await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.validation.retry_scheduled",resourceType:"repair_validation",resourceId:validationId,metadata:{draftId,issueId:draft.issueId,errorCode:code,attempt:job.attempts,maxAttempts:3,availableAt},createdAt:new Date().toISOString()});
+        return;
+      }
+      const completedAt=new Date().toISOString(),encryptedPayload=this.dependencies.cipher?.encrypt({result:{passed:false,errorCode:code}});
+      await this.dependencies.store.updateRepairValidation(validationId,{status:"failed",errorCode:code,...(encryptedPayload===undefined?{}:{encryptedPayload}),completedAt});
+      if(draft!==undefined){await this.dependencies.store.updateRepairDraft(draftId,{status:"validation_failed",errorCode:code});await this.dependencies.store.updateIssue(draft.issueId,"in_progress");await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.validation.error",resourceType:"repair_validation",resourceId:validationId,metadata:{draftId,issueId:draft.issueId,errorCode:code,attempt:job.attempts,maxAttempts:3},createdAt:completedAt});}
+    }
     await this.dependencies.store.failJob(job.jobId,code);
   }
   private async execute(job:OpsJob):Promise<Record<string,unknown>>{
@@ -127,9 +142,8 @@ export class KnowledgeOpsWorker {
   }
   private async validateRepairDraft(draftId:string,validationId:string):Promise<Record<string,unknown>>{
     const cipher=this.dependencies.cipher,reviewer=this.dependencies.answerReviewer;if(cipher===undefined||reviewer===undefined)throw new Error("repair_validator_not_configured");
-    const validation=await this.dependencies.store.getRepairValidation(validationId);if(validation===undefined||validation.draftId!==draftId)throw new Error("repair_validation_not_found");await this.dependencies.store.updateRepairValidation(validationId,{status:"running"});
-    try{
-      const material=await this.repairMaterial(draftId,cipher),candidateCatalog=await this.compileRepairCandidate(material.source,material.draft.baseGitRevision!,material.proposal.targetPath!,material.rendered,material.baselineCatalog);
+    const validation=await this.dependencies.store.getRepairValidation(validationId);if(validation===undefined||validation.draftId!==draftId)throw new Error("repair_validation_not_found");await this.dependencies.store.updateRepairValidation(validationId,{status:"running",errorCode:""});
+    const material=await this.repairMaterial(draftId,cipher),candidateCatalog=await this.compileRepairCandidate(material.source,material.draft.baseGitRevision!,material.proposal.targetPath!,material.rendered,material.baselineCatalog);
       const card=candidateCatalog.cards.find((item)=>item.cardId===material.proposal.cardId);if(card===undefined)throw new Error("repair_candidate_card_missing");
       const regressionCases=await this.dependencies.store.listRegressionCases(),validationFingerprint=hashText(stableJson({policyVersion:PROJECT_DATA_POLICY_VERSION,proposal:material.proposal,evidence:material.evidence,candidateCatalogHash:hashCatalog(candidateCatalog),regressionCases}));
       const previous=(await this.dependencies.store.listRepairValidations(draftId)).find((item)=>item.validationId!==validationId&&(item.status==="passed"||item.status==="failed"));
@@ -146,7 +160,6 @@ export class KnowledgeOpsWorker {
       const passed=material.evidence.issues.length===0&&targeted.every((item)=>item.passed)&&fullRegression.every((item)=>item.passed),completedAt=new Date().toISOString(),diagnostics=uniqueValidationDiagnostics(targeted.flatMap((item)=>item.diagnostics)),result={passed,outcome:passed?"passed":"validation_failed",validationFingerprint,targeted,fullRegression,evidenceIssues:material.evidence.issues,candidateCardId:card.cardId,diagnostics};
       await this.dependencies.store.updateRepairValidation(validationId,{status:passed?"passed":"failed",totalCases,passedCases,encryptedPayload:cipher.encrypt({result}),completedAt});await this.dependencies.store.updateRepairDraft(draftId,{status:passed?"ready_to_publish":"validation_failed"});await this.dependencies.store.updateIssue(material.draft.issueId,passed?"validating":"in_progress");
       await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:passed?"repair.validation.passed":"repair.validation.failed",resourceType:"repair_validation",resourceId:validationId,metadata:{draftId,issueId:material.draft.issueId,totalCases,passedCases},createdAt:completedAt});return{validationId,passed,totalCases,passedCases};
-    }catch(error){const code=safeCode(error),completedAt=new Date().toISOString();await this.dependencies.store.updateRepairValidation(validationId,{status:"failed",errorCode:code,encryptedPayload:cipher.encrypt({result:{passed:false,errorCode:code}}),completedAt});const draft=await this.dependencies.store.getRepairDraft(draftId);await this.dependencies.store.updateRepairDraft(draftId,{status:"validation_failed",errorCode:code});if(draft!==undefined)await this.dependencies.store.updateIssue(draft.issueId,"in_progress");await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.validation.error",resourceType:"repair_validation",resourceId:validationId,metadata:{draftId,errorCode:code},createdAt:completedAt});throw error;}
   }
   private async repairMaterial(draftId:string,cipher:ContentCipher){
     const storedDraft=await this.dependencies.store.getRepairDraft(draftId);if(storedDraft===undefined)throw new Error("repair_draft_not_found");const proposal=repairProposalSchema.parse(cipher.decrypt<{proposal?:unknown}>(storedDraft.encryptedPayload).proposal) as RepairDraftProposal;
