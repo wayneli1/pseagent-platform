@@ -13,6 +13,11 @@ describe("项目数据证据边界",()=>{
     expect(result.diagnostics).toEqual([]);
   });
 
+  it("不把项目实时同步机制误判成用户规模实时化",()=>{
+    const result=evaluateProjectDataAnswer({answer:"**华为项目**\n东莞节点为主生产节点（预测10万用户），英国节点为海外镜像节点（预测2万用户），通过实时同步、强同步和定时同步传输数据。",evidence});
+    expect(result.diagnostics).toEqual([]);
+  });
+
   it("拒绝把项目数据扩大为所有客户通用配置",()=>{
     const result=evaluateProjectDataAnswer({answer:"**华为项目**\n东莞节点预测10万用户，因此所有客户的通用配置都是10万用户。",evidence});
     expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({stage:"forbidden_claim",suggestedAction:"modify_answer"})]));
