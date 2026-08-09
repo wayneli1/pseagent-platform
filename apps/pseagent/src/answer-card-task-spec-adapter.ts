@@ -53,6 +53,13 @@ export function compileExactAnswerCardTaskSpec(input: {
   if (input.match.matchType !== "exact") {
     return { activated: false, reason: "match_not_active" };
   }
+  return compileSingleCardAnswerCardTaskSpec(input);
+}
+
+function compileSingleCardAnswerCardTaskSpec(input: {
+  readonly match: Exclude<AnswerCardMatch, { matchType: "none" }>;
+  readonly resolvedQuestion: ResolvedQuestion;
+}): AnswerCardTaskSpecAdapterResult {
   if (input.match.bindings.length === 0 || input.match.bindings.length > 6) {
     return { activated: false, reason: "requirement_limit_exceeded" };
   }
@@ -154,6 +161,13 @@ export function adaptAnswerCardToTaskSpec(input: {
   }
   if (input.match.matchType === "exact") {
     return compileExactAnswerCardTaskSpec({
+      match: input.match,
+      resolvedQuestion: input.resolvedQuestion,
+    });
+  }
+  if (isHighConfidenceSingleCardFamily(input.match) &&
+      !hasRequiredCustomerInput(input.taskSpec)) {
+    return compileSingleCardAnswerCardTaskSpec({
       match: input.match,
       resolvedQuestion: input.resolvedQuestion,
     });
@@ -305,6 +319,23 @@ export function adaptAnswerCardToTaskSpec(input: {
     guard,
     policies: Object.freeze(policies),
   };
+}
+
+function hasRequiredCustomerInput(taskSpec: TaskSpec): boolean {
+  return taskSpec.deliverables.some((deliverable) =>
+    deliverable.required && deliverable.obligations.some((obligation) =>
+      obligation.required && obligation.evidencePolicy === "customer_input"));
+}
+
+function isHighConfidenceSingleCardFamily(
+  match: Exclude<AnswerCardMatch, { matchType: "none" }>,
+): boolean {
+  return match.matchType === "family" &&
+    match.confidence === "high" &&
+    match.cardIdHashes.length === 1 &&
+    match.bindings.filter((binding) => binding.required).length > 1 &&
+    match.bindings.every((binding) => binding.evidencePolicy !== "customer_input") &&
+    new Set(match.bindings.map((binding) => binding.cardId)).size === 1;
 }
 
 export function applyAnswerCardPoliciesToPlan(input: {

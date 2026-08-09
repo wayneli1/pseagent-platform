@@ -943,6 +943,86 @@ describe("answer card TaskSpec adapter", () => {
     expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
   });
 
+  it("activates one high-confidence multi-obligation card independently of model task decomposition", () => {
+    const question = "Can one governed card cover storage boundaries and operations visibility?";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "mail storage", role: "subject", sourceText: question }],
+      deliverables: [{
+        id: "D1",
+        label: "storage answer",
+        kind: "fact",
+        required: true,
+        sourceText: "storage split",
+        obligations: [{
+          id: "O1",
+          label: "explain storage",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "storage split",
+        }],
+      }, {
+        id: "D2",
+        label: "visibility answer",
+        kind: "fact",
+        required: true,
+        sourceText: "visibility filter",
+        obligations: [{
+          id: "O2",
+          label: "explain visibility",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "visibility filter",
+        }],
+      }],
+    });
+    const binding = (
+      id: string,
+      label: string,
+    ): Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] => ({
+      obligationId: id,
+      cardObligationId: id,
+      cardId: "PRO-MS-BOUNDARY",
+      label,
+      domain: "coremail-professional",
+      domains: ["coremail-professional"],
+      required: true,
+      evidencePolicy: "synthesis",
+      requiredConcepts: [label],
+      forbiddenClaims: [],
+      preferredEvidencePaths: [],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "e".repeat(64),
+      familyId: "MS-BOUNDARY-FAMILY",
+      bindings: [
+        binding("O1", "product boundary"),
+        binding("O2", "validation process"),
+        binding("O3", "contract boundary"),
+      ],
+      cardIdHashes: ["f".repeat(64)],
+      expectedRevisions: { "coremail-professional": professionalRevision },
+      candidateCount: 1,
+    };
+
+    const result = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    });
+
+    expect(result).toMatchObject({ activated: true });
+    if (!result.activated) throw new Error("expected activation");
+    expect(result.taskSpec.deliverables).toHaveLength(1);
+    expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
+  });
+
   it("reports every answer-card concept missing after verification", () => {
     const binding = {
       domain: "presales-general" as const,
