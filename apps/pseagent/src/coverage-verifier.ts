@@ -1240,21 +1240,24 @@ function enforceAspectCoverage(
     if (summary === undefined || plannedAspectCount === 0) {
       return requirement;
     }
-    if (
-      requirement.coverage === "partial" &&
-      summary.removedSegmentCount > 0 &&
-      summary.removedSegmentCount <=
-        summary.retainedDirectSegmentCount + summary.retainedSynthesizedSegmentCount &&
+    const retainedSegmentCount = summary.retainedDirectSegmentCount +
+      summary.retainedSynthesizedSegmentCount;
+    const allPlannedAspectsCovered = retainedSegmentCount > 0 &&
+      summary.coveredAspectCount === plannedAspectCount &&
+      summary.missingAspectCount === 0;
+    const allClaimsRetained = summary.removedSegmentCount === 0;
+    const onlyUnsupportedExtrasRemoved = summary.removedSegmentCount > 0 &&
+      summary.removedSegmentCount <= retainedSegmentCount &&
       (
         draft.requirements[index]?.coverage === "partial" ||
         !/(?:认证流程|处理流程|操作流程|关键步骤|完整步骤|关键配置|配置项|配置参数)/u.test(
           plan.requirements[index]?.question ?? "",
         )
-      ) &&
-      summary.retainedDirectSegmentCount +
-          summary.retainedSynthesizedSegmentCount > 0 &&
-      summary.coveredAspectCount === plannedAspectCount &&
-      summary.missingAspectCount === 0
+      );
+    if (
+      requirement.coverage === "partial" &&
+      allPlannedAspectsCovered &&
+      (allClaimsRetained || onlyUnsupportedExtrasRemoved)
     ) {
       return {
         ...requirement,

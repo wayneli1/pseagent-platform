@@ -1371,6 +1371,80 @@ describe("verifyKnowledgeCoverage", () => {
     });
   });
 
+  it("corrects a partial draft when every retained claim and planned aspect is verified", async () => {
+    const plan: KnowledgePlan = {
+      subject: "模块故障处理",
+      requirements: [{
+        id: "R1",
+        question: "说明仲裁、模块切换、数据校验和回切",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [
+          { id: "A1", label: "仲裁与模块切换", terms: ["仲裁", "切换"] },
+          { id: "A2", label: "数据校验与回切", terms: ["数据校验", "回切"] },
+        ],
+        queries: [{
+          text: "仲裁 模块切换 数据校验 回切",
+          aspectIds: ["A1", "A2"],
+        }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "partial",
+        answer: [
+          "故障时先通过多数仲裁完成模块切换 [1]。",
+          "回切前完成数据校验，且不承诺固定恢复时间 [2]。",
+        ].join("\n"),
+        citations: [1, 2],
+      }],
+      citations: [1, 2],
+    };
+
+    const result = await verifyKnowledgeCoverage({
+      question: plan.subject,
+      plan,
+      draft,
+      evidence: [
+        {
+          requirementId: "R1",
+          citation: 1,
+          title: "模块切换",
+          path: "wiki/concepts/failover.md",
+          content: "正文说明多数仲裁和模块切换。",
+          aspectIds: ["A1"],
+        },
+        {
+          requirementId: "R1",
+          citation: 2,
+          title: "数据回切",
+          path: "wiki/concepts/failback.md",
+          content: "正文说明回切前完成数据校验且恢复时间需以项目为准。",
+          aspectIds: ["A2"],
+        },
+      ],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0, 1],
+          synthesizedTargetSegmentIndexes: [0, 1],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1", "A2"],
+          reason: "synthesized_support",
+        }],
+      } as CoverageVerificationAction),
+    });
+
+    expect(result.requirements[0]).toMatchObject({
+      coverage: "complete",
+      answer: expect.stringContaining("固定恢复时间"),
+      citations: [1, 2],
+    });
+  });
+
   it("retains synthesized segments with deterministic disclosure and support counts", async () => {
     const onVerified = vi.fn();
     const result = await verifyKnowledgeCoverage({

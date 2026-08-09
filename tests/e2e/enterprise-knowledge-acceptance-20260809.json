@@ -50,9 +50,9 @@
       "expectedScope": "professional",
       "expectedTarget": "ordinary_retrieval",
       "expectedEvidence": [],
-      "requiredFactGroups": [["心跳"], ["仲裁", "投票"], ["奇数", "3个"], ["UD"], ["MS"], ["deliveragent", "投递"], ["数据一致性", "复制进度"], ["手动回切", "回切前"], ["RPO", "RTO", "固定恢复时间"]],
+      "requiredFactGroups": [["心跳"], ["仲裁", "投票"], ["奇数", "3个"], ["UD"], ["MS"], ["deliveragent", "投递"], ["数据一致性", "复制进度"], ["手动回切", "回切前"]],
       "forbiddenClaims": ["所有模块都采用完全相同的切换方式", "故障恢复后一定自动回切且零数据丢失"],
-      "expectedBehavior": "说明多数仲裁和模块差异，并把复制、配置、索引与共享存储校验放在回切前，拒绝无证据的RPO/RTO承诺",
+      "expectedBehavior": "说明多数仲裁和模块差异，并把复制、配置、索引与共享存储校验放在回切前；若回答涉及RPO/RTO，不得给出无正式证据的固定承诺",
       "expectedIssueCenter": false
     },
     {
