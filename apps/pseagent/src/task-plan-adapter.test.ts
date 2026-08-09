@@ -163,6 +163,54 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
       .toBe("管理员权限 方案设计与验收边界是什么");
   });
 
+  it("keeps a traceable leading incident premise when the request has no bound entity", () => {
+    const incidentQuestion =
+      "用户说外部邮件没收到，怎样沿接收、过滤、路由、投递和信筒建立完整证据链？";
+    const request = "怎样沿接收、过滤、路由、投递和信筒建立完整证据链";
+    const spec: TaskSpec = {
+      subject: incidentQuestion,
+      entities: [{
+        id: "E1",
+        label: "邮件证据链",
+        role: "subject",
+        sourceText: incidentQuestion,
+      }],
+      deliverables: [{
+        id: "D1",
+        label: request,
+        kind: "diagnosis",
+        required: true,
+        sourceText: request,
+        obligations: [{
+          id: "O1",
+          label: request,
+          targetEntityIds: [],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: request,
+        }],
+      }],
+    };
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: {
+        ...resolvedQuestion,
+        rawQuestion: incidentQuestion,
+        standaloneQuestion: incidentQuestion,
+      },
+      taskSpec: spec,
+      guardResult: passingGuard,
+    });
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+
+    expect(result.plan.requirements[0]?.question)
+      .toBe("怎样沿接收 过滤 路由 投递和信筒建立完整证据链");
+    expect(result.plan.requirements[0]?.queries[0]?.text)
+      .toContain("用户说外部邮件没收到");
+  });
+
   it("restores named comparison context when a split obligation only says two sides", () => {
     const comparisonQuestion =
       "客户已有共享存储双机热备，为什么还会考虑 Coremail 多活？两者关键差异和限制是什么？";

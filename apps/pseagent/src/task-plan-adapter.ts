@@ -157,6 +157,13 @@ export function adaptTaskSpecToKnowledgePlan(
       )
       ? input.resolvedQuestion.standaloneQuestion
       : "";
+    const leadingQuestionContext = requiredParallelScope === undefined
+      ? traceableLeadingQuestionContext(
+        input.resolvedQuestion.standaloneQuestion,
+        item.obligation.sourceText,
+        otherEntitySourceTexts,
+      )
+      : "";
     const requiredParallelContext = requiredParallelScope?.sharedRequest ?? "";
     const baseRequirementQuestion = buildSemanticQuery([
       ...entitySourceTexts,
@@ -170,6 +177,7 @@ export function adaptTaskSpecToKnowledgePlan(
     ]);
     const primaryQuery = buildSemanticQuery([
       ...entitySourceTexts,
+      leadingQuestionContext,
       obligationSourceText,
       deliverableSourceText,
       comparisonContext,
@@ -329,6 +337,34 @@ function isRelevantParallelEntitySource(
   const normalizedSource = normalizeSemanticText(sourceText);
   return !scope.otherItems.some((item) =>
     normalizedSource.includes(normalizeSemanticText(item)));
+}
+
+function traceableLeadingQuestionContext(
+  question: string,
+  requestSourceText: string,
+  excludedEntityTexts: readonly string[],
+): string {
+  const requestIndex = question.indexOf(requestSourceText);
+  if (requestIndex <= 0) return "";
+  const prefix = question.slice(0, requestIndex);
+  const lastBoundary = Math.max(
+    prefix.lastIndexOf("。"),
+    prefix.lastIndexOf("！"),
+    prefix.lastIndexOf("？"),
+    prefix.lastIndexOf("!"),
+    prefix.lastIndexOf("?"),
+    prefix.lastIndexOf("；"),
+    prefix.lastIndexOf(";"),
+  );
+  const context = scopedDeliverableSource(
+    prefix.slice(lastBoundary + 1),
+    excludedEntityTexts,
+  )
+    .replace(/^[，,\s]+|[，,\s]+$/gu, "")
+    .trim();
+  return characterLength(context) >= 4 && characterLength(context) <= 128
+    ? context
+    : "";
 }
 
 function explicitComparisonDimensions(value: string): string[] {
