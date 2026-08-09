@@ -15,6 +15,7 @@ import {
 
 export interface AnswerCardObligationPolicy {
   readonly obligationId: string;
+  readonly label: string;
   readonly cardId: string;
   readonly cardObligationId: string;
   readonly requiredConcepts: readonly string[];
@@ -114,6 +115,7 @@ function compileSingleCardAnswerCardTaskSpec(input: {
 
   const policies = input.match.bindings.map((binding, index) => Object.freeze({
     obligationId: `O${index + 1}`,
+    label: binding.label,
     cardId: binding.cardId,
     cardObligationId: binding.cardObligationId,
     requiredConcepts: Object.freeze([...binding.requiredConcepts]),
@@ -264,6 +266,7 @@ export function adaptAnswerCardToTaskSpec(input: {
             bindingIndex: draft.cardBindingIndex ?? Number.MAX_SAFE_INTEGER,
             policy: Object.freeze({
               obligationId: id,
+              label: draft.cardBinding.label,
               cardId: draft.cardBinding.cardId,
               cardObligationId: draft.cardBinding.cardObligationId,
               requiredConcepts: Object.freeze([...draft.cardBinding.requiredConcepts]),
@@ -353,17 +356,28 @@ export function applyAnswerCardPoliciesToPlan(input: {
       if (policy === undefined || policy.requiredConcepts.length === 0) {
         return requirement;
       }
+      const governedQuestion = boundedText(
+        policy.label,
+        1_024,
+        requirement.question,
+      );
       const evidenceAspects = requirement.evidenceAspects.map((aspect, aspectIndex) =>
         aspectIndex !== 0
           ? aspect
           : {
               ...aspect,
+              label: boundedText(policy.label, 256, aspect.label),
               terms: stableSemanticText([
-                ...aspect.terms,
+                policy.label,
                 ...policy.requiredConcepts,
+                ...aspect.terms,
               ]).filter((term) => [...term].length <= 128).slice(0, 8),
             });
-      const expandedQuery = [requirement.question, ...policy.requiredConcepts]
+      const expandedQuery = [
+        requirement.question,
+        policy.label,
+        ...policy.requiredConcepts,
+      ]
         .join(" ")
         .trim();
       const queries = [...requirement.queries];
@@ -374,7 +388,12 @@ export function applyAnswerCardPoliciesToPlan(input: {
       ) {
         queries.push({ text: expandedQuery, aspectIds: ["A1"] });
       }
-      return { ...requirement, evidenceAspects, queries };
+      return {
+        ...requirement,
+        question: governedQuestion,
+        evidenceAspects,
+        queries,
+      };
     }),
   };
   const parsed = knowledgePlanSchema.safeParse(candidate);

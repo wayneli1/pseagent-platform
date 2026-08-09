@@ -605,6 +605,7 @@ describe("answer card TaskSpec adapter", () => {
       .toContain("迁移风险沟通方法");
     expect(adapted.policies).toEqual([expect.objectContaining({
       obligationId: "O1",
+      label: "说明 Coremail 迁移能力",
       cardId: "CM-MIGRATION-001",
       preferredEvidencePaths: ["wiki/queries/coremail-migration.md"],
     })]);
@@ -615,6 +616,12 @@ describe("answer card TaskSpec adapter", () => {
     });
     expect(governedPlan.requirements[0]?.evidenceAspects[0]?.terms)
       .toEqual(expect.arrayContaining(["Coremail", "迁移能力"]));
+    expect(governedPlan.requirements[0]).toMatchObject({
+      question: "说明 Coremail 迁移能力",
+      evidenceAspects: [{
+        label: "说明 Coremail 迁移能力",
+      }],
+    });
     expect(governedPlan.requirements[0]?.queries).toHaveLength(2);
   });
 
@@ -1021,6 +1028,32 @@ describe("answer card TaskSpec adapter", () => {
     if (!result.activated) throw new Error("expected activation");
     expect(result.taskSpec.deliverables).toHaveLength(1);
     expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
+    const governedPlan = applyAnswerCardPoliciesToPlan({
+      plan: {
+        subject: question,
+        retrievalStrategy: "coverage_units",
+        requirements: ["R1", "R2", "R3"].map((id) => ({
+          id: id as "R1" | "R2" | "R3",
+          question,
+          evidenceMode: "synthesis_allowed" as const,
+          evidenceAspects: [{ id: "A1" as const, label: question, terms: [question] }],
+          queries: [{ text: question, aspectIds: ["A1" as const] }],
+        })),
+      },
+      obligationIds: ["O1", "O2", "O3"],
+      policies: result.policies,
+    });
+    expect(governedPlan.requirements.map((requirement) => requirement.question)).toEqual([
+      "product boundary",
+      "validation process",
+      "contract boundary",
+    ]);
+    expect(governedPlan.requirements.map((requirement) =>
+      requirement.evidenceAspects[0]?.label)).toEqual([
+      "product boundary",
+      "validation process",
+      "contract boundary",
+    ]);
   });
 
   it("reports every answer-card concept missing after verification", () => {
