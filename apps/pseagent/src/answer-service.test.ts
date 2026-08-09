@@ -818,6 +818,72 @@ describe("AnswerService", () => {
     expect(execution.result.scope).toBe("general");
   });
 
+  it("prefers the governed parent-card item over a model guess for numbered follow-ups", async () => {
+    const rawQuestion = "你刚才列的第二点具体怎么确认？";
+    const standaloneQuestion = "演示资格判断中“客户要解决的关键业务问题”这一项具体怎么确认？";
+    const parentCardHash = "a".repeat(64);
+    const conversationContext = JSON.stringify({
+      version: 3,
+      recentTurns: [{
+        question: "销售临时让我演示但没有客户背景，应该直接做完整演示吗？",
+        answerOutline: "模型本轮生成了很长且顺序不稳定的自然语言提纲",
+        scope: "general",
+        answerCardIdHashes: [parentCardHash],
+      }],
+    });
+    const questionResolver = { resolve: vi.fn() };
+    const answerCardMatcher = {
+      resolveContextualAnswerItem: vi.fn(() => ({
+        standaloneQuestion,
+        inheritedSubjects: ["客户要解决的关键业务问题"],
+      })),
+      match: vi.fn(async () => ({
+        matchType: "none" as const,
+        confidence: "none" as const,
+        reason: "no_family_candidate" as const,
+        catalogHash: "b".repeat(64),
+        candidateCount: 0,
+      })),
+    };
+    const planner = createPlanner();
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "general",
+      status: "answered",
+      answer: "通过具体事实、业务影响和预期结果确认。",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: { completeText: vi.fn() } as unknown as ModelClient,
+      router: { route: vi.fn(async () => "normal" as const) },
+      planner,
+      knowledge: {
+        open: vi.fn(async () => ({
+          ...createKnowledgeSessionFixture(),
+          project: "presales-general" as const,
+        } as unknown as KnowledgeSession)),
+      },
+      runAgent,
+      questionResolver,
+      answerCardMatcher,
+    });
+
+    const execution = await service.answerDetailed(rawQuestion, conversationContext);
+
+    expect(answerCardMatcher.resolveContextualAnswerItem).toHaveBeenCalledWith({
+      question: rawQuestion,
+      currentDomain: "presales-general",
+      contextualCardIdHashes: [parentCardHash],
+    });
+    expect(questionResolver.resolve).not.toHaveBeenCalled();
+    expect(planner.plan).toHaveBeenCalledWith(expect.objectContaining({
+      question: standaloneQuestion,
+    }));
+    expect(execution.questionResolution).toMatchObject({
+      standaloneQuestion,
+      contextUsed: true,
+    });
+  });
+
   it("lets an explicit product boundary override the previous general scope", async () => {
     const rawQuestion = "那它的 SAML 接口支持哪些版本？";
     const standaloneQuestion = "Coremail 的 SAML 接口支持哪些版本？";

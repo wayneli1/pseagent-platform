@@ -253,13 +253,39 @@ export class AnswerService {
           })
         : scopeForDomain(exactRoute.domain);
       if (
-        scope === "normal" &&
         exactRoute === undefined &&
-        this.dependencies.questionResolver !== undefined &&
         requiresContextualRouteResolution(question, conversationContext)
       ) {
-        try {
-          const resolved = await observeModelCall({
+        const inheritedScope = latestConversationKnowledgeScope(conversationContext);
+        const contextualCardIdHashes = latestConversationAnswerCardIdHashes(
+          conversationContext,
+        );
+        const cardResolution = inheritedScope === undefined ||
+            contextualCardIdHashes === undefined
+          ? undefined
+          : this.dependencies.answerCardMatcher?.resolveContextualAnswerItem?.({
+              question,
+              currentDomain: inheritedScope === "professional"
+                ? "coremail-professional"
+                : "presales-general",
+              contextualCardIdHashes,
+            });
+        if (cardResolution !== undefined) {
+          questionResolution = {
+            rawQuestion: question.trim(),
+            standaloneQuestion: cardResolution.standaloneQuestion,
+            contextUsed: true,
+            inheritedSubjects: cardResolution.inheritedSubjects,
+            corrections: [],
+          };
+          scope = explicitScopeForResolvedQuestion(cardResolution.standaloneQuestion) ??
+            inheritedScope!;
+        } else if (
+          scope === "normal" &&
+          this.dependencies.questionResolver !== undefined
+        ) {
+          try {
+            const resolved = await observeModelCall({
             trace,
             role: "resolver",
             operation: "resolve",
@@ -269,19 +295,19 @@ export class AnswerService {
               ...(conversationContext === undefined ? {} : { conversationContext }),
               signal: requestSignal,
             }),
-          });
-          if (
-            resolved.contextUsed &&
-            resolved.standaloneQuestion.trim() !== question.trim()
-          ) {
-            questionResolution = resolved;
-            const explicitScope = explicitScopeForResolvedQuestion(
-              resolved.standaloneQuestion,
-            );
-            const inheritedScope = latestConversationKnowledgeScope(
-              conversationContext,
-            );
-            scope = explicitScope ?? inheritedScope ?? await observeModelCall({
+            });
+            if (
+              resolved.contextUsed &&
+              resolved.standaloneQuestion.trim() !== question.trim()
+            ) {
+              questionResolution = resolved;
+              const explicitScope = explicitScopeForResolvedQuestion(
+                resolved.standaloneQuestion,
+              );
+              const resolvedInheritedScope = latestConversationKnowledgeScope(
+                conversationContext,
+              );
+              scope = explicitScope ?? resolvedInheritedScope ?? await observeModelCall({
               trace,
               role: "resolver",
               operation: "route",
@@ -291,13 +317,14 @@ export class AnswerService {
                 undefined,
                 requestSignal,
               ),
-            });
+              });
+            }
+          } catch (error) {
+            if (
+              !(error instanceof InvalidModelPayloadError) &&
+              !(error instanceof ModelUnavailableError)
+            ) throw error;
           }
-        } catch (error) {
-          if (
-            !(error instanceof InvalidModelPayloadError) &&
-            !(error instanceof ModelUnavailableError)
-          ) throw error;
         }
       }
       recordDiagnostic(trace, { event: "route", scope });

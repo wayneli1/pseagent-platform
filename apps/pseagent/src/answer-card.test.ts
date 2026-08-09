@@ -185,6 +185,30 @@ describe("answer card registry and matching", () => {
     expect(completeJson).not.toHaveBeenCalled();
   });
 
+  it("resolves a numbered follow-up from the governed parent-card list", () => {
+    const source = catalog();
+    Object.assign(source.cards[1]!, { answerTemplate: [
+      "# 演示前确认",
+      "",
+      "- 客户角色；",
+      "- 客户要解决的关键业务问题；",
+      "- 为什么现在重要；",
+    ].join("\n") });
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(source),
+      { completeJson: vi.fn() } as unknown as ModelClient,
+    );
+
+    expect(matcher.resolveContextualAnswerItem({
+      question: "你刚才列的第二点具体怎么确认？",
+      currentDomain: "presales-general",
+      contextualCardIdHashes: [hashAnswerCardIdentifier("PS-RISK-001")],
+    })).toEqual({
+      standaloneQuestion: "迁移风险沟通中“客户要解决的关键业务问题”这一项具体怎么确认？",
+      inheritedSubjects: ["客户要解决的关键业务问题"],
+    });
+  });
+
   it("rejects a catalog with no active cards when production requires governed cards", () => {
     const source = catalog();
     source.cards[0]!.reviewStatus = "draft";

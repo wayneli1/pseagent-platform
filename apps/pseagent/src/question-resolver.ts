@@ -147,7 +147,6 @@ function validateResolvedQuestion(
   attempt: number,
 ): ResolvedQuestion {
   if (
-    attempt === 1 &&
     !action.contextUsed &&
     hasRecentTurns(context) &&
     (

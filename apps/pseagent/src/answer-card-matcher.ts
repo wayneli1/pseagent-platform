@@ -83,8 +83,18 @@ export interface AnswerCardRouteHint {
   readonly expectedRevision: string;
 }
 
+export interface AnswerCardContextItemResolution {
+  readonly standaloneQuestion: string;
+  readonly inheritedSubjects: readonly string[];
+}
+
 export interface AnswerCardMatcher {
   routeExact?(question: string): AnswerCardRouteHint | undefined;
+  resolveContextualAnswerItem?(input: {
+    readonly question: string;
+    readonly currentDomain: KnowledgeDomain;
+    readonly contextualCardIdHashes: readonly string[];
+  }): AnswerCardContextItemResolution | undefined;
   match(input: AnswerCardMatcherInput): Promise<AnswerCardMatch>;
 }
 
@@ -105,6 +115,28 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
     return {
       domain: card.domain,
       expectedRevision: this.registry.expectedRevision(card.domain),
+    };
+  }
+
+  resolveContextualAnswerItem(input: {
+    readonly question: string;
+    readonly currentDomain: KnowledgeDomain;
+    readonly contextualCardIdHashes: readonly string[];
+  }): AnswerCardContextItemResolution | undefined {
+    const ordinal = explicitAnswerItemOrdinal(input.question);
+    if (ordinal === undefined) return undefined;
+    const card = this.registry.contextualCard(
+      input.contextualCardIdHashes,
+      input.currentDomain,
+      input.question,
+    );
+    if (card?.answerTemplate === undefined) return undefined;
+    const item = longestAnswerTemplateList(card.answerTemplate)[ordinal - 1];
+    if (item === undefined) return undefined;
+    const intent = answerItemFollowUpIntent(input.question);
+    return {
+      standaloneQuestion: `${card.title}中“${item}”这一项${intent}`.slice(0, 16_384),
+      inheritedSubjects: Object.freeze([item]),
     };
   }
 
@@ -330,6 +362,14 @@ export class ReloadingAnswerCardMatcher implements AnswerCardMatcher {
     return this.matcher().routeExact(question);
   }
 
+  resolveContextualAnswerItem(input: {
+    readonly question: string;
+    readonly currentDomain: KnowledgeDomain;
+    readonly contextualCardIdHashes: readonly string[];
+  }): AnswerCardContextItemResolution | undefined {
+    return this.matcher().resolveContextualAnswerItem(input);
+  }
+
   match(input:AnswerCardMatcherInput):Promise<AnswerCardMatch> {
     return this.matcher().match(input);
   }
@@ -353,6 +393,49 @@ export class ReloadingAnswerCardMatcher implements AnswerCardMatcher {
     if(this.required)registry.assertHasActiveCards();
     return new DefaultAnswerCardMatcher(registry,this.model);
   }
+}
+
+function explicitAnswerItemOrdinal(question: string): number | undefined {
+  const token = question.normalize("NFKC").match(
+    /(?:刚才|前面|上(?:一)?次|上一轮).{0,16}?第?([一二三四五六七八九十\d]+)(?:点|项|条)/u,
+  )?.[1];
+  if (token === undefined) return undefined;
+  const arabic = Number(token);
+  if (Number.isInteger(arabic) && arabic > 0) return arabic;
+  const chinese = new Map([
+    ["一", 1], ["二", 2], ["三", 3], ["四", 4], ["五", 5],
+    ["六", 6], ["七", 7], ["八", 8], ["九", 9], ["十", 10],
+  ] as const);
+  return chinese.get(token as "一");
+}
+
+function longestAnswerTemplateList(template: string): readonly string[] {
+  const groups: string[][] = [];
+  let current: string[] = [];
+  const flush = () => {
+    if (current.length > 0) groups.push(current);
+    current = [];
+  };
+  for (const line of template.split(/\r?\n/u)) {
+    const item = line.match(
+      /^\s*(?:[-*+]|\d+[.)、]|[一二三四五六七八九十]+[.)、])\s*(.+?)\s*$/u,
+    )?.[1];
+    if (item === undefined) {
+      flush();
+      continue;
+    }
+    current.push(item.replace(/[；;。]\s*$/u, "").trim());
+  }
+  flush();
+  return groups.sort((left, right) => right.length - left.length)[0] ?? [];
+}
+
+function answerItemFollowUpIntent(question: string): string {
+  const suffix = question.replace(
+    /^.*?(?:刚才|前面|上(?:一)?次|上一轮).{0,16}?第?[一二三四五六七八九十\d]+(?:点|项|条)/u,
+    "",
+  ).trim().replace(/^[，,：:；;]+/u, "");
+  return suffix === "" ? "具体是什么？" : suffix;
 }
 
 function familySupportsNamedMethods(

@@ -104,6 +104,24 @@ describe("ModelQuestionResolver", () => {
     expect(completeJson).toHaveBeenCalledTimes(2);
   });
 
+  it("does not accept a second unresolved numbered-reference repair", async () => {
+    const context=JSON.stringify({version:3,recentTurns:[{question:"演示前确认什么？",answerOutline:"1. 参会角色\n2. 关键业务问题\n3. 判断标准"}]});
+    const unresolved={action:"resolve",standaloneQuestion:"你刚才列的第二点具体怎么确认？",contextUsed:false,inheritedSubjects:[],corrections:[]};
+    const completeJson=vi.fn()
+      .mockResolvedValueOnce(unresolved)
+      .mockResolvedValueOnce(unresolved)
+      .mockResolvedValueOnce({action:"resolve",standaloneQuestion:"演示前如何确认客户的关键业务问题？",contextUsed:true,inheritedSubjects:["关键业务问题"],corrections:[]});
+
+    await expect(new ModelQuestionResolver({completeJson,completeText:vi.fn()} as unknown as ModelClient).resolve({
+      question:"你刚才列的第二点具体怎么确认？",
+      conversationContext:context,
+    })).resolves.toMatchObject({
+      standaloneQuestion:"演示前如何确认客户的关键业务问题？",
+      contextUsed:true,
+    });
+    expect(completeJson).toHaveBeenCalledTimes(3);
+  });
+
   it("repairs an unresolved leading personal pronoun when recent turns contain the role antecedent", async () => {
     const context=JSON.stringify({version:3,recentTurns:[{question:"真正决策者与普通影响者有什么区别？",answerOutline:"真正决策者能调动预算和资源；影响者只能影响评估过程，需要通过共同会议和决策历史持续验证。"}]});
     const completeJson=vi.fn()
