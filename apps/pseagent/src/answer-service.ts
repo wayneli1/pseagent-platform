@@ -161,6 +161,7 @@ export interface AnswerCardActivationSummary {
     { event: "answer_card_activation" }
   >["reason"];
   readonly obligationCount: number;
+  readonly obligationIds?: readonly string[];
   readonly issueCodes?: readonly TaskSpecIssueCode[];
 }
 
@@ -492,6 +493,13 @@ export class AnswerService {
                 ? "analysis_unavailable"
                 : adapted.reason,
             obligationCount: adapted.activated ? adapted.policies.length : 0,
+            ...(adapted.activated
+              ? {
+                  obligationIds: [...new Set(adapted.policies.map(
+                    (policy) => policy.cardObligationId,
+                  ))],
+                }
+              : {}),
             ...(adapted.activated || adapted.issueCodes === undefined
               ? {}
               : { issueCodes: adapted.issueCodes }),
@@ -1513,6 +1521,9 @@ class OutcomeTrace implements DiagnosticTrace {
         activated: event.activated,
         reason: event.reason,
         obligationCount: event.obligationCount,
+        ...(event.obligationIds === undefined
+          ? {}
+          : { obligationIds: [...event.obligationIds] }),
         ...(event.issueCodes === undefined
           ? {}
           : { issueCodes: [...event.issueCodes] }),

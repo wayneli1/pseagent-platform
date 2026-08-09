@@ -115,6 +115,7 @@ export type DiagnosticEvent =
         | "task_spec_contract_exceeded"
         | "guard_rejected";
       readonly obligationCount: number;
+      readonly obligationIds?: readonly string[];
       readonly issueCodes?: readonly TaskSpecIssueCode[];
     }
   | {
@@ -658,6 +659,9 @@ function allowlistDiagnosticEvent(
           ANSWER_CARD_ACTIVATION_REASON_VALUES,
         ),
         obligationCount: safeCount(event.obligationCount),
+        ...(event.obligationIds === undefined
+          ? {}
+          : { obligationIds: safeArray(event.obligationIds, safeRequirementId, 12) }),
         ...(event.issueCodes === undefined
           ? {}
           : {

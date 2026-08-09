@@ -73,6 +73,11 @@ describe("enterprise E2E matrix", () => {
       "如何确认关键业务问题？",
       ["具体场景", "最近一次", "现状"],
     )).toBe(false);
+    expect(acceptanceFactGroupCovered(
+      "请客户描述解决问题后的预期收益或差距。",
+      "如何确认关键业务问题？",
+      ["影响", "结果"],
+    )).toBe(true);
   });
 
   it("accepts a complete 20-case second-round matrix", () => {

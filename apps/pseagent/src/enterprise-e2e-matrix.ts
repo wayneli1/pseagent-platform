@@ -139,6 +139,13 @@ function semanticAcceptanceEquivalent(answer: string, term: string): boolean {
   if (term === "最近一次") {
     return /最近(?:一次|发生|出现|遇到|案例|事件|例子)/u.test(answer);
   }
+  if (term === "影响") {
+    return /(?:受影响|实际后果|业务后果|损失|代价)/u.test(answer);
+  }
+  if (term === "结果") {
+    return /(?:预期|期望|改善后|解决后)(?:收益|成效|效果|结果)|(?:预期收益|期望收益|收益或差距)/u
+      .test(answer);
+  }
   const universal = /^所有(.+)$/u.exec(term);
   if (universal?.[1]) {
     const subject = escapeRegExp(universal[1]);

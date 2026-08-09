@@ -14,6 +14,7 @@ export interface BridgeAnswerCardActivationSummary {
   readonly activated: boolean;
   readonly reason: string;
   readonly obligationCount: number;
+  readonly obligationIds?: readonly string[];
   readonly issueCodes?: readonly string[];
 }
 

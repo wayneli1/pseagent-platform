@@ -67,6 +67,7 @@ export class IndependentAnswerReviewer {
 
   async review(input:IndependentAnswerReviewInput):Promise<AnswerReviewResult>{
     const governedCard=governedCardForReview(input);
+    const governedObligations=governedObligationsForReview(input,governedCard);
     const messages=[
         {role:"system",content:[
           "你是企业知识问答的独立复查员，不参与原回答生成。",
@@ -96,7 +97,7 @@ export class IndependentAnswerReviewer {
           governedCard:governedCard===undefined?null:{
             cardId:governedCard.cardId,
             canonicalQuestion:governedCard.canonicalQuestion,
-            obligations:governedCard.obligations.filter((item)=>item.required).map((item)=>({
+            obligations:governedObligations.map((item)=>({
               id:item.id,label:item.label,requiredConcepts:item.requiredConcepts,forbiddenClaims:item.forbiddenClaims,
             })),
           },
@@ -161,7 +162,7 @@ export function enforceDeterministicReview(
     defects.push({category:"coverage_gap",severity:"major",summary:"回答遗漏了正式框架页面明确规定的强边界",evidence:missingFrameworkBoundaries.join("；").slice(0,1_000)});
   }
   const governedCard=governedCardForReview(input);
-  const required=governedCard?.obligations.filter((item)=>item.required)??[];
+  const required=governedObligationsForReview(input,governedCard);
   const ruleConflicts=governedCard===undefined?[]:inspectAnswerCardRuleConflicts({answerTemplate:input.answer,obligations:required,evidence:input.evidence}).filter((item)=>item.code!=="unverifiable_required_concept");
   for(const conflict of ruleConflicts){forceFail=true;defects.push({category:"logic_gap",severity:"critical",summary:`答案卡规则冲突（${conflict.obligationId}）`,evidence:`${conflict.message} 规则：${conflict.rule}`.slice(0,1_000)});}
   const checks=new Map(modelResult.obligationChecks.map((check)=>[check.obligationId,check] as const));
@@ -210,13 +211,40 @@ function governedCardForReview(input:IndependentAnswerReviewInput):AnswerCard|un
   return isUnmappedCardActivation(input.answerCardActivation)?undefined:input.governedCard;
 }
 
+function governedObligationsForReview(
+  input:IndependentAnswerReviewInput,
+  governedCard:AnswerCard|undefined,
+):readonly AnswerCard["obligations"][number][] {
+  const required=governedCard?.obligations.filter((item)=>item.required)??[];
+  const activeIds=activeObligationIds(input.answerCardActivation);
+  if(activeIds===undefined)return required;
+  const active=required.filter((item)=>activeIds.has(item.id));
+  return active.length===0?required:active;
+}
+
+function activeObligationIds(
+  activation:Record<string,unknown>|undefined,
+):ReadonlySet<string>|undefined {
+  if(activation?.activated!==true||!Array.isArray(activation.obligationIds))return undefined;
+  const ids=activation.obligationIds.filter((item):item is string=>
+    typeof item==="string"&&/^O\d+$/u.test(item));
+  return ids.length===0?undefined:new Set(ids);
+}
+
 function isInactiveCardObligationDefect(
   defect:AnswerReviewResult["defects"][number],
   input:IndependentAnswerReviewInput,
 ):boolean{
-  if(input.governedCard===undefined||!isUnmappedCardActivation(input.answerCardActivation))return false;
-  return (defect.category==="coverage_gap"||defect.category==="planning_gap")&&
-    /(?:必答项|受治理概念|required\s+obligation|obligation\s*[A-Z]?\d*)/iu.test(`${defect.summary} ${defect.evidence}`);
+  if(input.governedCard===undefined)return false;
+  const diagnostic=`${defect.summary} ${defect.evidence}`;
+  if(isUnmappedCardActivation(input.answerCardActivation)){
+    return (defect.category==="coverage_gap"||defect.category==="planning_gap")&&
+      /(?:必答项|受治理概念|required\s+obligation|obligation\s*[A-Z]?\d*)/iu.test(diagnostic);
+  }
+  const activeIds=activeObligationIds(input.answerCardActivation);
+  if(activeIds===undefined)return false;
+  const mentioned=[...diagnostic.matchAll(/\bO\d+\b/giu)].map((match)=>match[0]!.toUpperCase());
+  return mentioned.length>0&&mentioned.every((id)=>!activeIds.has(id));
 }
 
 function isUnmappedCardActivation(activation:Record<string,unknown>|undefined):boolean{

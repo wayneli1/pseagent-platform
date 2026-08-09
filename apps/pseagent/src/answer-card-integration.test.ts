@@ -253,6 +253,7 @@ describe("answer card online orchestration", () => {
       activated: true,
       reason: "activated",
       obligationCount: 1,
+      obligationIds: ["O1"],
     });
     expect(plan).not.toHaveBeenCalled();
     expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
