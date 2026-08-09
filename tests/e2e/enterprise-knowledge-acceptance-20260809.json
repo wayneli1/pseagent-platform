@@ -258,7 +258,7 @@
       "expectedScope": "normal",
       "expectedTarget": "direct_answer",
       "expectedEvidence": [],
-      "requiredFactGroups": [["位数组", "bit array"], ["哈希", "hash"], ["假阳性", "误判存在"], ["假阴性", "误判不存在"], ["可能存在"], ["一定不存在"], ["空间", "概率"]],
+      "requiredFactGroups": [["位数组", "bit array"], ["哈希", "hash"], ["假阳性", "误判存在"], ["假阴性", "误判不存在"], ["可能存在"], ["一定不存在"], ["空间", "概率", "哈希冲突", "相同位置"]],
       "forbiddenClaims": ["布隆过滤器返回存在就能证明元素一定存在", "标准布隆过滤器可以直接精确删除任意元素"],
       "expectedBehavior": "直接解释位数组和多哈希机制、概率边界与适用场景，不检索或伪造企业知识引用",
       "expectedIssueCenter": false
