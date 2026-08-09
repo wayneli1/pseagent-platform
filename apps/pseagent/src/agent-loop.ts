@@ -68,6 +68,7 @@ import {
   isDirectComparisonQuestion,
   missingExplicitComparisonLabels,
 } from "./comparison-question.js";
+import { hasDanglingCollectionEnumeration } from "./answer-structure.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const DIRECT_ONLY_READ_LIMIT = 3;
@@ -422,6 +423,26 @@ async function runKnowledgeAgentCore(
         continue;
       }
       if (directAnswerRepairs.length > 0) {
+        return fallbackUnavailable(input, "invalid_final");
+      }
+      const danglingCollectionRepairs = pendingDanglingCollectionRepairs(
+        normalizedAction,
+      );
+      if (danglingCollectionRepairs.length > 0) {
+        if (
+          state.structuredCoverageRepairAttempts < 2 &&
+          turn < maxTurns &&
+          !deadlineReached(input)
+        ) {
+          state.structuredCoverageRepairAttempts += 1;
+          state.forceFinal = true;
+          observe(state, {
+            type: "structured_coverage_repair_required",
+            reason: "dangling_collection_enumeration",
+            requirements: danglingCollectionRepairs,
+          });
+          continue;
+        }
         return fallbackUnavailable(input, "invalid_final");
       }
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
@@ -3180,6 +3201,15 @@ function pendingComparisonSubjectRepairs(
 
 const STRUCTURED_COMPLETENESS_QUESTION_PATTERN =
   /(?:认证流程|处理流程|操作流程|关键步骤|完整步骤|关键配置|配置项|配置参数)/u;
+
+function pendingDanglingCollectionRepairs(action: FinalAction): string[] {
+  return action.requirements.flatMap((requirement) =>
+    requirement.coverage !== "none" &&
+      hasDanglingCollectionEnumeration(requirement.answer)
+      ? [requirement.id]
+      : []
+  );
+}
 
 function pendingStructuredCoverageRepairs(
   draft: FinalAction,

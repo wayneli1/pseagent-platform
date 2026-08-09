@@ -14,7 +14,8 @@ afterEach(async()=>{await Promise.all(temporary.splice(0).map((root)=>rm(root,{r
 it("syncs both real catalog domains once and remains idempotent",async()=>{
   const workspace=path.resolve(import.meta.dirname,"../../../..");
   const professional=path.join(workspace,"coremail-professional"),general=path.join(workspace,"presales-general");
-  const expectedCount=(await new CatalogCompiler().compile([{domain:"coremail-professional",root:professional},{domain:"presales-general",root:general}])).cards.length;
+  const catalog=await new CatalogCompiler().compile([{domain:"coremail-professional",root:professional},{domain:"presales-general",root:general}]);
+  const expectedCount=catalog.cards.length,statusByCardId=new Map(catalog.cards.map(card=>[card.cardId,card.reviewStatus]));
   const runtime=await mkdtemp(path.join(tmpdir(),"pse-catalog-sync-"));temporary.push(runtime);
   const store=new InMemoryKnowledgeOpsStore();
   const worker=new KnowledgeOpsWorker("catalog-worker",{
@@ -28,7 +29,7 @@ it("syncs both real catalog domains once and remains idempotent",async()=>{
   expect(await worker.runOnce(["compile_catalog"])).toBe(true);
   const first=await store.listCardRevisions();
   expect(first).toHaveLength(expectedCount);
-  expect(first.every((card)=>card.createdBy==="catalog-sync"&&card.status==="approved")).toBe(true);
+  expect(first.every((card)=>card.createdBy==="catalog-sync"&&card.status===statusByCardId.get(card.cardId))).toBe(true);
   await store.enqueueJob("compile_catalog",{trigger:"test-repeat"});
   expect(await worker.runOnce()).toBe(true);
   expect(await store.listCardRevisions()).toHaveLength(expectedCount);

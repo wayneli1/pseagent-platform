@@ -6,6 +6,7 @@ import {
 import {
   AnswerCardRegistry,
   DefaultAnswerCardMatcher,
+  hasDanglingCollectionEnumeration,
   hashAnswerCardIdentifier,
   type AnswerCardCatalog,
   type AnswerCardMatch,
@@ -131,6 +132,9 @@ export function enforceDeterministicReview(
   }
   if(input.evidence.length===0){
     defects.push({category:"citation_gap",severity:"major",summary:"没有可供独立复查的正式知识页面",evidence:"复查证据包为空"});
+  }
+  if(hasDanglingCollectionEnumeration(input.answer)){
+    defects.push({category:"coverage_gap",severity:"major",summary:"回答声称列出多项内容，但只出现第 1 项，存在结构性截断",evidence:"集合引导语后的编号未继续到第 2 项"});
   }
   const required=input.governedCard?.obligations.filter((item)=>item.required)??[];
   const ruleConflicts=input.governedCard===undefined?[]:inspectAnswerCardRuleConflicts({answerTemplate:input.answer,obligations:required,evidence:input.evidence}).filter((item)=>item.code!=="unverifiable_required_concept");

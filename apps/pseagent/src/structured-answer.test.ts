@@ -124,6 +124,25 @@ describe("structured answer", () => {
     expect(rendered).toContain("约定检查点");
   });
 
+  it("keeps later items when a sequence is introduced as confirmation items", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer:
+          "实施前需确认以下事项：1）确认用户所属组织 [1]；2）确认产品版本 [1]；3）确认实际组织配置 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    const rendered = renderStructuredAnswer(structured);
+    expect(rendered).toContain("确认用户所属组织");
+    expect(rendered).toContain("确认产品版本");
+    expect(rendered).toContain("确认实际组织配置");
+  });
+
   it("keeps an ordered sequence introduced as a concrete method", () => {
     const structured = buildStructuredAnswer({
       action: "final",

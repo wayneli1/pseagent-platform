@@ -1953,6 +1953,61 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("rewrites a collection that stops after its first numbered item", async () => {
+    const plan: KnowledgePlan = {
+      subject: "实施确认",
+      requirements: [{
+        id: "R1",
+        question: "实施前还要确认什么",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "实施确认事项",
+          terms: ["实施确认"],
+        }],
+        queries: [{ text: "实施确认事项", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "实施确认事项": [{
+          path: "wiki/concepts/implementation.md",
+          title: "实施确认",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/implementation.md"),
+      final("complete", "实施前需确认以下事项：1）确认用户所属组织 [1]。", [1]),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: "实施前需确认以下事项：1）确认用户所属组织 [1]；2）确认产品版本 [1]；3）确认实际组织配置 [1]。",
+          citations: [1],
+        }],
+        citations: [1],
+      },
+    ]);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(model.calls).toBe(3);
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "dangling_collection_enumeration",
+    );
+    expect(result.answer).toContain("产品版本");
+    expect(result.answer).toContain("实际组织配置");
+  });
+
   it("rewrites a comparison after verification drops one explicitly named side", async () => {
     const plan: KnowledgePlan = {
       subject: "协议对比",
