@@ -846,6 +846,40 @@ describe("AnswerService", () => {
       })),
     };
     const planner = createPlanner();
+    const taskAnalysisShadow = {
+      analyze: vi.fn(async (input) => ({
+        resolvedQuestion: input.resolvedQuestion!,
+        taskSpec: taskSpecSchema.parse({
+          subject: "关键业务问题确认",
+          entities: [{ id: "E1", label: "客户", role: "target", sourceText: "客户" }],
+          deliverables: [{
+            id: "D1",
+            label: "确认方法",
+            kind: "procedure",
+            required: true,
+            sourceText: standaloneQuestion,
+            obligations: [{
+              id: "O1",
+              label: "确认关键业务问题",
+              targetEntityIds: ["E1"],
+              evidencePolicy: "direct",
+              domains: ["presales-general"],
+              required: true,
+              sourceText: standaloneQuestion,
+            }],
+          }],
+        }),
+        guard: {
+          ok: true,
+          issues: [],
+          explicitEntityCount: 1,
+          mappedExplicitEntityCount: 1,
+          explicitRequestCount: 1,
+          mappedExplicitRequestCount: 1,
+        },
+        elapsedMs: 1,
+      })),
+    } satisfies TaskAnalysisShadow;
     const runAgent = vi.fn<AgentRunner>(async () => ({
       scope: "general",
       status: "answered",
@@ -865,6 +899,7 @@ describe("AnswerService", () => {
       runAgent,
       questionResolver,
       answerCardMatcher,
+      taskAnalysisShadow,
     });
 
     const execution = await service.answerDetailed(rawQuestion, conversationContext);
@@ -875,6 +910,12 @@ describe("AnswerService", () => {
       contextualCardIdHashes: [parentCardHash],
     });
     expect(questionResolver.resolve).not.toHaveBeenCalled();
+    expect(taskAnalysisShadow.analyze).toHaveBeenCalledWith(expect.objectContaining({
+      resolvedQuestion: expect.objectContaining({
+        standaloneQuestion,
+        contextUsed: true,
+      }),
+    }));
     expect(planner.plan).toHaveBeenCalledWith(expect.objectContaining({
       question: standaloneQuestion,
     }));

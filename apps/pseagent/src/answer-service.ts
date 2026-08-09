@@ -1354,6 +1354,7 @@ async function observeTaskAnalysisShadow(input: {
   readonly analyzer?: TaskAnalysisShadow;
   readonly question: string;
   readonly conversationContext?: string;
+  readonly resolvedQuestion?: ResolvedQuestion;
   readonly scope: Exclude<Scope, "normal">;
   readonly legacyPlan?: KnowledgePlan;
   readonly knowledgeContext: {
@@ -1375,6 +1376,9 @@ async function observeTaskAnalysisShadow(input: {
       ...(input.conversationContext === undefined
         ? {}
         : { conversationContext: input.conversationContext }),
+      ...(input.resolvedQuestion === undefined
+        ? {}
+        : { resolvedQuestion: input.resolvedQuestion }),
       scope: input.scope,
       ...(input.legacyPlan === undefined ? {} : { legacyPlan: input.legacyPlan }),
       knowledgeContext: input.knowledgeContext,
