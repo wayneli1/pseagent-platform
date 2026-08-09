@@ -2129,6 +2129,62 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("projects formal framework boundaries when repeated rewrites still omit them", async () => {
+    const path = "wiki/concepts/results-first.md";
+    const plan: KnowledgePlan = {
+      subject: "结果优先演示",
+      requirements: [{
+        id: "R1",
+        question: "怎样先建立相关性再按角色下钻证据",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "结果优先演示结构",
+          terms: ["结果优先", "倒金字塔", "按需深入"],
+        }],
+        queries: [{ text: "结果优先演示结构", aspectIds: ["A1"] }],
+      }],
+    };
+    const evidence =
+      "该结构包括 **Do the Last Thing First**（先展示最终结果）、" +
+      "**Illustration**（简洁画面）和 **Inverted Pyramid**（倒金字塔结构）" +
+      "三个相互配合的方法。\n### 边界与风险\n" +
+      "- 对敏感数据需使用脱敏或示意环境\n" +
+      "- 不能只展示漂亮仪表盘而无法说明业务含义";
+    const session = fakeSession({
+      hits: {
+        "结果优先演示结构": [{ path, title: "结果优先演示结构" }],
+      },
+      pageBodies: { [path]: evidence },
+    });
+    const incomplete = final(
+      "complete",
+      "用 Do the Last Thing First 先展示最终结果，以 Illustration 简洁画面连接情境，再以 Inverted Pyramid 按需深入 [1]。",
+      [1],
+    );
+    const model = scriptedAgentModel([
+      read("R1", path),
+      incomplete,
+      incomplete,
+      incomplete,
+      incomplete,
+    ]);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(model.calls).toBe(5);
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(result.answer).toContain("**正式边界**");
+    expect(result.answer).toContain("对敏感数据需使用脱敏或示意环境 [1]");
+    expect(result.answer).toContain("不能只展示漂亮仪表盘而无法说明业务含义 [1]");
+  });
+
   it("rewrites a collection that stops after its first numbered item", async () => {
     const plan: KnowledgePlan = {
       subject: "实施确认",

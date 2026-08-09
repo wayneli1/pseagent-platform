@@ -122,11 +122,12 @@ export function missingStrictFrameworkBoundaries(
     ));
 }
 
-function strictFrameworkBoundaries(
+export function strictFrameworkBoundaries(
   documents: readonly { readonly content: string }[],
 ): string[] {
   const boundaries: string[] = [];
   for (const document of documents) {
+    if (explicitFrameworkCollections([document]).length === 0) continue;
     let boundaryLevel: number | undefined;
     for (const rawLine of document.content.split(/\r?\n/u)) {
       const heading = rawLine.match(/^(#{2,6})\s+(.+)$/u);

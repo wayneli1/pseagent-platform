@@ -72,6 +72,7 @@ import {
   hasBrokenCollectionEnumeration,
   missingExplicitFrameworkItems,
   missingStrictFrameworkBoundaries,
+  strictFrameworkBoundaries,
   usesExplicitFrameworkCollection,
   verifierOrphanedOrderedSequence,
 } from "./answer-structure.js";
@@ -516,7 +517,18 @@ async function runKnowledgeAgentCore(
           });
           continue;
         }
-        return fallbackUnavailable(input, "invalid_final");
+        const projected = applyGroundedStrictFrameworkBoundaries(
+          normalizedAction,
+          state,
+        );
+        if (pendingFrameworkBoundaryRepairs(projected, state).length > 0) {
+          return fallbackUnavailable(input, "invalid_final");
+        }
+        normalizedAction = projected;
+        observe(state, {
+          type: "framework_boundary_grounded_projection",
+          requirements: frameworkBoundaryRepairs,
+        });
       }
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
       if (pendingReviews.length > 0 && !deadlineReached(input)) {
@@ -726,7 +738,27 @@ async function runKnowledgeAgentCore(
         continue;
       }
       if (structuredCoverageRepairs.length > 0) {
-        return fallbackUnavailable(input, "coverage_verifier_invalid");
+        const projected = applyGroundedStrictFrameworkBoundaries(
+          auditedAction,
+          state,
+        );
+        if (
+          pendingStructuredCoverageRepairs(
+            normalizedAction,
+            projected,
+            input.plan,
+            state,
+          ).length > 0
+        ) {
+          return fallbackUnavailable(input, "coverage_verifier_invalid");
+        }
+        auditedAction = projected;
+        projectedAfterVerification = true;
+        observe(state, {
+          type: "framework_boundary_grounded_projection",
+          requirements: structuredCoverageRepairs,
+          stage: "verified",
+        });
       }
       const auditedValidation = state.references.validateFinal(
         auditedAction,
@@ -3318,6 +3350,56 @@ function pendingFrameworkBoundaryRepairs(
       ? [requirement.id]
       : [];
   });
+}
+
+function applyGroundedStrictFrameworkBoundaries(
+  action: FinalAction,
+  state: AgentState,
+): FinalAction {
+  let changed = false;
+  const requirements = action.requirements.map((requirement) => {
+    if (requirement.coverage === "none") return requirement;
+    const documents = [...(
+      state.evidenceDocuments.get(requirement.id)?.entries() ?? []
+    )];
+    const evidence = documents.map(([, document]) => document);
+    const missing = missingStrictFrameworkBoundaries(
+      requirement.answer,
+      evidence,
+    );
+    if (missing.length === 0) return requirement;
+
+    const additions = missing.flatMap((boundary) => {
+      const citation = documents.find(([, document]) =>
+        strictFrameworkBoundaries([document]).includes(boundary)
+      )?.[0];
+      return citation === undefined
+        ? []
+        : [{ boundary, citation }];
+    });
+    if (additions.length !== missing.length) return requirement;
+
+    changed = true;
+    const projected = additions.map(({ boundary, citation }) =>
+      `- ${boundary.replace(/[。；;]+$/u, "")} [${citation}]。`
+    ).join("\n");
+    return {
+      ...requirement,
+      answer: `${requirement.answer.trimEnd()}\n\n**正式边界**\n${projected}`,
+      citations: stableUniqueNumbers([
+        ...requirement.citations,
+        ...additions.map(({ citation }) => citation),
+      ]),
+    };
+  });
+  if (!changed) return action;
+  return {
+    ...action,
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap(requirementEvidenceCitations),
+    ),
+  };
 }
 
 function pendingNamedMethodCompletenessReviews(

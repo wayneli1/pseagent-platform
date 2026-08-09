@@ -108,7 +108,13 @@ describe("collection enumeration integrity", () => {
       "### 关键原则",
       "- 画面必须与客户问题直接相关",
       "- 不能用虚构客户数据暗示已实现的承诺",
-    ].join("\n") }];
+    ].join("\n") }, {
+      content: [
+        "这里是相邻的演示建议页面。",
+        "### 注意事项",
+        "- 必须先确认现场设备",
+      ].join("\n"),
+    }];
     const broad =
       "先展示最终结果，用 Illustration 简洁画面情境化，再以倒金字塔结构深入。";
     expect(missingStrictFrameworkBoundaries(broad, evidence)).toEqual([
