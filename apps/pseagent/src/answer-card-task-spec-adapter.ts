@@ -211,6 +211,12 @@ export function adaptAnswerCardToTaskSpec(input: {
         ? selectSingleDeliverableGovernedAnchor(binding, requiredLocations)
         : undefined);
     if (source === undefined) {
+      if (canCompileContextualFamily(input.match, input.resolvedQuestion)) {
+        return compileSingleCardAnswerCardTaskSpec({
+          match: input.match,
+          resolvedQuestion: input.resolvedQuestion,
+        });
+      }
       return { activated: false, reason: "binding_unmapped" };
     }
     if (
@@ -239,6 +245,9 @@ export function adaptAnswerCardToTaskSpec(input: {
       ? deliverable.obligations.filter((obligation) => obligation.value.required).length
       : 0), 0);
   if (requiredCount === 0 || requiredCount > 6) {
+    if (canCompileContextualFamily(input.match, input.resolvedQuestion)) {
+      return compileSingleCardAnswerCardTaskSpec({ match: input.match, resolvedQuestion: input.resolvedQuestion });
+    }
     return { activated: false, reason: "requirement_limit_exceeded" };
   }
 
@@ -279,6 +288,9 @@ export function adaptAnswerCardToTaskSpec(input: {
   };
   const parsed = taskSpecSchema.safeParse(candidate);
   if (!parsed.success) {
+    if (canCompileContextualFamily(input.match, input.resolvedQuestion)) {
+      return compileSingleCardAnswerCardTaskSpec({ match: input.match, resolvedQuestion: input.resolvedQuestion });
+    }
     return { activated: false, reason: "task_spec_contract_exceeded" };
   }
   const rawGuard = new DeterministicTaskSpecGuard().validate({
@@ -350,6 +362,9 @@ export function adaptAnswerCardToTaskSpec(input: {
         issues: Object.freeze(trustedIssues),
       });
   if (!guard.ok) {
+    if (canCompileContextualFamily(input.match, input.resolvedQuestion)) {
+      return compileSingleCardAnswerCardTaskSpec({ match: input.match, resolvedQuestion: input.resolvedQuestion });
+    }
     return {
       activated: false,
       reason: "guard_rejected",
@@ -365,6 +380,21 @@ export function adaptAnswerCardToTaskSpec(input: {
     guard,
     policies: Object.freeze(policies),
   };
+}
+
+function canCompileContextualFamily(
+  match: Exclude<AnswerCardMatch, { matchType: "none" }>,
+  resolvedQuestion: ResolvedQuestion,
+): boolean {
+  if (!(match.matchType === "family" &&
+    match.confidence === "high" &&
+    resolvedQuestion.contextUsed &&
+    new Set(match.bindings.map((binding) => binding.cardId)).size === 1)) return false;
+  const requestClauses=extractExplicitQuestionSignals(
+    resolvedQuestion.standaloneQuestion,
+  ).requestClauses;
+  return requestClauses.every((clause) =>
+    match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)));
 }
 
 export function applyAnswerCardPoliciesToPlan(input: {

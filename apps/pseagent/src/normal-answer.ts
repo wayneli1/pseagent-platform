@@ -2,6 +2,21 @@ const EXAMPLE_REQUEST_PATTERN =
   /(?:举(?:一个|个|些)?例|举例|例子|示例|实例|案例|比如|for\s+example|examples?)/iu;
 const EXAMPLE_MARKER_PATTERN = /(?:例如|比如|举例(?:来说)?)[：:,，]?/gu;
 
+export function normalAnswerNeedsRepair(answer: string): boolean {
+  const trimmed=answer.trim();
+  if(trimmed==="")return true;
+  const pairs=new Map<string,string>([["(",")"],["（","）"],["[","]"],["【","】"],["{","}"]]);
+  const closing=new Set(pairs.values());
+  const stack:string[]=[];
+  for(const character of trimmed){
+    const expected=pairs.get(character);
+    if(expected!==undefined){stack.push(expected);continue;}
+    if(closing.has(character)&&stack.pop()!==character)return true;
+  }
+  if(stack.length>0)return true;
+  return /(?:^|\n)\s*[-*]\s*[^\n]{0,240}(?:[：:]|[（(【\[])\s*$/u.test(trimmed);
+}
+
 /**
  * Removes model-added illustrative examples when the user did not ask for
  * one. Ordinary answers have no formal evidence verifier, so optional

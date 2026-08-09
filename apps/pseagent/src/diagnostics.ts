@@ -158,6 +158,7 @@ export type DiagnosticEvent =
       readonly operation:
         | "route"
         | "normal_answer"
+        | "normal_answer_repair"
         | "resolve"
         | "compile"
         | "plan"
@@ -719,6 +720,7 @@ function allowlistDiagnosticEvent(
           [
             "route",
             "normal_answer",
+            "normal_answer_repair",
             "resolve",
             "compile",
             "plan",

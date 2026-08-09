@@ -74,7 +74,7 @@ import {
   type AnswerCardObligationPolicy,
 } from "./answer-card-task-spec-adapter.js";
 import { identityResolvedQuestion, type ResolvedQuestion } from "./question-resolver.js";
-import { stripUnrequestedExamples } from "./normal-answer.js";
+import { normalAnswerNeedsRepair, stripUnrequestedExamples } from "./normal-answer.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -253,7 +253,24 @@ export class AnswerService {
             signal: requestSignal,
           }),
         });
-        const answer = stripUnrequestedExamples(question, draft);
+        let answer = stripUnrequestedExamples(question, draft);
+        if (normalAnswerNeedsRepair(answer)) {
+          const repaired = await observeModelCall({
+            trace,
+            role: "synthesizer",
+            operation: "normal_answer_repair",
+            signal: requestSignal,
+            call: () => this.dependencies.model.completeText({
+              messages: [
+                ...normalAnswerMessages(question, conversationContext),
+                { role: "assistant", content: answer },
+                { role: "user", content: "上一次回答存在未闭合标点、截断清单或未完成句子。请完整重写答案，保留正确结论，补全关键机制与适用边界，不要解释修订过程。" },
+              ],
+              signal: requestSignal,
+            }),
+          });
+          answer = stripUnrequestedExamples(question, repaired);
+        }
         const result: AnswerResult = { scope, status: "answered", answer, references: [] };
         return withQuestionResolution(finishExecution(trace, result, startedAt, false, false));
       }

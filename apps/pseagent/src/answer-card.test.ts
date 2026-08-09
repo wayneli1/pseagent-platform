@@ -1250,6 +1250,28 @@ describe("answer card TaskSpec adapter", () => {
     expect(result).toEqual({ activated: false, reason: "binding_unmapped" });
   });
 
+  it("falls back to one approved card contract for a high-confidence contextual family", () => {
+    const question = "那它什么时候具备演示资格？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "演示资格", role: "subject", sourceText: question }],
+      deliverables: [
+        { id: "D1", label: "资格条件", kind: "fact", required: true, sourceText: question, obligations: [{ id: "O1", label: "角色条件", targetEntityIds: ["E1"], evidencePolicy: "direct", domains: ["presales-general"], required: true, sourceText: question }] },
+        { id: "D2", label: "进入后结构", kind: "recommendation", required: true, sourceText: question, obligations: [{ id: "O2", label: "演示结构", targetEntityIds: ["E1"], evidencePolicy: "synthesis", domains: ["presales-general"], required: true, sourceText: question }] },
+      ],
+    });
+    const binding=(id:string,label:string):Exclude<AnswerCardMatch,{matchType:"none"}>["bindings"][number]=>({obligationId:id,cardObligationId:id,cardId:"GEN-DEMO-QUALIFICATION",label,domain:"presales-general",domains:["presales-general"],required:true,evidencePolicy:"direct",requiredConcepts:[label],forbiddenClaims:[],preferredEvidencePaths:[]});
+    const match:Exclude<AnswerCardMatch,{matchType:"none"}>={matchType:"family",confidence:"high",catalogHash:"a".repeat(64),familyId:"demo",bindings:[binding("O1","演示资格条件"),binding("O2","业务问题"),binding("O3","结果优先")],cardIdHashes:["b".repeat(64)],expectedRevisions:{"presales-general":generalRevision},candidateCount:1};
+
+    const result=adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion:{...identityResolvedQuestion(question),standaloneQuestion:"演示请求在什么情况下具备资格？",contextUsed:true,inheritedSubjects:["演示请求"]},
+      taskSpec,
+    });
+
+    expect(result).toMatchObject({activated:true,policies:[{cardId:"GEN-DEMO-QUALIFICATION"},{cardId:"GEN-DEMO-QUALIFICATION"},{cardId:"GEN-DEMO-QUALIFICATION"}]});
+  });
+
   it("reports every answer-card concept missing after verification", () => {
     const binding = {
       domain: "presales-general" as const,

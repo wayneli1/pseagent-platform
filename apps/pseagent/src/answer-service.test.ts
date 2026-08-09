@@ -773,6 +773,25 @@ describe("AnswerService", () => {
     });
   });
 
+  it("rewrites a structurally truncated normal answer once", async () => {
+    const completeText=vi.fn()
+      .mockResolvedValueOnce("关键机制：\n- 如果图中存在环（。")
+      .mockResolvedValueOnce("关键机制：每轮移除一个入度为 0 的节点；存在有向环时不存在零入度节点，因此无法完成排序。");
+    const service = new AnswerService({
+      model: { completeText } as unknown as ModelClient,
+      router: { route: vi.fn(async () => "normal" as const) },
+      planner: createPlanner(),
+      knowledge: { open: vi.fn() },
+      runAgent: vi.fn(),
+    });
+
+    await expect(service.answer("为什么拓扑排序要求有向无环图？")).resolves.toMatchObject({
+      scope:"normal",
+      answer:expect.stringContaining("入度为 0"),
+    });
+    expect(completeText).toHaveBeenCalledTimes(2);
+  });
+
   it("answers PSEAgent architecture as normal even when Coremail dominates history", async () => {
     const completeJson = vi.fn();
     const model = {

@@ -58,6 +58,7 @@ export class AnswerProgressTracker {
         this.advance("planning");
         return;
       case "normal_answer":
+      case "normal_answer_repair":
       case "synthesize":
         this.advance("composing");
         return;

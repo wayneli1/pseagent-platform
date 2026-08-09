@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripUnrequestedExamples } from "./normal-answer.js";
+import { normalAnswerNeedsRepair, stripUnrequestedExamples } from "./normal-answer.js";
 
 describe("stripUnrequestedExamples", () => {
   it("removes an optional constructed example while preserving the explanation", () => {
@@ -29,5 +29,12 @@ describe("stripUnrequestedExamples", () => {
   it("keeps ordinary answers that contain no example marker unchanged", () => {
     const answer = "先说明前提，再解释机制，最后给出适用边界。";
     expect(stripUnrequestedExamples("为什么？", answer)).toBe(answer);
+  });
+
+  it("detects an unclosed delimiter in a truncated ordinary answer", () => {
+    expect(normalAnswerNeedsRepair("关键机制：\n- 如果图中存在环（。\n\n因此不适用。"))
+      .toBe(true);
+    expect(normalAnswerNeedsRepair("关键机制：每轮移除一个入度为 0 的节点；有环时不存在这种节点。"))
+      .toBe(false);
   });
 });
