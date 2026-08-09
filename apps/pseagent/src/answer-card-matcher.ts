@@ -120,11 +120,19 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
     if (!this.registry.snapshotCurrent(input.currentDomain, input.currentRevision)) {
       return this.none("stale_catalog", 0);
     }
-    const candidates = this.registry.familyCandidates(
+    const recalledCandidates = this.registry.familyCandidates(
       input.question,
       input.currentDomain,
     );
-    if (candidates.length === 0) return this.none("no_family_candidate", 0);
+    if (recalledCandidates.length === 0) return this.none("no_family_candidate", 0);
+    const namedMethods = explicitNamedMethods(input.question);
+    const candidates = namedMethods.length === 0
+      ? recalledCandidates
+      : recalledCandidates.filter((family) =>
+          familySupportsNamedMethods(family, namedMethods, this.registry));
+    if (candidates.length === 0) {
+      return this.none("family_rejected", recalledCandidates.length);
+    }
 
     let decision: z.infer<typeof familyDecisionSchema>;
     try {
@@ -315,6 +323,58 @@ export class ReloadingAnswerCardMatcher implements AnswerCardMatcher {
     if(this.required)registry.assertHasActiveCards();
     return new DefaultAnswerCardMatcher(registry,this.model);
   }
+}
+
+function explicitNamedMethods(question: string): readonly string[] {
+  const normalized = question.normalize("NFKC");
+  const labels: string[] = [];
+  for (const pattern of [
+    /(?:使用|采用|运用|基于|依据|按照|用)\s*([A-Za-z][A-Za-z0-9.+#-]*(?:[ \t]+[A-Za-z][A-Za-z0-9.+#-]*){0,3})/gu,
+    /([A-Za-z][A-Za-z0-9.+#-]*(?:[ \t]+[A-Za-z][A-Za-z0-9.+#-]*){0,3})\s*(?:方法|模型|框架|算法)/gu,
+  ]) {
+    for (const match of normalized.matchAll(pattern)) {
+      const label = normalizeNamedMethod(match[1] ?? "");
+      if (label.length >= 3 && !labels.includes(label)) labels.push(label);
+    }
+  }
+  return labels;
+}
+
+function familySupportsNamedMethods(
+  family: QuestionFamily,
+  methods: readonly string[],
+  registry: AnswerCardRegistry,
+): boolean {
+  const cards = [...new Set(family.bindings.map((binding) => binding.cardId))]
+    .flatMap((cardId) => {
+      const card = registry.card(cardId);
+      return card === undefined
+        ? []
+        : [
+            card.title,
+            card.canonicalQuestion,
+            ...card.aliases,
+            card.answerTemplate,
+            ...card.obligations.flatMap((obligation) => [
+              obligation.label,
+              ...obligation.requiredConcepts,
+            ]),
+          ];
+    });
+  const governedText = normalizeNamedMethod([
+    family.title,
+    family.canonicalQuestion,
+    ...family.aliases,
+    ...family.bindings.map((binding) => binding.label),
+    ...cards,
+  ].join(" "));
+  return methods.every((method) => governedText.includes(method));
+}
+
+function normalizeNamedMethod(value: string): string {
+  return value.normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9+#]+/gu, "");
 }
 
 function bindingFromCardObligation(

@@ -255,6 +255,32 @@ describe("answer card registry and matching", () => {
     expect(partial).toMatchObject({ matchType: "partial", confidence: "high" });
   });
 
+  it("rejects a family that does not govern an explicitly requested named method", async () => {
+    const model = {
+      completeJson: vi.fn(async () => ({
+        familyId: "MIXED-MIGRATION-001",
+        confidence: "high",
+        matchedObligationIds: ["O1", "O2"],
+      })),
+    } as unknown as ModelClient;
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(catalog()),
+      model,
+    );
+
+    await expect(matcher.match({
+      question: "请用 Mom Test 方法规划 Coremail 迁移并说明风险沟通",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    })).resolves.toMatchObject({
+      matchType: "none",
+      reason: "family_rejected",
+      candidateCount: 1,
+    });
+    expect(model.completeJson).not.toHaveBeenCalled();
+  });
+
   it("recalls colloquial families from governed obligation concepts", async () => {
     const source = catalog();
     source.cards[1]!.obligations[0]!.requiredConcepts = ["谁能调动跨部门资源"];
