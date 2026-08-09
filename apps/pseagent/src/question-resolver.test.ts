@@ -122,6 +122,52 @@ describe("ModelQuestionResolver", () => {
     expect(completeJson).toHaveBeenCalledTimes(2);
   });
 
+  it("repairs a whole-object state transition bound to one recent criterion", async () => {
+    const context = JSON.stringify({
+      version: 3,
+      recentTurns: [
+        {
+          question: "没有客户背景时应直接做完整演示吗？",
+          answerOutline: "演示请求需要先完成资格判断。",
+        },
+        {
+          question: "如何确认第二项关键业务问题？",
+          answerOutline: "要求客户用具体事实说明当前问题。",
+        },
+      ],
+    });
+    const completeJson = vi.fn()
+      .mockResolvedValueOnce({
+        action: "resolve",
+        standaloneQuestion: "关键业务问题这一项在什么情况下算具备资格，可以进入完整演示？",
+        contextUsed: true,
+        inheritedSubjects: ["关键业务问题"],
+        corrections: [],
+      })
+      .mockResolvedValueOnce({
+        action: "resolve",
+        standaloneQuestion: "演示请求在什么情况下具备资格，可以进入完整演示？",
+        contextUsed: true,
+        inheritedSubjects: ["演示请求"],
+        corrections: [],
+      });
+    const resolver = new ModelQuestionResolver({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    await expect(resolver.resolve({
+      question: "那它在什么情况下算已经具备资格，可以进入完整演示？",
+      conversationContext: context,
+    })).resolves.toMatchObject({
+      standaloneQuestion: "演示请求在什么情况下具备资格，可以进入完整演示？",
+      contextUsed: true,
+      inheritedSubjects: ["演示请求"],
+    });
+    expect(completeJson).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(completeJson.mock.calls[1])).toContain("整体准入");
+  });
+
   it("repairs a corrective follow-up that drops answer-changing parent constraints",async()=>{
     const context=JSON.stringify({version:3,recentTurns:[{question:"有一个客户要购买邮件系统，他们有5000用户，需要多活高可用，建议如何设计架构？",answerOutline:"推荐两台前端、两台后端和一台仲裁服务器。"}]});
     const incomplete={action:"resolve",standaloneQuestion:"Coremail 邮件系统架构需要几台前端服务器和几台后端服务器？",contextUsed:true,inheritedSubjects:["邮件系统"],corrections:[]};
