@@ -2081,7 +2081,7 @@ describe("runKnowledgeAgent", () => {
     const evidence =
       "该结构包括 **Do the Last Thing First**（先展示最终结果）、" +
       "**Illustration**（简洁画面）和 **Inverted Pyramid**（倒金字塔结构）" +
-      "三个相互配合的方法。";
+      "三个相互配合的方法。对敏感数据需使用脱敏或示意环境。";
     const session = fakeSession({
       hits: {
         "结果优先演示结构": [{ path, title: "结果优先演示结构" }],
@@ -2100,9 +2100,23 @@ describe("runKnowledgeAgent", () => {
         "用 Do the Last Thing First 先展示最终结果，以 Illustration 简洁画面连接情境，再以 Inverted Pyramid 按需深入 [1]。",
         [1],
       ),
+      final(
+        "complete",
+        "用 Do the Last Thing First 先展示最终结果，以 Illustration 简洁画面连接情境，再以 Inverted Pyramid 按需深入；敏感数据使用脱敏或示意环境 [1]。",
+        [1],
+      ),
     ]);
-    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
-      reportAndReturn(input));
+    const verifyCoverage = vi.fn()
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input, {
+          ...input.draft,
+          requirements: input.draft.requirements.map((requirement) => ({
+            ...requirement,
+            coverage: "partial" as const,
+          })),
+        }))
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input));
 
     const result = await runKnowledgeAgent({
       ...agentInput(model, session, plan),
@@ -2110,12 +2124,17 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(result.status).toBe("answered");
-    expect(model.calls).toBe(3);
+    expect(model.calls).toBe(4);
+    expect(verifyCoverage).toHaveBeenCalledTimes(2);
     expect(payloadAt(model, 2).observations?.join("\n")).toContain(
       "named_method_completeness_review_required",
     );
     expect(result.answer).toContain("Illustration");
     expect(result.answer).toContain("简洁画面");
+    expect(result.answer).toContain("脱敏");
+    expect(payloadAt(model, 3).observations?.join("\n")).toContain(
+      "structured_coverage_repair_required",
+    );
   });
 
   it("rewrites a collection that stops after its first numbered item", async () => {

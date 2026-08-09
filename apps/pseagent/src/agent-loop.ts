@@ -3338,7 +3338,8 @@ function pendingStructuredCoverageRepairs(
           explicitNamedMethods(planned.question).length > 0) &&
         original?.coverage === "complete" &&
         requirement.coverage === "partial" &&
-        requiresStructuredCompleteness(planned.question))
+        (requiresStructuredCompleteness(planned.question) ||
+          usesExplicitFrameworkCollection(original.answer, documents)))
       ? [requirement.id]
       : [];
   });
