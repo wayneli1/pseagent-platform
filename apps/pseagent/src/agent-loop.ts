@@ -3239,8 +3239,8 @@ function sortedCandidates(requirementState: RequirementState): Candidate[] {
   return [...requirementState.candidatePaths.values()]
     .sort((left, right) => {
       const pathPriority =
-        candidatePathPriority(left.path, requirementState.requirement) -
-        candidatePathPriority(right.path, requirementState.requirement);
+        candidatePathPriority(left, requirementState.requirement) -
+        candidatePathPriority(right, requirementState.requirement);
       const questionTitlePriority =
         directQuestionTitleCoverageScore(
           right.title,
@@ -3284,13 +3284,20 @@ function sortedCandidates(requirementState: RequirementState): Candidate[] {
     });
 }
 
-function candidatePathPriority(path: string, requirement: KnowledgeRequirement): number {
+function candidatePathPriority(candidate: Candidate, requirement: KnowledgeRequirement): number {
+  const path = candidate.path;
   if (
     path.startsWith("wiki/entities/") &&
     /核心(?:能力|功能)|有哪些(?:能力|功能)|功能清单|详细介绍.*功能|是什么/u
       .test(requirement.question)
   ) {
     return -1;
+  }
+  if (
+    path.startsWith("wiki/queries/") &&
+    directQuestionTitleCoverageScore(candidate.title, requirement) > 0
+  ) {
+    return 0;
   }
   const curatedPrefixes = [
     "wiki/concepts/",

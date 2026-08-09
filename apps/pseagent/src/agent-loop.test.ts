@@ -2600,6 +2600,43 @@ describe("runKnowledgeAgent", () => {
       .toBe("wiki/concepts/batna.md");
   });
 
+  it("treats a matching query page as curated evidence instead of burying it behind broad concepts", async () => {
+    const question = "Coremail 重复发信如何区分客户端重发和 deliveragent 重投？";
+    const query = "Coremail 重复发信 客户端重发 deliveragent 重投";
+    const plan: KnowledgePlan = {
+      subject: question,
+      requirements: [{
+        id: "R1",
+        question,
+        ...plannedEvidence(query),
+        evidenceMode: "direct_only",
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        [query]: [
+          {
+            path: "wiki/concepts/mail-troubleshooting.md",
+            title: "Coremail 邮件收发问题排查流程",
+          },
+          {
+            path: "wiki/queries/duplicate-send.md",
+            title: "Coremail 重复发信如何区分客户端重发和 deliveragent 重投",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/queries/duplicate-send.md"),
+      final("complete", "结合客户端记录与投递日志判断 [1]", [1]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe("wiki/queries/duplicate-send.md");
+  });
+
   it("uses an intent verb together with a domain term to identify the primary page", async () => {
     const question = "Coremail 如何设计容灾和高可用";
     const plan: KnowledgePlan = {
