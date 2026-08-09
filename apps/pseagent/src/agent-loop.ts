@@ -70,6 +70,7 @@ import {
 } from "./comparison-question.js";
 import {
   hasBrokenCollectionEnumeration,
+  missingDirectQueryOperationalConditions,
   missingExplicitFrameworkItems,
   missingStrictFrameworkBoundaries,
   strictFrameworkBoundaries,
@@ -528,6 +529,43 @@ async function runKnowledgeAgentCore(
         observe(state, {
           type: "framework_boundary_grounded_projection",
           requirements: frameworkBoundaryRepairs,
+        });
+      }
+      const operationalConditionRepairs = pendingOperationalConditionRepairs(
+        normalizedAction,
+        input.plan,
+        state,
+      );
+      if (operationalConditionRepairs.length > 0) {
+        if (
+          state.structuredCoverageRepairAttempts < 2 &&
+          turn < maxTurns &&
+          !deadlineReached(input)
+        ) {
+          state.structuredCoverageRepairAttempts += 1;
+          state.forceFinal = true;
+          observe(state, {
+            type: "structured_coverage_repair_required",
+            reason: "operational_condition_missing",
+            requirements: operationalConditionRepairs,
+          });
+          continue;
+        }
+        const projected = applyGroundedOperationalConditions(
+          normalizedAction,
+          input.plan,
+          state,
+        );
+        if (
+          pendingOperationalConditionRepairs(projected, input.plan, state)
+            .length > 0
+        ) {
+          return fallbackUnavailable(input, "invalid_final");
+        }
+        normalizedAction = projected;
+        observe(state, {
+          type: "operational_condition_grounded_projection",
+          requirements: operationalConditionRepairs,
         });
       }
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
@@ -3314,6 +3352,8 @@ function pendingComparisonSubjectRepairs(
 
 const STRUCTURED_COMPLETENESS_QUESTION_PATTERN =
   /(?:认证流程|处理流程|操作流程|关键步骤|完整步骤|关键配置|配置项|配置参数)/u;
+const OPERATIONAL_DETAIL_QUESTION_PATTERN =
+  /(?:配置|设置|安装|同步|操作|切换|部署|启用|升级)/u;
 
 function pendingBrokenCollectionRepairs(action: FinalAction): string[] {
   return action.requirements.flatMap((requirement) =>
@@ -3352,6 +3392,91 @@ function pendingFrameworkBoundaryRepairs(
       ? [requirement.id]
       : [];
   });
+}
+
+function pendingOperationalConditionRepairs(
+  action: FinalAction,
+  plan: KnowledgePlan,
+  state: AgentState,
+): string[] {
+  const plannedById = new Map(
+    plan.requirements.map((requirement) => [requirement.id, requirement] as const),
+  );
+  return action.requirements.flatMap((requirement) => {
+    const planned = plannedById.get(requirement.id);
+    if (
+      requirement.coverage === "none" ||
+      planned === undefined ||
+      planned.evidenceMode !== "direct_only" ||
+      !OPERATIONAL_DETAIL_QUESTION_PATTERN.test(planned.question)
+    ) {
+      return [];
+    }
+    const documents = [...(
+      state.evidenceDocuments.get(requirement.id)?.values() ?? []
+    )];
+    return missingDirectQueryOperationalConditions(requirement.answer, documents)
+        .length > 0
+      ? [requirement.id]
+      : [];
+  });
+}
+
+function applyGroundedOperationalConditions(
+  action: FinalAction,
+  plan: KnowledgePlan,
+  state: AgentState,
+): FinalAction {
+  const plannedById = new Map(
+    plan.requirements.map((requirement) => [requirement.id, requirement] as const),
+  );
+  let changed = false;
+  const requirements = action.requirements.map((requirement) => {
+    const planned = plannedById.get(requirement.id);
+    if (
+      requirement.coverage === "none" ||
+      planned === undefined ||
+      planned.evidenceMode !== "direct_only" ||
+      !OPERATIONAL_DETAIL_QUESTION_PATTERN.test(planned.question)
+    ) {
+      return requirement;
+    }
+    const documents = [...(
+      state.evidenceDocuments.get(requirement.id)?.entries() ?? []
+    )];
+    const missing = missingDirectQueryOperationalConditions(
+      requirement.answer,
+      documents.map(([, document]) => document),
+    );
+    const additions = missing.flatMap((condition) => {
+      const citation = documents.find(([, document]) =>
+        document.content.includes(condition))?.[0];
+      return citation === undefined ? [] : [{ condition, citation }];
+    });
+    if (additions.length !== missing.length || additions.length === 0) {
+      return requirement;
+    }
+    changed = true;
+    const projected = additions.map(({ condition, citation }) =>
+      `- ${condition.replace(/[。；;]+$/u, "")} [${citation}]。`
+    ).join("\n");
+    return {
+      ...requirement,
+      answer: `${requirement.answer.trimEnd()}\n\n**生效与操作条件**\n${projected}`,
+      citations: stableUniqueNumbers([
+        ...requirement.citations,
+        ...additions.map(({ citation }) => citation),
+      ]),
+    };
+  });
+  if (!changed) return action;
+  return {
+    ...action,
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap(requirementEvidenceCitations),
+    ),
+  };
 }
 
 function applyGroundedStrictFrameworkBoundaries(
@@ -3514,6 +3639,9 @@ function sortedCandidates(requirementState: RequirementState): Candidate[] {
       const pathPriority =
         candidatePathPriority(left, requirementState.requirement) -
         candidatePathPriority(right, requirementState.requirement);
+      const directQueryPagePriority =
+        directQueryPageTitleCoverageScore(right, requirementState) -
+        directQueryPageTitleCoverageScore(left, requirementState);
       const questionTitlePriority =
         directQuestionTitleCoverageScore(
           right.title,
@@ -3543,6 +3671,7 @@ function sortedCandidates(requirementState: RequirementState): Candidate[] {
         candidateAspectGain(left, requirementState);
       return requirementState.requirement.evidenceMode === "direct_only"
         ? pathPriority ||
+          directQueryPagePriority ||
           questionTitlePriority ||
           subjectTitlePriority ||
           titlePriority ||
@@ -3557,12 +3686,36 @@ function sortedCandidates(requirementState: RequirementState): Candidate[] {
     });
 }
 
+function directQueryPageTitleCoverageScore(
+  candidate: Candidate,
+  requirementState: RequirementState,
+): number {
+  if (
+    requirementState.requirement.evidenceMode !== "direct_only" ||
+    !candidate.path.startsWith("wiki/queries/")
+  ) {
+    return 0;
+  }
+  const score = titleCoverageScore(
+    candidate.title,
+    requirementState.requirement,
+    requirementState.queries,
+  );
+  return score >= 8 ? score : 0;
+}
+
 function candidatePathPriority(candidate: Candidate, requirement: KnowledgeRequirement): number {
   const path = candidate.path;
   if (
     path.startsWith("wiki/entities/") &&
-    /核心(?:能力|功能)|有哪些(?:能力|功能)|功能清单|详细介绍.*功能|是什么/u
-      .test(requirement.question)
+    (
+      /核心(?:能力|功能)|有哪些(?:能力|功能)|功能清单|详细介绍.*功能/u
+        .test(requirement.question) ||
+      (
+        requirement.question.includes("是什么") &&
+        normalizeTitleText(requirement.question).length <= 24
+      )
+    )
   ) {
     return -1;
   }
@@ -3774,6 +3927,10 @@ function expandSeedQueries(
         addExpandedQuery(expanded, variant, query.aspectIds, []);
       }
     }
+    const contradictionDiagnostic = contradictionDiagnosticSeedQuery(queryText);
+    if (contradictionDiagnostic !== undefined) {
+      addExpandedQuery(expanded, contradictionDiagnostic, query.aspectIds, []);
+    }
     if (
       /poc/iu.test(queryText) &&
       (
@@ -3800,6 +3957,26 @@ function expandSeedQueries(
     aspectIds: [...query.aspectIds],
     plannedQueryIndexes: [...query.plannedQueryIndexes],
   }));
+}
+
+function contradictionDiagnosticSeedQuery(queryText: string): string | undefined {
+  if (
+    !/(?:却|但(?:是)?|仍(?:然)?|依然|反而)/u.test(queryText) ||
+    !/(?:失败|异常|报错|不生效|未生效|无效|未放行|拦截|拒绝|无法|不能|未能)/u.test(queryText) ||
+    /(?:冲突|排查)/u.test(queryText)
+  ) {
+    return undefined;
+  }
+  const symptom = queryText
+    .split(/(?:应该|应当|需要|怎么|如何|能不能|是否|请问)/u, 1)[0]
+    ?.replace(/[，。；！？,.;!?]/gu, " ")
+    .replace(/(?:却|但(?:是)?|仍(?:然)?|依然|反而|被)/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (symptom === undefined || normalizeTitleText(symptom).length < 6) {
+    return undefined;
+  }
+  return `${symptom} 冲突 排查`;
 }
 
 function enrichSynthesisQuery(

@@ -2000,6 +2000,43 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("rewrites an operational answer that omits a conditional restart", async () => {
+    const plan: KnowledgePlan = {
+      subject: "插件同步配置",
+      requirements: [{
+        id: "R1",
+        question: "插件同步的具体配置和设置是什么",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "同步配置",
+          terms: ["同步", "配置"],
+        }],
+        queries: [{ text: "插件同步配置", aspectIds: ["A1"] }],
+      }],
+    };
+    const path = "wiki/queries/plugin-sync.md";
+    const session = fakeSession({
+      hits: { "插件同步配置": [{ path, title: "插件同步配置" }] },
+      pageBodies: {
+        [path]: "先配置同步范围。插件语言切换后需要重启 Outlook。",
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", path),
+      final("complete", "先配置同步范围 [1]。", [1]),
+      final("complete", "先配置同步范围；切换语言后重启 Outlook [1]。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(result.answer).toContain("重启 Outlook");
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "operational_condition_missing",
+    );
+  });
+
   it("rewrites an ordered taxonomy when verification removes its leading items", async () => {
     const plan: KnowledgePlan = {
       subject: "购买影响角色",
@@ -3102,6 +3139,44 @@ describe("runKnowledgeAgent", () => {
 
     expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
       .toBe("wiki/entities/gateway.md");
+  });
+
+  it("does not treat a compound configuration question ending in what-is as an entity definition", async () => {
+    const question =
+      "Coremail Outlook 插件要同步组织通讯录和日程，具体配置、同步方式、共享权限及版本边界是什么？";
+    const targetPath = "wiki/queries/outlook-contact-calendar-sync.md";
+    const plan: KnowledgePlan = {
+      subject: "Outlook 插件同步",
+      requirements: [{
+        id: "R1",
+        question,
+        ...plannedEvidence(question),
+        evidenceMode: "direct_only",
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        [question]: [
+          {
+            path: "wiki/entities/outlook-plugin.md",
+            title: "Coremail Outlook 插件",
+          },
+          {
+            path: targetPath,
+            title: "Coremail Outlook 插件如何同步组织通讯录和日程",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([final("none", "当前正式资料未覆盖")]);
+
+    await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question,
+    });
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe(targetPath);
   });
 
   it("uses dynamic per-requirement budgets instead of a global four-action cap", async () => {
@@ -5014,6 +5089,59 @@ describe("runKnowledgeAgent", () => {
         status: "empty",
       });
     }
+  });
+
+  it("adds a focused conflict diagnostic search for configured-but-still-failing symptoms", async () => {
+    const question = "邮件已加白名单却仍被 Webadmin 规则拦截，应该检查哪些规则和日志？";
+    const targetPath = "wiki/queries/webadmin-rule-conflict.md";
+    const session = fakeSession({
+      hits: {
+        [question]: [
+          {
+            path: "wiki/concepts/whitelist-boundary.md",
+            title: "邮件白名单规则边界",
+          },
+          {
+            path: "wiki/queries/webadmin-whitelist.md",
+            title: "如何在 Webadmin 中设置白名单",
+          },
+        ],
+        "邮件已加白名单 Webadmin 规则拦截 冲突 排查": [
+          {
+            path: "wiki/concepts/webadmin-conflict.md",
+            title: "Webadmin 规则冲突排查",
+          },
+          {
+            path: targetPath,
+            title: "如何排查 Webadmin 规则冲突导致邮件未放行",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([final("none", "当前正式资料未覆盖")]);
+    await runKnowledgeAgentDetailed({
+      ...agentInput(
+        model,
+        session,
+        {
+          subject: "矛盾症状排查",
+          requirements: [{
+            id: "R1",
+            question,
+            ...plannedEvidence(question),
+            evidenceMode: "direct_only",
+          }],
+        },
+      ),
+      question,
+    });
+
+    expect(session.search.mock.calls.map(([query]) => query)).toEqual([
+      question,
+      "邮件已加白名单 Webadmin 规则拦截 冲突 排查",
+    ]);
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe(targetPath);
   });
 
   it("limits shared physical seed hits to each consumer's own search window", async () => {

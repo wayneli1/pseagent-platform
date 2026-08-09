@@ -91,6 +91,16 @@ describe("enterprise E2E matrix", () => {
       "如何确认关键业务问题？",
       ["影响", "结果"],
     )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "算法每次取出当前距离最小的节点；只有图中没有负权边时该结论才成立。",
+      "为什么算法不能处理负权边？",
+      ["当前最短", "最小暂定距离"],
+    )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "只有图中没有负权边时，贪心确定性才成立。",
+      "为什么算法不能处理负权边？",
+      ["非负权", "边权非负"],
+    )).toBe(true);
   });
 
   it("accepts a complete 20-case second-round matrix", () => {

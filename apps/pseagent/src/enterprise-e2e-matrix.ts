@@ -151,6 +151,14 @@ function semanticAcceptanceEquivalent(answer: string, term: string): boolean {
     return /(?:预期|期望|改善后|解决后)(?:收益|成效|效果|结果)|(?:预期收益|期望收益|收益或差距)/u
       .test(answer);
   }
+  if (term === "非负权" || term === "边权非负") {
+    return /(?:没有|不存在|不含|无)负权边|(?:所有|全部)?边权(?:均|都)?非负/u
+      .test(answer);
+  }
+  if (term === "当前最短" || term === "最小暂定距离") {
+    return /当前(?:暂定)?距离最小|当前最小(?:暂定)?距离|最小(?:的)?暂定距离/u
+      .test(answer);
+  }
   const universal = /^所有(.+)$/u.exec(term);
   if (universal?.[1]) {
     const subject = escapeRegExp(universal[1]);

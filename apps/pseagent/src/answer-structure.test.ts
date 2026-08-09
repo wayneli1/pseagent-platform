@@ -4,6 +4,7 @@ import {
   firstOrderedItemValue,
   hasBrokenCollectionEnumeration,
   missingExplicitFrameworkItems,
+  missingDirectQueryOperationalConditions,
   missingStrictFrameworkBoundaries,
   usesExplicitFrameworkCollection,
   verifierOrphanedOrderedSequence,
@@ -98,6 +99,26 @@ describe("collection enumeration integrity", () => {
     )).toBe(false);
   });
 
+  it("detects missing siblings from an unnumbered formal checklist", () => {
+    const evidence = [{
+      content: "资料列出的检查对象包括发信 IP 规则、发件人规则、组织白名单、关键字规则、用户白名单、用户黑名单和 CAC 检查。",
+    }];
+    expect(missingExplicitFrameworkItems(
+      "先检查组织白名单和 CAC 检查结果。",
+      evidence,
+    )).toEqual([
+      "发信 IP 规则",
+      "发件人规则",
+      "关键字规则",
+      "用户白名单",
+      "用户黑名单",
+    ]);
+    expect(missingExplicitFrameworkItems(
+      "依次检查发信 IP 规则、发件人规则、组织白名单、关键字规则、用户白名单、用户黑名单和 CAC 检查。",
+      evidence,
+    )).toEqual([]);
+  });
+
   it("detects strict boundaries omitted from a broadly used framework", () => {
     const evidence = [{ content: [
       "该结构包括 **Do the Last Thing First**（先展示最终结果）、**Illustration**（简洁画面）和 **Inverted Pyramid**（倒金字塔结构）三个相互配合的方法。",
@@ -129,6 +150,21 @@ describe("collection enumeration integrity", () => {
     )).toEqual([]);
     expect(missingStrictFrameworkBoundaries(
       "只解释 Inverted Pyramid。",
+      evidence,
+    )).toEqual([]);
+  });
+
+  it("detects an omitted conditional action from a direct query page", () => {
+    const evidence = [{
+      path: "wiki/queries/outlook-sync.md",
+      content: "在高级设置中配置共享权限。插件语言切换后需要重启 Outlook。",
+    }];
+    expect(missingDirectQueryOperationalConditions(
+      "配置共享权限后即可使用 Outlook。",
+      evidence,
+    )).toEqual(["插件语言切换后需要重启 Outlook"]);
+    expect(missingDirectQueryOperationalConditions(
+      "配置共享权限；切换插件语言后需重启 Outlook。",
       evidence,
     )).toEqual([]);
   });

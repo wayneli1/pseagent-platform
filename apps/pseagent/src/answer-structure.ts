@@ -108,6 +108,62 @@ export function usesExplicitFrameworkCollection(
       .length >= 2);
 }
 
+export function missingDirectQueryOperationalConditions(
+  answer: string,
+  documents: readonly { readonly path?: string; readonly content: string }[],
+): readonly string[] {
+  const normalizedAnswer = normalizeFrameworkText(answer);
+  const missing: string[] = [];
+  for (const document of documents) {
+    if (document.path !== undefined && !document.path.startsWith("wiki/queries/")) {
+      continue;
+    }
+    for (const sentence of document.content.split(/[。；;\n]+/u)) {
+      const condition = operationalCondition(sentence);
+      if (condition === undefined || operationalConditionCovered(normalizedAnswer, condition)) {
+        continue;
+      }
+      const label = sentence.trim();
+      if (label && !missing.includes(label)) missing.push(label);
+    }
+  }
+  return missing;
+}
+
+function operationalCondition(value: string): {
+  readonly action: string;
+  readonly object?: string;
+  readonly tail: string;
+} | undefined {
+  if (!/(?:后|前|时|完成|生效).{0,24}(?:需要|需|必须|应当|应|才(?:能|会))/u.test(value)) {
+    return undefined;
+  }
+  const tail = value.match(/(?:需要|需|必须|应当|应|才(?:能|会))(?<tail>[^。；;\n]{1,80})/u)
+    ?.groups?.tail?.trim();
+  if (tail === undefined) return undefined;
+  const action = tail.match(/(?:重新启动|重启|刷新|保存|启用|开启|关闭|配置|确认|校验|同步|安装|授权|登录|切换)/u)?.[0];
+  if (action === undefined) return undefined;
+  const object = tail.match(/[A-Za-z][A-Za-z0-9._+-]{2,}/u)?.[0]
+    ?.toLocaleLowerCase("zh-CN");
+  return { action, ...(object === undefined ? {} : { object }), tail };
+}
+
+function operationalConditionCovered(
+  normalizedAnswer: string,
+  condition: { readonly action: string; readonly object?: string; readonly tail: string },
+): boolean {
+  const normalizedAction = normalizeFrameworkText(condition.action);
+  if (condition.object !== undefined) {
+    return new RegExp(
+      `${escapeRegExp(normalizedAction)}.{0,20}${escapeRegExp(condition.object)}`,
+      "u",
+    ).test(normalizedAnswer);
+  }
+  const normalizedTail = normalizeFrameworkText(condition.tail);
+  return normalizedAnswer.includes(normalizedAction) &&
+    hasCommonSubstring(normalizedAnswer, normalizedTail, 4);
+}
+
 export function missingStrictFrameworkBoundaries(
   answer: string,
   documents: readonly { readonly content: string }[],
@@ -163,6 +219,10 @@ function hasCommonSubstring(left: string, right: string, length: number): boolea
   return false;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 function explicitFrameworkCollections(
   documents: readonly { readonly content: string }[],
 ): Array<Array<{ readonly label: string; readonly alternatives: string[] }>> {
@@ -185,6 +245,26 @@ function explicitFrameworkCollections(
           .filter(Boolean),
       }));
       if (items.length === expectedCount) collections.push(items);
+    }
+    for (const match of document.content.matchAll(
+      /(?:包括|应同时检查|需要检查|需检查)(?<items>[^。；;\n]{4,400})[。；;]/gu,
+    )) {
+      const source = match.groups?.items ?? "";
+      if (source.includes("**")) continue;
+      const labels = source.split(/[、，,]|\s*(?:以及|和|及)\s*/u)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (
+        labels.length < 3 ||
+        labels.length > 12 ||
+        labels.some((label) => label.length < 2 || label.length > 40)
+      ) {
+        continue;
+      }
+      collections.push(labels.map((label) => ({
+        label,
+        alternatives: [normalizeFrameworkText(label)],
+      })));
     }
   }
   return collections;
