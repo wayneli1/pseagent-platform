@@ -1953,6 +1953,62 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("rewrites a named-method synthesis after verification finds omitted core rules", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Mom Test 访谈",
+      requirements: [{
+        id: "R1",
+        question: "怎样用 Mom Test 把赞美追问成事实",
+        evidenceMode: "synthesis_allowed",
+        evidenceAspects: [{
+          id: "A1",
+          label: "核心规则与访谈步骤",
+          terms: ["过去具体行为", "少说多听", "频率", "严重性"],
+        }],
+        queries: [{ text: "Mom Test 核心规则 访谈步骤", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "Mom Test 核心规则 访谈步骤": [{
+          path: "wiki/synthesis/mom-test.md",
+          title: "Mom Test 方法总览",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/synthesis/mom-test.md"),
+      final("complete", "追问最近一次具体行为，并要求下一步承诺 [1]。", [1]),
+      final(
+        "complete",
+        "先谈客户情境并少说多听，再追问最近一次具体行为、发生频率、问题严重性、责任人和现有替代，最后用客户实际承诺验证推进 [1]。",
+        [1],
+      ),
+    ]);
+    const verifyCoverage = vi.fn()
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input, {
+          ...input.draft,
+          requirements: input.draft.requirements.map((requirement) => ({
+            ...requirement,
+            coverage: "partial" as const,
+          })),
+        }))
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(verifyCoverage).toHaveBeenCalledTimes(2);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "structured_coverage_repair_required",
+    );
+  });
+
   it("rewrites a collection that stops after its first numbered item", async () => {
     const plan: KnowledgePlan = {
       subject: "实施确认",

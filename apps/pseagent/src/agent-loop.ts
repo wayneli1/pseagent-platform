@@ -69,6 +69,7 @@ import {
   missingExplicitComparisonLabels,
 } from "./comparison-question.js";
 import { hasBrokenCollectionEnumeration } from "./answer-structure.js";
+import { explicitNamedMethods } from "./named-method.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const DIRECT_ONLY_READ_LIMIT = 3;
@@ -3227,13 +3228,20 @@ function pendingStructuredCoverageRepairs(
     const original = draftById.get(requirement.id);
     return (requirement.coverage !== "none" &&
         hasBrokenCollectionEnumeration(requirement.answer)) ||
-      (planned?.evidenceMode === "direct_only" &&
+      (planned !== undefined &&
+        (planned.evidenceMode === "direct_only" ||
+          explicitNamedMethods(planned.question).length > 0) &&
         original?.coverage === "complete" &&
         requirement.coverage === "partial" &&
-        STRUCTURED_COMPLETENESS_QUESTION_PATTERN.test(planned.question))
+        requiresStructuredCompleteness(planned.question))
       ? [requirement.id]
       : [];
   });
+}
+
+function requiresStructuredCompleteness(question: string): boolean {
+  return STRUCTURED_COMPLETENESS_QUESTION_PATTERN.test(question) ||
+    explicitNamedMethods(question).length > 0;
 }
 
 function hasAmbiguousComparisonClaim(answer: string): boolean {

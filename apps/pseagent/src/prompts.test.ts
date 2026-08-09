@@ -208,6 +208,12 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain(
       "删除邻近页面扩展和正文未直接支持的强化措辞",
     );
+    expect(prompt).toContain(
+      "相邻场景页只能补充，不能替代正式总览中的整体方法",
+    );
+    expect(prompt).toContain(
+      "遗漏整条核心规则或主要步骤时不得标记 complete",
+    );
   });
 
   it("makes the verifier retain only evidence-backed target segments", () => {
@@ -258,6 +264,12 @@ describe("support and existence semantics", () => {
       "所有规划 aspect 都已在语义上确认覆盖时应保留 complete",
     );
     expect(prompt).toContain("不得用覆盖百分比忽略已确认的缺口");
+    expect(prompt).toContain(
+      "相邻场景页不能替代整体方法",
+    );
+    expect(prompt).toContain(
+      "遗漏整条核心规则或主要步骤时必须选择 retain_partial",
+    );
     expect(prompt).toContain("targetDecision=retain");
     expect(prompt).toContain("targetDecision=retain_partial");
     expect(prompt).toContain("targetDecision=not_covered");
