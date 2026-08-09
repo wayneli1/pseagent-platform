@@ -167,14 +167,6 @@ export function adaptAnswerCardToTaskSpec(input: {
       resolvedQuestion: input.resolvedQuestion,
     });
   }
-  if (isHighConfidenceSingleCardFamily(input.match) &&
-      !hasRequiredCustomerInput(input.taskSpec)) {
-    return compileSingleCardAnswerCardTaskSpec({
-      match: input.match,
-      resolvedQuestion: input.resolvedQuestion,
-    });
-  }
-
   const draftDeliverables = input.taskSpec.deliverables.map((deliverable) => ({
     ...deliverable,
     obligations: deduplicateEquivalentModelObligations(deliverable.obligations)
@@ -322,23 +314,6 @@ export function adaptAnswerCardToTaskSpec(input: {
     guard,
     policies: Object.freeze(policies),
   };
-}
-
-function hasRequiredCustomerInput(taskSpec: TaskSpec): boolean {
-  return taskSpec.deliverables.some((deliverable) =>
-    deliverable.required && deliverable.obligations.some((obligation) =>
-      obligation.required && obligation.evidencePolicy === "customer_input"));
-}
-
-function isHighConfidenceSingleCardFamily(
-  match: Exclude<AnswerCardMatch, { matchType: "none" }>,
-): boolean {
-  return match.matchType === "family" &&
-    match.confidence === "high" &&
-    match.cardIdHashes.length === 1 &&
-    match.bindings.filter((binding) => binding.required).length > 1 &&
-    match.bindings.every((binding) => binding.evidencePolicy !== "customer_input") &&
-    new Set(match.bindings.map((binding) => binding.cardId)).size === 1;
 }
 
 export function applyAnswerCardPoliciesToPlan(input: {

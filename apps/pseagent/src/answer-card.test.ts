@@ -950,7 +950,7 @@ describe("answer card TaskSpec adapter", () => {
     expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
   });
 
-  it("activates one high-confidence multi-obligation card independently of model task decomposition", () => {
+  it("rejects a family card that cannot map onto the model task decomposition", () => {
     const question = "Can one governed card cover storage boundaries and operations visibility?";
     const taskSpec = taskSpecSchema.parse({
       subject: question,
@@ -1024,36 +1024,7 @@ describe("answer card TaskSpec adapter", () => {
       taskSpec,
     });
 
-    expect(result).toMatchObject({ activated: true });
-    if (!result.activated) throw new Error("expected activation");
-    expect(result.taskSpec.deliverables).toHaveLength(1);
-    expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
-    const governedPlan = applyAnswerCardPoliciesToPlan({
-      plan: {
-        subject: question,
-        retrievalStrategy: "coverage_units",
-        requirements: ["R1", "R2", "R3"].map((id) => ({
-          id: id as "R1" | "R2" | "R3",
-          question,
-          evidenceMode: "synthesis_allowed" as const,
-          evidenceAspects: [{ id: "A1" as const, label: question, terms: [question] }],
-          queries: [{ text: question, aspectIds: ["A1" as const] }],
-        })),
-      },
-      obligationIds: ["O1", "O2", "O3"],
-      policies: result.policies,
-    });
-    expect(governedPlan.requirements.map((requirement) => requirement.question)).toEqual([
-      "product boundary",
-      "validation process",
-      "contract boundary",
-    ]);
-    expect(governedPlan.requirements.map((requirement) =>
-      requirement.evidenceAspects[0]?.label)).toEqual([
-      "product boundary",
-      "validation process",
-      "contract boundary",
-    ]);
+    expect(result).toEqual({ activated: false, reason: "binding_unmapped" });
   });
 
   it("reports every answer-card concept missing after verification", () => {
