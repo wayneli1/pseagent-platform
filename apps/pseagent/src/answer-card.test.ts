@@ -950,7 +950,7 @@ describe("answer card TaskSpec adapter", () => {
     expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
   });
 
-  it("uses reviewed family obligation labels to map a contextual confirmation request", () => {
+  it("uses reviewed family obligation concepts to map a contextual parallel request", () => {
     const question = "如果先看到 state=defer，接下来还要和哪些客户端记录及后续状态对齐，才能确认是服务器重投？";
     const taskSpec = taskSpecSchema.parse({
       subject: "Coremail 重复发信诊断",
@@ -962,10 +962,10 @@ describe("answer card TaskSpec adapter", () => {
       }],
       deliverables: [{
         id: "D1",
-        label: "对齐客户端记录和后续状态",
+        label: "列出客户端记录",
         kind: "fact",
         required: true,
-        sourceText: "接下来还需要与哪些客户端记录及后续 deliveragent 状态对齐",
+        sourceText: "哪些客户端记录",
         obligations: [{
           id: "O1",
           label: "说明对齐方法",
@@ -973,7 +973,7 @@ describe("answer card TaskSpec adapter", () => {
           evidencePolicy: "direct",
           domains: ["coremail-professional"],
           required: true,
-          sourceText: "接下来还需要与哪些客户端记录及后续 deliveragent 状态对齐",
+          sourceText: "哪些客户端记录",
         }],
       }],
     });
@@ -1002,7 +1002,7 @@ describe("answer card TaskSpec adapter", () => {
       bindings: [
         binding("O1", "核对 Outlook 客户端重发证据", ["Outlook", "客户端发送记录"]),
         binding("O2", "核对 deliveragent 服务器重投证据", ["state=defer", "state=sent"]),
-        binding("O3", "用客户端与服务器证据建立完整时间线", ["完整时间线", "同时核对"]),
+        binding("O3", "用客户端与服务器证据建立完整时间线", ["投递状态", "完整时间线", "同时核对"]),
       ],
       cardIdHashes: ["f".repeat(64)],
       expectedRevisions: { "coremail-professional": professionalRevision },
@@ -1031,6 +1031,42 @@ describe("answer card TaskSpec adapter", () => {
     if (!result.activated) return;
     expect(result.guard).toMatchObject({ ok: true, issues: [] });
     expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
+
+    const unrelatedQuestion = "如果先看到 state=defer，接下来还要检查补丁下载地址和安装命令？";
+    const unrelatedTaskSpec = taskSpecSchema.parse({
+      subject: "Coremail 重复发信诊断",
+      entities: [{ id: "E1", label: "Coremail", role: "subject", sourceText: "Coremail" }],
+      deliverables: [{
+        id: "D1",
+        label: "检查补丁下载地址",
+        kind: "fact",
+        required: true,
+        sourceText: "检查补丁下载地址",
+        obligations: [{
+          id: "O1",
+          label: "检查补丁下载地址",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "检查补丁下载地址",
+        }],
+      }],
+    });
+    expect(adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: {
+        ...identityResolvedQuestion(unrelatedQuestion),
+        standaloneQuestion: "在 Coremail 重复发信场景中，如果先看到 state=defer，接下来还要检查补丁下载地址和安装命令？",
+        contextUsed: true,
+        inheritedSubjects: ["Coremail", "state=defer"],
+      },
+      taskSpec: unrelatedTaskSpec,
+    })).toEqual({
+      activated: false,
+      reason: "guard_rejected",
+      issueCodes: ["explicit_request_unmapped"],
+    });
   });
 
   it("rejects a family card that cannot map onto the model task decomposition", () => {

@@ -7,6 +7,7 @@ import type { ResolvedQuestion } from "./question-resolver.js";
 import { knowledgePlanSchema, type KnowledgePlan } from "./contracts.js";
 import {
   DeterministicTaskSpecGuard,
+  extractExplicitQuestionSignals,
   taskSpecSchema,
   type TaskSpec,
   type TaskSpecGuardResult,
@@ -284,15 +285,21 @@ export function adaptAnswerCardToTaskSpec(input: {
     resolvedQuestion: input.resolvedQuestion,
     taskSpec: parsed.data,
   });
-  const governedObligationIds = new Set(
-    policyEntries.map((entry) => entry.policy.obligationId),
+  const governedPolicyByObligationId = new Map(
+    policyEntries.map((entry) => [entry.policy.obligationId, entry.policy] as const),
   );
+  const governedObligationIds = new Set(governedPolicyByObligationId.keys());
   const rawTrustedIssues = rawGuard.issues.filter((issue) =>
     issue.code !== "protected_fact_not_direct" ||
     issue.obligationId === undefined ||
     !governedObligationIds.has(issue.obligationId));
   const rawUnmappedRequestCount = rawTrustedIssues.filter((issue) =>
     issue.code === "explicit_request_unmapped").length;
+  const explicitRequestClauses = rawUnmappedRequestCount === 0
+    ? []
+    : extractExplicitQuestionSignals(input.resolvedQuestion.rawQuestion).requestClauses;
+  // The assisted pass may only replace explicit-request mapping issues. Entity,
+  // source, evidence, and protected-fact decisions always remain from rawGuard.
   const labelAssistedGuard = rawUnmappedRequestCount === 0
     ? undefined
     : new DeterministicTaskSpecGuard().validate({
@@ -301,13 +308,23 @@ export function adaptAnswerCardToTaskSpec(input: {
           ...parsed.data,
           deliverables: parsed.data.deliverables.map((deliverable) => ({
             ...deliverable,
-            obligations: deliverable.obligations.map((obligation) =>
-              governedObligationIds.has(obligation.id)
+            obligations: deliverable.obligations.map((obligation) => {
+              const policy = governedPolicyByObligationId.get(obligation.id);
+              const trustedClauses = policy === undefined
+                ? []
+                : explicitRequestClauses.filter((clause) =>
+                    trustedCardClauseMatches(clause, policy));
+              return policy !== undefined
                 ? {
                     ...obligation,
-                    sourceText: trustedCardSourceText(obligation.sourceText, obligation.label),
+                    sourceText: trustedCardSourceText(
+                      obligation.sourceText,
+                      policy,
+                      trustedClauses,
+                    ),
                   }
-                : obligation),
+                : obligation;
+            }),
           })),
         },
       });
@@ -600,13 +617,49 @@ function normalizeText(value: string): string {
     .replace(/[\s\p{P}\p{S}]+/gu, "");
 }
 
-function trustedCardSourceText(sourceText: string, cardLabel: string): string {
-  if (normalizeText(sourceText).includes(normalizeText(cardLabel))) return sourceText;
-  const label = [...cardLabel.trim()].slice(0, 256).join("");
-  const separator = "；";
-  const sourceLimit = Math.max(1, 512 - [...label, ...separator].length);
-  const source = [...sourceText.trim()].slice(0, sourceLimit).join("");
-  return `${source}${separator}${label}`;
+function trustedCardSourceText(
+  sourceText: string,
+  policy: Pick<AnswerCardObligationPolicy, "label" | "requiredConcepts">,
+  trustedClauses: readonly string[],
+): string {
+  const trustedTerms = stableSemanticText([
+    ...trustedClauses,
+    policy.label,
+    ...policy.requiredConcepts,
+    sourceText,
+  ]);
+  return [...trustedTerms.join("；")].slice(0, 512).join("");
+}
+
+const TRUSTED_REQUEST_SCAFFOLD_PATTERN =
+  /(?:哪些|什么|如何|怎么|怎样|接下来|还要|需要|后续|对齐|确认|判断|检查|核对|说明|给出|列出)/gu;
+
+function trustedCardClauseMatches(
+  clause: string,
+  policy: Pick<AnswerCardObligationPolicy, "label" | "requiredConcepts">,
+): boolean {
+  const core = normalizeText(clause).replace(TRUSTED_REQUEST_SCAFFOLD_PATTERN, "");
+  if ([...core].length < 2) return false;
+  return [policy.label, ...policy.requiredConcepts].some((term) =>
+    trustedSemanticOverlap(core, term));
+}
+
+function trustedSemanticOverlap(left: string, right: string): boolean {
+  const normalizedLeft = normalizeText(left);
+  const normalizedRight = normalizeText(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  if (
+    normalizedLeft.includes(normalizedRight) ||
+    normalizedRight.includes(normalizedLeft)
+  ) {
+    return true;
+  }
+  const leftBigrams = meaningfulBigrams(normalizedLeft);
+  const rightBigrams = meaningfulBigrams(normalizedRight);
+  const smallerSize = Math.min(leftBigrams.size, rightBigrams.size);
+  if (smallerSize === 0) return false;
+  const intersection = [...leftBigrams].filter((item) => rightBigrams.has(item)).length;
+  return intersection >= Math.min(2, smallerSize) && intersection / smallerSize >= 0.5;
 }
 
 function stableSemanticText(values: readonly string[]): string[] {
