@@ -5,7 +5,34 @@ import {
   InvalidResolvedQuestionError,
   ModelQuestionResolver,
   QUESTION_RESOLVER_SYSTEM_PROMPT,
+  requiresContextualRouteResolution,
 } from "./question-resolver.js";
+
+describe("requiresContextualRouteResolution", () => {
+  const context = JSON.stringify({
+    version: 3,
+    recentTurns: [{ question: "演示前确认什么？", answerOutline: "1. 参会角色\n2. 关键业务问题" }],
+  });
+
+  it.each([
+    "你刚才列的第二点具体怎么确认？",
+    "那它在什么情况下算具备资格？",
+    "这个具体怎么判断？",
+  ])("detects a context-dependent follow-up: %s", (question) => {
+    expect(requiresContextualRouteResolution(question, context)).toBe(true);
+  });
+
+  it.each([
+    "换个话题：为什么拓扑排序只适用于有向无环图？",
+    "为什么拓扑排序只适用于有向无环图？",
+  ])("does not inherit context for a standalone topic: %s", (question) => {
+    expect(requiresContextualRouteResolution(question, context)).toBe(false);
+  });
+
+  it("requires actual conversation context", () => {
+    expect(requiresContextualRouteResolution("你刚才列的第二点是什么？")).toBe(false);
+  });
+});
 
 describe("ModelQuestionResolver", () => {
   it("uses an identity result without a model call when no context exists", async () => {

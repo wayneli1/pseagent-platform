@@ -18,6 +18,8 @@ export type { TaskCompiler, TaskSpecGuard } from "./task-spec.js";
 export interface TaskAnalysisShadowInput {
   readonly question: string;
   readonly conversationContext?: string;
+  /** A pre-route resolution can be reused to avoid a second, divergent model call. */
+  readonly resolvedQuestion?: ResolvedQuestion;
   readonly scope: Exclude<Scope, "normal">;
   readonly legacyPlan?: KnowledgePlan;
   readonly knowledgeContext: {
@@ -49,7 +51,7 @@ export class DefaultTaskAnalysisShadow implements TaskAnalysisShadow {
 
   async analyze(input: TaskAnalysisShadowInput): Promise<TaskAnalysisShadowResult> {
     const startedAt = Date.now();
-    const resolvedQuestion = await observeModelCall({
+    const resolvedQuestion = input.resolvedQuestion ?? await observeModelCall({
       trace: input.trace,
       role: "resolver",
       operation: "resolve",

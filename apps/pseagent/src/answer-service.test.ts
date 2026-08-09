@@ -752,6 +752,102 @@ describe("AnswerService", () => {
     ]);
   });
 
+  it("resolves and reroutes an explicit contextual follow-up before returning a normal answer", async () => {
+    const rawQuestion = "你刚才列的第二点具体怎么确认？";
+    const standaloneQuestion = "演示前如何确认客户的关键业务问题？";
+    const conversationContext = JSON.stringify({
+      version: 3,
+      recentTurns: [{
+        question: "销售临时让我演示但没有客户背景，应该直接做完整演示吗？",
+        answerOutline: "1. 确认参会角色\n2. 确认关键业务问题\n3. 确认判断标准",
+      }],
+    });
+    const router = {
+      route: vi.fn()
+        .mockResolvedValueOnce("normal" as const)
+        .mockResolvedValueOnce("general" as const),
+    };
+    const questionResolver = {
+      resolve: vi.fn(async () => ({
+        rawQuestion,
+        standaloneQuestion,
+        contextUsed: true,
+        inheritedSubjects: ["关键业务问题"],
+        corrections: [],
+      })),
+    };
+    const planner = createPlanner();
+    const generalSession = {
+      ...createKnowledgeSessionFixture(),
+      project: "presales-general" as const,
+    } as unknown as KnowledgeSession;
+    const knowledge = { open: vi.fn(async () => generalSession) };
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "general",
+      status: "answered",
+      answer: "通过最近具体业务场景、影响和预期结果确认。",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: { completeText: vi.fn() } as unknown as ModelClient,
+      router,
+      planner,
+      knowledge,
+      runAgent,
+      questionResolver,
+    });
+
+    const execution = await service.answerDetailed(rawQuestion, conversationContext);
+
+    expect(router.route).toHaveBeenNthCalledWith(
+      1,
+      rawQuestion,
+      conversationContext,
+      expect.any(AbortSignal),
+    );
+    expect(router.route).toHaveBeenNthCalledWith(
+      2,
+      standaloneQuestion,
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(planner.plan).toHaveBeenCalledWith(expect.objectContaining({
+      question: standaloneQuestion,
+    }));
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      scope: "general",
+      question: standaloneQuestion,
+    }));
+    expect(runAgent.mock.calls[0]?.[0]).not.toHaveProperty("conversationContext");
+    expect(execution.questionResolution).toMatchObject({
+      rawQuestion,
+      standaloneQuestion,
+      contextUsed: true,
+    });
+    expect(execution.result.scope).toBe("general");
+  });
+
+  it("keeps an explicit topic switch on the normal route without resolving old context", async () => {
+    const router = { route: vi.fn(async () => "normal" as const) };
+    const questionResolver = { resolve: vi.fn() };
+    const model = { completeText: vi.fn(async () => "拓扑排序要求不存在有向环。") } as unknown as ModelClient;
+    const service = new AnswerService({
+      model,
+      router,
+      planner: createPlanner(),
+      knowledge: { open: vi.fn() },
+      runAgent: vi.fn(),
+      questionResolver,
+    });
+
+    await expect(service.answer(
+      "换个话题：为什么拓扑排序只适用于有向无环图？",
+      JSON.stringify({ version: 3, recentTurns: [{ question: "演示前确认什么？" }] }),
+    )).resolves.toMatchObject({ scope: "normal" });
+    expect(questionResolver.resolve).not.toHaveBeenCalled();
+    expect(router.route).toHaveBeenCalledOnce();
+  });
+
   it("removes an unrequested illustrative example from a normal answer", async () => {
     const model = {
       completeText: vi.fn(async () =>

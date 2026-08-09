@@ -27,7 +27,10 @@ import {
   type ModelRoleClients,
 } from "./model-client.js";
 import { ScopeRouter } from "./router.js";
-import { ModelQuestionResolver } from "./question-resolver.js";
+import {
+  ModelQuestionResolver,
+  type QuestionResolver,
+} from "./question-resolver.js";
 import {
   DefaultTaskAnalysisShadow,
   type TaskAnalysisShadow,
@@ -59,6 +62,7 @@ export interface PseRuntimeDependencies {
     model: ModelClient,
     config: AppConfig,
   ) => TaskAnalysisShadow;
+  readonly createQuestionResolver?: (model: ModelClient) => QuestionResolver;
   readonly createAnswerCardMatcher?: (
     model: ModelClient,
     config: Extract<AppConfig["answerCards"], { enabled: true }>,
@@ -102,9 +106,12 @@ export async function createPseAgentRuntime(
       dependencies.createKnowledgePlanner ??
       ((value) => new ModelKnowledgePlanner(value))
     )(models.planner);
+    const questionResolver = (
+      dependencies.createQuestionResolver ?? ((model) => new ModelQuestionResolver(model))
+    )(models.resolver);
     const taskAnalysisShadow = config.taskSpecShadow.enabled
       ? dependencies.createTaskAnalysisShadow === undefined
-        ? defaultCreateTaskAnalysisShadow(models, config)
+        ? defaultCreateTaskAnalysisShadow(models, config, questionResolver)
         : dependencies.createTaskAnalysisShadow(models.resolver, config)
       : undefined;
     const answerCardMatcher = config.answerCards.enabled
@@ -129,6 +136,7 @@ export async function createPseAgentRuntime(
       multiDomainActiveEnabled: config.multiDomainActiveEnabled,
       answerCardExactActiveEnabled: config.answerCards.exactActiveEnabled,
       answerCardFamilyActiveEnabled: config.answerCards.familyActiveEnabled,
+      questionResolver,
       ...(answerCardMatcher === undefined ? {} : { answerCardMatcher }),
       ...(taskAnalysisShadow === undefined || !config.taskSpecShadow.enabled
         ? {}
@@ -187,9 +195,10 @@ function defaultCreateAnswerCardMatcher(
 function defaultCreateTaskAnalysisShadow(
   models: ModelRoleClients,
   _config: AppConfig,
+  questionResolver: QuestionResolver,
 ): TaskAnalysisShadow {
   return new DefaultTaskAnalysisShadow(
-    new ModelQuestionResolver(models.resolver),
+    questionResolver,
     new ModelTaskCompiler(models.planner),
     new DeterministicTaskSpecGuard(),
   );

@@ -33,6 +33,20 @@ export interface QuestionResolver {
   resolve(input: QuestionResolverInput): Promise<ResolvedQuestion>;
 }
 
+/**
+ * Limit the pre-route resolution pass to questions whose meaning actually
+ * depends on a previous turn.  This keeps unrelated topic switches on the
+ * normal path and avoids paying for a second routing pass on standalone
+ * questions.
+ */
+export function requiresContextualRouteResolution(
+  question: string,
+  conversationContext?: string,
+): boolean {
+  if (!conversationContext?.trim() || isExplicitTopicSwitch(question)) return false;
+  return hasExplicitAnswerItemReference(question) || hasLeadingContextReference(question);
+}
+
 export class InvalidResolvedQuestionError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -223,4 +237,9 @@ function hasRecentTurns(context: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isExplicitTopicSwitch(value: string): boolean {
+  return /^(?:换个话题|换个问题|另一个问题|另外问(?:一|个)?|不说这个了|与前面无关|和前面无关)/u
+    .test(value.trim());
 }

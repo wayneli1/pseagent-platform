@@ -92,4 +92,62 @@ describe("DefaultTaskAnalysisShadow", () => {
     expect(calls).toEqual(["resolver", "compiler", "guard"]);
     expect(plan).toEqual(legacyBefore);
   });
+
+  it("reuses a pre-route resolution without resolving the same follow-up twice", async () => {
+    const resolvedQuestion = {
+      rawQuestion: "你刚才列的第二点具体怎么确认？",
+      standaloneQuestion: "演示前如何确认客户的关键业务问题？",
+      contextUsed: true,
+      inheritedSubjects: ["关键业务问题"],
+      corrections: [],
+    } as const;
+    const taskSpec = taskSpecSchema.parse({
+      subject: "演示资格",
+      entities: [{ id: "E1", label: "客户", role: "target", sourceText: "客户" }],
+      deliverables: [{
+        id: "D1",
+        label: "确认关键业务问题",
+        kind: "procedure",
+        required: true,
+        sourceText: "如何确认客户的关键业务问题",
+        obligations: [{
+          id: "O1",
+          label: "确认关键业务问题",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "如何确认客户的关键业务问题",
+        }],
+      }],
+    });
+    const resolver = { resolve: vi.fn() } satisfies QuestionResolver;
+    const compiler = { compile: vi.fn(async () => taskSpec) } satisfies TaskCompiler;
+    const guard = {
+      validate: vi.fn(() => ({
+        ok: true,
+        issues: [],
+        explicitEntityCount: 1,
+        mappedExplicitEntityCount: 1,
+        explicitRequestCount: 1,
+        mappedExplicitRequestCount: 1,
+      })),
+    } satisfies TaskSpecGuard;
+    const analyzer = new DefaultTaskAnalysisShadow(resolver, compiler, guard);
+
+    await analyzer.analyze({
+      question: resolvedQuestion.rawQuestion,
+      conversationContext: "旧上下文",
+      resolvedQuestion,
+      scope: "general",
+      knowledgeContext: {
+        purpose: "售前知识",
+        schema: "schema",
+        planningOverview: "overview",
+      },
+    });
+
+    expect(resolver.resolve).not.toHaveBeenCalled();
+    expect(compiler.compile).toHaveBeenCalledWith(expect.objectContaining({ resolvedQuestion }));
+  });
 });

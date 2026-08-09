@@ -73,7 +73,12 @@ import {
   compileExactAnswerCardTaskSpec,
   type AnswerCardObligationPolicy,
 } from "./answer-card-task-spec-adapter.js";
-import { identityResolvedQuestion, type ResolvedQuestion } from "./question-resolver.js";
+import {
+  identityResolvedQuestion,
+  requiresContextualRouteResolution,
+  type QuestionResolver,
+  type ResolvedQuestion,
+} from "./question-resolver.js";
 import { normalAnswerNeedsRepair, stripUnrequestedExamples } from "./normal-answer.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
@@ -188,6 +193,7 @@ export class AnswerService {
     readonly answerCardMatcher?: AnswerCardMatcher;
     readonly answerCardExactActiveEnabled?: boolean;
     readonly answerCardFamilyActiveEnabled?: boolean;
+    readonly questionResolver?: QuestionResolver;
   }) {}
 
   async answer(
@@ -241,19 +247,67 @@ export class AnswerService {
             ),
           })
         : scopeForDomain(exactRoute.domain);
+      if (
+        scope === "normal" &&
+        exactRoute === undefined &&
+        this.dependencies.questionResolver !== undefined &&
+        requiresContextualRouteResolution(question, conversationContext)
+      ) {
+        try {
+          const resolved = await observeModelCall({
+            trace,
+            role: "resolver",
+            operation: "resolve",
+            signal: requestSignal,
+            call: () => this.dependencies.questionResolver!.resolve({
+              question,
+              ...(conversationContext === undefined ? {} : { conversationContext }),
+              signal: requestSignal,
+            }),
+          });
+          if (
+            resolved.contextUsed &&
+            resolved.standaloneQuestion.trim() !== question.trim()
+          ) {
+            questionResolution = resolved;
+            scope = await observeModelCall({
+              trace,
+              role: "resolver",
+              operation: "route",
+              signal: requestSignal,
+              call: () => this.dependencies.router.route(
+                resolved.standaloneQuestion,
+                undefined,
+                requestSignal,
+              ),
+            });
+          }
+        } catch (error) {
+          if (
+            !(error instanceof InvalidModelPayloadError) &&
+            !(error instanceof ModelUnavailableError)
+          ) throw error;
+        }
+      }
       recordDiagnostic(trace, { event: "route", scope });
       if (scope === "normal") {
+        const normalQuestion = questionResolution.contextUsed
+          ? questionResolution.standaloneQuestion
+          : question;
+        const normalConversationContext = questionResolution.contextUsed
+          ? undefined
+          : conversationContext;
         const draft = await observeModelCall({
           trace,
           role: "synthesizer",
           operation: "normal_answer",
           signal: requestSignal,
           call: () => this.dependencies.model.completeText({
-            messages: normalAnswerMessages(question, conversationContext),
+            messages: normalAnswerMessages(normalQuestion, normalConversationContext),
             signal: requestSignal,
           }),
         });
-        let answer = stripUnrequestedExamples(question, draft);
+        let answer = stripUnrequestedExamples(normalQuestion, draft);
         if (normalAnswerNeedsRepair(answer)) {
           const repaired = await observeModelCall({
             trace,
@@ -262,14 +316,14 @@ export class AnswerService {
             signal: requestSignal,
             call: () => this.dependencies.model.completeText({
               messages: [
-                ...normalAnswerMessages(question, conversationContext),
+                ...normalAnswerMessages(normalQuestion, normalConversationContext),
                 { role: "assistant", content: answer },
                 { role: "user", content: "上一次回答存在未闭合标点、截断清单或未完成句子。请完整重写答案，保留正确结论，补全关键机制与适用边界，不要解释修订过程。" },
               ],
               signal: requestSignal,
             }),
           });
-          answer = stripUnrequestedExamples(question, repaired);
+          answer = stripUnrequestedExamples(normalQuestion, repaired);
         }
         const result: AnswerResult = { scope, status: "answered", answer, references: [] };
         return withQuestionResolution(finishExecution(trace, result, startedAt, false, false));
@@ -278,6 +332,12 @@ export class AnswerService {
         throw new Error("invalid_routed_scope");
       }
       const knowledgeScope = scope;
+      const routedQuestion = questionResolution.contextUsed
+        ? questionResolution.standaloneQuestion
+        : question;
+      const routedConversationContext = questionResolution.contextUsed
+        ? undefined
+        : conversationContext;
       const session = await this.dependencies.knowledge.open(knowledgeScope, requestSignal);
       const loadLegacyPlan = async (): Promise<KnowledgePlan> => {
         const legacyPlan = await observeModelCall({
@@ -287,11 +347,13 @@ export class AnswerService {
           signal: requestSignal,
           call: () => this.dependencies.planner.plan({
             scope: knowledgeScope,
-            question,
+            question: routedQuestion,
             purpose: session.purpose,
             schema: session.schema,
             planningOverview: session.planningOverview,
-            ...(conversationContext === undefined ? {} : { conversationContext }),
+            ...(routedConversationContext === undefined
+              ? {}
+              : { conversationContext: routedConversationContext }),
             signal: requestSignal,
           }),
         });
@@ -308,6 +370,9 @@ export class AnswerService {
               : { analyzer: this.dependencies.taskAnalysisShadow }),
             question,
             ...(conversationContext === undefined ? {} : { conversationContext }),
+            ...(questionResolution.contextUsed
+              ? { resolvedQuestion: questionResolution }
+              : {}),
             scope,
             ...(legacyPlan === undefined ? {} : { legacyPlan }),
             knowledgeContext: {
@@ -323,7 +388,7 @@ export class AnswerService {
       if(taskAnalysis!==undefined)questionResolution=taskAnalysis.resolvedQuestion;
       const answerCardMatch = await this.matchAnswerCard({
         question: exactRoute === undefined
-          ? taskAnalysis?.resolvedQuestion.standaloneQuestion ?? question
+          ? taskAnalysis?.resolvedQuestion.standaloneQuestion ?? routedQuestion
           : question,
         currentDomain: session.project,
         currentRevision: session.revision,
@@ -386,9 +451,9 @@ export class AnswerService {
           }
         }
       }
-      let effectiveQuestion = question;
+      let effectiveQuestion = routedQuestion;
       let effectivePlan = legacyPlan;
-      let effectiveConversationContext = conversationContext;
+      let effectiveConversationContext = routedConversationContext;
       let effectiveEvidenceConditions: readonly RequirementEvidenceCondition[] | undefined;
       let effectiveRequirementBindings: readonly DomainRequirementBinding[] | undefined;
       if (taskAnalysis !== undefined) {
