@@ -14,6 +14,7 @@ export function normalAnswerNeedsRepair(answer: string): boolean {
     if(closing.has(character)&&stack.pop()!==character)return true;
   }
   if(stack.length>0)return true;
+  if(/[，,:：；;]\s*[。！？!?]/u.test(trimmed))return true;
   return /(?:^|\n)\s*[-*]\s*[^\n]{0,240}(?:[：:]|[（(【\[])\s*$/u.test(trimmed);
 }
 

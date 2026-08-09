@@ -37,4 +37,13 @@ describe("stripUnrequestedExamples", () => {
     expect(normalAnswerNeedsRepair("关键机制：每轮移除一个入度为 0 的节点；有环时不存在这种节点。"))
       .toBe(false);
   });
+
+  it("detects an empty clause left between consecutive punctuation", () => {
+    expect(normalAnswerNeedsRepair(
+      "核心机制：\n- 如果图中存在环，。\n\n因此排序无解。",
+    )).toBe(true);
+    expect(normalAnswerNeedsRepair(
+      "核心机制：如果图中存在环，环内节点的入度无法降为 0。",
+    )).toBe(false);
+  });
 });
