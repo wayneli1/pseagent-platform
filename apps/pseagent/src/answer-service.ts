@@ -74,6 +74,7 @@ import {
   type AnswerCardObligationPolicy,
 } from "./answer-card-task-spec-adapter.js";
 import { identityResolvedQuestion, type ResolvedQuestion } from "./question-resolver.js";
+import { stripUnrequestedExamples } from "./normal-answer.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 300_000;
 export const PSE_ACTIVE_DEADLINE_MS = 270_000;
@@ -242,7 +243,7 @@ export class AnswerService {
         : scopeForDomain(exactRoute.domain);
       recordDiagnostic(trace, { event: "route", scope });
       if (scope === "normal") {
-        const answer = await observeModelCall({
+        const draft = await observeModelCall({
           trace,
           role: "synthesizer",
           operation: "normal_answer",
@@ -252,6 +253,7 @@ export class AnswerService {
             signal: requestSignal,
           }),
         });
+        const answer = stripUnrequestedExamples(question, draft);
         const result: AnswerResult = { scope, status: "answered", answer, references: [] };
         return withQuestionResolution(finishExecution(trace, result, startedAt, false, false));
       }

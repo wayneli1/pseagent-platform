@@ -187,4 +187,13 @@ describe("ScopeRouter", () => {
     expect(messages[0]?.content).toContain(PSEAGENT_SELF_CONTEXT);
     expect(messages[0]?.content).toContain("不得把 PSEAgent 解释为其他同名项目");
   });
+
+  it("keeps ordinary technical explanations conservative and complete", () => {
+    const messages = normalAnswerMessages(
+      "为什么这个算法不适用，应该换什么方案？",
+    );
+    expect(messages[0]?.content).toContain("明确提出多个子问题时必须逐项回答");
+    expect(messages[0]?.content).toContain("先明确结论成立的关键前提");
+    expect(messages[0]?.content).toContain("没有明确要求举例时，不要主动添加具体例子");
+  });
 });

@@ -752,6 +752,27 @@ describe("AnswerService", () => {
     ]);
   });
 
+  it("removes an unrequested illustrative example from a normal answer", async () => {
+    const model = {
+      completeText: vi.fn(async () =>
+        "先说明成立前提。错误条件会推翻既有结论。例如这个装饰性例子没有经过核算。"),
+    } as unknown as ModelClient;
+    const service = new AnswerService({
+      model,
+      router: { route: vi.fn(async () => "normal" as const) },
+      planner: createPlanner(),
+      knowledge: { open: vi.fn() },
+      runAgent: vi.fn(),
+    });
+
+    await expect(service.answer("为什么这个方法会失效？")).resolves.toEqual({
+      scope: "normal",
+      status: "answered",
+      answer: "先说明成立前提。错误条件会推翻既有结论。",
+      references: [],
+    });
+  });
+
   it("answers PSEAgent architecture as normal even when Coremail dominates history", async () => {
     const completeJson = vi.fn();
     const model = {
