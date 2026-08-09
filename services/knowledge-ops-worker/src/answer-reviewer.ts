@@ -8,6 +8,7 @@ import {
   DefaultAnswerCardMatcher,
   collectionEnumerationIssue,
   hashAnswerCardIdentifier,
+  missingExplicitFrameworkItems,
   type AnswerCardCatalog,
   type AnswerCardMatch,
   type ModelClient,
@@ -72,6 +73,7 @@ export class IndependentAnswerReviewer {
           "受评对象只能是 input.answer。evidence 只是判定基准；正式资料写了某项，不代表回答已经写了该项。",
           "逐项检查正确性、完整性、逻辑、引用和表达；证据不足时选择 needs_review，不得猜测 pass。",
           "用户明确枚举多个对象、角色、类别或维度时，必须逐项检查 answer 是否给出各项的定义、判断标准或当前问题要求的结论；只提到名称、只给孤立例子或只完整回答其中一项，不能判为完整覆盖。",
+          "正式证据把一个框架明确写成多个相互配合的核心组件，而 answer 已经采用其中至少两个组件时，必须检查中间或相邻的核心组件是否被遗漏；不能因为首尾方向正确就判为完整。",
           "governedCard 存在时，必须为每个 required obligation 返回且只返回一个 obligationChecks 项。",
           "发现与正式证据冲突的关键结论时选择 fail；缺项或证据不足选择 needs_review。",
           "not_covered 是有效的安全交付状态：当正式证据确实不覆盖目标、回答明确说明边界且没有无依据主张时，可以判为 pass；不得只因没有给出资料外的目标答案而降级。",
@@ -143,6 +145,10 @@ export function enforceDeterministicReview(
       :enumerationIssue==="declared_count_incomplete"
         ?{category:"coverage_gap",severity:"major",summary:"回答声明的集合数量大于实际列出的项目数，存在结构性截断",evidence:"声明的步骤或项目数量未完整列出"}
         :{category:"coverage_gap",severity:"major",summary:"回答的清单编号不连续，存在中间项目被删除的结构性截断",evidence:"集合编号跳过了一个或多个序号"});
+  }
+  const missingFrameworkItems=missingExplicitFrameworkItems(input.answer,input.evidence);
+  if(missingFrameworkItems.length>0){
+    defects.push({category:"coverage_gap",severity:"major",summary:"回答遗漏了正式定义中相互配合的核心框架组件",evidence:`缺少：${missingFrameworkItems.join("、")}`});
   }
   const governedCard=governedCardForReview(input);
   const required=governedCard?.obligations.filter((item)=>item.required)??[];

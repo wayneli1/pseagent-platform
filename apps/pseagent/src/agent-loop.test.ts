@@ -171,6 +171,7 @@ function fakeSession(options: {
   readonly failedReadAttempts?: number;
   readonly pageType?: string;
   readonly pageSources?: readonly string[];
+  readonly pageBodies?: Readonly<Record<string, string>>;
 } = {}) {
   const remainingFailedQueryAttempts = new Map(
     Object.entries(options.failedQueryAttempts ?? {}),
@@ -229,7 +230,7 @@ function fakeSession(options: {
       tags: [],
       related: [],
       sources: [...(options.pageSources ?? [])],
-      body: `body:${path}`,
+      body: options.pageBodies?.[path] ?? `body:${path}`,
       contentHash: hash,
     };
   });
@@ -242,7 +243,8 @@ function fakeSession(options: {
     search: searchMock,
     graph: graphMock,
     readPage: readPageMock,
-    compactPage: vi.fn(() => "compact page"),
+    compactPage: vi.fn((page: { readonly path: string }) =>
+      options.pageBodies?.[page.path] ?? "compact page"),
     totalToolCalls: () =>
       searchMock.mock.calls.length + graphMock.mock.calls.length + readPageMock.mock.calls.length,
   };
@@ -2058,6 +2060,62 @@ describe("runKnowledgeAgent", () => {
     );
     expect(result.answer).toContain("少说多听");
     expect(result.answer).toContain("问题严重性");
+  });
+
+  it("rewrites an answer that omits one formally coordinated framework component", async () => {
+    const path = "wiki/concepts/results-first.md";
+    const plan: KnowledgePlan = {
+      subject: "结果优先演示",
+      requirements: [{
+        id: "R1",
+        question: "怎样先建立相关性再按角色下钻证据",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "结果优先演示结构",
+          terms: ["结果优先", "倒金字塔", "按需深入"],
+        }],
+        queries: [{ text: "结果优先演示结构", aspectIds: ["A1"] }],
+      }],
+    };
+    const evidence =
+      "该结构包括 **Do the Last Thing First**（先展示最终结果）、" +
+      "**Illustration**（简洁画面）和 **Inverted Pyramid**（倒金字塔结构）" +
+      "三个相互配合的方法。";
+    const session = fakeSession({
+      hits: {
+        "结果优先演示结构": [{ path, title: "结果优先演示结构" }],
+      },
+      pageBodies: { [path]: evidence },
+    });
+    const model = scriptedAgentModel([
+      read("R1", path),
+      final(
+        "complete",
+        "用 Do the Last Thing First 先展示最终结果，再以 Inverted Pyramid 按需深入 [1]。",
+        [1],
+      ),
+      final(
+        "complete",
+        "用 Do the Last Thing First 先展示最终结果，以 Illustration 简洁画面连接情境，再以 Inverted Pyramid 按需深入 [1]。",
+        [1],
+      ),
+    ]);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(model.calls).toBe(3);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "coordinated_framework_component_missing",
+    );
+    expect(result.answer).toContain("Illustration");
+    expect(result.answer).toContain("简洁画面");
   });
 
   it("rewrites a collection that stops after its first numbered item", async () => {

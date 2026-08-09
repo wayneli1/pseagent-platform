@@ -3,6 +3,7 @@ import {
   collectionEnumerationIssue,
   firstOrderedItemValue,
   hasBrokenCollectionEnumeration,
+  missingExplicitFrameworkItems,
   verifierOrphanedOrderedSequence,
 } from "./answer-structure.js";
 
@@ -67,5 +68,23 @@ describe("collection enumeration integrity", () => {
     expect(firstOrderedItemValue(verified)).toBe(4);
     expect(verifierOrphanedOrderedSequence(draft, verified)).toBe(true);
     expect(verifierOrphanedOrderedSequence(draft, draft)).toBe(false);
+  });
+
+  it("detects a missing sibling from a formally enumerated framework", () => {
+    const evidence = [{
+      content: "该结构包括 **Do the Last Thing First**（先展示最终结果）、**Illustration**（简洁画面）和 **Inverted Pyramid**（倒金字塔结构）三个相互配合的方法。",
+    }];
+    expect(missingExplicitFrameworkItems(
+      "采用 Do the Last Thing First 建立相关性，再用 Inverted Pyramid 控制密度。",
+      evidence,
+    )).toEqual(["Illustration"]);
+    expect(missingExplicitFrameworkItems(
+      "先展示最终结果，再用简洁画面情境化，最后按 Inverted Pyramid 深入。",
+      evidence,
+    )).toEqual([]);
+    expect(missingExplicitFrameworkItems(
+      "Inverted Pyramid 是先结论后细节。",
+      evidence,
+    )).toEqual([]);
   });
 });

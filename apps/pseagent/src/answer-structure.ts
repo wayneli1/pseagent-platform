@@ -75,6 +75,49 @@ export function hasBrokenCollectionEnumeration(answer: string): boolean {
   return collectionEnumerationIssue(answer) !== undefined;
 }
 
+/**
+ * Finds a missing sibling in a formally defined framework collection. The
+ * guard only activates after the answer already uses at least two members, so
+ * a narrow question about one component does not expand into the whole page.
+ */
+export function missingExplicitFrameworkItems(
+  answer: string,
+  documents: readonly { readonly content: string }[],
+): readonly string[] {
+  const normalizedAnswer = normalizeFrameworkText(answer);
+  for (const document of documents) {
+    for (const match of document.content.matchAll(
+      /(?:包括|由)(?<items>[^。\n]{1,800}?)(?<count>[二三四五六七八九十2-9])\s*(?:个|项|种)(?:相互配合的|相互协同的|协同的|核心的)?\s*(?:方法|部分|组件|要素|阶段|维度|原则|步骤)(?:[。；;]|$)/gu,
+    )) {
+      const expectedCount = collectionCountValue(match.groups?.count ?? "");
+      if (expectedCount === undefined) continue;
+      const items = [...(match.groups?.items ?? "").matchAll(
+        /\*\*([^*\n]{2,100})\*\*(?:[（(]([^）)\n]{1,100})[）)])?/gu,
+      )].map((item) => ({
+        label: item[1]?.trim() ?? "",
+        alternatives: [item[1] ?? "", item[2] ?? ""]
+          .map(normalizeFrameworkText)
+          .filter(Boolean),
+      }));
+      if (items.length !== expectedCount) continue;
+      const covered = items.filter((item) =>
+        item.alternatives.some((alternative) => normalizedAnswer.includes(alternative)));
+      if (covered.length < 2) continue;
+      const missing = items.filter((item) =>
+        !item.alternatives.some((alternative) => normalizedAnswer.includes(alternative)))
+        .map((item) => item.label);
+      if (missing.length > 0) return missing;
+    }
+  }
+  return [];
+}
+
+function normalizeFrameworkText(value: string): string {
+  return value.normalize("NFKC")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
 export function firstOrderedItemValue(answer: string): number | undefined {
   const first = answer.matchAll(ORDERED_ITEM_PATTERN).next().value as
     | RegExpMatchArray

@@ -70,6 +70,7 @@ import {
 } from "./comparison-question.js";
 import {
   hasBrokenCollectionEnumeration,
+  missingExplicitFrameworkItems,
   verifierOrphanedOrderedSequence,
 } from "./answer-structure.js";
 import {
@@ -473,6 +474,27 @@ async function runKnowledgeAgentCore(
         }
         return fallbackUnavailable(input, "invalid_final");
       }
+      const frameworkComponentRepairs = pendingFrameworkComponentRepairs(
+        normalizedAction,
+        state,
+      );
+      if (frameworkComponentRepairs.length > 0) {
+        if (
+          state.structuredCoverageRepairAttempts < 2 &&
+          turn < maxTurns &&
+          !deadlineReached(input)
+        ) {
+          state.structuredCoverageRepairAttempts += 1;
+          state.forceFinal = true;
+          observe(state, {
+            type: "structured_coverage_repair_required",
+            reason: "coordinated_framework_component_missing",
+            requirements: frameworkComponentRepairs,
+          });
+          continue;
+        }
+        return fallbackUnavailable(input, "invalid_final");
+      }
       const pendingReviews = pendingEvidenceReviews(normalizedAction, state);
       if (pendingReviews.length > 0 && !deadlineReached(input)) {
         observe(state, {
@@ -664,6 +686,7 @@ async function runKnowledgeAgentCore(
         normalizedAction,
         auditedAction,
         input.plan,
+        state,
       );
       if (
         structuredCoverageRepairs.length > 0 &&
@@ -3243,6 +3266,21 @@ function pendingBrokenCollectionRepairs(action: FinalAction): string[] {
   );
 }
 
+function pendingFrameworkComponentRepairs(
+  action: FinalAction,
+  state: AgentState,
+): string[] {
+  return action.requirements.flatMap((requirement) => {
+    if (requirement.coverage === "none") return [];
+    const documents = [...(
+      state.evidenceDocuments.get(requirement.id)?.values() ?? []
+    )];
+    return missingExplicitFrameworkItems(requirement.answer, documents).length > 0
+      ? [requirement.id]
+      : [];
+  });
+}
+
 function pendingNamedMethodCompletenessReviews(
   action: FinalAction,
   plan: KnowledgePlan,
@@ -3271,6 +3309,7 @@ function pendingStructuredCoverageRepairs(
   draft: FinalAction,
   audited: FinalAction,
   plan: KnowledgePlan,
+  state: AgentState,
 ): string[] {
   const draftById = new Map(
     draft.requirements.map((requirement) => [requirement.id, requirement] as const),
@@ -3278,8 +3317,13 @@ function pendingStructuredCoverageRepairs(
   return audited.requirements.flatMap((requirement, index) => {
     const planned = plan.requirements[index];
     const original = draftById.get(requirement.id);
+    const documents = [...(
+      state.evidenceDocuments.get(requirement.id)?.values() ?? []
+    )];
     return (requirement.coverage !== "none" &&
         hasBrokenCollectionEnumeration(requirement.answer)) ||
+      (requirement.coverage !== "none" &&
+        missingExplicitFrameworkItems(requirement.answer, documents).length > 0) ||
       (original !== undefined && verifierOrphanedOrderedSequence(
         original.answer,
         requirement.answer,

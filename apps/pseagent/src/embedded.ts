@@ -30,4 +30,5 @@ export {
 export {
   collectionEnumerationIssue,
   hasBrokenCollectionEnumeration,
+  missingExplicitFrameworkItems,
 } from "./answer-structure.js";
