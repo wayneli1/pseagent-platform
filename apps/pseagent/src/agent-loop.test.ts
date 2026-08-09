@@ -2112,7 +2112,7 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
     expect(model.calls).toBe(3);
     expect(payloadAt(model, 2).observations?.join("\n")).toContain(
-      "coordinated_framework_component_missing",
+      "named_method_completeness_review_required",
     );
     expect(result.answer).toContain("Illustration");
     expect(result.answer).toContain("简洁画面");

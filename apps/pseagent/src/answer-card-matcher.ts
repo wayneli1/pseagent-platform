@@ -377,6 +377,21 @@ function explicitEnumeratedLabels(question: string): readonly string[] {
       return labels;
     }
   }
+  for (const match of normalized.matchAll(
+    /(?:怎样|如何|怎么)?(?:使用|采用|运用|用|按|基于)\s*(?<items>.{2,120}?)(?:先|来|去|用于|以便)(?:建立|控制|完成|实现|解决|评估|分析|规划|呈现|展示|识别|判断)/gu,
+  )) {
+    const labels = (match.groups?.items ?? "")
+      .split(/(?:、|以及|及|和|与)/u)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (
+      labels.length >= 2 &&
+      labels.length <= 9 &&
+      labels.every((label) => [...label].length >= 2 && [...label].length <= 40)
+    ) {
+      return labels;
+    }
+  }
   return [];
 }
 

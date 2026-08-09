@@ -71,6 +71,7 @@ import {
 import {
   hasBrokenCollectionEnumeration,
   missingExplicitFrameworkItems,
+  usesExplicitFrameworkCollection,
   verifierOrphanedOrderedSequence,
 } from "./answer-structure.js";
 import {
@@ -3291,13 +3292,17 @@ function pendingNamedMethodCompletenessReviews(
   );
   return action.requirements.flatMap((requirement) => {
     if (requirement.coverage === "none") return [];
+    const documents = [...(
+      state.evidenceDocuments.get(requirement.id)?.values() ?? []
+    )];
+    if (usesExplicitFrameworkCollection(requirement.answer, documents)) {
+      return [requirement.id];
+    }
     const methods = explicitNamedMethods(
       plannedById.get(requirement.id)?.question ?? "",
     );
     if (methods.length === 0) return [];
-    const documents = state.evidenceDocuments.get(requirement.id);
-    const hasDirectMethodOverview = documents !== undefined &&
-      [...documents.values()].some((document) => {
+    const hasDirectMethodOverview = documents.some((document) => {
         const title = normalizeNamedMethod(document.title);
         return methods.some((method) => title.includes(method));
       });

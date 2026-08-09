@@ -4,6 +4,7 @@ import {
   firstOrderedItemValue,
   hasBrokenCollectionEnumeration,
   missingExplicitFrameworkItems,
+  usesExplicitFrameworkCollection,
   verifierOrphanedOrderedSequence,
 } from "./answer-structure.js";
 
@@ -86,5 +87,13 @@ describe("collection enumeration integrity", () => {
       "Inverted Pyramid 是先结论后细节。",
       evidence,
     )).toEqual([]);
+    expect(usesExplicitFrameworkCollection(
+      "先展示最终结果，再用倒金字塔结构控制信息密度。",
+      evidence,
+    )).toBe(true);
+    expect(usesExplicitFrameworkCollection(
+      "只解释 Inverted Pyramid。",
+      evidence,
+    )).toBe(false);
   });
 });

@@ -85,6 +85,36 @@ export function missingExplicitFrameworkItems(
   documents: readonly { readonly content: string }[],
 ): readonly string[] {
   const normalizedAnswer = normalizeFrameworkText(answer);
+  for (const items of explicitFrameworkCollections(documents)) {
+    const covered = items.filter((item) =>
+      item.alternatives.some((alternative) => normalizedAnswer.includes(alternative)));
+    if (covered.length < 2) continue;
+    const missing = items.filter((item) =>
+      !item.alternatives.some((alternative) => normalizedAnswer.includes(alternative)))
+      .map((item) => item.label);
+    if (missing.length > 0) return missing;
+  }
+  return [];
+}
+
+export function usesExplicitFrameworkCollection(
+  answer: string,
+  documents: readonly { readonly content: string }[],
+): boolean {
+  const normalizedAnswer = normalizeFrameworkText(answer);
+  return explicitFrameworkCollections(documents).some((items) =>
+    items.filter((item) =>
+      item.alternatives.some((alternative) => normalizedAnswer.includes(alternative)))
+      .length >= 2);
+}
+
+function explicitFrameworkCollections(
+  documents: readonly { readonly content: string }[],
+): Array<Array<{ readonly label: string; readonly alternatives: string[] }>> {
+  const collections: Array<Array<{
+    readonly label: string;
+    readonly alternatives: string[];
+  }>> = [];
   for (const document of documents) {
     for (const match of document.content.matchAll(
       /(?:包括|由)(?<items>[^。\n]{1,800}?)(?<count>[二三四五六七八九十2-9])\s*(?:个|项|种)(?:相互配合的|相互协同的|协同的|核心的)?\s*(?:方法|部分|组件|要素|阶段|维度|原则|步骤)(?:[。；;]|$)/gu,
@@ -99,17 +129,10 @@ export function missingExplicitFrameworkItems(
           .map(normalizeFrameworkText)
           .filter(Boolean),
       }));
-      if (items.length !== expectedCount) continue;
-      const covered = items.filter((item) =>
-        item.alternatives.some((alternative) => normalizedAnswer.includes(alternative)));
-      if (covered.length < 2) continue;
-      const missing = items.filter((item) =>
-        !item.alternatives.some((alternative) => normalizedAnswer.includes(alternative)))
-        .map((item) => item.label);
-      if (missing.length > 0) return missing;
+      if (items.length === expectedCount) collections.push(items);
     }
   }
-  return [];
+  return collections;
 }
 
 function normalizeFrameworkText(value: string): string {
