@@ -56,7 +56,7 @@ export function formatKnowledgeFinal(
   const status = knowledgeCoverage === "none" && caseAssessability === "insufficient"
     ? "partially_answered"
     : statusForKnowledgeCoverage(knowledgeCoverage);
-  const gapSection = formatGapSection(context.coverageGaps ?? []);
+  const gapSection = formatGapSection(context.coverageGaps ?? [], context.question);
   const evidenceConditionSection = formatEvidenceConditionSection(
     context.evidenceLedgers ?? [],
   );
@@ -322,7 +322,10 @@ function statusForKnowledgeCoverage(coverage: KnowledgeCoverage): AnswerStatus {
   return coverage === "partial" ? "partially_answered" : "not_covered";
 }
 
-function formatGapSection(gaps: readonly CoverageGap[]): string {
+function formatGapSection(
+  gaps: readonly CoverageGap[],
+  originalQuestion?: string,
+): string {
   if (gaps.length === 0) return "";
   const groups: readonly (readonly CoverageGap[])[] = gaps.length <= 3
     ? gaps.map((gap) => [gap])
@@ -341,21 +344,23 @@ function formatGapSection(gaps: readonly CoverageGap[]): string {
       nextActions.length === 0 ? "" : `下一步验证：${nextActions.join("；")}`,
     ].filter(Boolean).join("；");
   });
-  const materialGuidance = formatProductEvidenceMaterialGuidance(gaps);
+  const materialGuidance = formatProductEvidenceMaterialGuidance(gaps, originalQuestion);
   return ["尚未确认的部分：", ...lines, materialGuidance].filter(Boolean).join("\n");
 }
 
 function formatProductEvidenceMaterialGuidance(
   gaps: readonly CoverageGap[],
+  originalQuestion?: string,
 ): string {
   const productGaps = gaps.filter((gap) =>
     gap.domain === "coremail-professional" &&
     ["knowledge", "retrieval", "source", "freshness"].includes(gap.gapClass));
   if (productGaps.length === 0) return "";
 
-  const topic = productGaps
-    .flatMap((gap) => [gap.subject, gap.missingAspect])
-    .join(" ");
+  const topic = [
+    originalQuestion ?? "",
+    ...productGaps.flatMap((gap) => [gap.subject, gap.missingAspect]),
+  ].join(" ");
   const materials: string[] = [];
   if (/(?:是否|能否|支持|兼容|能力|功能)/u.test(topic)) {
     materials.push("正式产品功能说明或发布说明，用于直接确认支持性与功能边界");

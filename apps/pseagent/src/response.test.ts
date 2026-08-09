@@ -452,8 +452,8 @@ describe("knowledge response", () => {
       domain: "coremail-professional",
       gapClass: "retrieval",
       reason: "retrieval_budget_exhausted",
-      subject: "某产品是否支持新的登录能力，适用版本、License 和配置步骤是什么？",
-      missingAspect: "支持性、版本、License 和配置步骤",
+      subject: "某产品",
+      missingAspect: "支持性和适用版本",
       affectsConclusion: true,
       confirmedBoundary: "检索预算已结束，核验尚未完整。",
       nextAction: "继续检索。",
@@ -471,6 +471,7 @@ describe("knowledge response", () => {
 
     const result = formatKnowledgeFinal("professional", action, [], {
       coverageGaps: [gap],
+      question: "某产品是否支持新的登录能力，适用版本、License 和配置步骤是什么？",
     });
 
     expect(result.answer).toContain("资料补充口径");
