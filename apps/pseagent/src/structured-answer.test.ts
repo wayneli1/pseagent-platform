@@ -160,6 +160,7 @@ describe("structured answer", () => {
     expect(rendered).toContain("nginx 节点具备 DNS 能力");
     expect(rendered).toContain("可访问外网 TCP 25");
     expect(rendered).toContain("TCP 6610 已放行");
+    expect(rendered).not.toContain("1)");
   });
 
   it("keeps an ordered sequence introduced as a concrete method", () => {
