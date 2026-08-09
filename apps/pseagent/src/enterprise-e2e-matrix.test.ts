@@ -102,10 +102,15 @@ describe("enterprise E2E matrix", () => {
       ["非负权", "边权非负"],
     )).toBe(true);
     expect(acceptanceFactGroupCovered(
-      "系统定义的优先级并非在所有场景下都绝对有效。",
+      "不应直接套用一套固定优先级。",
       "能不能直接套用一套固定优先级？",
       ["不能", "无法"],
     )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "系统定义的优先级并非在所有场景下都绝对有效。",
+      "能不能直接套用一套固定优先级？",
+      ["不能", "无法"],
+    )).toBe(false);
     expect(acceptanceFactGroupCovered(
       "可以直接套用一套固定优先级。",
       "能不能直接套用一套固定优先级？",

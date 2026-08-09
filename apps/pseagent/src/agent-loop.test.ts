@@ -2267,6 +2267,46 @@ describe("runKnowledgeAgent", () => {
     expect(result.answer).toContain("不能只展示漂亮仪表盘而无法说明业务含义 [1]");
   });
 
+  it("rewrites a formal ordering that omits its evidence-insufficiency boundary", async () => {
+    const path = "wiki/queries/rule-order.md";
+    const question = "能不能直接套用一套固定优先级？";
+    const plan: KnowledgePlan = {
+      subject: "规则冲突排查",
+      requirements: [{
+        id: "R1",
+        question,
+        evidenceMode: "direct_only",
+        evidenceAspects: [{ id: "A1", label: "规则与边界", terms: ["规则", "优先级"] }],
+        queries: [{ text: "规则冲突固定优先级", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: { "规则冲突固定优先级": [{ path, title: "规则冲突固定优先级" }] },
+      pageBodies: { [path]: [
+        "应同时检查发信 IP 规则、发件人规则、组织白名单和 CAC 检查。",
+        "材料中的规则高低排列不足以证明完整、固定的优先级。",
+        "不得据此生成确定性优先级表。",
+      ].join("\n") },
+    });
+    const model = scriptedAgentModel([
+      read("R1", path),
+      final("complete", "优先级从高到低是发信 IP 规则、发件人规则、组织白名单和 CAC 检查；但并非所有场景都绝对有效 [1]。", [1]),
+      final("complete", "优先级从高到低是发信 IP 规则、发件人规则、组织白名单和 CAC 检查；但并非所有场景都绝对有效 [1]。", [1]),
+      final("complete", "应检查发信 IP 规则、发件人规则、组织白名单和 CAC 检查；材料排列不足以证明完整固定优先级，不能据此生成确定性优先级表 [1]。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(result.answer).toContain("不能据此生成确定性优先级表");
+    expect(payloadAt(model, 3).observations?.join("\n")).toContain(
+      "framework_boundary_repair_required",
+    );
+  });
+
   it("rewrites a collection that stops after its first numbered item", async () => {
     const plan: KnowledgePlan = {
       subject: "实施确认",

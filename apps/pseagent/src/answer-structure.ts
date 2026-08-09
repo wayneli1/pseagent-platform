@@ -171,11 +171,24 @@ export function missingStrictFrameworkBoundaries(
   if (!usesExplicitFrameworkCollection(answer, documents)) return [];
   const normalizedAnswer = normalizeFrameworkText(answer);
   return strictFrameworkBoundaries(documents).filter((boundary) =>
-    !hasCommonSubstring(
-      normalizedAnswer,
-      normalizeFrameworkText(boundary),
-      4,
-    ));
+    !strictFrameworkBoundaryCovered(normalizedAnswer, boundary));
+}
+
+const STRONG_EPISTEMIC_BOUNDARY_PATTERN =
+  /(?:不足以|不能|无法).{0,32}(?:证明|确认)|未(?:提供|有).{0,24}(?:足够|充分)?证据.{0,20}(?:证明|确认)|(?:不得|不能|不应).{0,24}(?:据此|直接).{0,40}(?:生成|推断|承诺|认定|得出)/u;
+
+function strictFrameworkBoundaryCovered(
+  normalizedAnswer: string,
+  boundary: string,
+): boolean {
+  if (STRONG_EPISTEMIC_BOUNDARY_PATTERN.test(boundary)) {
+    return STRONG_EPISTEMIC_BOUNDARY_PATTERN.test(normalizedAnswer);
+  }
+  return hasCommonSubstring(
+    normalizedAnswer,
+    normalizeFrameworkText(boundary),
+    4,
+  );
 }
 
 export function strictFrameworkBoundaries(
@@ -205,6 +218,16 @@ export function strictFrameworkBoundaries(
         !boundaries.includes(bullet)
       ) {
         boundaries.push(bullet);
+      }
+    }
+    for (const sentence of document.content.split(/[。；;\n]+/u)) {
+      const boundary = sentence.trim();
+      if (
+        boundary !== "" &&
+        STRONG_EPISTEMIC_BOUNDARY_PATTERN.test(boundary) &&
+        !boundaries.includes(boundary)
+      ) {
+        boundaries.push(boundary);
       }
     }
   }

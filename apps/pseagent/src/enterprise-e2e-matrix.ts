@@ -180,7 +180,7 @@ function semanticAcceptanceEquivalent(
     (term === "不能" || term === "无法") &&
     /(?:能不能|能否|是否可以|可不可以|可以吗)/u.test(question)
   ) {
-    return /(?:不应|不得|不可|不建议|未必|不一定)|并非.{0,24}(?:都|所有|绝对|总是|普遍)/u
+    return /(?:不应|不得|不可|不建议|未必|不一定)/u
       .test(answer);
   }
   const universal = /^所有(.+)$/u.exec(term);

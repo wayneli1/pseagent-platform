@@ -168,4 +168,23 @@ describe("collection enumeration integrity", () => {
       evidence,
     )).toEqual([]);
   });
+
+  it("requires an explicit evidence boundary before presenting a formal list", () => {
+    const evidence = [{ content: [
+      "应同时检查发信 IP 规则、发件人规则、组织白名单和 CAC 检查。",
+      "材料中的规则高低排列不足以证明完整、固定的优先级。",
+      "不得据此生成确定性优先级表。",
+    ].join("\n") }];
+    expect(missingStrictFrameworkBoundaries(
+      "按优先级检查发信 IP 规则、发件人规则、组织白名单和 CAC；该顺序并非在所有场景都绝对有效。",
+      evidence,
+    )).toEqual([
+      "材料中的规则高低排列不足以证明完整、固定的优先级",
+      "不得据此生成确定性优先级表",
+    ]);
+    expect(missingStrictFrameworkBoundaries(
+      "检查发信 IP 规则、发件人规则、组织白名单和 CAC；材料排列不足以证明完整固定优先级，不能据此生成确定性优先级表。",
+      evidence,
+    )).toEqual([]);
+  });
 });
