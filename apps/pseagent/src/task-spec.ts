@@ -832,6 +832,10 @@ export interface ExplicitQuestionSignals {
   readonly unresolvedDistributiveGroups: readonly string[];
   readonly requestClauses: readonly string[];
   readonly independentRequestClauses: readonly string[];
+  readonly requiredParallelGroups: readonly {
+    readonly sourceText: string;
+    readonly items: readonly string[];
+  }[];
 }
 
 export function extractExplicitQuestionSignals(
@@ -875,6 +879,10 @@ export function extractExplicitQuestionSignals(
 
   const requestClauses: string[] = [];
   const independentRequestClauses: string[] = [];
+  const requiredParallelGroups: Array<{
+    sourceText: string;
+    items: string[];
+  }> = [];
   const coverageListPattern =
     /(?:请|需要|需|应|要)?(?:覆盖|涵盖)(?<list>[^。！？!?]{2,180}?)(?=(?:，|,)?\s*(?:并|同时|以及)?\s*(?:明确|说明|列出|给出|指出)|[。！？!?]|$)/gu;
   for (const match of question.matchAll(coverageListPattern)) {
@@ -901,6 +909,25 @@ export function extractExplicitQuestionSignals(
       }
     }
   }
+  const requiredParallelListPattern =
+    /(?:(?<![不无])(?:需要|要求|希望|应当|应该|必须)|(?<![不无])需|(?<![主重不只需])要)\s*(?<list>[^，,；;。！？!?]{2,180})/gu;
+  for (const rawSegment of question.split(/[，,；;。！？!?]+/u)) {
+    const segment = rawSegment.trim();
+    if (!segment) continue;
+    for (const match of segment.matchAll(requiredParallelListPattern)) {
+      const list = match.groups?.list?.trim();
+      if (!list) continue;
+      const clauses = splitIndependentRequestItems(list)
+        .map(cleanRequestClause)
+        .filter((clause) => [...clause].length >= 2);
+      if (clauses.length < 2) continue;
+      requiredParallelGroups.push({ sourceText: segment, items: clauses });
+      for (const clause of clauses) {
+        requestClauses.push(clause);
+        independentRequestClauses.push(clause);
+      }
+    }
+  }
   for (const rawSegment of question.split(/[，,；;。！？!?]+/u)) {
     const segment = rawSegment.trim();
     if (!segment) continue;
@@ -918,6 +945,7 @@ export function extractExplicitQuestionSignals(
     unresolvedDistributiveGroups: stableUniqueText(unresolvedDistributiveGroups),
     requestClauses: stableUniqueText(requestClauses),
     independentRequestClauses: stableUniqueText(independentRequestClauses),
+    requiredParallelGroups,
   };
 }
 

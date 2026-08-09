@@ -110,6 +110,59 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
     expect(result.plan.requirements[1]?.evidenceAspects[0]?.terms).toContain("比亚迪");
   });
 
+  it("adds shared acceptance context without diluting each required parallel aspect", () => {
+    const parallelQuestion =
+      "集团共用一套 Coremail，但各子公司要独立域名、用户别名和管理员权限，方案设计与验收边界是什么？";
+    const aspects = ["独立域名", "用户别名", "管理员权限"];
+    const spec: TaskSpec = {
+      subject: parallelQuestion,
+      entities: [{
+        id: "E1",
+        label: "集团独立域名方案",
+        role: "subject",
+        sourceText: "集团共用一套 Coremail，但各子公司要独立域名",
+      }],
+      deliverables: aspects.map((aspect, index) => ({
+        id: `D${index + 1}`,
+        label: aspect,
+        kind: "fact",
+        required: true,
+        sourceText: aspect,
+        obligations: [{
+          id: `O${index + 1}`,
+          label: aspect,
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: aspect,
+        }],
+      })),
+    };
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: {
+        ...resolvedQuestion,
+        rawQuestion: parallelQuestion,
+        standaloneQuestion: parallelQuestion,
+      },
+      taskSpec: spec,
+      guardResult: passingGuard,
+    });
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+
+    const adminQueries = result.plan.requirements[2]?.queries.map((query) =>
+      query.text) ?? [];
+    expect(adminQueries).toEqual([
+      "管理员权限",
+      "管理员权限 方案设计与验收边界是什么",
+    ]);
+    expect(adminQueries.join(" ")).not.toMatch(/独立域名|用户别名/u);
+    expect(result.plan.requirements[2]?.evidenceAspects[0]?.label)
+      .toBe("管理员权限 方案设计与验收边界是什么");
+  });
+
   it("restores named comparison context when a split obligation only says two sides", () => {
     const comparisonQuestion =
       "客户已有共享存储双机热备，为什么还会考虑 Coremail 多活？两者关键差异和限制是什么？";

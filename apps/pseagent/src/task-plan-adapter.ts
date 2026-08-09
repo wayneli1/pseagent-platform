@@ -9,7 +9,10 @@ import type {
   TaskSpec,
   TaskSpecGuardResult,
 } from "./task-spec.js";
-import { taskEvidenceConditionFor } from "./task-spec.js";
+import {
+  extractExplicitQuestionSignals,
+  taskEvidenceConditionFor,
+} from "./task-spec.js";
 import type { RequirementEvidenceCondition } from "./evidence-ledger.js";
 
 export type TaskPlanAdapterInactiveReason =
@@ -109,10 +112,18 @@ export function adaptTaskSpecToKnowledgePlan(
     const targetEntities = item.obligation.targetEntityIds.map(
       (entityId) => entitiesById.get(entityId)!,
     );
+    const requiredParallelScope = findRequiredParallelScope(
+      input.resolvedQuestion.standaloneQuestion,
+      item.obligation.sourceText,
+    );
     const entitySourceTexts = targetEntities.map((entity) => entity.sourceText)
       .filter((value) => isTraceableText(
         input.resolvedQuestion.standaloneQuestion,
         value,
+      ))
+      .filter((value) => isRelevantParallelEntitySource(
+        value,
+        requiredParallelScope,
       ));
     const otherEntitySourceTexts = targetEntityIds.size === 0
       ? []
@@ -146,11 +157,16 @@ export function adaptTaskSpecToKnowledgePlan(
       )
       ? input.resolvedQuestion.standaloneQuestion
       : "";
-    const requirementQuestion = buildSemanticQuery([
+    const requiredParallelContext = requiredParallelScope?.sharedRequest ?? "";
+    const baseRequirementQuestion = buildSemanticQuery([
       ...entitySourceTexts,
       obligationSourceText,
       deliverableSourceText,
       comparisonContext,
+    ]);
+    const requirementQuestion = buildSemanticQuery([
+      baseRequirementQuestion,
+      requiredParallelContext,
     ]);
     const primaryQuery = buildSemanticQuery([
       ...entitySourceTexts,
@@ -171,6 +187,7 @@ export function adaptTaskSpecToKnowledgePlan(
       comparisonContext,
       selectionContext,
       safeLabel,
+      requiredParallelContext,
     );
     const comparisonDimensions = explicitComparisonDimensions(
       obligationContext,
@@ -185,7 +202,7 @@ export function adaptTaskSpecToKnowledgePlan(
         ? undefined
         : [{
             id: "A1" as const,
-            label: aspectLabel(
+            label: requiredParallelContext || aspectLabel(
               obligationSourceText,
               deliverableSourceText,
               entitySourceTexts,
@@ -194,6 +211,19 @@ export function adaptTaskSpecToKnowledgePlan(
           }];
     const aspectIds = evidenceAspects?.map((aspect) => aspect.id) ?? [];
     const queries = [primaryQuery];
+    if (requiredParallelContext !== "") {
+      const contextual = buildSemanticQuery([
+        primaryQuery,
+        requiredParallelContext,
+      ]);
+      if (
+        normalizeSemanticText(contextual) !==
+          normalizeSemanticText(primaryQuery) &&
+        characterLength(contextual) <= MAX_QUERY_CHARACTERS
+      ) {
+        queries.push(contextual);
+      }
+    }
     if (safeLabel !== "") {
       const expanded = buildSemanticQuery([primaryQuery, safeLabel]);
       if (
@@ -253,6 +283,52 @@ export function adaptTaskSpecToKnowledgePlan(
       ...taskEvidenceConditionFor(obligation),
     })),
   };
+}
+
+interface RequiredParallelScope {
+  readonly currentItem: string;
+  readonly otherItems: readonly string[];
+  readonly sharedRequest: string;
+}
+
+function findRequiredParallelScope(
+  question: string,
+  obligationSourceText: string,
+): RequiredParallelScope | undefined {
+  const normalizedObligation = normalizeSemanticText(obligationSourceText);
+  if (!normalizedObligation) return undefined;
+  const signals = extractExplicitQuestionSignals(question);
+  const group = signals.requiredParallelGroups
+    .find((candidate) => candidate.items.some((item) =>
+      normalizeSemanticText(item) === normalizedObligation));
+  if (group === undefined || !question.includes(group.sourceText)) return undefined;
+  const currentItem = group.items.find((item) =>
+    normalizeSemanticText(item) === normalizedObligation)!;
+  const groupEnd = question.indexOf(group.sourceText) + group.sourceText.length;
+  const independentKeys = new Set(
+    signals.independentRequestClauses.map(normalizeSemanticText),
+  );
+  const shared = signals.requestClauses.filter((clause) =>
+    !independentKeys.has(normalizeSemanticText(clause)) &&
+    question.indexOf(clause) >= groupEnd,
+  ).slice(0, 2);
+  return {
+    currentItem,
+    otherItems: group.items.filter((item) => item !== currentItem),
+    sharedRequest: shared.length === 0
+      ? ""
+      : buildSemanticQuery([currentItem, ...shared]),
+  };
+}
+
+function isRelevantParallelEntitySource(
+  sourceText: string,
+  scope: RequiredParallelScope | undefined,
+): boolean {
+  if (scope === undefined) return true;
+  const normalizedSource = normalizeSemanticText(sourceText);
+  return !scope.otherItems.some((item) =>
+    normalizedSource.includes(normalizeSemanticText(item)));
 }
 
 function explicitComparisonDimensions(value: string): string[] {

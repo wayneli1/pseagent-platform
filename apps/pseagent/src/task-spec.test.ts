@@ -1586,6 +1586,39 @@ describe("DeterministicTaskSpecGuard", () => {
     );
   });
 
+  it("keeps every explicitly required parallel aspect as an independent obligation", () => {
+    const question =
+      "集团共用一套 Coremail，但各子公司要独立域名、用户别名和管理员权限，方案设计与验收边界是什么？";
+    const signals = extractExplicitQuestionSignals(question);
+    expect(signals.independentRequestClauses).toEqual([
+      "独立域名",
+      "用户别名",
+      "管理员权限",
+    ]);
+    expect(signals.requiredParallelGroups).toEqual([{
+      sourceText: "但各子公司要独立域名、用户别名和管理员权限",
+      items: ["独立域名", "用户别名", "管理员权限"],
+    }]);
+
+    const result = guardSingleObligation(question, "direct");
+    expect(result.ok).toBe(false);
+    expect(result.issues.filter((issue) =>
+      issue.code === "explicit_request_unmapped")).toHaveLength(2);
+  });
+
+  it.each([
+    ["项目需要评估容量、制定方案和说明回退边界", ["评估容量", "制定方案", "说明回退边界"]],
+    ["客户主要关注价格、交付和服务，应该怎么回应？", []],
+    ["客户和合作伙伴需要共同推进机会", []],
+    ["不需要迁移历史邮件、通讯录和日程", []],
+  ] as const)(
+    "only treats affirmative governed lists as required parallel aspects: %s",
+    (question, expected) => {
+      expect(extractExplicitQuestionSignals(question).independentRequestClauses)
+        .toEqual([...expected]);
+    },
+  );
+
   it.each([
     ["请分析交付与售前协同问题", []],
     ["天地和科技、甲公司分别部署邮件系统", ["天地和科技", "甲公司"]],
@@ -1614,6 +1647,77 @@ describe("DeterministicTaskSpecGuard", () => {
 });
 
 describe("ModelTaskCompiler", () => {
+  it("falls back when a model drops explicitly required parallel aspects", async () => {
+    const question =
+      "集团共用一套 Coremail，但各子公司要独立域名、用户别名和管理员权限，方案设计与验收边界是什么？";
+    const incompleteTaskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{
+        id: "E1",
+        label: "集团 Coremail 方案",
+        role: "product",
+        sourceText: "集团共用一套 Coremail",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: "集团 Coremail 方案设计与验收",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "设计并验收集团 Coremail 方案",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const completeJson = vi.fn(async () => incompleteTaskSpec as never);
+    const compiler = new ModelTaskCompiler({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      scopeHint: "professional",
+      knowledgeContext: {
+        purpose: "专业知识边界",
+        schema: "知识结构",
+        planningOverview: "多组织、多域名、别名和管理员权限资料",
+      },
+    });
+
+    const sources = result.deliverables.flatMap((deliverable) =>
+      deliverable.obligations.map((obligation) => obligation.sourceText));
+    expect(sources).toEqual([
+      "独立域名",
+      "用户别名",
+      "管理员权限",
+      "方案设计与验收边界是什么",
+    ]);
+    expect(new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: {
+        rawQuestion: question,
+        standaloneQuestion: question,
+        contextUsed: false,
+        inheritedSubjects: [],
+        corrections: [],
+      },
+      taskSpec: result,
+    }).ok).toBe(true);
+    expect(completeJson).toHaveBeenCalledTimes(1);
+  });
+
   it("falls back to a bounded deterministic contract after repeated invalid model payloads", async () => {
     const question = "对比 Exchange 与 Coremail，请覆盖部署与迁移、国产化适配、安全、运维和服务、成本边界，并明确哪些结论需要结合客户现状确认。";
     const completeJson = vi.fn(async () => {
