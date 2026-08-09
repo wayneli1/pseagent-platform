@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   collectionEnumerationIssue,
+  firstOrderedItemValue,
   hasBrokenCollectionEnumeration,
+  verifierOrphanedOrderedSequence,
 } from "./answer-structure.js";
 
 describe("collection enumeration integrity", () => {
@@ -43,5 +45,15 @@ describe("collection enumeration integrity", () => {
       .toBe(false);
     expect(hasBrokenCollectionEnumeration("1）结论已经由正式资料确认。"))
       .toBe(false);
+  });
+
+  it("detects when verification removes the beginning of an ordered sequence", () => {
+    const draft = "1. 经济角色 [1]。\n2. 用户角色 [1]。\n3. 技术角色 [1]。\n4. Coach [1]。";
+    const verified = "4. Coach [1]。\n角色判断需要持续验证 [1]。";
+
+    expect(firstOrderedItemValue(draft)).toBe(1);
+    expect(firstOrderedItemValue(verified)).toBe(4);
+    expect(verifierOrphanedOrderedSequence(draft, verified)).toBe(true);
+    expect(verifierOrphanedOrderedSequence(draft, draft)).toBe(false);
   });
 });

@@ -68,7 +68,10 @@ import {
   isDirectComparisonQuestion,
   missingExplicitComparisonLabels,
 } from "./comparison-question.js";
-import { hasBrokenCollectionEnumeration } from "./answer-structure.js";
+import {
+  hasBrokenCollectionEnumeration,
+  verifierOrphanedOrderedSequence,
+} from "./answer-structure.js";
 import {
   explicitNamedMethods,
   normalizeNamedMethod,
@@ -3277,6 +3280,10 @@ function pendingStructuredCoverageRepairs(
     const original = draftById.get(requirement.id);
     return (requirement.coverage !== "none" &&
         hasBrokenCollectionEnumeration(requirement.answer)) ||
+      (original !== undefined && verifierOrphanedOrderedSequence(
+        original.answer,
+        requirement.answer,
+      )) ||
       (planned !== undefined &&
         (planned.evidenceMode === "direct_only" ||
           explicitNamedMethods(planned.question).length > 0) &&

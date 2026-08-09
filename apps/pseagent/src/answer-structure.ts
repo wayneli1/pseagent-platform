@@ -42,6 +42,21 @@ export function hasBrokenCollectionEnumeration(answer: string): boolean {
   return collectionEnumerationIssue(answer) !== undefined;
 }
 
+export function firstOrderedItemValue(answer: string): number | undefined {
+  const first = answer.matchAll(ORDERED_ITEM_PATTERN).next().value as
+    | RegExpMatchArray
+    | undefined;
+  return first === undefined ? undefined : orderedItemValue(first);
+}
+
+export function verifierOrphanedOrderedSequence(
+  draftAnswer: string,
+  verifiedAnswer: string,
+): boolean {
+  return firstOrderedItemValue(draftAnswer) === 1 &&
+    (firstOrderedItemValue(verifiedAnswer) ?? 1) > 1;
+}
+
 function orderedItemValue(match: RegExpMatchArray): number {
   const numeric = match[1] ?? match[2];
   if (numeric !== undefined) return Number(numeric);

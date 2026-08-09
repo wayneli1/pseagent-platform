@@ -70,6 +70,7 @@ export class IndependentAnswerReviewer {
           "只能依据输入中的已批准答案卡和正式知识页面判断，不得使用外部知识补足。",
           "受评对象只能是 input.answer。evidence 只是判定基准；正式资料写了某项，不代表回答已经写了该项。",
           "逐项检查正确性、完整性、逻辑、引用和表达；证据不足时选择 needs_review，不得猜测 pass。",
+          "用户明确枚举多个对象、角色、类别或维度时，必须逐项检查 answer 是否给出各项的定义、判断标准或当前问题要求的结论；只提到名称、只给孤立例子或只完整回答其中一项，不能判为完整覆盖。",
           "governedCard 存在时，必须为每个 required obligation 返回且只返回一个 obligationChecks 项。",
           "发现与正式证据冲突的关键结论时选择 fail；缺项或证据不足选择 needs_review。",
           "not_covered 是有效的安全交付状态：当正式证据确实不覆盖目标、回答明确说明边界且没有无依据主张时，可以判为 pass；不得只因没有给出资料外的目标答案而降级。",

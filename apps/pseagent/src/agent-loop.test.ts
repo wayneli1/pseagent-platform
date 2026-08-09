@@ -1953,6 +1953,64 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("rewrites an ordered taxonomy when verification removes its leading items", async () => {
+    const plan: KnowledgePlan = {
+      subject: "购买影响角色",
+      requirements: [{
+        id: "R1",
+        question: "怎样识别经济、用户、技术和 Coach 四类角色",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "四类角色",
+          terms: ["经济", "用户", "技术", "Coach"],
+        }],
+        queries: [{ text: "四类购买影响角色", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "四类购买影响角色": [{
+          path: "wiki/concepts/buying-roles.md",
+          title: "四类购买影响角色",
+        }],
+      },
+    });
+    const fullAnswer =
+      "1. 经济角色能释放或否决资源 [1]。\n2. 用户角色判断工作与绩效影响 [1]。\n3. 技术角色执行筛选标准 [1]。\n4. Coach 提供准确信息并帮助接触角色 [1]。";
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/buying-roles.md"),
+      final("complete", fullAnswer, [1]),
+      final("complete", fullAnswer, [1]),
+    ]);
+    const verifyCoverage = vi.fn()
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input, {
+          ...input.draft,
+          requirements: input.draft.requirements.map((requirement) => ({
+            ...requirement,
+            answer: "4. Coach 提供准确信息并帮助接触角色 [1]。",
+          })),
+        }))
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(verifyCoverage).toHaveBeenCalledTimes(2);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "structured_coverage_repair_required",
+    );
+    expect(result.answer).toContain("经济角色");
+    expect(result.answer).toContain("用户角色");
+    expect(result.answer).toContain("技术角色");
+    expect(result.answer).toContain("Coach");
+  });
+
   it("runs one evidence-grounded completeness review for an explicitly named method", async () => {
     const plan: KnowledgePlan = {
       subject: "Mom Test 访谈",
