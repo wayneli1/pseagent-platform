@@ -69,7 +69,10 @@ import {
   missingExplicitComparisonLabels,
 } from "./comparison-question.js";
 import { hasBrokenCollectionEnumeration } from "./answer-structure.js";
-import { explicitNamedMethods } from "./named-method.js";
+import {
+  explicitNamedMethods,
+  normalizeNamedMethod,
+} from "./named-method.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const DIRECT_ONLY_READ_LIMIT = 3;
@@ -197,6 +200,7 @@ type AgentState = {
   citationRepairAttempts: number;
   directAnswerRepairAttempts: number;
   comparisonSubjectRepairAttempts: number;
+  namedMethodCompletenessReviewAttempts: number;
   structuredCoverageRepairAttempts: number;
   answerCardConceptRepairAttempts: number;
   invalidPayloadTurnRetries: number;
@@ -425,6 +429,26 @@ async function runKnowledgeAgentCore(
       }
       if (directAnswerRepairs.length > 0) {
         return fallbackUnavailable(input, "invalid_final");
+      }
+      const namedMethodCompletenessReviews =
+        pendingNamedMethodCompletenessReviews(
+          normalizedAction,
+          input.plan,
+          state,
+        );
+      if (
+        namedMethodCompletenessReviews.length > 0 &&
+        state.namedMethodCompletenessReviewAttempts === 0 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.namedMethodCompletenessReviewAttempts += 1;
+        state.forceFinal = true;
+        observe(state, {
+          type: "named_method_completeness_review_required",
+          requirements: namedMethodCompletenessReviews,
+        });
+        continue;
       }
       const danglingCollectionRepairs = pendingBrokenCollectionRepairs(
         normalizedAction,
@@ -1099,6 +1123,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     citationRepairAttempts: 0,
     directAnswerRepairAttempts: 0,
     comparisonSubjectRepairAttempts: 0,
+    namedMethodCompletenessReviewAttempts: 0,
     structuredCoverageRepairAttempts: 0,
     answerCardConceptRepairAttempts: 0,
     invalidPayloadTurnRetries: 0,
@@ -3213,6 +3238,30 @@ function pendingBrokenCollectionRepairs(action: FinalAction): string[] {
       ? [requirement.id]
       : []
   );
+}
+
+function pendingNamedMethodCompletenessReviews(
+  action: FinalAction,
+  plan: KnowledgePlan,
+  state: AgentState,
+): string[] {
+  const plannedById = new Map(
+    plan.requirements.map((requirement) => [requirement.id, requirement] as const),
+  );
+  return action.requirements.flatMap((requirement) => {
+    if (requirement.coverage === "none") return [];
+    const methods = explicitNamedMethods(
+      plannedById.get(requirement.id)?.question ?? "",
+    );
+    if (methods.length === 0) return [];
+    const documents = state.evidenceDocuments.get(requirement.id);
+    const hasDirectMethodOverview = documents !== undefined &&
+      [...documents.values()].some((document) => {
+        const title = normalizeNamedMethod(document.title);
+        return methods.some((method) => title.includes(method));
+      });
+    return hasDirectMethodOverview ? [requirement.id] : [];
+  });
 }
 
 function pendingStructuredCoverageRepairs(

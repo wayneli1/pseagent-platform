@@ -214,6 +214,12 @@ describe("support and existence semantics", () => {
     expect(prompt).toContain(
       "遗漏整条核心规则或主要步骤时不得标记 complete",
     );
+    expect(prompt).toContain(
+      "named_method_completeness_review_required",
+    );
+    expect(prompt).toContain(
+      "不得用一句宽泛总结替代正文中的整组核心规则",
+    );
   });
 
   it("makes the verifier retain only evidence-backed target segments", () => {

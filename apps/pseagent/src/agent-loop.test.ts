@@ -1953,7 +1953,7 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
-  it("rewrites a named-method synthesis after verification finds omitted core rules", async () => {
+  it("runs one evidence-grounded completeness review for an explicitly named method", async () => {
     const plan: KnowledgePlan = {
       subject: "Mom Test 访谈",
       requirements: [{
@@ -1985,17 +1985,8 @@ describe("runKnowledgeAgent", () => {
         [1],
       ),
     ]);
-    const verifyCoverage = vi.fn()
-      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
-        reportAndReturn(input, {
-          ...input.draft,
-          requirements: input.draft.requirements.map((requirement) => ({
-            ...requirement,
-            coverage: "partial" as const,
-          })),
-        }))
-      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
-        reportAndReturn(input));
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input));
 
     const result = await runKnowledgeAgent({
       ...agentInput(model, session, plan),
@@ -2003,10 +1994,12 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(result.status).toBe("answered");
-    expect(verifyCoverage).toHaveBeenCalledTimes(2);
+    expect(verifyCoverage).toHaveBeenCalledOnce();
     expect(payloadAt(model, 2).observations?.join("\n")).toContain(
-      "structured_coverage_repair_required",
+      "named_method_completeness_review_required",
     );
+    expect(result.answer).toContain("少说多听");
+    expect(result.answer).toContain("问题严重性");
   });
 
   it("rewrites a collection that stops after its first numbered item", async () => {
