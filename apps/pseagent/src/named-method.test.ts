@@ -9,6 +9,13 @@ describe("explicitNamedMethods", () => {
       .toEqual(["bellmanford"]);
   });
 
+  it("extracts explicitly requested Chinese named methods", () => {
+    expect(explicitNamedMethods("售前怎样用价值主张画布把客户任务与方案能力对齐？"))
+      .toEqual(["价值主张画布"]);
+    expect(explicitNamedMethods("请采用客户旅程地图梳理关键触点。"))
+      .toEqual(["客户旅程地图"]);
+  });
+
   it("does not treat incidental English product words as a method request", () => {
     expect(explicitNamedMethods("Coremail Outlook 插件如何同步日程？"))
       .toEqual([]);

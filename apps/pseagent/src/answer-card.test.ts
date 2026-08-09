@@ -325,6 +325,16 @@ describe("answer card registry and matching", () => {
       reason: "family_rejected",
       candidateCount: 1,
     });
+    await expect(matcher.match({
+      question: "请用价值主张画布规划 Coremail 迁移并说明风险沟通",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    })).resolves.toMatchObject({
+      matchType: "none",
+      reason: "family_rejected",
+      candidateCount: 1,
+    });
     expect(model.completeJson).not.toHaveBeenCalled();
   });
 

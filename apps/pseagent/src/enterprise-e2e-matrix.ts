@@ -166,6 +166,12 @@ function semanticAcceptanceEquivalent(
     return /当前(?:暂定)?距离最小|当前最小(?:暂定)?距离|最小(?:的)?暂定距离/u
       .test(answer);
   }
+  if (term === "customerprofile" || term === "客户画像") {
+    return answer.includes("客户侧") &&
+      answer.includes("客户任务") &&
+      answer.includes("痛点") &&
+      answer.includes("收益");
+  }
   if (
     (term === "不能" || term === "无法") &&
     /(?:能不能|能否|是否可以|可不可以|可以吗)/u.test(question)

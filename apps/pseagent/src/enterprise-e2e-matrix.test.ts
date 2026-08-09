@@ -111,6 +111,11 @@ describe("enterprise E2E matrix", () => {
       "能不能直接套用一套固定优先级？",
       ["不能", "无法"],
     )).toBe(false);
+    expect(acceptanceFactGroupCovered(
+      "客户侧三要素包括客户任务、痛点和收益。",
+      "怎样用价值主张画布完成对齐？",
+      ["Customer Profile", "客户画像"],
+    )).toBe(true);
   });
 
   it("accepts a complete 20-case second-round matrix", () => {
