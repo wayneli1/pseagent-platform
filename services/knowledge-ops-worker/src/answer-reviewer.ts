@@ -64,6 +64,7 @@ export class IndependentAnswerReviewer {
   }
 
   async review(input:IndependentAnswerReviewInput):Promise<AnswerReviewResult>{
+    const governedCard=governedCardForReview(input);
     const messages=[
         {role:"system",content:[
           "你是企业知识问答的独立复查员，不参与原回答生成。",
@@ -87,10 +88,10 @@ export class IndependentAnswerReviewer {
           answer:input.answer,
           answerStatus:input.answerStatus,
           evidenceIssues:input.evidenceIssues,
-          governedCard:input.governedCard===undefined?null:{
-            cardId:input.governedCard.cardId,
-            canonicalQuestion:input.governedCard.canonicalQuestion,
-            obligations:input.governedCard.obligations.filter((item)=>item.required).map((item)=>({
+          governedCard:governedCard===undefined?null:{
+            cardId:governedCard.cardId,
+            canonicalQuestion:governedCard.canonicalQuestion,
+            obligations:governedCard.obligations.filter((item)=>item.required).map((item)=>({
               id:item.id,label:item.label,requiredConcepts:item.requiredConcepts,forbiddenClaims:item.forbiddenClaims,
             })),
           },
@@ -118,7 +119,8 @@ export function enforceDeterministicReview(
   const modelDefects=modelResult.defects.filter((defect)=>
     !isRuntimeCitationNumberingDefect(defect)&&
     !isSupportedProjectDataFalsePositive(defect,projectData.diagnostics.length)&&
-    !isDirectEvidenceSupportFalsePositive(defect,input.evidence));
+    !isDirectEvidenceSupportFalsePositive(defect,input.evidence)&&
+    !isInactiveCardObligationDefect(defect,input));
   const defects=[...modelDefects,...projectData.defects];
   let forceFail=false;
   if(projectData.defects.some((defect)=>defect.severity==="critical"))forceFail=true;
@@ -138,10 +140,13 @@ export function enforceDeterministicReview(
   if(enumerationIssue!==undefined){
     defects.push(enumerationIssue==="dangling_first_item"
       ?{category:"coverage_gap",severity:"major",summary:"回答声称列出多项内容，但只出现第 1 项，存在结构性截断",evidence:"集合引导语后的编号未继续到第 2 项"}
-      :{category:"coverage_gap",severity:"major",summary:"回答的清单编号不连续，存在中间项目被删除的结构性截断",evidence:"集合编号跳过了一个或多个序号"});
+      :enumerationIssue==="declared_count_incomplete"
+        ?{category:"coverage_gap",severity:"major",summary:"回答声明的集合数量大于实际列出的项目数，存在结构性截断",evidence:"声明的步骤或项目数量未完整列出"}
+        :{category:"coverage_gap",severity:"major",summary:"回答的清单编号不连续，存在中间项目被删除的结构性截断",evidence:"集合编号跳过了一个或多个序号"});
   }
-  const required=input.governedCard?.obligations.filter((item)=>item.required)??[];
-  const ruleConflicts=input.governedCard===undefined?[]:inspectAnswerCardRuleConflicts({answerTemplate:input.answer,obligations:required,evidence:input.evidence}).filter((item)=>item.code!=="unverifiable_required_concept");
+  const governedCard=governedCardForReview(input);
+  const required=governedCard?.obligations.filter((item)=>item.required)??[];
+  const ruleConflicts=governedCard===undefined?[]:inspectAnswerCardRuleConflicts({answerTemplate:input.answer,obligations:required,evidence:input.evidence}).filter((item)=>item.code!=="unverifiable_required_concept");
   for(const conflict of ruleConflicts){forceFail=true;defects.push({category:"logic_gap",severity:"critical",summary:`答案卡规则冲突（${conflict.obligationId}）`,evidence:`${conflict.message} 规则：${conflict.rule}`.slice(0,1_000)});}
   const checks=new Map(modelResult.obligationChecks.map((check)=>[check.obligationId,check] as const));
   const normalizedAnswer=normalize(input.answer);
@@ -183,6 +188,23 @@ export function enforceDeterministicReview(
       ? Math.min(modelResult.score,69)
       : Math.max(modelResult.score,80);
   return answerReviewResultSchema.parse({...modelResult,verdict,score,defects:unique});
+}
+
+function governedCardForReview(input:IndependentAnswerReviewInput):AnswerCard|undefined{
+  return isUnmappedCardActivation(input.answerCardActivation)?undefined:input.governedCard;
+}
+
+function isInactiveCardObligationDefect(
+  defect:AnswerReviewResult["defects"][number],
+  input:IndependentAnswerReviewInput,
+):boolean{
+  if(input.governedCard===undefined||!isUnmappedCardActivation(input.answerCardActivation))return false;
+  return (defect.category==="coverage_gap"||defect.category==="planning_gap")&&
+    /(?:必答项|受治理概念|required\s+obligation|obligation\s*[A-Z]?\d*)/iu.test(`${defect.summary} ${defect.evidence}`);
+}
+
+function isUnmappedCardActivation(activation:Record<string,unknown>|undefined):boolean{
+  return activation?.activated===false&&activation.reason==="binding_unmapped";
 }
 
 function isRuntimeCitationNumberingDefect(defect:AnswerReviewResult["defects"][number]):boolean{

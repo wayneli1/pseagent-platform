@@ -31,9 +31,21 @@ describe("collection enumeration integrity", () => {
     )).toBe("non_contiguous_ordinals");
   });
 
+  it("detects a list that declares more items than it actually returns", () => {
+    expect(collectionEnumerationIssue(
+      "具体五步结构为：1. 暂停推进。",
+    )).toBe("declared_count_incomplete");
+    expect(collectionEnumerationIssue(
+      "三项检查为：1）核对组织；2）核对版本。",
+    )).toBe("declared_count_incomplete");
+  });
+
   it("accepts complete and explicitly single-item collections", () => {
     expect(hasBrokenCollectionEnumeration(
       "实施前需确认以下事项：1）核对版本；2）核对实际配置。",
+    )).toBe(false);
+    expect(hasBrokenCollectionEnumeration(
+      "具体三步结构为：1）暂停；2）陈述信号；3）提出核验问题。",
     )).toBe(false);
     expect(hasBrokenCollectionEnumeration(
       "当前唯一一个要求：1）核对版本。",

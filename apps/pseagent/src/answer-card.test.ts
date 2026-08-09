@@ -307,6 +307,32 @@ describe("answer card registry and matching", () => {
     expect(model.completeJson).not.toHaveBeenCalled();
   });
 
+  it("rejects an unrelated family for an explicit uncounted list of labels", async () => {
+    const model = {
+      completeJson: vi.fn(async () => ({
+        familyId: "MIXED-MIGRATION-001",
+        confidence: "high",
+        matchedObligationIds: ["O1", "O2"],
+      })),
+    } as unknown as ModelClient;
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(catalog()),
+      model,
+    );
+
+    await expect(matcher.match({
+      question: "Coremail 迁移项目里怎样用能力、风险、财务标记具体要求？",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+    })).resolves.toMatchObject({
+      matchType: "none",
+      reason: "family_rejected",
+      candidateCount: 1,
+    });
+    expect(model.completeJson).not.toHaveBeenCalled();
+  });
+
   it("recalls colloquial families from governed obligation concepts", async () => {
     const source = catalog();
     source.cards[1]!.obligations[0]!.requiredConcepts = ["谁能调动跨部门资源"];
