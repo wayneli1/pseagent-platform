@@ -143,6 +143,25 @@ describe("structured answer", () => {
     expect(rendered).toContain("确认实际组织配置");
   });
 
+  it("keeps later items when a sequence is introduced as required checks", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer:
+          "网络层面需要检查：1) nginx 节点具备 DNS 能力 [1]；2) 可访问外网 TCP 25 [1]；3) TCP 6610 已放行 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    const rendered = renderStructuredAnswer(structured);
+    expect(rendered).toContain("nginx 节点具备 DNS 能力");
+    expect(rendered).toContain("可访问外网 TCP 25");
+    expect(rendered).toContain("TCP 6610 已放行");
+  });
+
   it("keeps an ordered sequence introduced as a concrete method", () => {
     const structured = buildStructuredAnswer({
       action: "final",
