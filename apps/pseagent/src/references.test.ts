@@ -5,7 +5,12 @@ import type {
   RequirementCoverage,
 } from "./contracts.js";
 import { finalActionSchema } from "./contracts.js";
-import { ReferenceRegistry, ReferenceValidationError, type ReadEvidence } from "./references.js";
+import {
+  ReferenceRegistry,
+  ReferenceValidationError,
+  splitAnswerLineSegments,
+  type ReadEvidence,
+} from "./references.js";
 
 const revision = "a".repeat(40);
 const contentHash = "b".repeat(64);
@@ -417,5 +422,19 @@ describe("ReferenceRegistry", () => {
       requirements.slice(0, 1),
       evidence([["R1", [1]]]),
     )).toEqual({ ok: false, reason: "requirement_answer_delegates_to_citation" });
+  });
+});
+
+describe("splitAnswerLineSegments", () => {
+  it("preserves query strings and inline code while splitting real questions", () => {
+    expect(splitAnswerLineSegments(
+      "应用首页通过 sso.do?orgId=acme 进入邮箱 [1]。生产环境是否启用 HTTPS?需要确认。",
+    )).toEqual([
+      "应用首页通过 sso.do?orgId=acme 进入邮箱 [1]。",
+      "生产环境是否启用 HTTPS?",
+      "需要确认。",
+    ]);
+    expect(splitAnswerLineSegments("配置 `redirect?target=mail` 后再联调 [1]。"))
+      .toEqual(["配置 `redirect?target=mail` 后再联调 [1]。"]);
   });
 });

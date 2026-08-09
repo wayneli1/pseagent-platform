@@ -35,6 +35,23 @@ describe("structured answer", () => {
     expect(structured.coverage).toBe("complete");
   });
 
+  it("does not split a URL query into separate answer bullets", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "应用首页通过 sso.do?orgId=acme 进入邮箱 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    expect(renderStructuredAnswer(structured)).toBe(
+      "应用首页通过 sso.do?orgId=acme 进入邮箱 [1]。",
+    );
+  });
+
   it("replaces model numbering with stable bullets and removes dangling connectors", () => {
     const structured = buildStructuredAnswer({
       action: "final",

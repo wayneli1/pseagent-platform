@@ -34,6 +34,7 @@ import { knowledgeAgentMessages } from "./prompts.js";
 import {
   normalizeTrailingCitationPlacement,
   ReferenceRegistry,
+  splitAnswerLineSegments,
 } from "./references.js";
 import { formatKnowledgeFinal, unavailableResult } from "./response.js";
 import {
@@ -2830,8 +2831,7 @@ function dropUnsupportedRequirementCitationSegments(
       new Set<number>();
     const pieces = normalizeTrailingCitationPlacement(requirement.answer)
       .split(/\r?\n+/u)
-      .flatMap((line) =>
-        line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [])
+      .flatMap(splitAnswerLineSegments)
       .map((piece) => piece.trim())
       .filter(Boolean);
     const retainedSegments: string[] = [];
@@ -3219,7 +3219,7 @@ function hasAmbiguousComparisonClaim(answer: string): boolean {
       hasExplicitHeadingContext = true;
       continue;
     }
-    const pieces = line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [line];
+    const pieces = splitAnswerLineSegments(line);
     for (const piece of pieces) {
       if (
         !hasExplicitHeadingContext &&

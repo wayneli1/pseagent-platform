@@ -15,6 +15,52 @@ export function normalizeTrailingCitationPlacement(value: string): string {
   );
 }
 
+export function splitAnswerLineSegments(value: string): string[] {
+  const segments: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (
+      character === undefined ||
+      !/[。！？；!?]/u.test(character) ||
+      isEmbeddedAsciiPunctuation(value, index)
+    ) {
+      continue;
+    }
+    let segmentEnd = index + 1;
+    while (
+      segmentEnd < value.length &&
+      /[。！？；!?]/u.test(value[segmentEnd] ?? "") &&
+      !isEmbeddedAsciiPunctuation(value, segmentEnd)
+    ) {
+      segmentEnd += 1;
+    }
+    const segment = value.slice(segmentStart, segmentEnd).trim();
+    if (segment !== "") segments.push(segment);
+    segmentStart = segmentEnd;
+    index = segmentEnd - 1;
+  }
+  const remainder = value.slice(segmentStart).trim();
+  if (remainder !== "") segments.push(remainder);
+  return segments;
+}
+
+function isEmbeddedAsciiPunctuation(value: string, index: number): boolean {
+  const character = value[index];
+  if (character !== "?" && character !== "!") return false;
+  if (insideInlineCode(value, index)) return true;
+  const before = value.slice(0, index).match(/[^\s<>()，。！？；"']+$/u)?.[0] ?? "";
+  const after = value.slice(index + 1).match(/^[^\s<>()，。！？；"']+/u)?.[0] ?? "";
+  if (!/[A-Za-z0-9_%]$/u.test(before) || !/^[A-Za-z0-9_%]/u.test(after)) {
+    return false;
+  }
+  return /[/:.=]/u.test(before) || /[=&]/u.test(after);
+}
+
+function insideInlineCode(value: string, index: number): boolean {
+  return (value.slice(0, index).match(/`/gu)?.length ?? 0) % 2 === 1;
+}
+
 export type FinalValidation = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
 export class ReferenceValidationError extends Error {

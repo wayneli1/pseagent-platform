@@ -7,7 +7,10 @@ import {
   SYNTHESIS_DISCLOSURE,
   type CoverageVerificationReport,
 } from "./coverage-verifier.js";
-import { normalizeTrailingCitationPlacement } from "./references.js";
+import {
+  normalizeTrailingCitationPlacement,
+  splitAnswerLineSegments,
+} from "./references.js";
 import type { KnowledgeDomain } from "./task-spec.js";
 
 export type StructuredAnswerSupportKind = "direct" | "synthesized";
@@ -184,7 +187,7 @@ function splitSupportedSegments(answer: string): {
 } {
   const pieces = normalizeTrailingCitationPlacement(answer)
     .split(/\r?\n+/u)
-    .flatMap((line) => line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [])
+    .flatMap(splitAnswerLineSegments)
     .map((piece) => piece.trim())
     .filter(Boolean);
   const segments: Array<{ statement: string; citations: number[] }> = [];

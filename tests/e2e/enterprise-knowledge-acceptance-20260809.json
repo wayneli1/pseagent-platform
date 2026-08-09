@@ -89,7 +89,7 @@
       "expectedScope": "professional",
       "expectedTarget": "ordinary_retrieval",
       "expectedEvidence": [],
-      "requiredFactGroups": [["H5", "微应用"], ["lunkr-plugins"], ["hxphone"], ["首次", "账号和密码", "绑定"], ["deliveragent", "通知"], ["app_association", "绑定关系"], ["管理员", "数据库", "解绑"], ["HTTPS"], ["版本兼容", "联调"], ["重试", "可靠送达"]],
+      "requiredFactGroups": [["H5", "微应用"], ["lunkr-plugins"], ["hxphone"], ["首次", "账号和密码", "绑定"], ["deliveragent", "通知"], ["app_association", "绑定关系"], ["管理员", "数据库", "解绑"], ["HTTPS", "协议安全配置"], ["兼容", "联调"]],
       "forbiddenClaims": ["所有Coremail部署默认具备钉钉单点和通知能力", "普通用户一定可以自助解绑且无需管理员"],
       "expectedBehavior": "拆分H5入口、账号绑定、通知推送与解绑链路，说明插件、代理、数据库、配置和安全验证边界",
       "expectedIssueCenter": false

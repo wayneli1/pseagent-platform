@@ -16,7 +16,10 @@ import {
   COVERAGE_VERIFICATION_REPAIR_INSTRUCTION,
   coverageVerificationMessages,
 } from "./prompts.js";
-import { normalizeTrailingCitationPlacement } from "./references.js";
+import {
+  normalizeTrailingCitationPlacement,
+  splitAnswerLineSegments,
+} from "./references.js";
 import { missingExplicitComparisonLabels } from "./comparison-question.js";
 
 export interface CoverageEvidenceDocument {
@@ -1382,7 +1385,7 @@ function splitTargetLine(line: string): Array<{
   readonly text: string;
   readonly citations: readonly number[];
 }> {
-  const pieces = (line.match(/[^。！？；!?\n]+(?:[。！？；!?]+|$)/gu) ?? [])
+  const pieces = splitAnswerLineSegments(line)
     .map((text) => text.trim())
     .filter(Boolean)
     .map((text) => ({
