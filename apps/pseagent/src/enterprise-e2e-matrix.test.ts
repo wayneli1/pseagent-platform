@@ -57,6 +57,24 @@ describe("enterprise E2E matrix", () => {
     )).toBe(false);
   });
 
+  it("accepts general semantic equivalents without requiring keyword stuffing", () => {
+    expect(acceptanceFactGroupCovered(
+      "请客户用具体事实描述当前面临的问题。",
+      "如何确认关键业务问题？",
+      ["具体场景", "最近一次", "现状"],
+    )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "对每一条有向边，起点都必须排在终点之前。",
+      "为什么拓扑排序只适用于有向无环图？",
+      ["所有边"],
+    )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "请笼统描述未来设想。",
+      "如何确认关键业务问题？",
+      ["具体场景", "最近一次", "现状"],
+    )).toBe(false);
+  });
+
   it("accepts a complete 20-case second-round matrix", () => {
     expect(validateAcceptanceMatrix(matrix, {
       phase1Count: 20,

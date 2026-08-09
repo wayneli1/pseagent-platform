@@ -105,6 +105,7 @@ export function acceptanceFactGroupCovered(
   return alternatives.some((term) => {
     const compactTerm = normalizeQuestion(term);
     if (compactAnswer.includes(compactTerm)) return true;
+    if (semanticAcceptanceEquivalent(compactAnswer, compactTerm)) return true;
     const termWords = wordTokens(term);
     if (
       termWords.length >= 2 &&
@@ -126,6 +127,27 @@ export function acceptanceFactGroupCovered(
     }
     return false;
   });
+}
+
+function semanticAcceptanceEquivalent(answer: string, term: string): boolean {
+  if (term === "现状") {
+    return /(?:当前|目前|现阶段)(?:情况|状态|问题|面临|正在)/u.test(answer);
+  }
+  if (term === "具体场景") {
+    return /具体(?:事实|事件|例子|案例|场景|情境|问题|现象)/u.test(answer);
+  }
+  if (term === "最近一次") {
+    return /最近(?:一次|发生|出现|遇到|案例|事件|例子)/u.test(answer);
+  }
+  const universal = /^所有(.+)$/u.exec(term);
+  if (universal?.[1]) {
+    const subject = escapeRegExp(universal[1]);
+    return new RegExp(
+      `(?:所有的?|每(?:一)?(?:个|条|项|种|类|次)?).{0,4}${subject}`,
+      "u",
+    ).test(answer);
+  }
+  return false;
 }
 
 function escapeRegExp(value: string): string {
