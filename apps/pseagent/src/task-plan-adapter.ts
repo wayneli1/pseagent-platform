@@ -171,18 +171,27 @@ export function adaptTaskSpecToKnowledgePlan(
         item.obligation.sourceText,
         otherEntitySourceTexts,
       );
+    // An obligation without a traceable bound entity has no independent topic.
+    // Keep the user's leading premise in the requirement and every seed query so
+    // short dependent requests cannot retrieve unrelated pages on their own.
+    const leadingTopicAnchor = entitySourceTexts.length === 0
+      ? leadingQuestionContext
+      : "";
     const requiredParallelContext = requiredParallelScope?.sharedRequest ?? "";
-    const parallelLeadingContext = requiredParallelScope !== undefined &&
+    const parallelLeadingContext = leadingTopicAnchor === "" &&
+        requiredParallelScope !== undefined &&
         requiredParallelContext === ""
       ? leadingQuestionContext
       : "";
     const baseRequirementQuestion = buildSemanticQuery([
+      leadingTopicAnchor,
       ...entitySourceTexts,
       obligationSourceText,
       deliverableSourceText,
       comparisonContext,
     ]);
     const primaryQuery = buildSemanticQuery([
+      leadingTopicAnchor,
       ...entitySourceTexts,
       obligationSourceText,
       deliverableSourceText,
@@ -199,7 +208,9 @@ export function adaptTaskSpecToKnowledgePlan(
         taskSourceScopeKey(item.deliverable, item.obligation),
       )?.size ?? 0) > 1;
     const requirementQuestion = buildSemanticQuery([
-      useAtomicLabel ? safeLabel : baseRequirementQuestion,
+      useAtomicLabel
+        ? buildSemanticQuery([leadingTopicAnchor, safeLabel])
+        : baseRequirementQuestion,
       requiredParallelContext || parallelLeadingContext,
     ]);
     const terms = buildAspectTerms(
@@ -211,6 +222,7 @@ export function adaptTaskSpecToKnowledgePlan(
       safeLabel,
       requiredParallelContext,
       parallelLeadingContext,
+      leadingTopicAnchor,
     );
     const comparisonDimensions = explicitComparisonDimensions(
       obligationContext,
@@ -225,9 +237,11 @@ export function adaptTaskSpecToKnowledgePlan(
         ? undefined
         : [{
             id: "A1" as const,
-            label: requiredParallelContext || (useAtomicLabel
-              ? safeLabel
-              : aspectLabel(
+            label: requiredParallelContext || (leadingTopicAnchor !== ""
+              ? requirementQuestion
+              : useAtomicLabel
+                ? safeLabel
+                : aspectLabel(
                   obligationSourceText,
                   deliverableSourceText,
                   entitySourceTexts,
@@ -246,7 +260,7 @@ export function adaptTaskSpecToKnowledgePlan(
         queries.push(expanded);
       }
     }
-    if (leadingQuestionContext !== "") {
+    if (leadingQuestionContext !== "" && leadingTopicAnchor === "") {
       for (const contextual of [
         buildSemanticQuery([primaryQuery, leadingQuestionContext]),
         leadingQuestionContext,
@@ -278,8 +292,8 @@ export function adaptTaskSpecToKnowledgePlan(
     if (safeLabel !== "" && queries.length < 3) {
       const expanded = buildSemanticQuery([primaryQuery, safeLabel]);
       if (
-        normalizeSemanticText(expanded) !==
-          normalizeSemanticText(primaryQuery) &&
+        !queries.some((query) =>
+          normalizeSemanticText(query) === normalizeSemanticText(expanded)) &&
         characterLength(expanded) <= MAX_QUERY_CHARACTERS
       ) {
         queries.push(expanded);

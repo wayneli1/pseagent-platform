@@ -211,12 +211,12 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
     if (!result.activated) return;
 
     expect(result.plan.requirements.map((requirement) => requirement.question))
-      .toEqual(labels);
+      .toEqual(labels.map((label) => `规划 2 万用户 Coremail 时 ${label}`));
     expect(result.plan.requirements.map((requirement) =>
       requirement.evidenceAspects[0]?.label))
-      .toEqual(labels);
+      .toEqual(labels.map((label) => `规划 2 万用户 Coremail 时 ${label}`));
     expect(result.plan.requirements[0]?.queries[0]?.text)
-      .toBe("存储 索引和带宽应怎样估算");
+      .toBe("规划 2 万用户 Coremail 时 存储 索引和带宽应怎样估算");
     expect(result.plan.requirements[0]?.queries.some((query) =>
       query.text.includes("说明存储容量的估算方法")))
       .toBe(true);
@@ -311,13 +311,89 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
     if (!result.activated) return;
 
     expect(result.plan.requirements[0]?.question)
-      .toBe("怎样沿接收 过滤 路由 投递和信筒建立完整证据链");
+      .toBe("用户说外部邮件没收到 怎样沿接收 过滤 路由 投递和信筒建立完整证据链");
     expect(result.plan.requirements[0]?.queries.map((query) => query.text))
       .toEqual([
-        "怎样沿接收 过滤 路由 投递和信筒建立完整证据链",
-        "怎样沿接收 过滤 路由 投递和信筒建立完整证据链 用户说外部邮件没收到",
-        "用户说外部邮件没收到",
+        "用户说外部邮件没收到 怎样沿接收 过滤 路由 投递和信筒建立完整证据链",
       ]);
+  });
+
+  it("anchors an unbound dependent subrequest to its traceable topic", () => {
+    const question =
+      "Webadmin 同时配置了全局密码策略和某组织的密码策略，用户最终按哪套执行，实施前还要确认什么？";
+    const spec: TaskSpec = {
+      subject: "Webadmin 密码策略",
+      entities: [
+        {
+          id: "E1",
+          label: "全局密码策略",
+          role: "subject",
+          sourceText: "全局密码策略",
+        },
+        {
+          id: "E2",
+          label: "组织密码策略",
+          role: "subject",
+          sourceText: "某组织的密码策略",
+        },
+      ],
+      deliverables: [{
+        id: "D1",
+        label: "密码策略优先级",
+        kind: "fact",
+        required: true,
+        sourceText: "用户最终按哪套执行",
+        obligations: [{
+          id: "O1",
+          label: "说明密码策略优先级",
+          targetEntityIds: ["E1", "E2"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "用户最终按哪套执行",
+        }],
+      }, {
+        id: "D2",
+        label: "实施确认事项",
+        kind: "fact",
+        required: true,
+        sourceText: "实施前还要确认什么",
+        obligations: [{
+          id: "O2",
+          label: "列出实施前需要确认的事项清单",
+          targetEntityIds: [],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "实施前还要确认什么",
+        }],
+      }],
+    };
+
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: {
+        ...resolvedQuestion,
+        rawQuestion: question,
+        standaloneQuestion: question,
+      },
+      taskSpec: spec,
+      guardResult: passingGuard,
+    });
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+
+    const requirement = result.plan.requirements[1]!;
+    expect(requirement.question).toContain("Webadmin");
+    expect(requirement.question).toContain("密码策略");
+    expect(requirement.question).toContain("实施前还要确认什么");
+    expect(requirement.evidenceAspects[0]?.terms.join(" ")).toContain("Webadmin");
+    expect(requirement.queries.length).toBeGreaterThan(0);
+    expect(requirement.queries.every((query) =>
+      query.text.includes("Webadmin") && query.text.includes("密码策略")))
+      .toBe(true);
+    expect(requirement.queries.map((query) => query.text))
+      .not.toContain("实施前还要确认什么");
   });
 
   it("restores named comparison context when a split obligation only says two sides", () => {
