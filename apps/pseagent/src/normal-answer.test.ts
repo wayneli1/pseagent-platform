@@ -26,6 +26,12 @@ describe("stripUnrequestedExamples", () => {
     expect(stripUnrequestedExamples("请举一个例子说明", answer)).toBe(answer);
   });
 
+  it("does not cut a required example out of the middle of a dependent clause", () => {
+    const answer = "如果图中存在环，例如 A→B→A，则环内节点的入度无法全部降为 0。";
+    expect(stripUnrequestedExamples("为什么拓扑排序要求有向无环图？", answer))
+      .toBe(answer);
+  });
+
   it("keeps ordinary answers that contain no example marker unchanged", () => {
     const answer = "先说明前提，再解释机制，最后给出适用边界。";
     expect(stripUnrequestedExamples("为什么？", answer)).toBe(answer);

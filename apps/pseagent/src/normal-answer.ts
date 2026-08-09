@@ -35,6 +35,7 @@ export function stripUnrequestedExamples(
     if (match === null) return part;
     const prefix = part.slice(0, match.index).trimEnd();
     if (!prefix) return "";
+    if (/[，,:：、]$/u.test(prefix)) return part;
     return /[。！？!?；;]$/u.test(prefix) ? prefix : `${prefix}。`;
   }).join("").replace(/(?:\r?\n\s*){3,}/gu, "\n\n").trim();
   return cleaned || answer;
