@@ -516,5 +516,6 @@ describe("knowledge response", () => {
     expect(result.answer).toContain("截止日期");
     expect(result.answer).toContain("不能依据现有正式资料确认上述结论");
     expect(result.answer).not.toMatch(/^1\. 对象：/mu);
+    expect(result.answer).not.toContain("检索预算");
   });
 });

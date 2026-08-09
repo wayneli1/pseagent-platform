@@ -127,6 +127,7 @@ export function enforceDeterministicReview(
     !isDirectEvidenceSupportFalsePositive(defect,input.evidence)&&
     !isExplicitSafeBoundaryFalsePositive(defect,input.answer)&&
     !isClaimedMissingDimensionFalsePositive(defect,input.answer)&&
+    !isAcknowledgedEvidenceGapFalsePositive(defect,input)&&
     !isInactiveCardObligationDefect(defect,input));
   const defects=[...modelDefects,...projectData.defects];
   let forceFail=false;
@@ -255,6 +256,18 @@ function isClaimedMissingDimensionFalsePositive(
   ];
   const asserted=checks.filter((check)=>check.claimed);
   return asserted.length>0&&asserted.every((check)=>check.present);
+}
+
+function isAcknowledgedEvidenceGapFalsePositive(
+  defect:AnswerReviewResult["defects"][number],
+  input:IndependentAnswerReviewInput,
+):boolean{
+  if(input.answerStatus!=="not_covered"&&input.answerStatus!=="partially_answered")return false;
+  if(!["knowledge_gap","retrieval_gap","citation_gap","coverage_gap"].includes(defect.category))return false;
+  const answerHasBoundary=/(?:不能|无法).{0,32}(?:确认|判断|作为|承诺|保证)|(?:未覆盖|证据不足|时效.{0,8}未确认)/u.test(input.answer);
+  const diagnostic=`${defect.summary} ${defect.evidence}`;
+  const complainsAboutMissingSupport=/(?:未提供|缺少|不足|过期|时效性不足|无法支撑|未覆盖).{0,48}(?:正式|最新|当前|公告|清单|证据|结论|判断|承诺|CVE|漏洞)/iu.test(diagnostic);
+  return answerHasBoundary&&complainsAboutMissingSupport;
 }
 
 function isDirectEvidenceSupportFalsePositive(

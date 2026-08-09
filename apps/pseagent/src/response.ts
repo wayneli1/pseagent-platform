@@ -334,9 +334,9 @@ function formatGapSection(
     const subjects = uniqueText(group.map((gap) => gap.subject));
     const missing = uniqueText(group.map((gap) => gap.missingAspect));
     const boundaries = uniqueText(group.flatMap((gap) =>
-      gap.confirmedBoundary === undefined ? [] : [gap.confirmedBoundary]));
+      gap.confirmedBoundary === undefined ? [] : [publicGapBoundary(gap.confirmedBoundary)]));
     const nextActions = uniqueText(group.flatMap((gap) =>
-      gap.nextAction === undefined ? [] : [gap.nextAction]));
+      gap.nextAction === undefined ? [] : [publicGapNextAction(gap.nextAction)]));
     return [
       groups.length === 1
         ? `对象：${subjects.join("、")}`
@@ -348,6 +348,20 @@ function formatGapSection(
   });
   const materialGuidance = formatProductEvidenceMaterialGuidance(gaps, originalQuestion);
   return ["尚未确认的部分：", ...lines, materialGuidance].filter(Boolean).join("\n");
+}
+
+function publicGapBoundary(value: string): string {
+  if (/(?:检索|读页|search|read).{0,12}预算/iu.test(value)) {
+    return "现有检索结果尚未形成完整核验结论。";
+  }
+  return value;
+}
+
+function publicGapNextAction(value: string): string {
+  if (/(?:检索|读页|search|read).{0,12}预算/iu.test(value)) {
+    return "继续核验正式知识库；若仍无直接覆盖，则转入资料待补。";
+  }
+  return value;
 }
 
 function formatProductEvidenceMaterialGuidance(
