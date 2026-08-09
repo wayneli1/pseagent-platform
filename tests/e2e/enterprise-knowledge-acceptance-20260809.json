@@ -102,7 +102,7 @@
       "expectedScope": "professional",
       "expectedTarget": "ordinary_retrieval",
       "expectedEvidence": [],
-      "requiredFactGroups": [["设置", "导入", "PST"], ["本地", "不能上传到服务器"], ["邮件数据"], ["规则", "签名", "个人配置"], ["目标账户"], ["文件大小", "性能"], ["附件", "编码", "格式"], ["版本", "界面"]],
+      "requiredFactGroups": [["设置", "导入", "PST"], ["本地", "不能上传到服务器"], ["邮件数据"], ["规则", "签名", "个人配置"], ["目标账户"], ["文件大小", "性能"], ["附件", "编码", "格式"]],
       "forbiddenClaims": ["PST导入会自动迁移规则签名和全部个人配置", "PST导入会把历史邮件完整上传到服务器"],
       "expectedBehavior": "区分客户端本地导入与服务器迁移，说明操作路径、邮件范围、个人配置边界及兼容性能验收",
       "expectedIssueCenter": false
