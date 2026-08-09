@@ -282,12 +282,7 @@ export function adaptAnswerCardToTaskSpec(input: {
                 : draft.value.label,
               cardId: draft.cardBinding.cardId,
               cardObligationId: draft.cardBinding.cardObligationId,
-              requiredConcepts: Object.freeze(contextualBindingIndexes === undefined
-                ? [...draft.cardBinding.requiredConcepts]
-                : contextualRequiredConcepts(
-                    draft.cardBinding,
-                    draft.value,
-                  )),
+              requiredConcepts: Object.freeze([...draft.cardBinding.requiredConcepts]),
               forbiddenClaims: Object.freeze([...draft.cardBinding.forbiddenClaims]),
               preferredEvidencePaths: Object.freeze([
                 ...draft.cardBinding.preferredEvidencePaths,
@@ -511,16 +506,6 @@ function asksForWholeCardContract(question: string): boolean {
   }
   return /(?:哪些|什么|全部|所有|完整).{0,8}(?:条件|标准|步骤|要求)|具备资格.{0,16}(?:进入|开始|推进)/u
     .test(question);
-}
-
-function contextualRequiredConcepts(
-  binding: AnswerCardMatchBinding,
-  obligation: TaskSpec["deliverables"][number]["obligations"][number],
-): string[] {
-  const focus = `${obligation.label}；${obligation.sourceText}`;
-  const selected = binding.requiredConcepts.filter((concept) =>
-    trustedSemanticOverlap(focus, concept));
-  return selected.length === 0 ? [...binding.requiredConcepts] : selected;
 }
 
 function createCardObligation(

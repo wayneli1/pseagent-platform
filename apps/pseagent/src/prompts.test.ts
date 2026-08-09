@@ -3,11 +3,22 @@ import {
   KNOWLEDGE_PLAN_SYSTEM_PROMPT,
   coverageVerificationMessages,
   knowledgeAgentMessages,
+  normalAnswerMessages,
 } from "./prompts.js";
 
 function systemMessage(messages: ReturnType<typeof knowledgeAgentMessages>): string {
   return messages[0]?.content ?? "";
 }
+
+describe("normal answer completeness", () => {
+  it("requires both the invariant and the operational failure mechanism for constrained techniques", () => {
+    const prompt = normalAnswerMessages("为什么这种算法只能用于满足约束的数据？")[0]?.content ?? "";
+
+    expect(prompt).toContain("除定义或不变量外");
+    expect(prompt).toContain("执行过程在哪一步无法继续或产生矛盾");
+    expect(prompt).toContain("明确适用边界");
+  });
+});
 
 describe("support and existence semantics", () => {
   it("makes the planner classify direct-only and synthesis-allowed evidence", () => {

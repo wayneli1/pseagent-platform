@@ -1375,7 +1375,13 @@ describe("answer card TaskSpec adapter", () => {
         cardId: "GEN-DEMO-QUALIFICATION",
         cardObligationId: "O1",
         label: "确认客户关键业务问题的方法",
-        requiredConcepts: ["关键业务问题"],
+        requiredConcepts: [
+          "客户角色",
+          "关键业务问题",
+          "紧迫性",
+          "价值",
+          "下一步",
+        ],
         forbiddenClaims: ["不得无依据承诺"],
       }],
     });
