@@ -27,8 +27,7 @@ export async function loadReviewEvidence(input:{
     let bytes:Buffer;
     try{bytes=await readFile(candidate);}catch{issues.push(`reference_${reference.index}:unreadable`);continue;}
     if(bytes.byteLength>MAX_FILE_BYTES){issues.push(`reference_${reference.index}:too_large`);continue;}
-    const contentHash=createHash("sha256").update(bytes).digest("hex");
-    if(contentHash!==reference.contentHash){issues.push(`reference_${reference.index}:content_hash_mismatch`);continue;}
+    if(!matchesContentHash(bytes,reference.contentHash)){issues.push(`reference_${reference.index}:content_hash_mismatch`);continue;}
     const remaining=MAX_TOTAL_CHARS-totalChars;if(remaining<=0){issues.push(`reference_${reference.index}:evidence_budget_exhausted`);continue;}
     const content=[...bytes.toString("utf8")].slice(0,Math.min(MAX_DOCUMENT_CHARS,remaining)).join("");totalChars+=[...content].length;
     documents.push({index:reference.index,title:reference.title,path:reference.path,content});
@@ -37,3 +36,10 @@ export async function loadReviewEvidence(input:{
 }
 
 function isInside(root:string,candidate:string):boolean{const relative=path.relative(root,candidate);return relative===""||(!relative.startsWith("..")&&!path.isAbsolute(relative));}
+function matchesContentHash(bytes:Buffer,expected:string):boolean{
+  if(hash(bytes)===expected)return true;
+  let text:string;try{text=new TextDecoder("utf-8",{fatal:true}).decode(bytes);}catch{return false;}
+  const lf=text.replace(/\r\n/gu,"\n");
+  return hash(Buffer.from(lf,"utf8"))===expected||hash(Buffer.from(lf.replace(/\n/gu,"\r\n"),"utf8"))===expected;
+}
+function hash(bytes:Buffer):string{return createHash("sha256").update(bytes).digest("hex");}
