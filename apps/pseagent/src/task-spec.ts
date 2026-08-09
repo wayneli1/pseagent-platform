@@ -931,6 +931,10 @@ export function extractExplicitQuestionSignals(
   for (const rawSegment of question.split(/[，,；;。！？!?]+/u)) {
     const segment = rawSegment.trim();
     if (!segment) continue;
+    if (requiredParallelGroups.some((group) =>
+      sameSemanticText(group.sourceText, segment))) {
+      continue;
+    }
     const boundaries = requestClauseBoundaries(segment);
     if (boundaries.length === 0) continue;
     const starts = [0, ...boundaries.slice(1)];
@@ -1000,7 +1004,7 @@ function escapeRegularExpression(value: string): string {
 }
 
 const REQUEST_INTERROGATIVE_PATTERN =
-  /(?:如何|怎样|为什么|哪些|多少|是否|能否|有没有|是什么|怎么办|怎么做|怎么提升|如何提升)/gu;
+  /(?:什么时候|何时|如何|怎样|为什么|哪些|多少|是否|能否|有没有|是什么|怎么办|怎么做|怎么提升|如何提升)/gu;
 const REQUEST_ACTION_PATTERN =
   /(?:^|请|帮我|需要|还要|以及|同时|然后|并且|并|再|且|要)\s*(?:(?:分别|逐一|逐个|各自)\s*)?(?:检索|搜索|查找|分析|评估|介绍|说明|列出|总结|建议|推荐|给出|制定|设计|判断|排查)/gu;
 

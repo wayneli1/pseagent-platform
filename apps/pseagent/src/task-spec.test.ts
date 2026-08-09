@@ -1426,6 +1426,22 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(signals.requestClauses.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("keeps timing requests and removes a duplicated parallel parent clause", () => {
+    const signals = extractExplicitQuestionSignals(
+      "Coremail 归档检索异常时，什么时候可以重建索引，执行前后需要哪些检查和风险控制？",
+    );
+
+    expect(signals.requestClauses).toEqual([
+      "哪些检查",
+      "风险控制",
+      "什么时候可以重建索引",
+    ]);
+    expect(signals.requiredParallelGroups).toEqual([{
+      sourceText: "执行前后需要哪些检查和风险控制",
+      items: ["哪些检查", "风险控制"],
+    }]);
+  });
+
   it("keeps every ordered checklist dimension as an independent obligation", () => {
     const question = "请给出客户信息清单，按决策、预算、竞争、技术和时间排序。";
     const signals = extractExplicitQuestionSignals(question);
