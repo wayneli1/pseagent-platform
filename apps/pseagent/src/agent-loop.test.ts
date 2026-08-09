@@ -3720,6 +3720,46 @@ describe("runKnowledgeAgent", () => {
     expect(model.lastSchemaName()).toBe("pse_final_action");
   });
 
+  it("does not preload unrelated seed pages after governed card evidence is ready", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/unrelated-project.md" }] },
+    });
+    session.compactPage.mockReturnValue(
+      "The governed page requires measurable success criteria.",
+    );
+    const model = scriptedAgentModel([
+      final("complete", "Use measurable success criteria [1].", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        cardId: "CM-GOVERNED-001",
+        cardObligationId: "O1",
+        requiredConcepts: ["success criteria"],
+        preferredEvidencePaths: ["wiki/queries/governed-answer.md"],
+      }],
+    });
+
+    expect(result.status).toBe("answered");
+    expect(session.readPage).toHaveBeenCalledWith(
+      "wiki/queries/governed-answer.md",
+      undefined,
+    );
+    expect(session.readPage).not.toHaveBeenCalledWith(
+      "wiki/unrelated-project.md",
+      undefined,
+    );
+    expect(result.references).toEqual([
+      expect.objectContaining({ path: "wiki/queries/governed-answer.md" }),
+    ]);
+  });
+
   it("repairs a missing answer-card concept as a natural model-authored fact", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     session.compactPage.mockReturnValue("The governed page requires measurable success criteria.");

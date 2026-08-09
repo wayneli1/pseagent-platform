@@ -244,6 +244,7 @@ async function runKnowledgeAgentCore(
   prepareGovernedEvidenceCandidates(input, state);
   await executeSeedSearches(input, state);
   await preloadGovernedEvidence(input, state);
+  const governedEvidencePreloaded = governedEvidenceReady(input, state);
   const hasRetrievalRequirement = [...state.requirements.keys()].some(
     (requirementId) =>
       state.evidenceConditions.get(requirementId)?.inputState !== "missing",
@@ -269,12 +270,14 @@ async function runKnowledgeAgentCore(
     recordDiagnostic(input.trace, { event: "stop", reason: "seed_unavailable" });
     return unavailableResult(input.scope);
   }
-  if (input.plan.retrievalStrategy === "coverage_units") {
-    await preloadCoverageUnitEvidence(input, state);
-  } else {
-    await preloadBroadSynthesisEvidence(input, state);
+  if (!governedEvidencePreloaded) {
+    if (input.plan.retrievalStrategy === "coverage_units") {
+      await preloadCoverageUnitEvidence(input, state);
+    } else {
+      await preloadBroadSynthesisEvidence(input, state);
+    }
   }
-  if (governedEvidenceReady(input, state)) {
+  if (governedEvidencePreloaded || governedEvidenceReady(input, state)) {
     state.forceFinal = true;
     observe(state, { type: "governed_answer_card_evidence_ready" });
   }
