@@ -101,6 +101,16 @@ describe("enterprise E2E matrix", () => {
       "为什么算法不能处理负权边？",
       ["非负权", "边权非负"],
     )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "系统定义的优先级并非在所有场景下都绝对有效。",
+      "能不能直接套用一套固定优先级？",
+      ["不能", "无法"],
+    )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "可以直接套用一套固定优先级。",
+      "能不能直接套用一套固定优先级？",
+      ["不能", "无法"],
+    )).toBe(false);
   });
 
   it("accepts a complete 20-case second-round matrix", () => {

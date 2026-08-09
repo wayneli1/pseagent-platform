@@ -102,10 +102,13 @@ export function acceptanceFactGroupCovered(
   alternatives: readonly string[],
 ): boolean {
   const compactAnswer = normalizeQuestion(answer);
+  const compactQuestion = normalizeQuestion(question);
   return alternatives.some((term) => {
     const compactTerm = normalizeQuestion(term);
     if (compactAnswer.includes(compactTerm)) return true;
-    if (semanticAcceptanceEquivalent(compactAnswer, compactTerm)) return true;
+    if (semanticAcceptanceEquivalent(compactAnswer, compactQuestion, compactTerm)) {
+      return true;
+    }
     const termWords = wordTokens(term);
     if (
       termWords.length >= 2 &&
@@ -134,7 +137,11 @@ function orderedChineseConceptsCovered(answer: string, words: readonly string[])
   return new RegExp(words.map(escapeRegExp).join(semanticConnector), "u").test(answer);
 }
 
-function semanticAcceptanceEquivalent(answer: string, term: string): boolean {
+function semanticAcceptanceEquivalent(
+  answer: string,
+  question: string,
+  term: string,
+): boolean {
   if (term === "现状") {
     return /(?:当前|目前|现阶段)(?:情况|状态|问题|面临|正在)/u.test(answer);
   }
@@ -157,6 +164,13 @@ function semanticAcceptanceEquivalent(answer: string, term: string): boolean {
   }
   if (term === "当前最短" || term === "最小暂定距离") {
     return /当前(?:暂定)?距离最小|当前最小(?:暂定)?距离|最小(?:的)?暂定距离/u
+      .test(answer);
+  }
+  if (
+    (term === "不能" || term === "无法") &&
+    /(?:能不能|能否|是否可以|可不可以|可以吗)/u.test(question)
+  ) {
+    return /(?:不应|不得|不可|不建议|未必|不一定)|并非.{0,24}(?:都|所有|绝对|总是|普遍)/u
       .test(answer);
   }
   const universal = /^所有(.+)$/u.exec(term);
