@@ -108,7 +108,7 @@ export const NOT_COVERED_REQUIREMENT_ANSWER =
 export function notCoveredRequirementAnswer(question: string): string {
   const target = [...question.trim()].slice(0, 160).join("");
   if (!target) return NOT_COVERED_REQUIREMENT_ANSWER;
-  if (/(?:是否|能否|有没有|是否具备|支不支持|支持|兼容|适配)/u.test(question)) {
+  if (/(?:支持|兼容|适配|具备)/u.test(question)) {
     const capabilityTarget = question.match(
       /(?:(?:是否|能否|有没有|支不支持)\s*)?(?:已经|已|能够|可以)?\s*(?:支持|兼容|适配|具备)\s*([^？?。！!]{2,100})/u,
     )?.[1]?.trim();

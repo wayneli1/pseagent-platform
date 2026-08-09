@@ -79,6 +79,7 @@ export class IndependentAnswerReviewer {
           "governedCard 存在时，必须为每个 required obligation 返回且只返回一个 obligationChecks 项。",
           "发现与正式证据冲突的关键结论时选择 fail；缺项或证据不足选择 needs_review。",
           "not_covered 是有效的安全交付状态：当正式证据确实不覆盖目标、回答明确说明边界且没有无依据主张时，可以判为 pass；不得只因没有给出资料外的目标答案而降级。",
+          "partially_answered 也可以是有效的安全交付状态：当回答只保留正式资料支持的部分，并明确拒绝资料不支持的结论或承诺时，应按实际内容复查，不得只因状态不是 answered 而降级。",
           "正式证据直接支持的项目用户数、授权量、服务器数、节点数和部署规模允许出现。重点检查项目归属、数据口径、跨项目套用、历史数据实时化、产品上限化和对新客户的承诺，不得仅因答案包含具体数字而失败。",
           "不要要求 answer 包含手工 [1] 等引用编号；修订验证依据 evidence 与 preferredEvidencePaths 检查事实支持，在线引用编号由回答系统另行生成。",
           "score 采用 0-100 正向评分，0 最差、100 最好；pass 必须为 80-100 分。",
@@ -125,6 +126,7 @@ export function enforceDeterministicReview(
     !isSupportedProjectDataFalsePositive(defect,projectData.diagnostics.length)&&
     !isDirectEvidenceSupportFalsePositive(defect,input.evidence)&&
     !isExplicitSafeBoundaryFalsePositive(defect,input.answer)&&
+    !isClaimedMissingDimensionFalsePositive(defect,input.answer)&&
     !isInactiveCardObligationDefect(defect,input));
   const defects=[...modelDefects,...projectData.defects];
   let forceFail=false;
@@ -233,6 +235,26 @@ function isExplicitSafeBoundaryFalsePositive(
   const claimsBoundaryMissing=/(?:未明确|没有明确|未直接).{0,24}(?:不能|无法).{0,16}(?:确认|承诺|保证)|(?:无法确认).{0,24}(?:代替|不等于)|结论不清晰/u.test(diagnostic);
   const answerHasBoundary=/(?:不能|无法).{0,24}(?:确认|作为|承诺|保证)/u.test(answer);
   return claimsBoundaryMissing&&answerHasBoundary;
+}
+
+function isClaimedMissingDimensionFalsePositive(
+  defect:AnswerReviewResult["defects"][number],
+  answer:string,
+):boolean{
+  if(defect.category!=="coverage_gap"&&defect.category!=="expression_gap")return false;
+  const diagnostic=`${defect.summary} ${defect.evidence}`;
+  const checks=[
+    {
+      claimed:/(?:未|没有).{0,24}(?:时效|截至|截止(?:日期|时间)?)/u.test(diagnostic),
+      present:/(?:时效|截至\s*\d|截止(?:日期|时间)?)/u.test(answer),
+    },
+    {
+      claimed:/(?:未|没有).{0,48}(?:产品.{0,8}安全.{0,8}法务.{0,12}审批|合同.{0,16}审批|审批.{0,12}流程)/u.test(diagnostic),
+      present:/(?:产品.{0,8}安全.{0,8}法务.{0,12}审批|合同.{0,16}审批|审批.{0,12}流程)/u.test(answer),
+    },
+  ];
+  const asserted=checks.filter((check)=>check.claimed);
+  return asserted.length>0&&asserted.every((check)=>check.present);
 }
 
 function isDirectEvidenceSupportFalsePositive(

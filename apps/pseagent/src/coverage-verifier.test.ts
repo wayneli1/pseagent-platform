@@ -156,6 +156,13 @@ const evidence = [
 ] as const;
 
 describe("verifyKnowledgeCoverage", () => {
+  it("does not mislabel a generic confirmation question as a protocol capability", () => {
+    expect(notCoveredRequirementAnswer("能否确认当前版本已修复全部高危 CVE？"))
+      .toBe("现有资料未覆盖“能否确认当前版本已修复全部高危 CVE？”，无法根据正式知识库确认。");
+    expect(notCoveredRequirementAnswer("是否支持目标协议"))
+      .toContain("无法根据正式知识库确认是否支持或兼容");
+  });
+
   it("rejects a verifier decision that drops one explicitly named scenario choice", async () => {
     const plan: KnowledgePlan = {
       subject: "DNS 切换",
