@@ -163,6 +163,27 @@ describe("structured answer", () => {
     expect(rendered).not.toContain("1)");
   });
 
+  it("keeps every core rule after a bold Markdown list introduction", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer:
+          "**核心规则**：1) 谈客户的生活而不是你的想法 [1]；\n2) 问过去具体行为而不是未来意见 [1]；\n3) 少说多听 [1]。\n**后续说明**：用行为证据更新机会 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    const rendered = renderStructuredAnswer(structured);
+    expect(rendered).toContain("谈客户的生活而不是你的想法");
+    expect(rendered).toContain("问过去具体行为而不是未来意见");
+    expect(rendered).toContain("少说多听");
+    expect(rendered).toContain("用行为证据更新机会");
+    expect(rendered).not.toContain("1)");
+  });
+
   it("keeps an ordered sequence introduced as a concrete method", () => {
     const structured = buildStructuredAnswer({
       action: "final",
