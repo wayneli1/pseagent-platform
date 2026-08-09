@@ -1,5 +1,6 @@
 export * from "./crypto.js";
 export * from "./evidence-needs.js";
+export * from "./feedback-review-alignment.js";
 export * from "./api.js";
 export * from "./http-server.js";
 export * from "./postgres-store.js";

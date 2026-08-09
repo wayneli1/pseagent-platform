@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AnswerReviewEncryptedPayload, AnswerReviewReference, IssueCategory, IssuePriority, KnowledgeOpsStore, OpsJob, OpsJobType, RegressionCaseRecord, RegressionRun, RepairDraftProposal, RepairPublication, ReleaseRecord, StoredAnswerReviewCase } from "@pseagent/knowledge-ops";
-import { ContentCipher, isEvidenceBlockedProposal, repairProposalSchema } from "@pseagent/knowledge-ops";
+import { ContentCipher, isEvidenceBlockedProposal, passingReviewConflictsWithFeedback, repairProposalSchema } from "@pseagent/knowledge-ops";
 import type { AnswerCard, AnswerCardCatalog, AnswerReviewResult, KnowledgeDomain, ReleaseManifest, RepairValidationDiagnostic } from "@pseagent/knowledge-governance-contracts";
 import { CatalogCompiler, type KnowledgeSource } from "./catalog-compiler.js";
 import { SafeGitWorkspace, type GitFileChange } from "./git-workspace.js";
@@ -116,7 +116,7 @@ export class KnowledgeOpsWorker {
       await this.dependencies.store.updateAnswerReviewMachine(reviewId,{processingStatus:"completed",verdict:result.verdict,workflowStatus,encryptedPayload,score:result.score,defectCount:result.defects.length});
       machineCompleted=true;
       if(result.verdict!=="pass")await this.recordReviewIssue(stored,payload,result.verdict==="fail"?"p0":"p1",primaryIssueCategory(result));
-      else{const feedback=await this.dependencies.store.getFeedbackByRequestId(stored.requestId);if(feedback!==undefined&&feedback.classification!=="useful"&&feedback.status!=="resolved"&&feedback.status!=="rejected")await this.recordReviewIssue(stored,payload,"p1","judgement_conflict");}
+      else{const feedback=await this.dependencies.store.getFeedbackByRequestId(stored.requestId);if(feedback!==undefined&&feedback.classification!=="useful"&&feedback.status!=="resolved"&&feedback.status!=="rejected"&&passingReviewConflictsWithFeedback({classification:feedback.classification,answerStatus:feedback.answerStatus}))await this.recordReviewIssue(stored,payload,"p1","judgement_conflict");}
       return{reviewId,verdict:result.verdict,score:result.score,defectCount:result.defects.length};
     }catch(error){if(!machineCompleted){await this.dependencies.store.updateAnswerReviewMachine(reviewId,{processingStatus:"errored",verdict:"pending",workflowStatus:"open",errorCode:safeCode(error)});await this.recordReviewIssue(stored,payload,"p3","review_error");}throw error;}
   }
