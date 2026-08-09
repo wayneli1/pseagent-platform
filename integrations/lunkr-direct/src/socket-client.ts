@@ -83,6 +83,7 @@ export class LunkrSocketClient {
       func: "cim.common:sioSubscribe",
       sid: this.session.sid,
       cookie: cookieHeader(this.session),
+      method: "GET",
     });
     if (response.body.code !== "S_OK") {
       throw new Error(`Lunkr 实时消息订阅失败（code=${response.body.code}）`);
