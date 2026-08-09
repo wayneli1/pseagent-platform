@@ -232,7 +232,7 @@
       "expectedScope": "general",
       "expectedTarget": "ordinary_retrieval",
       "expectedEvidence": ["wiki/concepts/BATNA.md"],
-      "requiredFactGroups": [["最佳替代方案", "BATNA"], ["可执行"], ["成本", "时间", "风险"], ["保留点"], ["目标"], ["不优于", "退出"], ["让步", "条件"], ["交换关系"], ["记录"], ["跨多个议题"]],
+      "requiredFactGroups": [["最佳替代方案", "BATNA"], ["可执行", "会执行"], ["成本", "时间", "风险"], ["保留点"], ["目标"], ["不优于", "退出"], ["让步", "条件"], ["交换关系", "换取"], ["记录"], ["跨多个议题", "议题一起讨论"]],
       "forbiddenClaims": ["BATNA就是最低报价", "应该先无条件降价再询问客户原因"],
       "expectedBehavior": "区分替代行动、保留边界与目标，把让步绑定可验证交换条件并记录，必要时选择退出",
       "expectedIssueCenter": false
