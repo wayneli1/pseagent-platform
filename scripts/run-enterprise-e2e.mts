@@ -110,6 +110,9 @@ try {
         question: turn.resolvedQuestion,
         ...(turn.answerOutline === undefined ? {} : { answerOutline: turn.answerOutline }),
         ...(turn.scope === undefined ? {} : { scope: turn.scope }),
+        ...(turn.answerCardMatch?.cardIdHashes === undefined
+          ? {}
+          : { answerCardIdHashes: turn.answerCardMatch.cardIdHashes }),
       })));
       conversations.set(testCase.session, conversation);
     }
@@ -183,6 +186,9 @@ try {
         question: questionResolution?.standaloneQuestion ?? testCase.question,
         answer: result.answer,
         scope: result.scope,
+        ...(match?.cardIdHashes === undefined
+          ? {}
+          : { answerCardIdHashes: match.cardIdHashes }),
       });
       try {
         await feedback.appendConversation({

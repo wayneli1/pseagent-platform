@@ -69,8 +69,12 @@ describe("ConversationStore", () => {
       question: "没有客户背景时应该完整演示吗？",
       answer: "先判断演示资格。",
       scope: "general",
+      answerCardIdHashes: ["a".repeat(64)],
     });
 
     expect(store.context("#a#U", "第二点怎么确认？")).toContain('"scope":"general"');
+    expect(store.context("#a#U", "第二点怎么确认？")).toContain(
+      `"answerCardIdHashes":["${"a".repeat(64)}"]`,
+    );
   });
 });

@@ -3,12 +3,14 @@ export interface ConversationTurn {
   readonly answer?: string;
   readonly answerOutline?: string;
   readonly scope?: string;
+  readonly answerCardIdHashes?: readonly string[];
 }
 
 interface StoredConversationTurn {
   readonly question: string;
   readonly answerOutline?: string;
   readonly scope?: string;
+  readonly answerCardIdHashes?: readonly string[];
 }
 
 interface SerializedConversationContext {
@@ -69,6 +71,9 @@ export class ConversationStore {
       question,
       ...(answerOutline === undefined ? {} : { answerOutline }),
       ...(turn.scope === undefined ? {} : { scope: turn.scope }),
+      ...(turn.answerCardIdHashes === undefined || turn.answerCardIdHashes.length === 0
+        ? {}
+        : { answerCardIdHashes: [...turn.answerCardIdHashes] }),
     };
     const turns = [...(this.conversations.get(peerUid) ?? []), stored];
     if (turns.length > this.maxTurns) {
@@ -116,6 +121,9 @@ function fitLatestTurn(turn: StoredConversationTurn, maxChars: number): string |
       question: question.join(""),
       ...(outline.length === 0 ? {} : { answerOutline: outline.join("") }),
       ...(turn.scope === undefined ? {} : { scope: turn.scope }),
+      ...(turn.answerCardIdHashes === undefined || turn.answerCardIdHashes.length === 0
+        ? {}
+        : { answerCardIdHashes: turn.answerCardIdHashes }),
     };
     const serialized = serializeContext([candidate]);
     if (serialized.length <= maxChars) return serialized;

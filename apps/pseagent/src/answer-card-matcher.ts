@@ -73,6 +73,7 @@ export interface AnswerCardMatcherInput {
   readonly currentDomain: KnowledgeDomain;
   readonly currentRevision: string;
   readonly familyEnabled: boolean;
+  readonly contextualCardIdHashes?: readonly string[];
   readonly signal?: AbortSignal;
 }
 
@@ -123,6 +124,14 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
     if (!input.familyEnabled) return this.none("family_disabled", 0);
     if (!this.registry.snapshotCurrent(input.currentDomain, input.currentRevision)) {
       return this.none("stale_catalog", 0);
+    }
+    if (input.contextualCardIdHashes !== undefined) {
+      const contextualCard = this.registry.contextualCard(
+        input.contextualCardIdHashes,
+        input.currentDomain,
+        input.question,
+      );
+      if (contextualCard !== undefined) return this.hitFromContextCard(contextualCard);
     }
     const recalledCandidates = this.registry.familyCandidates(
       input.question,
@@ -224,7 +233,9 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
     );
   }
 
-  private hitFromCard(card: AnswerCard): AnswerCardMatch {
+  private hitFromCard(
+    card: AnswerCard,
+  ): Exclude<AnswerCardMatch, { matchType: "none" }> {
     const bindings = card.obligations.map((obligation) =>
       bindingFromCardObligation(card, obligation.id, obligation));
     return {
@@ -237,6 +248,16 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
         [card.domain]: this.registry.expectedRevision(card.domain),
       },
       candidateCount: 1,
+    };
+  }
+
+  private hitFromContextCard(
+    card: AnswerCard,
+  ): Exclude<AnswerCardMatch, { matchType: "none" }> {
+    return {
+      ...this.hitFromCard(card),
+      matchType: "family",
+      confidence: "high",
     };
   }
 

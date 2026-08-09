@@ -3,6 +3,7 @@ import type { ModelClient } from "./model-client.js";
 import {
   AnswerCardRegistry,
   AnswerCardRegistryError,
+  hashAnswerCardIdentifier,
   normalizeQuestion,
 } from "./answer-card-registry.js";
 import {
@@ -160,6 +161,27 @@ describe("answer card registry and matching", () => {
     expect(() => registry.assertHasActiveCards()).not.toThrow();
     expect(registry.cardApplicable("CM-MIGRATION-001", "Coremail 迁移能力")).toBe(true);
     expect(registry.cardApplicable("CM-MIGRATION-001", "其他产品迁移能力")).toBe(false);
+  });
+
+  it("reuses one active parent card for a contextual follow-up", async () => {
+    const completeJson = vi.fn();
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(catalog()),
+      { completeJson } as unknown as ModelClient,
+    );
+
+    await expect(matcher.match({
+      question: "它的第二点具体怎么确认？",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+      familyEnabled: true,
+      contextualCardIdHashes: [hashAnswerCardIdentifier("CM-MIGRATION-001")],
+    })).resolves.toMatchObject({
+      matchType: "family",
+      confidence: "high",
+      cardIdHashes: [hashAnswerCardIdentifier("CM-MIGRATION-001")],
+    });
+    expect(completeJson).not.toHaveBeenCalled();
   });
 
   it("rejects a catalog with no active cards when production requires governed cards", () => {

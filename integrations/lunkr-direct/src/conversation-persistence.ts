@@ -3,6 +3,7 @@ export interface PersistedConversationTurn {
   readonly resolvedQuestion: string;
   readonly answerOutline?: string;
   readonly scope?: string;
+  readonly answerCardMatch?: { readonly cardIdHashes?: readonly string[] };
 }
 
 export interface PersistedConversationContext {

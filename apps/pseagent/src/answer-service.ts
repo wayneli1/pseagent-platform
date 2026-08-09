@@ -397,12 +397,18 @@ export class AnswerService {
           })
         : undefined;
       if(taskAnalysis!==undefined)questionResolution=taskAnalysis.resolvedQuestion;
+      const contextualCardIdHashes = questionResolution.contextUsed
+        ? latestConversationAnswerCardIdHashes(conversationContext)
+        : undefined;
       const answerCardMatch = await this.matchAnswerCard({
         question: exactRoute === undefined
           ? taskAnalysis?.resolvedQuestion.standaloneQuestion ?? routedQuestion
           : question,
         currentDomain: session.project,
         currentRevision: session.revision,
+        ...(contextualCardIdHashes === undefined
+          ? {}
+          : { contextualCardIdHashes }),
         requestSignal,
         trace,
       });
@@ -653,6 +659,7 @@ export class AnswerService {
     readonly question: string;
     readonly currentDomain: KnowledgeDomain;
     readonly currentRevision: string;
+    readonly contextualCardIdHashes?: readonly string[];
     readonly requestSignal: AbortSignal;
     readonly trace: DiagnosticTrace;
   }): Promise<AnswerCardMatch | undefined> {
@@ -665,6 +672,9 @@ export class AnswerService {
         currentDomain: input.currentDomain,
         currentRevision: input.currentRevision,
         familyEnabled: true,
+        ...(input.contextualCardIdHashes === undefined
+          ? {}
+          : { contextualCardIdHashes: input.contextualCardIdHashes }),
         signal: input.requestSignal,
       });
     } catch {
@@ -1071,6 +1081,31 @@ function latestConversationKnowledgeScope(
     for (let index = parsed.recentTurns.length - 1; index >= 0; index -= 1) {
       const scope = (parsed.recentTurns[index] as { scope?: unknown }).scope;
       if (scope === "professional" || scope === "general") return scope;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function latestConversationAnswerCardIdHashes(
+  conversationContext: string | undefined,
+): readonly string[] | undefined {
+  if (conversationContext === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(conversationContext) as {
+      version?: unknown;
+      recentTurns?: unknown;
+    };
+    if (parsed.version !== 3 || !Array.isArray(parsed.recentTurns)) return undefined;
+    for (let index = parsed.recentTurns.length - 1; index >= 0; index -= 1) {
+      const hashes = (parsed.recentTurns[index] as {
+        answerCardIdHashes?: unknown;
+      }).answerCardIdHashes;
+      if (!Array.isArray(hashes)) continue;
+      const valid = hashes.filter((value): value is string =>
+        typeof value === "string" && /^[a-f0-9]{64}$/u.test(value));
+      if (valid.length > 0) return Object.freeze([...new Set(valid)]);
     }
   } catch {
     return undefined;

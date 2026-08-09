@@ -206,6 +206,20 @@ export class AnswerCardRegistry {
     return this.cardById.get(cardId);
   }
 
+  contextualCard(
+    cardIdHashes: readonly string[],
+    domain: KnowledgeDomain,
+    question: string,
+  ): AnswerCard | undefined {
+    const hashes = new Set(cardIdHashes);
+    const matches = this.catalog.cards.filter((card) =>
+      card.domain === domain &&
+      isCardActive(card) &&
+      hashes.has(hashAnswerCardIdentifier(card.cardId)) &&
+      this.exactCardApplicable(card.cardId, question));
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
   cardApplicable(cardId: string, question: string): boolean {
     const card = this.cardById.get(cardId);
     if (card === undefined) return false;
