@@ -159,6 +159,8 @@ function extractFacts(text:string,projects:readonly string[],path?:string,title?
       const before=context.slice(Math.max(0,(match.index??0)-10),match.index??0),window=context.slice(Math.max(0,(match.index??0)-18),(match.index??0)+raw.length+18);
       const comparator=/(?:超过|超出|大于|高于)\s*$/u.test(before)?"gt":/(?:不少于|至少|不低于)\s*$/u.test(before)?"gte":/(?:约|大约|左右|预测|预计)[^，。；]{0,8}$/u.test(before)?"approx":"exact";
       const metric=/授权/u.test(raw)||(!/(?:用户|服务器|节点|套|台)/u.test(raw)&&/授权/u.test(window))?"authorizations":/用户|户/u.test(raw)||(!/(?:授权|服务器|节点|套|台)/u.test(raw)&&/用户|户/u.test(window))?"users":/服务器|台/u.test(raw)||(!/(?:授权|用户|节点|套)/u.test(raw)&&/服务器|台/u.test(window))?"servers":/节点/u.test(raw)||(!/(?:授权|用户|服务器|套|台)/u.test(raw)&&/节点/u.test(window))?"nodes":/套/u.test(raw)||/套/u.test(window)?"systems":"scale";
+      const trailing=context.slice((match.index??0)+raw.length,(match.index??0)+raw.length+12);
+      if(metric==="systems"&&/^(?:(?:架构|配置|建设)?方案|参数|口径|方法|模型|算法|规则|估算)/u.test(trailing))continue;
       result.push({raw,value:number*multiplier,metric,comparator,projects:projects.filter((project)=>context.includes(project)),context:context.slice(0,1_000),...(path===undefined?{}:{path})});
     }
   }

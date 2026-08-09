@@ -163,6 +163,65 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
       .toBe("管理员权限 方案设计与验收边界是什么");
   });
 
+  it("uses distinct atomic labels when the model reuses one broad source for parallel obligations", () => {
+    const capacityQuestion =
+      "规划 2 万用户 Coremail 时，存储、索引和带宽应怎样估算？";
+    const broadSource = "存储、索引和带宽应怎样估算";
+    const labels = [
+      "说明存储容量的估算方法",
+      "说明索引容量的估算方法",
+      "说明带宽的估算方法",
+    ];
+    const spec: TaskSpec = {
+      subject: capacityQuestion,
+      entities: [{
+        id: "E1",
+        label: "2 万用户 Coremail",
+        role: "subject",
+        sourceText: "2 万用户 Coremail",
+      }],
+      deliverables: labels.map((label, index) => ({
+        id: `D${index + 1}`,
+        label,
+        kind: "fact",
+        required: true,
+        sourceText: broadSource,
+        obligations: [{
+          id: `O${index + 1}`,
+          label,
+          targetEntityIds: [],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: broadSource,
+        }],
+      })),
+    };
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: {
+        ...resolvedQuestion,
+        rawQuestion: capacityQuestion,
+        standaloneQuestion: capacityQuestion,
+      },
+      taskSpec: spec,
+      guardResult: passingGuard,
+    });
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+
+    expect(result.plan.requirements.map((requirement) => requirement.question))
+      .toEqual(labels);
+    expect(result.plan.requirements.map((requirement) =>
+      requirement.evidenceAspects[0]?.label))
+      .toEqual(labels);
+    expect(result.plan.requirements[0]?.queries[0]?.text)
+      .toBe("存储 索引和带宽应怎样估算");
+    expect(result.plan.requirements[0]?.queries.some((query) =>
+      query.text.includes("说明存储容量的估算方法")))
+      .toBe(true);
+  });
+
   it("keeps a traceable leading incident premise when the request has no bound entity", () => {
     const incidentQuestion =
       "用户说外部邮件没收到，怎样沿接收、过滤、路由、投递和信筒建立完整证据链？";

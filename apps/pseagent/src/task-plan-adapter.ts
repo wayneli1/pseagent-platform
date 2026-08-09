@@ -106,6 +106,13 @@ export function adaptTaskSpecToKnowledgePlan(
   const entitiesById = new Map(
     input.taskSpec.entities.map((entity) => [entity.id, entity] as const),
   );
+  const labelsBySourceScope = new Map<string, Set<string>>();
+  for (const item of applicable) {
+    const key = taskSourceScopeKey(item.deliverable, item.obligation);
+    const labels = labelsBySourceScope.get(key) ?? new Set<string>();
+    labels.add(normalizeSemanticText(item.obligation.label));
+    labelsBySourceScope.set(key, labels);
+  }
   const requirements: KnowledgePlan["requirements"][number][] = [];
   for (const [index, item] of applicable.entries()) {
     const targetEntityIds = new Set(item.obligation.targetEntityIds);
@@ -171,10 +178,6 @@ export function adaptTaskSpecToKnowledgePlan(
       deliverableSourceText,
       comparisonContext,
     ]);
-    const requirementQuestion = buildSemanticQuery([
-      baseRequirementQuestion,
-      requiredParallelContext,
-    ]);
     const primaryQuery = buildSemanticQuery([
       ...entitySourceTexts,
       obligationSourceText,
@@ -187,6 +190,14 @@ export function adaptTaskSpecToKnowledgePlan(
       entitySourceTexts,
       primaryQuery,
     );
+    const useAtomicLabel = safeLabel !== "" &&
+      (labelsBySourceScope.get(
+        taskSourceScopeKey(item.deliverable, item.obligation),
+      )?.size ?? 0) > 1;
+    const requirementQuestion = buildSemanticQuery([
+      useAtomicLabel ? safeLabel : baseRequirementQuestion,
+      requiredParallelContext,
+    ]);
     const terms = buildAspectTerms(
       entitySourceTexts,
       obligationSourceText,
@@ -209,15 +220,27 @@ export function adaptTaskSpecToKnowledgePlan(
         ? undefined
         : [{
             id: "A1" as const,
-            label: requiredParallelContext || aspectLabel(
-              obligationSourceText,
-              deliverableSourceText,
-              entitySourceTexts,
-            ),
+            label: requiredParallelContext || (useAtomicLabel
+              ? safeLabel
+              : aspectLabel(
+                  obligationSourceText,
+                  deliverableSourceText,
+                  entitySourceTexts,
+                )),
             terms,
           }];
     const aspectIds = evidenceAspects?.map((aspect) => aspect.id) ?? [];
     const queries = [primaryQuery];
+    if (useAtomicLabel) {
+      const expanded = buildSemanticQuery([primaryQuery, safeLabel]);
+      if (
+        normalizeSemanticText(expanded) !==
+          normalizeSemanticText(primaryQuery) &&
+        characterLength(expanded) <= MAX_QUERY_CHARACTERS
+      ) {
+        queries.push(expanded);
+      }
+    }
     if (leadingQuestionContext !== "") {
       for (const contextual of [
         buildSemanticQuery([primaryQuery, leadingQuestionContext]),
@@ -306,6 +329,15 @@ export function adaptTaskSpecToKnowledgePlan(
       ...taskEvidenceConditionFor(obligation),
     })),
   };
+}
+
+function taskSourceScopeKey(
+  deliverable: TaskSpec["deliverables"][number],
+  obligation: TaskSpec["deliverables"][number]["obligations"][number],
+): string {
+  return [deliverable.sourceText, obligation.sourceText]
+    .map(normalizeSemanticText)
+    .join("\u0000");
 }
 
 interface RequiredParallelScope {

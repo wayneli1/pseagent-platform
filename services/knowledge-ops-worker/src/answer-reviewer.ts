@@ -113,7 +113,10 @@ export function enforceDeterministicReview(
   modelResult:AnswerReviewResult,
 ):AnswerReviewResult{
   const projectData=evaluateProjectDataAnswer({question:input.question,answer:input.answer,evidence:input.evidence});
-  const modelDefects=modelResult.defects.filter((defect)=>!isRuntimeCitationNumberingDefect(defect)&&!isSupportedProjectDataFalsePositive(defect,projectData.diagnostics.length));
+  const modelDefects=modelResult.defects.filter((defect)=>
+    !isRuntimeCitationNumberingDefect(defect)&&
+    !isSupportedProjectDataFalsePositive(defect,projectData.diagnostics.length)&&
+    !isDirectEvidenceSupportFalsePositive(defect,input.evidence));
   const defects=[...modelDefects,...projectData.defects];
   let forceFail=false;
   if(projectData.defects.some((defect)=>defect.severity==="critical"))forceFail=true;
@@ -175,7 +178,25 @@ export function enforceDeterministicReview(
 }
 
 function isRuntimeCitationNumberingDefect(defect:AnswerReviewResult["defects"][number]):boolean{
-  return defect.category==="citation_gap"&&/(?:\[\d+\]|引用编号|引用序号|手工引用|未标注编号)/u.test(`${defect.summary} ${defect.evidence}`);
+  return defect.category==="citation_gap"&&/(?:引用编号|引用序号|手工引用|未标注(?:引用)?编号|缺少(?:引用)?编号)/u.test(`${defect.summary} ${defect.evidence}`);
+}
+
+function isDirectEvidenceSupportFalsePositive(
+  defect:AnswerReviewResult["defects"][number],
+  evidence:readonly ReviewEvidenceDocument[],
+):boolean{
+  if(defect.category!=="citation_gap"||!/(?:没有|缺少|未有|不具备).{0,16}(?:正式|直接)?证据|无(?:正式|直接)?证据/u.test(defect.summary))return false;
+  const claim=normalize(defect.evidence.replace(/\[\d+\]/gu,""));
+  if(claim.length<24||!/\d/u.test(claim))return false;
+  return evidence.some((document)=>hasDirectTextOverlap(claim,normalize(document.content),24));
+}
+
+function hasDirectTextOverlap(left:string,right:string,minimumLength:number):boolean{
+  if(left.length<minimumLength||right.length<minimumLength)return false;
+  for(let index=0;index<=left.length-minimumLength;index+=1){
+    if(right.includes(left.slice(index,index+minimumLength)))return true;
+  }
+  return false;
 }
 
 function isSupportedProjectDataFalsePositive(defect:AnswerReviewResult["defects"][number],deterministicIssueCount:number):boolean{

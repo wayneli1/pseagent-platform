@@ -33,6 +33,18 @@ describe("项目数据证据边界",()=>{
     expect(result.diagnostics).toEqual([]);
   });
 
+  it("不把一套方案的枚举量词误判成项目部署套数",()=>{
+    const result=evaluateProjectDataAnswer({
+      answer:"另一套方案使用每用户邮箱容量 5G、实际占用率 40%。",
+      evidence:[{
+        title:"存储估算",
+        path:"wiki/concepts/capacity.md",
+        content:"## 容量案例\n参数包括每用户邮箱容量 5G、实际占用率 40%。\n这些数值是项目案例中的规划值。",
+      }],
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
   it("在模型调用前指出必答项与宽泛禁答项的规则冲突",()=>{
     const conflicts=inspectAnswerCardRuleConflicts({answerTemplate:"**华为项目**\n东莞节点预测10万用户。",evidence,obligations:[{id:"O1",label:"项目规模",evidencePolicy:"direct",requiredConcepts:["华为项目规模"],forbiddenClaims:["华为项目具体用户数"],preferredEvidencePaths:["wiki/entities/东莞节点.md"]}]});
     expect(conflicts).toEqual([expect.objectContaining({code:"evidence_supported_project_data_forbidden",obligationId:"O1",field:"forbiddenClaims",suggestedAction:"modify_rule"})]);
