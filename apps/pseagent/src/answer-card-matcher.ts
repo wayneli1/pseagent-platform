@@ -130,10 +130,13 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
     );
     if (recalledCandidates.length === 0) return this.none("no_family_candidate", 0);
     const namedMethods = explicitNamedMethods(input.question);
-    const candidates = namedMethods.length === 0
-      ? recalledCandidates
-      : recalledCandidates.filter((family) =>
-          familySupportsNamedMethods(family, namedMethods, this.registry));
+    const enumeratedLabels = explicitEnumeratedLabels(input.question);
+    const candidates = recalledCandidates.filter((family) =>
+      (namedMethods.length === 0 ||
+        familySupportsNamedMethods(family, namedMethods, this.registry)) &&
+      (enumeratedLabels.length === 0 ||
+        familySupportsEnumeratedLabels(family, enumeratedLabels, this.registry))
+    );
     if (candidates.length === 0) {
       return this.none("family_rejected", recalledCandidates.length);
     }
@@ -334,6 +337,62 @@ function familySupportsNamedMethods(
   methods: readonly string[],
   registry: AnswerCardRegistry,
 ): boolean {
+  const governedText = normalizeNamedMethod(familyGovernedText(family, registry));
+  return methods.every((method) => governedText.includes(method));
+}
+
+function explicitEnumeratedLabels(question: string): readonly string[] {
+  const normalized = question.normalize("NFKC");
+  for (const match of normalized.matchAll(
+    /(?<prefix>.{0,160}?)(?<count>[二三四五六七八九十2-9])\s*类/gu,
+  )) {
+    const count = enumerationCount(match.groups?.count ?? "");
+    if (count === undefined) continue;
+    const parts = (match.groups?.prefix ?? "")
+      .split(/(?:、|，|,|以及|及|和|与)/u)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length < count) continue;
+    const labels = parts.slice(-count);
+    labels[0] = labels[0]?.replace(
+      /^.*(?:识别|区分|说明|介绍|列出|比较|对比|包括|包含|分为|覆盖)/u,
+      "",
+    ).trim() ?? "";
+    if (labels.every((label) => [...label].length >= 1 && [...label].length <= 40)) {
+      return labels;
+    }
+  }
+  return [];
+}
+
+function enumerationCount(value: string): number | undefined {
+  if (/^[2-9]$/u.test(value)) return Number(value);
+  return ({
+    二: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  } as const)[value as "二" | "三" | "四" | "五" | "六" | "七" | "八" | "九" | "十"];
+}
+
+function familySupportsEnumeratedLabels(
+  family: QuestionFamily,
+  labels: readonly string[],
+  registry: AnswerCardRegistry,
+): boolean {
+  const governedText = normalizeGovernedPhrase(familyGovernedText(family, registry));
+  return labels.every((label) => governedText.includes(normalizeGovernedPhrase(label)));
+}
+
+function familyGovernedText(
+  family: QuestionFamily,
+  registry: AnswerCardRegistry,
+): string {
   const cards = [...new Set(family.bindings.map((binding) => binding.cardId))]
     .flatMap((cardId) => {
       const card = registry.card(cardId);
@@ -350,14 +409,19 @@ function familySupportsNamedMethods(
             ]),
           ];
     });
-  const governedText = normalizeNamedMethod([
+  return [
     family.title,
     family.canonicalQuestion,
     ...family.aliases,
     ...family.bindings.map((binding) => binding.label),
     ...cards,
-  ].join(" "));
-  return methods.every((method) => governedText.includes(method));
+  ].join(" ");
+}
+
+function normalizeGovernedPhrase(value: string): string {
+  return value.normalize("NFKC")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 function bindingFromCardObligation(
