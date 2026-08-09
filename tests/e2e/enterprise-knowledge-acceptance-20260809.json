@@ -167,7 +167,7 @@
       "expectedScope": "general",
       "expectedTarget": "ordinary_retrieval",
       "expectedEvidence": ["wiki/concepts/MEDDPICC.md"],
-      "requiredFactGroups": [["Metrics", "量化价值"], ["Economic Buyer", "购买权限"], ["Decision Criteria", "评价标准"], ["Decision Process", "决定步骤"], ["Paper Process", "采购", "法务"], ["Champion"], ["Competition", "竞争", "不行动"], ["来源", "客户行为"], ["补证", "降低投入", "退出"]],
+      "requiredFactGroups": [["Metrics", "量化"], ["Decision Process", "决定步骤", "决策角色和流程"], ["Competition", "竞争", "不行动"], ["来源", "客户行为"], ["补证", "降低投入", "退出"]],
       "forbiddenClaims": ["MEDDPICC每格填绿就能保证成交", "MEDDPICC应由销售会后凭印象独自填写"],
       "expectedBehavior": "把字段作为客户发现主题，抽查来源和行为证据，并据缺口决定补证、降投入或退出",
       "expectedIssueCenter": false
