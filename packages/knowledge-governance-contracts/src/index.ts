@@ -23,6 +23,11 @@ export const answerCardMatchTypeSchema = z.enum([
   "none",
 ]);
 
+const wikiMarkdownPathSchema = z.string().trim().min(1).max(1_000).refine((value) => {
+  if (!/^wiki\/[^\u0000-\u001f\u007f\\<>:"|?*]+\.md$/u.test(value)) return false;
+  return !value.split("/").some((segment) => segment === "" || segment === "." || segment === "..");
+}, "invalid_wiki_markdown_path");
+
 export const answerCardObligationSchema = z.object({
   id: z.string().regex(/^O\d+$/u),
   label: z.string().trim().min(1).max(200),
@@ -31,9 +36,7 @@ export const answerCardObligationSchema = z.object({
   evidencePolicy: z.enum(["direct", "synthesis", "customer_input"]),
   requiredConcepts: z.array(z.string().trim().min(1).max(100)).max(20).default([]),
   forbiddenClaims: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
-  preferredEvidencePaths: z.array(
-    z.string().regex(/^wiki\/[\p{L}\p{N}_.\-/ ()（）]+\.md$/u),
-  ).max(20).default([]),
+  preferredEvidencePaths: z.array(wikiMarkdownPathSchema).max(20).default([]),
 }).strict();
 
 export const answerCardApplicabilitySchema = z.object({

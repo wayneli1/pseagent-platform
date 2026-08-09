@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  answerCardObligationSchema,
   answerCardRuleConflictSchema,
   answerReviewResultSchema,
   answerCardSchema,
@@ -10,6 +11,31 @@ import {
 } from "./index.js";
 
 describe("knowledge governance contracts", () => {
+  it("accepts punctuation used by imported wiki evidence paths without allowing unsafe paths", () => {
+    const obligation = {
+      id: "O1",
+      label: "正式证据",
+      domains: ["coremail-professional"],
+      evidencePolicy: "direct",
+      preferredEvidencePaths: [
+        "wiki/queries/Coremail助手支持哪些AI功能？.md",
+        "wiki/concepts/C-C++源代码安全审计方法与缺陷分类.md",
+        "wiki/findings/Coremail金融信创试点覆盖率达46.7%.md",
+        "wiki/concepts/供应商初选评价——米斯特检测认证案例.md",
+      ],
+    };
+
+    expect(answerCardObligationSchema.safeParse(obligation).success).toBe(true);
+    expect(answerCardObligationSchema.safeParse({
+      ...obligation,
+      preferredEvidencePaths: ["wiki/../secrets.md"],
+    }).success).toBe(false);
+    expect(answerCardObligationSchema.safeParse({
+      ...obligation,
+      preferredEvidencePaths: ["wiki/queries/unsafe?.md"],
+    }).success).toBe(false);
+  });
+
   it("accepts an approved domain answer card with governed obligations", () => {
     const card = answerCardSchema.parse({
       cardSchemaVersion: 1,
