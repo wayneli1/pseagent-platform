@@ -15,6 +15,9 @@ describe("collection enumeration integrity", () => {
     expect(collectionEnumerationIssue(
       "网络层面需要检查：1) nginx 节点具备 DNS 能力。",
     )).toBe("dangling_first_item");
+    expect(collectionEnumerationIssue(
+      "- **核心规则**：1) 谈客户的生活而不是你的想法 [1]；\n- **识别坏数据**：继续说明其他内容。",
+    )).toBe("dangling_first_item");
   });
 
   it("detects a collection whose numeric or Chinese ordinals skip an item", () => {
