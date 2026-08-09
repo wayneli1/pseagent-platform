@@ -2002,10 +2002,67 @@ describe("runKnowledgeAgent", () => {
     expect(model.calls).toBe(3);
     expect(verifyCoverage).toHaveBeenCalledOnce();
     expect(payloadAt(model, 2).observations?.join("\n")).toContain(
-      "dangling_collection_enumeration",
+      "broken_collection_enumeration",
     );
     expect(result.answer).toContain("产品版本");
     expect(result.answer).toContain("实际组织配置");
+  });
+
+  it("rewrites a collection when verification removes a middle ordinal", async () => {
+    const plan: KnowledgePlan = {
+      subject: "实施确认",
+      requirements: [{
+        id: "R1",
+        question: "实施前还要确认什么",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "实施确认事项",
+          terms: ["实施确认"],
+        }],
+        queries: [{ text: "实施确认事项", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "实施确认事项": [{
+          path: "wiki/concepts/implementation.md",
+          title: "实施确认",
+        }],
+      },
+    });
+    const complete =
+      "实施前需确认以下事项：一是确认用户组织 [1]；二是确认服务等级 [1]；" +
+      "三是确认产品版本 [1]；四是确认实际配置 [1]。";
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/implementation.md"),
+      final("complete", complete, [1]),
+      final("complete", complete, [1]),
+    ]);
+    const verifyCoverage = vi.fn()
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input, {
+          ...input.draft,
+          requirements: input.draft.requirements.map((requirement) => ({
+            ...requirement,
+            answer:
+              "实施前需确认以下事项：一是确认用户组织 [1]；二是确认服务等级 [1]；四是确认实际配置 [1]。",
+          })),
+        }))
+      .mockImplementationOnce(async (input: CoverageVerifierInput) =>
+        reportAndReturn(input));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(verifyCoverage).toHaveBeenCalledTimes(2);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "structured_coverage_repair_required",
+    );
+    expect(result.answer).toContain("三是确认产品版本");
   });
 
   it("rewrites a comparison after verification drops one explicitly named side", async () => {

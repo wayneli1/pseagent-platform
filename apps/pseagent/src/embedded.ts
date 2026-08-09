@@ -27,4 +27,7 @@ export {
   DefaultAnswerCardMatcher,
   type AnswerCardMatch,
 } from "./answer-card-matcher.js";
-export { hasDanglingCollectionEnumeration } from "./answer-structure.js";
+export {
+  collectionEnumerationIssue,
+  hasBrokenCollectionEnumeration,
+} from "./answer-structure.js";

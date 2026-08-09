@@ -68,7 +68,7 @@ import {
   isDirectComparisonQuestion,
   missingExplicitComparisonLabels,
 } from "./comparison-question.js";
-import { hasDanglingCollectionEnumeration } from "./answer-structure.js";
+import { hasBrokenCollectionEnumeration } from "./answer-structure.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const DIRECT_ONLY_READ_LIMIT = 3;
@@ -425,7 +425,7 @@ async function runKnowledgeAgentCore(
       if (directAnswerRepairs.length > 0) {
         return fallbackUnavailable(input, "invalid_final");
       }
-      const danglingCollectionRepairs = pendingDanglingCollectionRepairs(
+      const danglingCollectionRepairs = pendingBrokenCollectionRepairs(
         normalizedAction,
       );
       if (danglingCollectionRepairs.length > 0) {
@@ -438,7 +438,7 @@ async function runKnowledgeAgentCore(
           state.forceFinal = true;
           observe(state, {
             type: "structured_coverage_repair_required",
-            reason: "dangling_collection_enumeration",
+            reason: "broken_collection_enumeration",
             requirements: danglingCollectionRepairs,
           });
           continue;
@@ -650,6 +650,9 @@ async function runKnowledgeAgentCore(
           requirements: structuredCoverageRepairs,
         });
         continue;
+      }
+      if (structuredCoverageRepairs.length > 0) {
+        return fallbackUnavailable(input, "coverage_verifier_invalid");
       }
       const auditedValidation = state.references.validateFinal(
         auditedAction,
@@ -3202,10 +3205,10 @@ function pendingComparisonSubjectRepairs(
 const STRUCTURED_COMPLETENESS_QUESTION_PATTERN =
   /(?:认证流程|处理流程|操作流程|关键步骤|完整步骤|关键配置|配置项|配置参数)/u;
 
-function pendingDanglingCollectionRepairs(action: FinalAction): string[] {
+function pendingBrokenCollectionRepairs(action: FinalAction): string[] {
   return action.requirements.flatMap((requirement) =>
     requirement.coverage !== "none" &&
-      hasDanglingCollectionEnumeration(requirement.answer)
+      hasBrokenCollectionEnumeration(requirement.answer)
       ? [requirement.id]
       : []
   );
@@ -3222,10 +3225,12 @@ function pendingStructuredCoverageRepairs(
   return audited.requirements.flatMap((requirement, index) => {
     const planned = plan.requirements[index];
     const original = draftById.get(requirement.id);
-    return planned?.evidenceMode === "direct_only" &&
+    return (requirement.coverage !== "none" &&
+        hasBrokenCollectionEnumeration(requirement.answer)) ||
+      (planned?.evidenceMode === "direct_only" &&
         original?.coverage === "complete" &&
         requirement.coverage === "partial" &&
-        STRUCTURED_COMPLETENESS_QUESTION_PATTERN.test(planned.question)
+        STRUCTURED_COMPLETENESS_QUESTION_PATTERN.test(planned.question))
       ? [requirement.id]
       : [];
   });
