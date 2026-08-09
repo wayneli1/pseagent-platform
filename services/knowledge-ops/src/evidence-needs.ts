@@ -57,6 +57,9 @@ function requiredMaterials(topic: string, domain: RepairDraftProposal["targetDom
     "角色、决策、预算、资源或价值判断的核验口径及可接受证据。",
     "适用与排除条件、审批边界、记录模板和需要升级确认的例外。",
   ];
+  if (/(?:\bCVE\b|漏洞|高危|安全公告|安全修复|漏洞修复)/iu.test(topic)) {
+    return securityCommitmentMaterials(topic);
+  }
   if (/(?:是否|能否|支持|兼容|能力|功能|版本|license|licence|授权|许可|配置|启用|部署|安装|步骤)/iu.test(topic)) {
     return productCapabilityMaterials(topic);
   }
@@ -65,6 +68,18 @@ function requiredMaterials(topic: string, domain: RepairDraftProposal["targetDom
     "适用版本、部署形态、授权条件、依赖项和前置条件说明。",
     "可执行步骤、输入输出、验证方法、限制、例外以及异常升级或回退路径。",
   ];
+}
+
+function securityCommitmentMaterials(topic: string): readonly string[] {
+  const materials = [
+    `覆盖“${topic}”的官方安全公告和版本发布或修复说明，标明产品、版本、发布日期及公告维护责任。`,
+    "截至指定日期的 CVE 或漏洞清单，逐项标明受影响版本、修复版本、不受影响依据、例外和残余风险。",
+    "对应目标版本的正式复测、漏洞扫描或渗透测试报告，标明测试日期、环境、范围、方法、结果和报告签发方。",
+  ];
+  if (/(?:合同|承诺|保证|担保|SLA|招标应答)/iu.test(topic)) {
+    materials.push("经产品、安全和法务审批的书面确认或合同条款模板，明确承诺主体、适用版本、截止日期、例外、有效期和升级审批人。");
+  }
+  return materials;
 }
 
 function productCapabilityMaterials(topic: string): readonly string[] {

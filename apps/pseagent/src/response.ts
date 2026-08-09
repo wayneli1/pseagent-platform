@@ -362,6 +362,10 @@ function formatProductEvidenceMaterialGuidance(
     ...productGaps.flatMap((gap) => [gap.subject, gap.missingAspect]),
   ].join(" ");
   const materials: string[] = [];
+  if (/(?:\bCVE\b|漏洞|高危|安全公告|安全修复|漏洞修复)/iu.test(topic)) {
+    materials.push("按目标版本和截止日期发布的官方安全公告及漏洞清单，用于逐项确认 CVE 影响范围、修复状态和排除边界");
+    materials.push("对应版本的正式复测、扫描或渗透测试报告，用于确认测试环境、日期、方法和残余风险");
+  }
   if (/(?:是否|能否|支持|兼容|能力|功能)/u.test(topic)) {
     materials.push("正式产品功能说明或发布说明，用于直接确认支持性与功能边界");
   }
@@ -373,6 +377,9 @@ function formatProductEvidenceMaterialGuidance(
   }
   if (/(?:配置|启用|部署|安装|操作|步骤|验证|回退)/u.test(topic)) {
     materials.push("正式管理员配置手册，用于确认前置条件、启用步骤、验证方法、安全限制和回退方式");
+  }
+  if (/(?:合同|承诺|保证|担保|SLA|招标应答)/iu.test(topic)) {
+    materials.push("经产品、安全和法务审批的书面确认或合同条款模板，用于限定承诺主体、适用版本、截止日期、例外和有效期");
   }
   if (materials.length < 2) return "";
   return `资料补充口径：若完整复核后正式知识库仍无直接覆盖，请补充${materials.join("；")}。`;

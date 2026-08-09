@@ -480,4 +480,39 @@ describe("knowledge response", () => {
     expect(result.answer).toContain("License、SKU 或版本授权说明");
     expect(result.answer).toContain("正式管理员配置手册");
   });
+
+  it("lists dated security evidence and approval for an uncovered universal vulnerability commitment", () => {
+    const gap: CoverageGap = {
+      id: "G1",
+      requirementId: "R1",
+      deliverableId: "D1",
+      obligationId: "O1",
+      domain: "coremail-professional",
+      gapClass: "freshness",
+      reason: "retrieval_budget_exhausted",
+      subject: "当前版本高危漏洞修复状态",
+      missingAspect: "截至当前的完整 CVE 覆盖结论",
+      affectsConclusion: true,
+    };
+    const action: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "现有正式资料无法支持该全量结论。",
+        citations: [],
+      }],
+      citations: [],
+    };
+
+    const result = formatKnowledgeFinal("professional", action, [], {
+      coverageGaps: [gap],
+      question: "能否保证当前版本已修复全部高危 CVE，并写进合同？",
+    });
+
+    expect(result.answer).toContain("官方安全公告及漏洞清单");
+    expect(result.answer).toContain("正式复测、扫描或渗透测试报告");
+    expect(result.answer).toContain("产品、安全和法务审批");
+    expect(result.answer).toContain("截止日期");
+  });
 });
