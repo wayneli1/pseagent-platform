@@ -150,6 +150,7 @@ type Candidate = {
 };
 
 type RequirementState = {
+  readonly subject: string;
   readonly requirement: KnowledgeRequirement;
   readonly queries: Set<string>;
   readonly candidatePaths: Map<string, Candidate>;
@@ -1033,6 +1034,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     requirements: new Map(input.plan.requirements.map((requirement) => [
       requirement.id,
       {
+        subject: input.plan.subject,
         requirement,
         queries: new Set([
           ...requirement.queries.map((query) => normalizeQuery(query.text)),
@@ -3248,6 +3250,9 @@ function sortedCandidates(requirementState: RequirementState): Candidate[] {
           left.title,
           requirementState.requirement,
         );
+      const subjectTitlePriority =
+        titleCoverageScoreForValues(right.title, [requirementState.subject]) -
+        titleCoverageScoreForValues(left.title, [requirementState.subject]);
       const titlePriority =
         titleCoverageScore(
           right.title,
@@ -3266,6 +3271,7 @@ function sortedCandidates(requirementState: RequirementState): Candidate[] {
       return requirementState.requirement.evidenceMode === "direct_only"
         ? pathPriority ||
           questionTitlePriority ||
+          subjectTitlePriority ||
           titlePriority ||
           relevancePriority ||
           aspectPriority ||

@@ -2516,6 +2516,53 @@ describe("runKnowledgeAgent", () => {
       .toBe("wiki/concepts/mirror-sync.md");
   });
 
+  it("keeps an atomic acceptance question anchored to the overall subject", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Outlook PST 历史邮件导入 Coremail 客户端",
+      requirements: [{
+        id: "R1",
+        question: "验收要看什么",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{ id: "A1", label: "验收要点", terms: ["验收"] }],
+        queries: [
+          { text: "验收要看什么", aspectIds: ["A1"] },
+          {
+            text: "验收要看什么 Outlook PST 历史邮件导入 Coremail 客户端",
+            aspectIds: ["A1"],
+          },
+        ],
+      }],
+      retrievalStrategy: "coverage_units",
+    };
+    const session = fakeSession({
+      hits: {
+        "验收要看什么": [{
+          path: "wiki/synthesis/project-acceptance.md",
+          title: "项目验收要点",
+        }],
+        "验收要看什么 Outlook PST 历史邮件导入 Coremail 客户端": [
+          {
+            path: "wiki/synthesis/project-acceptance.md",
+            title: "项目验收要点",
+          },
+          {
+            path: "wiki/concepts/coremail-client-pst-import.md",
+            title: "Coremail 客户端 PST 导入",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/coremail-client-pst-import.md"),
+      final("complete", "核对目标账户、兼容边界和导入结果 [1]", [1]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe("wiki/concepts/coremail-client-pst-import.md");
+  });
+
   it("uses an intent verb together with a domain term to identify the primary page", async () => {
     const question = "Coremail 如何设计容灾和高可用";
     const plan: KnowledgePlan = {
