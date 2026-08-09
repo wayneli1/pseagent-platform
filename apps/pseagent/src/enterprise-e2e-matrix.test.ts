@@ -31,6 +31,19 @@ const matrix = {
 };
 
 describe("enterprise E2E matrix", () => {
+  it("accepts an optional Chinese possessive particle between semantic words", () => {
+    expect(acceptanceFactGroupCovered(
+      "不同元素可能映射到相同的位置。",
+      "为什么会有假阳性？",
+      ["相同位置"],
+    )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "不同元素会映射到不同位置。",
+      "为什么会有假阳性？",
+      ["相同位置"],
+    )).toBe(false);
+  });
+
   it("accepts a two-action inversion only when the user question uses that wording", () => {
     expect(acceptanceFactGroupCovered(
       "应先修复异常发信，再提交申请解除流程。",

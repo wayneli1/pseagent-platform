@@ -106,6 +106,13 @@ export function acceptanceFactGroupCovered(
     const compactTerm = normalizeQuestion(term);
     if (compactAnswer.includes(compactTerm)) return true;
     const termWords = wordTokens(term);
+    if (
+      termWords.length >= 2 &&
+      termWords.every((word) => /^\p{Script=Han}+$/u.test(word)) &&
+      new RegExp(termWords.map(escapeRegExp).join("的?"), "u").test(compactAnswer)
+    ) {
+      return true;
+    }
     if (termWords.length !== 2 || termWords[0] === termWords[1]) return false;
     const questionWords = wordTokens(question);
     for (let index = 0; index + 1 < questionWords.length; index += 1) {
@@ -119,6 +126,10 @@ export function acceptanceFactGroupCovered(
     }
     return false;
   });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function wordTokens(value: string): string[] {
