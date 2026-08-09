@@ -4,6 +4,7 @@ import {
   firstOrderedItemValue,
   hasBrokenCollectionEnumeration,
   missingExplicitFrameworkItems,
+  missingStrictFrameworkBoundaries,
   usesExplicitFrameworkCollection,
   verifierOrphanedOrderedSequence,
 } from "./answer-structure.js";
@@ -95,5 +96,34 @@ describe("collection enumeration integrity", () => {
       "只解释 Inverted Pyramid。",
       evidence,
     )).toBe(false);
+  });
+
+  it("detects strict boundaries omitted from a broadly used framework", () => {
+    const evidence = [{ content: [
+      "该结构包括 **Do the Last Thing First**（先展示最终结果）、**Illustration**（简洁画面）和 **Inverted Pyramid**（倒金字塔结构）三个相互配合的方法。",
+      "### 边界与风险",
+      "- 对监管、数据或流程高度敏感时需使用脱敏或示意环境",
+      "- 不能为了制造惊喜而跳过必要背景",
+      "## Illustration",
+      "### 关键原则",
+      "- 画面必须与客户问题直接相关",
+      "- 不能用虚构客户数据暗示已实现的承诺",
+    ].join("\n") }];
+    const broad =
+      "先展示最终结果，用 Illustration 简洁画面情境化，再以倒金字塔结构深入。";
+    expect(missingStrictFrameworkBoundaries(broad, evidence)).toEqual([
+      "对监管、数据或流程高度敏感时需使用脱敏或示意环境",
+      "不能为了制造惊喜而跳过必要背景",
+      "画面必须与客户问题直接相关",
+      "不能用虚构客户数据暗示已实现的承诺",
+    ]);
+    expect(missingStrictFrameworkBoundaries(
+      `${broad}敏感内容使用脱敏或示意环境；不跳过必要背景；画面必须与客户问题直接相关；不能用虚构客户数据暗示承诺。`,
+      evidence,
+    )).toEqual([]);
+    expect(missingStrictFrameworkBoundaries(
+      "只解释 Inverted Pyramid。",
+      evidence,
+    )).toEqual([]);
   });
 });

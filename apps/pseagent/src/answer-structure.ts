@@ -108,6 +108,60 @@ export function usesExplicitFrameworkCollection(
       .length >= 2);
 }
 
+export function missingStrictFrameworkBoundaries(
+  answer: string,
+  documents: readonly { readonly content: string }[],
+): readonly string[] {
+  if (!usesExplicitFrameworkCollection(answer, documents)) return [];
+  const normalizedAnswer = normalizeFrameworkText(answer);
+  return strictFrameworkBoundaries(documents).filter((boundary) =>
+    !hasCommonSubstring(
+      normalizedAnswer,
+      normalizeFrameworkText(boundary),
+      4,
+    ));
+}
+
+function strictFrameworkBoundaries(
+  documents: readonly { readonly content: string }[],
+): string[] {
+  const boundaries: string[] = [];
+  for (const document of documents) {
+    let boundaryLevel: number | undefined;
+    for (const rawLine of document.content.split(/\r?\n/u)) {
+      const heading = rawLine.match(/^(#{2,6})\s+(.+)$/u);
+      if (heading !== null) {
+        const level = heading[1]?.length ?? 6;
+        const title = heading[2] ?? "";
+        if (/(?:边界|风险|关键原则|注意事项)/u.test(title)) {
+          boundaryLevel = level;
+        } else if (boundaryLevel !== undefined && level <= boundaryLevel) {
+          boundaryLevel = undefined;
+        }
+        continue;
+      }
+      if (boundaryLevel === undefined) continue;
+      const bullet = rawLine.match(/^\s*[-*+]\s+(.+)$/u)?.[1]?.trim();
+      if (
+        bullet !== undefined &&
+        /(?:必须|不能|不得|禁止|需(?:要)?|不应)/u.test(bullet) &&
+        !boundaries.includes(bullet)
+      ) {
+        boundaries.push(bullet);
+      }
+    }
+  }
+  return boundaries;
+}
+
+function hasCommonSubstring(left: string, right: string, length: number): boolean {
+  if (left.length < length || right.length < length) return false;
+  for (let index = 0; index <= right.length - length; index += 1) {
+    if (left.includes(right.slice(index, index + length))) return true;
+  }
+  return false;
+}
+
 function explicitFrameworkCollections(
   documents: readonly { readonly content: string }[],
 ): Array<Array<{ readonly label: string; readonly alternatives: string[] }>> {

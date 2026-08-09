@@ -31,5 +31,6 @@ export {
   collectionEnumerationIssue,
   hasBrokenCollectionEnumeration,
   missingExplicitFrameworkItems,
+  missingStrictFrameworkBoundaries,
   usesExplicitFrameworkCollection,
 } from "./answer-structure.js";

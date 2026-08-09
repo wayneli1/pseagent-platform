@@ -9,6 +9,7 @@ import {
   collectionEnumerationIssue,
   hashAnswerCardIdentifier,
   missingExplicitFrameworkItems,
+  missingStrictFrameworkBoundaries,
   type AnswerCardCatalog,
   type AnswerCardMatch,
   type ModelClient,
@@ -150,6 +151,10 @@ export function enforceDeterministicReview(
   const missingFrameworkItems=missingExplicitFrameworkItems(input.answer,input.evidence);
   if(missingFrameworkItems.length>0){
     defects.push({category:"coverage_gap",severity:"major",summary:"回答遗漏了正式定义中相互配合的核心框架组件",evidence:`缺少：${missingFrameworkItems.join("、")}`});
+  }
+  const missingFrameworkBoundaries=missingStrictFrameworkBoundaries(input.answer,input.evidence);
+  if(missingFrameworkBoundaries.length>0){
+    defects.push({category:"coverage_gap",severity:"major",summary:"回答遗漏了正式框架页面明确规定的强边界",evidence:missingFrameworkBoundaries.join("；").slice(0,1_000)});
   }
   const governedCard=governedCardForReview(input);
   const required=governedCard?.obligations.filter((item)=>item.required)??[];
