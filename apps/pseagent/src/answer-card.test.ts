@@ -1272,6 +1272,94 @@ describe("answer card TaskSpec adapter", () => {
     expect(result).toMatchObject({activated:true,policies:[{cardId:"GEN-DEMO-QUALIFICATION"},{cardId:"GEN-DEMO-QUALIFICATION"},{cardId:"GEN-DEMO-QUALIFICATION"}]});
   });
 
+  it("keeps a contextual sub-question focused on the matching card obligation", () => {
+    const question = "演示前如何确认客户关键业务问题？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: "关键业务问题确认",
+      entities: [{ id: "E1", label: "客户", role: "target", sourceText: "客户" }],
+      deliverables: [{
+        id: "D1",
+        label: "确认方法",
+        kind: "procedure",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "确认客户关键业务问题的方法",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const binding = (
+      id: string,
+      label: string,
+      requiredConcepts: readonly string[],
+    ): Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] => ({
+      obligationId: id,
+      cardObligationId: id,
+      cardId: "GEN-DEMO-QUALIFICATION",
+      label,
+      domain: "presales-general",
+      domains: ["presales-general"],
+      required: true,
+      evidencePolicy: "direct",
+      requiredConcepts,
+      forbiddenClaims: ["不得无依据承诺"],
+      preferredEvidencePaths: ["wiki/concepts/演示资格判断.md"],
+      answerTemplate: "完整答案卡模板",
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "a".repeat(64),
+      familyId: "demo",
+      bindings: [
+        binding("O1", "检查角色、业务问题、紧迫性、预期价值和下一步", [
+          "客户角色",
+          "关键业务问题",
+          "紧迫性",
+          "价值",
+          "下一步",
+        ]),
+        binding("O2", "信息不足时调整为探索会或预览", ["探索会", "预览"]),
+        binding("O3", "具备资格后采用结果优先结构并确认相关性", [
+          "先展示结果",
+          "确认相关性",
+        ]),
+      ],
+      cardIdHashes: ["b".repeat(64)],
+      expectedRevisions: { "presales-general": generalRevision },
+      candidateCount: 1,
+    };
+
+    const result = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: {
+        ...identityResolvedQuestion(question),
+        contextUsed: true,
+        inheritedSubjects: ["关键业务问题"],
+      },
+      taskSpec,
+    });
+
+    expect(result).toMatchObject({
+      activated: true,
+      policies: [{
+        cardId: "GEN-DEMO-QUALIFICATION",
+        cardObligationId: "O1",
+        label: "确认客户关键业务问题的方法",
+        requiredConcepts: ["关键业务问题"],
+        forbiddenClaims: ["不得无依据承诺"],
+      }],
+    });
+    if (!result.activated) throw new Error("expected contextual card activation");
+    expect(result.policies[0]).not.toHaveProperty("answerTemplate");
+  });
+
   it("reports every answer-card concept missing after verification", () => {
     const binding = {
       domain: "presales-general" as const,

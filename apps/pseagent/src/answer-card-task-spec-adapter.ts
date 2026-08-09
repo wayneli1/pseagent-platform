@@ -180,13 +180,22 @@ export function adaptAnswerCardToTaskSpec(input: {
           obligation.value.required
             ? [{ deliverableIndex, obligationIndex, obligation }]
             : []));
+  const contextualBindingIndexes = selectContextualBindingIndexes(
+    input.match,
+    input.resolvedQuestion,
+    requiredLocations,
+  );
   const used = new Set<DraftObligation>();
-  const requiredBindingCount = input.match.bindings.filter((binding) =>
-    binding.required).length;
+  const requiredBindingCount = input.match.bindings.filter((binding, index) =>
+    binding.required &&
+    (contextualBindingIndexes === undefined || contextualBindingIndexes.has(index))).length;
   const singleRequiredBinding = requiredBindingCount === 1;
 
   for (const [bindingIndex, binding] of input.match.bindings.entries()) {
-    if (!binding.required) continue;
+    if (
+      !binding.required ||
+      (contextualBindingIndexes !== undefined && !contextualBindingIndexes.has(bindingIndex))
+    ) continue;
     const overlayLocations = requiredLocations.filter((location) =>
       !used.has(location.obligation) &&
       bindingCanOverlay(binding, location.obligation.value));
@@ -268,15 +277,23 @@ export function adaptAnswerCardToTaskSpec(input: {
             bindingIndex: draft.cardBindingIndex ?? Number.MAX_SAFE_INTEGER,
             policy: Object.freeze({
               obligationId: id,
-              label: draft.cardBinding.label,
+              label: contextualBindingIndexes === undefined
+                ? draft.cardBinding.label
+                : draft.value.label,
               cardId: draft.cardBinding.cardId,
               cardObligationId: draft.cardBinding.cardObligationId,
-              requiredConcepts: Object.freeze([...draft.cardBinding.requiredConcepts]),
+              requiredConcepts: Object.freeze(contextualBindingIndexes === undefined
+                ? [...draft.cardBinding.requiredConcepts]
+                : contextualRequiredConcepts(
+                    draft.cardBinding,
+                    draft.value,
+                  )),
               forbiddenClaims: Object.freeze([...draft.cardBinding.forbiddenClaims]),
               preferredEvidencePaths: Object.freeze([
                 ...draft.cardBinding.preferredEvidencePaths,
               ]),
-              ...(draft.cardBinding.answerTemplate === undefined
+              ...(contextualBindingIndexes !== undefined ||
+                  draft.cardBinding.answerTemplate === undefined
                 ? {}
                 : { answerTemplate: draft.cardBinding.answerTemplate }),
             }),
@@ -461,6 +478,35 @@ export function applyAnswerCardPoliciesToPlan(input: {
           : { retrievalStrategy: input.plan.retrievalStrategy }),
       }
     : input.plan;
+}
+
+function selectContextualBindingIndexes(
+  match: Exclude<AnswerCardMatch, { matchType: "none" }>,
+  resolvedQuestion: ResolvedQuestion,
+  locations: readonly DraftObligationLocation[],
+): ReadonlySet<number> | undefined {
+  if (!resolvedQuestion.contextUsed || match.matchType !== "family") return undefined;
+  const selected = new Set<number>();
+  for (const [index, binding] of match.bindings.entries()) {
+    if (!binding.required) continue;
+    if (locations.some((location) => trustedCardClauseMatches(
+      `${location.obligation.value.label}；${location.obligation.value.sourceText}`,
+      binding,
+    ))) selected.add(index);
+  }
+  // If the compiler did not preserve enough semantic detail to select a safe
+  // subset, retain the existing whole-card fallback instead of guessing.
+  return selected.size === 0 ? undefined : selected;
+}
+
+function contextualRequiredConcepts(
+  binding: AnswerCardMatchBinding,
+  obligation: TaskSpec["deliverables"][number]["obligations"][number],
+): string[] {
+  const focus = `${obligation.label}；${obligation.sourceText}`;
+  const selected = binding.requiredConcepts.filter((concept) =>
+    trustedSemanticOverlap(focus, concept));
+  return selected.length === 0 ? [...binding.requiredConcepts] : selected;
 }
 
 function createCardObligation(
