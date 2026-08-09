@@ -222,6 +222,52 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
       .toBe(true);
   });
 
+  it("keeps leading topic context for required parallel items without a trailing request", () => {
+    const question =
+      "Coremail 归档检索异常时，什么时候可以重建索引，执行前后需要哪些检查和风险控制？";
+    const aspects = ["哪些检查", "风险控制"];
+    const spec: TaskSpec = {
+      subject: question,
+      entities: [],
+      deliverables: aspects.map((aspect, index) => ({
+        id: `D${index + 1}`,
+        label: aspect,
+        kind: "fact",
+        required: true,
+        sourceText: aspect,
+        obligations: [{
+          id: `O${index + 1}`,
+          label: aspect,
+          targetEntityIds: [],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: aspect,
+        }],
+      })),
+    };
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: {
+        ...resolvedQuestion,
+        rawQuestion: question,
+        standaloneQuestion: question,
+      },
+      taskSpec: spec,
+      guardResult: passingGuard,
+    });
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+
+    for (const requirement of result.plan.requirements) {
+      expect(requirement.question).toContain("Coremail 归档检索异常时");
+      expect(requirement.queries.some((query) =>
+        query.text.includes("Coremail 归档检索异常时"))).toBe(true);
+    }
+    expect(result.plan.requirements[0]?.question).toContain("哪些检查");
+    expect(result.plan.requirements[1]?.question).toContain("风险控制");
+  });
+
   it("keeps a traceable leading incident premise when the request has no bound entity", () => {
     const incidentQuestion =
       "用户说外部邮件没收到，怎样沿接收、过滤、路由、投递和信筒建立完整证据链？";

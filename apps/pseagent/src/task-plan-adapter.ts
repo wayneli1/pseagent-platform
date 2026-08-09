@@ -164,14 +164,18 @@ export function adaptTaskSpecToKnowledgePlan(
       )
       ? input.resolvedQuestion.standaloneQuestion
       : "";
-    const leadingQuestionContext = requiredParallelScope === undefined
-      ? traceableLeadingQuestionContext(
+    const leadingQuestionContext = requiredParallelScope?.sharedRequest
+      ? ""
+      : traceableLeadingQuestionContext(
         input.resolvedQuestion.standaloneQuestion,
         item.obligation.sourceText,
         otherEntitySourceTexts,
-      )
-      : "";
+      );
     const requiredParallelContext = requiredParallelScope?.sharedRequest ?? "";
+    const parallelLeadingContext = requiredParallelScope !== undefined &&
+        requiredParallelContext === ""
+      ? leadingQuestionContext
+      : "";
     const baseRequirementQuestion = buildSemanticQuery([
       ...entitySourceTexts,
       obligationSourceText,
@@ -196,7 +200,7 @@ export function adaptTaskSpecToKnowledgePlan(
       )?.size ?? 0) > 1;
     const requirementQuestion = buildSemanticQuery([
       useAtomicLabel ? safeLabel : baseRequirementQuestion,
-      requiredParallelContext,
+      requiredParallelContext || parallelLeadingContext,
     ]);
     const terms = buildAspectTerms(
       entitySourceTexts,
@@ -206,6 +210,7 @@ export function adaptTaskSpecToKnowledgePlan(
       selectionContext,
       safeLabel,
       requiredParallelContext,
+      parallelLeadingContext,
     );
     const comparisonDimensions = explicitComparisonDimensions(
       obligationContext,
