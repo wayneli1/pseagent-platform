@@ -179,6 +179,7 @@ describe("answer card registry and matching", () => {
     })).resolves.toMatchObject({
       matchType: "family",
       confidence: "high",
+      contextual: true,
       cardIdHashes: [hashAnswerCardIdentifier("CM-MIGRATION-001")],
     });
     expect(completeJson).not.toHaveBeenCalled();
@@ -1273,7 +1274,7 @@ describe("answer card TaskSpec adapter", () => {
   });
 
   it("falls back to one approved card contract for a high-confidence contextual family", () => {
-    const question = "那它什么时候具备演示资格？";
+    const question = "那它具备哪些条件后可以进入完整演示？";
     const taskSpec = taskSpecSchema.parse({
       subject: question,
       entities: [{ id: "E1", label: "演示资格", role: "subject", sourceText: question }],
@@ -1283,11 +1284,11 @@ describe("answer card TaskSpec adapter", () => {
       ],
     });
     const binding=(id:string,label:string):Exclude<AnswerCardMatch,{matchType:"none"}>["bindings"][number]=>({obligationId:id,cardObligationId:id,cardId:"GEN-DEMO-QUALIFICATION",label,domain:"presales-general",domains:["presales-general"],required:true,evidencePolicy:"direct",requiredConcepts:[label],forbiddenClaims:[],preferredEvidencePaths:[]});
-    const match:Exclude<AnswerCardMatch,{matchType:"none"}>={matchType:"family",confidence:"high",catalogHash:"a".repeat(64),familyId:"demo",bindings:[binding("O1","演示资格条件"),binding("O2","业务问题"),binding("O3","结果优先")],cardIdHashes:["b".repeat(64)],expectedRevisions:{"presales-general":generalRevision},candidateCount:1};
+    const match:Exclude<AnswerCardMatch,{matchType:"none"}>={matchType:"family",confidence:"high",contextual:true,catalogHash:"a".repeat(64),familyId:"demo",bindings:[binding("O1","演示资格条件"),binding("O2","业务问题"),binding("O3","结果优先")],cardIdHashes:["b".repeat(64)],expectedRevisions:{"presales-general":generalRevision},candidateCount:1};
 
     const result=adaptAnswerCardToTaskSpec({
       match,
-      resolvedQuestion:{...identityResolvedQuestion(question),standaloneQuestion:"演示请求在什么情况下具备资格？",contextUsed:true,inheritedSubjects:["演示请求"]},
+      resolvedQuestion:{...identityResolvedQuestion(question),standaloneQuestion:"演示请求具备哪些条件后可以进入完整演示？",contextUsed:true,inheritedSubjects:["演示请求"]},
       taskSpec,
     });
 

@@ -407,6 +407,7 @@ function canCompileContextualFamily(
     match.confidence === "high" &&
     resolvedQuestion.contextUsed &&
     new Set(match.bindings.map((binding) => binding.cardId)).size === 1)) return false;
+  if (match.contextual === true) return true;
   const requestClauses=extractExplicitQuestionSignals(
     resolvedQuestion.standaloneQuestion,
   ).requestClauses;
@@ -486,17 +487,30 @@ function selectContextualBindingIndexes(
   locations: readonly DraftObligationLocation[],
 ): ReadonlySet<number> | undefined {
   if (!resolvedQuestion.contextUsed || match.matchType !== "family") return undefined;
+  if (asksForWholeCardContract(resolvedQuestion.standaloneQuestion)) return undefined;
+  const resolvedFocus = resolvedQuestion.standaloneQuestion;
   const selected = new Set<number>();
   for (const [index, binding] of match.bindings.entries()) {
     if (!binding.required) continue;
-    if (locations.some((location) => trustedCardClauseMatches(
-      `${location.obligation.value.label}；${location.obligation.value.sourceText}`,
-      binding,
-    ))) selected.add(index);
+    if (
+      trustedCardClauseMatches(resolvedFocus, binding) ||
+      locations.some((location) => trustedCardClauseMatches(
+        `${location.obligation.value.label}；${location.obligation.value.sourceText}`,
+        binding,
+      ))
+    ) selected.add(index);
   }
   // If the compiler did not preserve enough semantic detail to select a safe
   // subset, retain the existing whole-card fallback instead of guessing.
   return selected.size === 0 ? undefined : selected;
+}
+
+function asksForWholeCardContract(question: string): boolean {
+  if (/(?:第[一二三四五六七八九十\d]+(?:项|点|条)|这一项|该项|某一项|单项)/u.test(question)) {
+    return false;
+  }
+  return /(?:哪些|什么|全部|所有|完整).{0,8}(?:条件|标准|步骤|要求)|具备资格.{0,16}(?:进入|开始|推进)/u
+    .test(question);
 }
 
 function contextualRequiredConcepts(

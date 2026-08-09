@@ -915,6 +915,28 @@ describe("AnswerService", () => {
     expect(completeText).toHaveBeenCalledTimes(2);
   });
 
+  it("rechecks a repaired normal answer and retries one more time when still truncated", async () => {
+    const completeText=vi.fn()
+      .mockResolvedValueOnce("关键机制：如果图中存在环，。")
+      .mockResolvedValueOnce("关键机制：如果图中存在环，。因此无法完成。")
+      .mockResolvedValueOnce("关键机制：有向环中的节点无法全部降为零入度，因此拓扑排序无法完成。");
+    const service = new AnswerService({
+      model: { completeText } as unknown as ModelClient,
+      router: { route: vi.fn(async () => "normal" as const) },
+      planner: createPlanner(),
+      knowledge: { open: vi.fn() },
+      runAgent: vi.fn(),
+    });
+
+    await expect(service.answer("为什么拓扑排序要求有向无环图？"))
+      .resolves.toMatchObject({
+        scope: "normal",
+        status: "answered",
+        answer: expect.stringContaining("零入度"),
+      });
+    expect(completeText).toHaveBeenCalledTimes(3);
+  });
+
   it("answers PSEAgent architecture as normal even when Coremail dominates history", async () => {
     const completeJson = vi.fn();
     const model = {

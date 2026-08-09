@@ -56,6 +56,7 @@ export type AnswerCardMatch =
       readonly confidence: Exclude<AnswerCardMatchConfidence, "none">;
       readonly catalogHash: string;
       readonly familyId?: string;
+      readonly contextual?: boolean;
       readonly bindings: readonly AnswerCardMatchBinding[];
       readonly cardIdHashes: readonly string[];
       readonly expectedRevisions: Readonly<Partial<Record<KnowledgeDomain, string>>>;
@@ -258,6 +259,7 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
       ...this.hitFromCard(card),
       matchType: "family",
       confidence: "high",
+      contextual: true,
     };
   }
 

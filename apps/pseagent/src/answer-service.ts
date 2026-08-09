@@ -319,7 +319,11 @@ export class AnswerService {
           }),
         });
         let answer = stripUnrequestedExamples(normalQuestion, draft);
-        if (normalAnswerNeedsRepair(answer)) {
+        for (
+          let repairAttempt = 1;
+          repairAttempt <= 2 && normalAnswerNeedsRepair(answer);
+          repairAttempt += 1
+        ) {
           const repaired = await observeModelCall({
             trace,
             role: "synthesizer",
@@ -329,12 +333,22 @@ export class AnswerService {
               messages: [
                 ...normalAnswerMessages(normalQuestion, normalConversationContext),
                 { role: "assistant", content: answer },
-                { role: "user", content: "上一次回答存在未闭合标点、截断清单或未完成句子。请完整重写答案，保留正确结论，补全关键机制与适用边界，不要解释修订过程。" },
+                { role: "user", content: "上一次回答存在未闭合标点、连续冲突标点、空从句、截断清单或未完成句子。请从头完整重写答案，删除所有空句和残句，保留正确结论，补全关键机制与适用边界，不要解释修订过程。" },
               ],
               signal: requestSignal,
             }),
           });
           answer = stripUnrequestedExamples(normalQuestion, repaired);
+        }
+        if (normalAnswerNeedsRepair(answer)) {
+          recordDiagnostic(trace, { event: "stop", reason: "invalid_final" });
+          return withQuestionResolution(finishExecution(
+            trace,
+            temporaryUnavailableResult(scope),
+            startedAt,
+            false,
+            false,
+          ));
         }
         const result: AnswerResult = { scope, status: "answered", answer, references: [] };
         return withQuestionResolution(finishExecution(trace, result, startedAt, false, false));
