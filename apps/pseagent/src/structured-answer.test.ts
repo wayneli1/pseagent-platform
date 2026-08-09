@@ -124,6 +124,28 @@ describe("structured answer", () => {
     expect(rendered).toContain("约定检查点");
   });
 
+  it("keeps every item after a declared-count structure introduction", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer:
+          "其五步对话结构为：1.暂停推进，不急着解释产品；2.陈述可观察信号，不评价动机；3.说明信号影响；4.提出可回答的问题；5.接受三种结果并调整投入 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    const rendered = renderStructuredAnswer(structured);
+    expect(rendered).toContain("暂停推进");
+    expect(rendered).toContain("陈述可观察信号");
+    expect(rendered).toContain("说明信号影响");
+    expect(rendered).toContain("提出可回答的问题");
+    expect(rendered).toContain("接受三种结果并调整投入");
+    expect(rendered).not.toContain("1.");
+  });
+
   it("keeps later items when a sequence is introduced as confirmation items", () => {
     const structured = buildStructuredAnswer({
       action: "final",
