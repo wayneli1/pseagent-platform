@@ -2,11 +2,13 @@ export interface ConversationTurn {
   readonly question: string;
   readonly answer?: string;
   readonly answerOutline?: string;
+  readonly scope?: string;
 }
 
 interface StoredConversationTurn {
   readonly question: string;
   readonly answerOutline?: string;
+  readonly scope?: string;
 }
 
 interface SerializedConversationContext {
@@ -66,6 +68,7 @@ export class ConversationStore {
     const stored: StoredConversationTurn = {
       question,
       ...(answerOutline === undefined ? {} : { answerOutline }),
+      ...(turn.scope === undefined ? {} : { scope: turn.scope }),
     };
     const turns = [...(this.conversations.get(peerUid) ?? []), stored];
     if (turns.length > this.maxTurns) {
@@ -112,6 +115,7 @@ function fitLatestTurn(turn: StoredConversationTurn, maxChars: number): string |
     const candidate: StoredConversationTurn = {
       question: question.join(""),
       ...(outline.length === 0 ? {} : { answerOutline: outline.join("") }),
+      ...(turn.scope === undefined ? {} : { scope: turn.scope }),
     };
     const serialized = serializeContext([candidate]);
     if (serialized.length <= maxChars) return serialized;

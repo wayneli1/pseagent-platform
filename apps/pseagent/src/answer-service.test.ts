@@ -760,13 +760,10 @@ describe("AnswerService", () => {
       recentTurns: [{
         question: "销售临时让我演示但没有客户背景，应该直接做完整演示吗？",
         answerOutline: "1. 确认参会角色\n2. 确认关键业务问题\n3. 确认判断标准",
+        scope: "general",
       }],
     });
-    const router = {
-      route: vi.fn()
-        .mockResolvedValueOnce("normal" as const)
-        .mockResolvedValueOnce("general" as const),
-    };
+    const router = { route: vi.fn(async () => "normal" as const) };
     const questionResolver = {
       resolve: vi.fn(async () => ({
         rawQuestion,
@@ -799,18 +796,12 @@ describe("AnswerService", () => {
 
     const execution = await service.answerDetailed(rawQuestion, conversationContext);
 
-    expect(router.route).toHaveBeenNthCalledWith(
-      1,
+    expect(router.route).toHaveBeenCalledWith(
       rawQuestion,
       conversationContext,
       expect.any(AbortSignal),
     );
-    expect(router.route).toHaveBeenNthCalledWith(
-      2,
-      standaloneQuestion,
-      undefined,
-      expect.any(AbortSignal),
-    );
+    expect(router.route).toHaveBeenCalledOnce();
     expect(planner.plan).toHaveBeenCalledWith(expect.objectContaining({
       question: standaloneQuestion,
     }));
@@ -825,6 +816,42 @@ describe("AnswerService", () => {
       contextUsed: true,
     });
     expect(execution.result.scope).toBe("general");
+  });
+
+  it("lets an explicit product boundary override the previous general scope", async () => {
+    const rawQuestion = "那它的 SAML 接口支持哪些版本？";
+    const standaloneQuestion = "Coremail 的 SAML 接口支持哪些版本？";
+    const conversationContext = JSON.stringify({
+      version: 3,
+      recentTurns: [{ question: "先按通用方法确认演示资格，产品是 Coremail。", scope: "general" }],
+    });
+    const router = { route: vi.fn(async () => "normal" as const) };
+    const service = new AnswerService({
+      model: { completeText: vi.fn() } as unknown as ModelClient,
+      router,
+      planner: createPlanner(),
+      knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
+      runAgent: vi.fn<AgentRunner>(async () => ({
+        scope: "professional",
+        status: "answered",
+        answer: "按正式资料核验版本。",
+        references: [],
+      })),
+      questionResolver: {
+        resolve: vi.fn(async () => ({
+          rawQuestion,
+          standaloneQuestion,
+          contextUsed: true,
+          inheritedSubjects: ["Coremail SAML 接口"],
+          corrections: [],
+        })),
+      },
+    });
+
+    const execution = await service.answerDetailed(rawQuestion, conversationContext);
+
+    expect(execution.result.scope).toBe("professional");
+    expect(router.route).toHaveBeenCalledOnce();
   });
 
   it("keeps an explicit topic switch on the normal route without resolving old context", async () => {

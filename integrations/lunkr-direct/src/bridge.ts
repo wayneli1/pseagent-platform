@@ -488,6 +488,7 @@ export class LunkrPseBridge<Result> {
       this.conversations.append(message.peerUid, {
         question:resolvedQuestion,
         ...(answerOutline===undefined?{}:{answerOutline}),
+        ...(metadata.scope===undefined?{}:{scope:metadata.scope}),
       });
       await this.persistConversationTurn({message,questionId:start.questionId,question,resolvedQuestion,answerOutline,metadata});
     }
@@ -613,7 +614,7 @@ export class LunkrPseBridge<Result> {
     if(dependency!==undefined&&!this.conversations.has(peerUid)&&!this.forceNewSessionPeers.has(peerUid)){
       try{
         const user=pseudonymizeFeedbackUser(peerUid,dependency.pseudonymizationKey),stored=await dependency.load(user,this.config.contextMaxTurns);
-        this.conversations.replace(peerUid,stored.recentTurns.map((turn)=>({question:turn.resolvedQuestion,...(turn.answerOutline===undefined?{}:{answerOutline:turn.answerOutline})})));
+        this.conversations.replace(peerUid,stored.recentTurns.map((turn)=>({question:turn.resolvedQuestion,...(turn.answerOutline===undefined?{}:{answerOutline:turn.answerOutline}),...(turn.scope===undefined?{}:{scope:turn.scope})})));
       }catch{/* persisted context is an availability enhancement; memory remains the safe fallback */}
     }
     return this.conversations.context(peerUid,currentQuestion);

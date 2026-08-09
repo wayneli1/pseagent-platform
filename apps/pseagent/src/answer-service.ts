@@ -12,7 +12,12 @@ import type {
 } from "./contracts.js";
 import { knowledgePlanSchema, type KnowledgePlan } from "./contracts.js";
 import { normalAnswerMessages } from "./prompts.js";
-import type { ScopeRouter } from "./router.js";
+import {
+  isUnambiguouslyGeneralPresalesQuestion,
+  isUnambiguouslyNormalQuestion,
+  isUnambiguouslyProfessionalQuestion,
+  type ScopeRouter,
+} from "./router.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { KnowledgePlanner } from "./knowledge-planner.js";
@@ -270,7 +275,13 @@ export class AnswerService {
             resolved.standaloneQuestion.trim() !== question.trim()
           ) {
             questionResolution = resolved;
-            scope = await observeModelCall({
+            const explicitScope = explicitScopeForResolvedQuestion(
+              resolved.standaloneQuestion,
+            );
+            const inheritedScope = latestConversationKnowledgeScope(
+              conversationContext,
+            );
+            scope = explicitScope ?? inheritedScope ?? await observeModelCall({
               trace,
               role: "resolver",
               operation: "route",
@@ -1038,6 +1049,33 @@ export class AnswerService {
       );
     }
   }
+}
+
+function explicitScopeForResolvedQuestion(question: string): Scope | undefined {
+  if (isUnambiguouslyNormalQuestion(question)) return "normal";
+  if (isUnambiguouslyGeneralPresalesQuestion(question)) return "general";
+  if (isUnambiguouslyProfessionalQuestion(question)) return "professional";
+  return undefined;
+}
+
+function latestConversationKnowledgeScope(
+  conversationContext: string | undefined,
+): Exclude<Scope, "normal"> | undefined {
+  if (conversationContext === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(conversationContext) as {
+      version?: unknown;
+      recentTurns?: unknown;
+    };
+    if (parsed.version !== 3 || !Array.isArray(parsed.recentTurns)) return undefined;
+    for (let index = parsed.recentTurns.length - 1; index >= 0; index -= 1) {
+      const scope = (parsed.recentTurns[index] as { scope?: unknown }).scope;
+      if (scope === "professional" || scope === "general") return scope;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 function scopeForDomain(domain: KnowledgeDomain): Exclude<Scope, "normal"> {

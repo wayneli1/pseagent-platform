@@ -30,6 +30,7 @@ const conversation = new ConversationStore(6, 32_768);
 conversation.replace(peerUid, persisted.recentTurns.map((turn) => ({
   question: turn.resolvedQuestion,
   ...(turn.answerOutline === undefined ? {} : { answerOutline: turn.answerOutline }),
+  ...(turn.scope === undefined ? {} : { scope: turn.scope }),
 })));
 const conversationContext = conversation.context(peerUid, question);
 if (conversationContext === undefined) throw new Error("persisted_conversation_context_required");

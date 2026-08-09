@@ -62,4 +62,15 @@ describe("ConversationStore", () => {
   });
 
   it("hydrates resolved persisted turns without rebuilding an answer outline",()=>{const store=new ConversationStore(6,2_000);store.replace("#a#U",[{question:"完整迁移问题",answerOutline:"1. 范围\n2. 客户端专用密码"}]);expect(store.has("#a#U")).toBe(true);expect(store.context("#a#U","第二点呢")).toContain('"question":"完整迁移问题"');expect(store.context("#a#U","第二点呢")).toContain("2. 客户端专用密码");});
+
+  it("carries the verified answer scope into follow-up context", () => {
+    const store = new ConversationStore(6, 2_000);
+    store.append("#a#U", {
+      question: "没有客户背景时应该完整演示吗？",
+      answer: "先判断演示资格。",
+      scope: "general",
+    });
+
+    expect(store.context("#a#U", "第二点怎么确认？")).toContain('"scope":"general"');
+  });
 });

@@ -109,6 +109,7 @@ try {
       conversation.replace(peerUid, persisted.recentTurns.map((turn) => ({
         question: turn.resolvedQuestion,
         ...(turn.answerOutline === undefined ? {} : { answerOutline: turn.answerOutline }),
+        ...(turn.scope === undefined ? {} : { scope: turn.scope }),
       })));
       conversations.set(testCase.session, conversation);
     }
@@ -178,7 +179,11 @@ try {
     let conversationPersisted = false;
     if (result.status === "answered" || result.status === "partially_answered") {
       const answerOutline = buildAnswerOutline(result.answer);
-      conversation.append(peerUid, { question: questionResolution?.standaloneQuestion ?? testCase.question, answer: result.answer });
+      conversation.append(peerUid, {
+        question: questionResolution?.standaloneQuestion ?? testCase.question,
+        answer: result.answer,
+        scope: result.scope,
+      });
       try {
         await feedback.appendConversation({
           turnId: randomUUID(),

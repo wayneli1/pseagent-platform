@@ -2,6 +2,7 @@ export interface PersistedConversationTurn {
   readonly requestId: string;
   readonly resolvedQuestion: string;
   readonly answerOutline?: string;
+  readonly scope?: string;
 }
 
 export interface PersistedConversationContext {
