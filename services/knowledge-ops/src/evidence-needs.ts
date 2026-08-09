@@ -37,7 +37,7 @@ function requiredMaterials(topic: string, domain: RepairDraftProposal["targetDom
     "可接受的核验事实清单：例如审批链、预算来源、资源承诺、参与角色和已完成的实际动作。",
     "适用与排除条件、记录模板及升级审批边界，说明哪些信号只能作为假设而不能作为结论。",
   ];
-  if (/AIR|离线|断网|版本/u.test(topic)) return [
+  if (/\bAIR\b/iu.test(topic)) return [
     "AIR 客户端 AI 能力清单，并区分在线、内网隔离和完全离线环境下的可用范围。",
     "产品版本、部署形态、授权项、服务端依赖和网络依赖的正式支持矩阵。",
     "不支持或条件支持场景、验证方法、升级要求及需由产品团队确认的例外流程。",
@@ -57,9 +57,31 @@ function requiredMaterials(topic: string, domain: RepairDraftProposal["targetDom
     "角色、决策、预算、资源或价值判断的核验口径及可接受证据。",
     "适用与排除条件、审批边界、记录模板和需要升级确认的例外。",
   ];
+  if (/(?:是否|能否|支持|兼容|能力|功能|版本|license|licence|授权|许可|配置|启用|部署|安装|步骤)/iu.test(topic)) {
+    return productCapabilityMaterials(topic);
+  }
   return [
     `覆盖“${topic}”的正式产品、实施、迁移或运维资料。`,
     "适用版本、部署形态、授权条件、依赖项和前置条件说明。",
     "可执行步骤、输入输出、验证方法、限制、例外以及异常升级或回退路径。",
   ];
+}
+
+function productCapabilityMaterials(topic: string): readonly string[] {
+  const materials: string[] = [];
+  if (/(?:是否|能否|支持|兼容|能力|功能)/u.test(topic)) {
+    materials.push(`覆盖“${topic}”的正式产品功能说明、产品发布说明或能力边界说明。`);
+  }
+  if (/(?:版本|release|edition|\bv\d|xt\d)/iu.test(topic)) {
+    materials.push("产品版本—功能支持矩阵，明确首次支持版本、适用小版本、升级要求和已知限制。");
+  }
+  if (/(?:license|licence|授权|许可|sku)/iu.test(topic)) {
+    materials.push("License、SKU 或版本授权说明，明确必需授权项、购买前提和部署限制。");
+  }
+  if (/(?:配置|启用|部署|安装|操作|步骤|验证|回退)/u.test(topic)) {
+    materials.push("正式管理员配置手册，包含前置条件、启用步骤、参数含义、验证方法、安全边界和回退方式。");
+  }
+  return materials.length > 0
+    ? materials
+    : [`覆盖“${topic}”的正式产品资料，并明确适用范围与维护责任。`];
 }

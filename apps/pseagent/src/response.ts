@@ -341,7 +341,36 @@ function formatGapSection(gaps: readonly CoverageGap[]): string {
       nextActions.length === 0 ? "" : `下一步验证：${nextActions.join("；")}`,
     ].filter(Boolean).join("；");
   });
-  return ["尚未确认的部分：", ...lines].join("\n");
+  const materialGuidance = formatProductEvidenceMaterialGuidance(gaps);
+  return ["尚未确认的部分：", ...lines, materialGuidance].filter(Boolean).join("\n");
+}
+
+function formatProductEvidenceMaterialGuidance(
+  gaps: readonly CoverageGap[],
+): string {
+  const productGaps = gaps.filter((gap) =>
+    gap.domain === "coremail-professional" &&
+    ["knowledge", "retrieval", "source", "freshness"].includes(gap.gapClass));
+  if (productGaps.length === 0) return "";
+
+  const topic = productGaps
+    .flatMap((gap) => [gap.subject, gap.missingAspect])
+    .join(" ");
+  const materials: string[] = [];
+  if (/(?:是否|能否|支持|兼容|能力|功能)/u.test(topic)) {
+    materials.push("正式产品功能说明或发布说明，用于直接确认支持性与功能边界");
+  }
+  if (/(?:版本|release|edition|\bv\d|xt\d)/iu.test(topic)) {
+    materials.push("产品版本—功能支持矩阵，用于确认首次支持版本、适用小版本和升级边界");
+  }
+  if (/(?:license|licence|授权|许可|sku)/iu.test(topic)) {
+    materials.push("License、SKU 或版本授权说明，用于确认授权项、前置购买条件和部署限制");
+  }
+  if (/(?:配置|启用|部署|安装|操作|步骤|验证|回退)/u.test(topic)) {
+    materials.push("正式管理员配置手册，用于确认前置条件、启用步骤、验证方法、安全限制和回退方式");
+  }
+  if (materials.length < 2) return "";
+  return `资料补充口径：若完整复核后正式知识库仍无直接覆盖，请补充${materials.join("；")}。`;
 }
 
 function uniqueText(values: readonly string[]): string[] {

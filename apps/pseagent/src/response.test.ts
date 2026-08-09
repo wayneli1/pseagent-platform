@@ -442,4 +442,41 @@ describe("knowledge response", () => {
       expect(result.answer).toContain(label);
     }
   });
+
+  it("lists the formal material classes needed for an uncovered product capability", () => {
+    const gap: CoverageGap = {
+      id: "G1",
+      requirementId: "R1",
+      deliverableId: "D1",
+      obligationId: "O1",
+      domain: "coremail-professional",
+      gapClass: "retrieval",
+      reason: "retrieval_budget_exhausted",
+      subject: "某产品是否支持新的登录能力，适用版本、License 和配置步骤是什么？",
+      missingAspect: "支持性、版本、License 和配置步骤",
+      affectsConclusion: true,
+      confirmedBoundary: "检索预算已结束，核验尚未完整。",
+      nextAction: "继续检索。",
+    };
+    const action: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "正式知识库未覆盖该能力，无法确认是否支持。",
+        citations: [],
+      }],
+      citations: [],
+    };
+
+    const result = formatKnowledgeFinal("professional", action, [], {
+      coverageGaps: [gap],
+    });
+
+    expect(result.answer).toContain("资料补充口径");
+    expect(result.answer).toContain("正式产品功能说明或发布说明");
+    expect(result.answer).toContain("产品版本—功能支持矩阵");
+    expect(result.answer).toContain("License、SKU 或版本授权说明");
+    expect(result.answer).toContain("正式管理员配置手册");
+  });
 });
