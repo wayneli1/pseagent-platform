@@ -184,6 +184,29 @@ describe("structured answer", () => {
     expect(rendered).not.toContain("1)");
   });
 
+  it("keeps every step after a numbered-method operation introduction", () => {
+    const structured = buildStructuredAnswer({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer:
+          "售前可按七步法操作：1. 选定角色 [1]；2. 列出任务 [1]；3. 排定优先级 [1]；4. 列出产品与服务 [1]；5. 建立因果连接 [1]；6. 标注证据 [1]；7. 形成测试计划 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    const rendered = renderStructuredAnswer(structured);
+    expect(rendered).toContain("选定角色");
+    expect(rendered).toContain("列出任务");
+    expect(rendered).toContain("排定优先级");
+    expect(rendered).toContain("列出产品与服务");
+    expect(rendered).toContain("建立因果连接");
+    expect(rendered).toContain("标注证据");
+    expect(rendered).toContain("形成测试计划");
+  });
+
   it("keeps an ordered sequence introduced as a concrete method", () => {
     const structured = buildStructuredAnswer({
       action: "final",

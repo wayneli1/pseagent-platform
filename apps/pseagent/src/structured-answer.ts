@@ -156,7 +156,7 @@ function retainCoherentOrderedSegments(
 
 function leadingOrderedStep(value: string): number | undefined {
   const match = value.match(
-    /(?:^|\n)\s*(?:(?:[^：:\n]{0,40})(?:步骤|流程|阶段|顺序|事项|清单|检查(?:项|内容)?|要点|规则|做法|方法|如下)[^：:\n]{0,12}[：:]\s*)?[（(]?([1-9]\d{0,2})[.、．)）]\s*/u,
+    /(?:^|\n)\s*(?:(?:[^：:\n]{0,40})(?:步骤|流程|阶段|顺序|事项|清单|检查(?:项|内容)?|要点|规则|操作|做法|方法|如下)[^：:\n]{0,12}[：:]\s*)?[（(]?([1-9]\d{0,2})[.、．)）]\s*/u,
   );
   if (match?.[1] === undefined) return undefined;
   return Number(match[1]);
@@ -236,7 +236,7 @@ function normalizeRenderedStatement(value: string): string {
         "",
       )
       .replace(
-        /((?:以下|下列|如下|事项|步骤|要点|规则|清单|检查(?:项|内容)?)[^：:\n]{0,12}[：:])\s*[（(]?1[.、．)）]\s*/u,
+        /((?:以下|下列|如下|事项|步骤|要点|规则|操作|清单|检查(?:项|内容)?)[^：:\n]{0,12}[：:])\s*[（(]?1[.、．)）]\s*/u,
         "$1 ",
       )
       .trim())
