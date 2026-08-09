@@ -15,7 +15,7 @@ import {
 } from "./answer-card-task-spec-adapter.js";
 import { applyAnswerCardPoliciesToPlan } from "./answer-card-task-spec-adapter.js";
 import { identityResolvedQuestion } from "./question-resolver.js";
-import { taskSpecSchema } from "./task-spec.js";
+import { DeterministicTaskSpecGuard, taskSpecSchema } from "./task-spec.js";
 import {
   applyGroundedAnswerCardRequiredConcepts,
   answerCardRequirementsWithGroundedConcepts,
@@ -947,6 +947,89 @@ describe("answer card TaskSpec adapter", () => {
     expect(result.activated).toBe(true);
     if (!result.activated) throw new Error("expected activation");
     expect(result.policies).toHaveLength(3);
+    expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
+  });
+
+  it("uses reviewed family obligation labels to map a contextual confirmation request", () => {
+    const question = "如果先看到 state=defer，接下来还要和哪些客户端记录及后续状态对齐，才能确认是服务器重投？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: "Coremail 重复发信诊断",
+      entities: [{
+        id: "E1",
+        label: "Coremail",
+        role: "subject",
+        sourceText: "Coremail",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: "对齐客户端记录和后续状态",
+        kind: "fact",
+        required: true,
+        sourceText: "接下来还需要与哪些客户端记录及后续 deliveragent 状态对齐",
+        obligations: [{
+          id: "O1",
+          label: "说明对齐方法",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "接下来还需要与哪些客户端记录及后续 deliveragent 状态对齐",
+        }],
+      }],
+    });
+    const binding = (
+      id: string,
+      label: string,
+      concepts: readonly string[],
+    ): Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] => ({
+      obligationId: id,
+      cardObligationId: id,
+      cardId: "PRO-DUPLICATE-SEND-DIAGNOSIS",
+      label,
+      domain: "coremail-professional",
+      domains: ["coremail-professional"],
+      required: true,
+      evidencePolicy: "direct",
+      requiredConcepts: concepts,
+      forbiddenClaims: [],
+      preferredEvidencePaths: [],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "e".repeat(64),
+      familyId: "repair_pro_duplicate_send_diagnosis",
+      bindings: [
+        binding("O1", "核对 Outlook 客户端重发证据", ["Outlook", "客户端发送记录"]),
+        binding("O2", "核对 deliveragent 服务器重投证据", ["state=defer", "state=sent"]),
+        binding("O3", "用客户端与服务器证据建立完整时间线", ["完整时间线", "同时核对"]),
+      ],
+      cardIdHashes: ["f".repeat(64)],
+      expectedRevisions: { "coremail-professional": professionalRevision },
+      candidateCount: 1,
+    };
+    const resolvedQuestion = {
+      ...identityResolvedQuestion(question),
+      standaloneQuestion: "在 Coremail 同一封邮件重复发送场景中，如果先在 deliveragent 日志中看到 state=defer，接下来还需要与哪些客户端记录及后续 deliveragent 状态对齐，才能确认该邮件是服务器重投而非客户端重发？",
+      contextUsed: true,
+      inheritedSubjects: ["Coremail", "Outlook", "deliveragent", "state=defer"],
+    };
+    expect(new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion,
+      taskSpec,
+    }).issues).toContainEqual(expect.objectContaining({
+      code: "explicit_request_unmapped",
+    }));
+
+    const result = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion,
+      taskSpec,
+    });
+
+    expect(result).toMatchObject({ activated: true });
+    if (!result.activated) return;
+    expect(result.guard).toMatchObject({ ok: true, issues: [] });
     expect(result.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
   });
 

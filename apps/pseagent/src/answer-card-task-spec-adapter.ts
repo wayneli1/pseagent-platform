@@ -287,14 +287,48 @@ export function adaptAnswerCardToTaskSpec(input: {
   const governedObligationIds = new Set(
     policyEntries.map((entry) => entry.policy.obligationId),
   );
-  const trustedIssues = rawGuard.issues.filter((issue) =>
+  const rawTrustedIssues = rawGuard.issues.filter((issue) =>
     issue.code !== "protected_fact_not_direct" ||
     issue.obligationId === undefined ||
     !governedObligationIds.has(issue.obligationId));
-  const guard: TaskSpecGuardResult = trustedIssues.length === rawGuard.issues.length
+  const rawUnmappedRequestCount = rawTrustedIssues.filter((issue) =>
+    issue.code === "explicit_request_unmapped").length;
+  const labelAssistedGuard = rawUnmappedRequestCount === 0
+    ? undefined
+    : new DeterministicTaskSpecGuard().validate({
+        resolvedQuestion: input.resolvedQuestion,
+        taskSpec: {
+          ...parsed.data,
+          deliverables: parsed.data.deliverables.map((deliverable) => ({
+            ...deliverable,
+            obligations: deliverable.obligations.map((obligation) =>
+              governedObligationIds.has(obligation.id)
+                ? {
+                    ...obligation,
+                    sourceText: trustedCardSourceText(obligation.sourceText, obligation.label),
+                  }
+                : obligation),
+          })),
+        },
+      });
+  const assistedUnmappedRequestIssues = labelAssistedGuard?.issues.filter((issue) =>
+    issue.code === "explicit_request_unmapped") ?? [];
+  const usedLabelAssistance = labelAssistedGuard !== undefined &&
+    assistedUnmappedRequestIssues.length < rawUnmappedRequestCount;
+  const trustedIssues = usedLabelAssistance
+    ? [
+        ...rawTrustedIssues.filter((issue) => issue.code !== "explicit_request_unmapped"),
+        ...assistedUnmappedRequestIssues,
+      ]
+    : rawTrustedIssues;
+  const guardMetrics = usedLabelAssistance ? labelAssistedGuard : rawGuard;
+  const guard: TaskSpecGuardResult = trustedIssues.length === rawGuard.issues.length &&
+      !usedLabelAssistance
     ? rawGuard
     : Object.freeze({
         ...rawGuard,
+        explicitRequestCount: guardMetrics.explicitRequestCount,
+        mappedExplicitRequestCount: guardMetrics.mappedExplicitRequestCount,
         ok: !trustedIssues.some((issue) => issue.severity === "error"),
         issues: Object.freeze(trustedIssues),
       });
@@ -564,6 +598,15 @@ function normalizeText(value: string): string {
   return value.normalize("NFKC")
     .toLocaleLowerCase("zh-CN")
     .replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function trustedCardSourceText(sourceText: string, cardLabel: string): string {
+  if (normalizeText(sourceText).includes(normalizeText(cardLabel))) return sourceText;
+  const label = [...cardLabel.trim()].slice(0, 256).join("");
+  const separator = "；";
+  const sourceLimit = Math.max(1, 512 - [...label, ...separator].length);
+  const source = [...sourceText.trim()].slice(0, sourceLimit).join("");
+  return `${source}${separator}${label}`;
 }
 
 function stableSemanticText(values: readonly string[]): string[] {
