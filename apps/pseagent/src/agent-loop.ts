@@ -3261,7 +3261,6 @@ function pendingDirectAnswerRepairs(
     const requirementState = state.requirements.get(result.id);
     if (
       requirementState === undefined ||
-      result.coverage !== "none" ||
       !isDirectComparisonRequirement(requirementState.requirement)
     ) {
       return [];
@@ -3275,7 +3274,10 @@ function pendingDirectAnswerRepairs(
         ) > 0
       )
       .map(([citation]) => citation);
-    return exactCitations.length === 0
+    if (exactCitations.length === 0) return [];
+    const citesExactComparison = exactCitations.some((citation) =>
+      result.citations.includes(citation));
+    return result.coverage !== "none" && citesExactComparison
       ? []
       : [{
           requirementId: result.id,

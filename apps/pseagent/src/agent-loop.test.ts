@@ -1690,6 +1690,51 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("rewrites a complete comparison draft that omits the exact comparison citation", async () => {
+    const plan: KnowledgePlan = {
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question: "Alpha 和 Beta 有哪些差异",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Alpha 与 Beta 的差异",
+          terms: ["Alpha", "Beta", "差异"],
+        }],
+        queries: [{ text: "产品差异", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "产品差异": [{
+          path: "wiki/concepts/products.md",
+          title: "产品能力",
+        }],
+        "Alpha Beta 差异": [{
+          path: "wiki/comparison/alpha-vs-beta.md",
+          title: "Alpha vs Beta 对比",
+        }],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/products.md"),
+      search("R1", "Alpha Beta 差异"),
+      read("R1", "wiki/comparison/alpha-vs-beta.md"),
+      final("complete", "广义产品页概述了 Alpha 和 Beta 的差异 [1]", [1]),
+      final("complete", "正式对比页确认了 Alpha 与 Beta 的差异 [2]", [2]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(result.references.map((reference) => reference.path))
+      .toContain("wiki/comparison/alpha-vs-beta.md");
+    expect(payloadAt(model, 4).observations?.join("\n")).toContain(
+      "direct_answer_repair_required",
+    );
+  });
+
   it("rewrites a comparison draft whose cited claims lose their subjects", async () => {
     const plan: KnowledgePlan = {
       subject: "产品对比",

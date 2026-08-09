@@ -110,7 +110,7 @@ export function acceptanceFactGroupCovered(
     if (
       termWords.length >= 2 &&
       termWords.every((word) => /^\p{Script=Han}+$/u.test(word)) &&
-      new RegExp(termWords.map(escapeRegExp).join("的?"), "u").test(compactAnswer)
+      orderedChineseConceptsCovered(compactAnswer, termWords)
     ) {
       return true;
     }
@@ -127,6 +127,11 @@ export function acceptanceFactGroupCovered(
     }
     return false;
   });
+}
+
+function orderedChineseConceptsCovered(answer: string, words: readonly string[]): boolean {
+  const semanticConnector = "[\\p{Script=Han}]{0,4}";
+  return new RegExp(words.map(escapeRegExp).join(semanticConnector), "u").test(answer);
 }
 
 function semanticAcceptanceEquivalent(answer: string, term: string): boolean {

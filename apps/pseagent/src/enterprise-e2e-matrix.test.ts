@@ -44,6 +44,19 @@ describe("enterprise E2E matrix", () => {
     )).toBe(false);
   });
 
+  it("accepts short Chinese modifiers between ordered concept words", () => {
+    expect(acceptanceFactGroupCovered(
+      "具体容量和权限边界必须按目标版本正文资料核实。",
+      "需要核对哪些边界？",
+      ["版本资料"],
+    )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "资料只描述产品能力，未说明适用版本。",
+      "需要核对哪些边界？",
+      ["版本资料"],
+    )).toBe(false);
+  });
+
   it("accepts a two-action inversion only when the user question uses that wording", () => {
     expect(acceptanceFactGroupCovered(
       "应先修复异常发信，再提交申请解除流程。",
