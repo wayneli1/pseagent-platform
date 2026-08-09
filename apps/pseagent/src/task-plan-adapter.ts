@@ -177,7 +177,6 @@ export function adaptTaskSpecToKnowledgePlan(
     ]);
     const primaryQuery = buildSemanticQuery([
       ...entitySourceTexts,
-      leadingQuestionContext,
       obligationSourceText,
       deliverableSourceText,
       comparisonContext,
@@ -219,12 +218,28 @@ export function adaptTaskSpecToKnowledgePlan(
           }];
     const aspectIds = evidenceAspects?.map((aspect) => aspect.id) ?? [];
     const queries = [primaryQuery];
+    if (leadingQuestionContext !== "") {
+      for (const contextual of [
+        buildSemanticQuery([primaryQuery, leadingQuestionContext]),
+        leadingQuestionContext,
+      ]) {
+        if (
+          queries.length < 3 &&
+          !queries.some((query) =>
+            normalizeSemanticText(query) === normalizeSemanticText(contextual)) &&
+          characterLength(contextual) <= MAX_QUERY_CHARACTERS
+        ) {
+          queries.push(contextual);
+        }
+      }
+    }
     if (requiredParallelContext !== "") {
       const contextual = buildSemanticQuery([
         primaryQuery,
         requiredParallelContext,
       ]);
       if (
+        queries.length < 3 &&
         normalizeSemanticText(contextual) !==
           normalizeSemanticText(primaryQuery) &&
         characterLength(contextual) <= MAX_QUERY_CHARACTERS
@@ -232,7 +247,7 @@ export function adaptTaskSpecToKnowledgePlan(
         queries.push(contextual);
       }
     }
-    if (safeLabel !== "") {
+    if (safeLabel !== "" && queries.length < 3) {
       const expanded = buildSemanticQuery([primaryQuery, safeLabel]);
       if (
         normalizeSemanticText(expanded) !==

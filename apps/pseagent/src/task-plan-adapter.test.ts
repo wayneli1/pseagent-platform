@@ -207,8 +207,12 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
 
     expect(result.plan.requirements[0]?.question)
       .toBe("怎样沿接收 过滤 路由 投递和信筒建立完整证据链");
-    expect(result.plan.requirements[0]?.queries[0]?.text)
-      .toContain("用户说外部邮件没收到");
+    expect(result.plan.requirements[0]?.queries.map((query) => query.text))
+      .toEqual([
+        "怎样沿接收 过滤 路由 投递和信筒建立完整证据链",
+        "怎样沿接收 过滤 路由 投递和信筒建立完整证据链 用户说外部邮件没收到",
+        "用户说外部邮件没收到",
+      ]);
   });
 
   it("restores named comparison context when a split obligation only says two sides", () => {
