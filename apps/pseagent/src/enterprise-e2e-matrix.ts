@@ -172,6 +172,10 @@ function semanticAcceptanceEquivalent(
       answer.includes("痛点") &&
       answer.includes("收益");
   }
+  if (term === "已经确定" || term === "已确定节点" || term === "推翻") {
+    return /(?:永久确定|标记为已确定|已经.{0,10}已确定|已被确定)|确定后.{0,24}(?:不再|不会再).{0,8}(?:更新|改变)/u
+      .test(answer);
+  }
   if (
     (term === "不能" || term === "无法") &&
     /(?:能不能|能否|是否可以|可不可以|可以吗)/u.test(question)

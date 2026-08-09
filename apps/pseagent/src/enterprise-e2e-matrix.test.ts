@@ -116,6 +116,11 @@ describe("enterprise E2E matrix", () => {
       "怎样用价值主张画布完成对齐？",
       ["Customer Profile", "客户画像"],
     )).toBe(true);
+    expect(acceptanceFactGroupCovered(
+      "算法会永久确定该节点的最短路径，之后不会再更新它。",
+      "为什么算法不能处理负权边？",
+      ["已经确定", "已确定节点", "推翻"],
+    )).toBe(true);
   });
 
   it("accepts a complete 20-case second-round matrix", () => {
