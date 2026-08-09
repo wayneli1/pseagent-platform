@@ -3351,6 +3351,9 @@ function titleCoverageScoreForValues(
     values.flatMap((value) => titleTerms(value, preserveProductTerms)),
   );
   const matches = [...terms].filter((term) => normalizedTitle.includes(term));
+  if (matches.length === 1 && matches[0] === normalizedTitle) {
+    return Math.min(matches[0].length, 4);
+  }
   if (matches.length < 2) return 0;
   return matches.reduce((score, term) => score + Math.min(term.length, 4), 0);
 }

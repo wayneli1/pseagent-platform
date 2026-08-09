@@ -2563,6 +2563,43 @@ describe("runKnowledgeAgent", () => {
       .toBe("wiki/concepts/coremail-client-pst-import.md");
   });
 
+  it("prioritizes an explicitly named single-term concept page", async () => {
+    const question = "客户要求继续降价，怎样用 BATNA 谈判？";
+    const query = "客户降价 BATNA 谈判";
+    const plan: KnowledgePlan = {
+      subject: question,
+      requirements: [{
+        id: "R1",
+        question,
+        ...plannedEvidence(query),
+        evidenceMode: "direct_only",
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        [query]: [
+          {
+            path: "wiki/synthesis/negotiation-guide.md",
+            title: "售前谈判场景应对手册",
+          },
+          {
+            path: "wiki/concepts/batna.md",
+            title: "BATNA",
+          },
+        ],
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/batna.md"),
+      final("complete", "先确定可执行的最佳替代方案，再设置保留点 [1]", [1]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(payloadAt(model, 0).requirementEvidence?.[0]?.candidates[0]?.path)
+      .toBe("wiki/concepts/batna.md");
+  });
+
   it("uses an intent verb together with a domain term to identify the primary page", async () => {
     const question = "Coremail 如何设计容灾和高可用";
     const plan: KnowledgePlan = {
