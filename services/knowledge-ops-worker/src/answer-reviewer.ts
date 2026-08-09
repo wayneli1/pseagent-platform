@@ -124,11 +124,12 @@ export function enforceDeterministicReview(
     !isRuntimeCitationNumberingDefect(defect)&&
     !isSupportedProjectDataFalsePositive(defect,projectData.diagnostics.length)&&
     !isDirectEvidenceSupportFalsePositive(defect,input.evidence)&&
+    !isExplicitSafeBoundaryFalsePositive(defect,input.answer)&&
     !isInactiveCardObligationDefect(defect,input));
   const defects=[...modelDefects,...projectData.defects];
   let forceFail=false;
   if(projectData.defects.some((defect)=>defect.severity==="critical"))forceFail=true;
-  if(input.answerStatus!=="answered"&&input.answerStatus!=="not_covered"){
+  if(input.answerStatus!=="answered"&&input.answerStatus!=="not_covered"&&input.answerStatus!=="partially_answered"){
     defects.push({category:"coverage_gap",severity:"major",summary:`回答状态为 ${input.answerStatus}，不能自动判为完整通过`,evidence:"回答交付元数据"});
   }
   if(hasUnavailableGovernedFamily(input.answerCardMatch)){
@@ -221,6 +222,17 @@ function isUnmappedCardActivation(activation:Record<string,unknown>|undefined):b
 
 function isRuntimeCitationNumberingDefect(defect:AnswerReviewResult["defects"][number]):boolean{
   return defect.category==="citation_gap"&&/(?:引用编号|引用序号|手工引用|未标注(?:引用)?编号|缺少(?:引用)?编号)/u.test(`${defect.summary} ${defect.evidence}`);
+}
+
+function isExplicitSafeBoundaryFalsePositive(
+  defect:AnswerReviewResult["defects"][number],
+  answer:string,
+):boolean{
+  if(defect.category!=="coverage_gap"&&defect.category!=="expression_gap")return false;
+  const diagnostic=`${defect.summary} ${defect.evidence}`;
+  const claimsBoundaryMissing=/(?:未明确|没有明确|未直接).{0,24}(?:不能|无法).{0,16}(?:确认|承诺|保证)|(?:无法确认).{0,24}(?:代替|不等于)|结论不清晰/u.test(diagnostic);
+  const answerHasBoundary=/(?:不能|无法).{0,24}(?:确认|作为|承诺|保证)/u.test(answer);
+  return claimsBoundaryMissing&&answerHasBoundary;
 }
 
 function isDirectEvidenceSupportFalsePositive(

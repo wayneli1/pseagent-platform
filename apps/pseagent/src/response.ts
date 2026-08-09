@@ -338,7 +338,9 @@ function formatGapSection(
     const nextActions = uniqueText(group.flatMap((gap) =>
       gap.nextAction === undefined ? [] : [gap.nextAction]));
     return [
-      `${index + 1}. 对象：${subjects.join("、")}`,
+      groups.length === 1
+        ? `对象：${subjects.join("、")}`
+        : `${index + 1}. 对象：${subjects.join("、")}`,
       `缺失信息：${missing.join("、")}`,
       boundaries.length === 0 ? "" : `已确认边界：${boundaries.join("；")}`,
       nextActions.length === 0 ? "" : `下一步验证：${nextActions.join("；")}`,
@@ -382,7 +384,13 @@ function formatProductEvidenceMaterialGuidance(
     materials.push("经产品、安全和法务审批的书面确认或合同条款模板，用于限定承诺主体、适用版本、截止日期、例外和有效期");
   }
   if (materials.length < 2) return "";
-  return `资料补充口径：若完整复核后正式知识库仍无直接覆盖，请补充${materials.join("；")}。`;
+  const commitmentBoundary = /(?:合同|承诺|保证|担保|SLA|招标应答)/iu.test(topic)
+    ? "结论边界：不能依据现有正式资料确认上述结论，也不能将其直接作为未经审批的合同或对外承诺。"
+    : "";
+  return [
+    commitmentBoundary,
+    `资料补充口径：若完整复核后正式知识库仍无直接覆盖，请补充${materials.join("；")}。`,
+  ].filter(Boolean).join("\n");
 }
 
 function uniqueText(values: readonly string[]): string[] {
