@@ -1,0 +1,253 @@
+{
+  "batchId": "E2E-20260810-005",
+  "userDisplayName": "Codex 自动测试 · E2E-20260810-005",
+  "model": "deepseek_v4_flash",
+  "cases": [
+    {
+      "id": "R5P01",
+      "matrixType": "professional_historical_evidence_boundary",
+      "question": "找一下 AIHUB 和 Coremail AI系统的功能区别：两者分别解决什么问题，主要功能、部署依赖和适用场景怎么对比？",
+      "session": "aihub-comparison",
+      "expectedScope": "professional",
+      "expectedTarget": "本地专业知识与历史内部资料联合核验；证据不足时只做部分回答并进入资料待补",
+      "expectedEvidence": [
+        "wiki/entities/coremail-ai-middleware.md",
+        "wiki/entities/Coremail-AI邮件系统.md"
+      ],
+      "requiredFactGroups": [
+        ["AIHUB", "大模型对接模块", "AI中间件"],
+        ["大语言模型", "LLM", "模型对接"],
+        ["Coremail AI邮件系统", "CMAI"],
+        ["资料未提供产品能力", "缺少完整功能矩阵", "不能直接完成一一对比", "需要补充正式资料"]
+      ],
+      "forbiddenClaims": [
+        "AIHUB就是Coremail AI邮件系统的全部功能",
+        "现有资料已经证明两者完全等价"
+      ],
+      "expectedBehavior": "给出有证据的定位差异；对 Coremail AI系统完整能力、版本、授权和部署边界明确标记资料不足，不猜测",
+      "baselineAssessment": "本地库只确认 AI 中间件定位与 CMAI 安装包入口；Coremail Wiki 有 AIHUB 部署及资源治理资料，但缺少完整的一一产品矩阵",
+      "expectedIssueCenter": true
+    },
+    {
+      "id": "R5P02",
+      "matrixType": "professional_version_capability_comparison",
+      "question": "Coremail XT6.0.16 高级版会议日程比基础版多了哪些能力？这些能力能否直接推断 Outlook、移动端也全部支持？",
+      "session": "calendar-edition",
+      "expectedScope": "professional",
+      "expectedTarget": "专业库普通检索",
+      "expectedEvidence": [
+        "wiki/comparisons/Coremail-XT6.0.16高级版与基础版会议日程能力对比.md"
+      ],
+      "requiredFactGroups": [
+        ["循环与例外事件", "循环事件"],
+        ["会议室忙闲查询", "冲突检查"],
+        ["Webadmin 服务等级", "服务等级开关"],
+        ["不能据此推断", "不同终端需单独确认", "不与客户端同步"]
+      ],
+      "forbiddenClaims": [
+        "所有终端均具备相同能力",
+        "基础版默认包含全部高级版能力"
+      ],
+      "expectedBehavior": "列出代表性高级能力，同时说明版本、服务等级和终端边界",
+      "baselineAssessment": "正式对比页可支持能力范围与终端边界，但不支持价格、容量或全终端承诺",
+      "expectedIssueCenter": false
+    },
+    {
+      "id": "R5P03",
+      "matrixType": "professional_card_colloquial",
+      "question": "为了让 POC 看起来更丰富，合同没买、现场也暂时测不了的功能，能不能先放进去演？",
+      "session": "poc-scope",
+      "expectedScope": "professional",
+      "expectedTarget": "复用现有 POC 范围控制答案卡",
+      "expectedCardId": "PRO-POC-UNPURCHASED-FUNCTIONS",
+      "expectedEvidence": [
+        "wiki/concepts/POC范围控制原则.md",
+        "wiki/queries/POC中客户未购买的功能是否应该纳入测试.md"
+      ],
+      "requiredFactGroups": [
+        ["不应纳入", "应该删除", "不应该"],
+        ["未购买功能", "合同没买"],
+        ["合同范围", "客户现状", "人工确认"],
+        ["展示不等于购买", "演示过不等于已购买", "避免扩大承诺"]
+      ],
+      "forbiddenClaims": [
+        "所有可演示功能都应进入POC",
+        "无需查看合同即可确定采购范围"
+      ],
+      "expectedBehavior": "明确默认不纳入并给出合同与客户现状的核验边界",
+      "baselineAssessment": "已批准答案卡和正式来源直接支持",
+      "expectedIssueCenter": false
+    },
+    {
+      "id": "R5P04",
+      "matrixType": "professional_deployment_mode_synthesis",
+      "question": "客户在本地自建 Coremail 和 Cloud SaaS 之间犹豫，怎么从数据控制、运维投入、定制集成、扩容和责任边界比较？现有资料能直接下成本与合规结论吗？",
+      "session": "deployment-mode",
+      "expectedScope": "professional",
+      "expectedTarget": "专业库普通检索",
+      "expectedEvidence": [
+        "wiki/comparisons/Coremail邮件系统本地化部署与Cloud SaaS模式对比.md"
+      ],
+      "requiredFactGroups": [
+        ["企业自有机房", "本地化部署"],
+        ["服务商提供", "无需自行投入人力和物力"],
+        ["数据控制", "运维能力", "定制需求", "系统集成", "服务责任边界"],
+        ["不能直接做成本", "不能直接做合规结论", "资料未提供价格或SLA"]
+      ],
+      "forbiddenClaims": [
+        "SaaS一定更便宜",
+        "本地部署天然满足全部合规要求"
+      ],
+      "expectedBehavior": "给出选择维度和来源明确差异，不把概念页扩大为成本、性能或合规承诺",
+      "baselineAssessment": "单一正式对比页足以回答原则，但项目结论仍需客户输入",
+      "expectedIssueCenter": false
+    },
+    {
+      "id": "R5P05",
+      "matrixType": "professional_multi_page_ai_rollout",
+      "question": "金融客户想先小范围上线 Coremail AI，灰度拓扑、用户控制、故障隔离、验收指标和不能直接承诺的数字应该怎么设计？",
+      "session": "ai-rollout",
+      "expectedScope": "professional",
+      "expectedTarget": "专业库多页综合检索",
+      "expectedEvidence": [
+        "wiki/concepts/coremail-ai-模块灰度部署架构.md",
+        "wiki/concepts/AI邮件试用效果评估与人工回退.md"
+      ],
+      "requiredFactGroups": [
+        ["两台前端", "部分前端节点"],
+        ["nginx 代理", "nginx"],
+        ["服务等级", "COS"],
+        ["负载均衡中摘除", "故障隔离"],
+        ["处理量", "准确率", "人工处理耗时", "审计记录"],
+        ["不能作为通用产品承诺", "待核实宣称", "样本规模"]
+      ],
+      "forbiddenClaims": [
+        "这是所有客户都能达到的通用指标",
+        "两台前端故障会影响全部用户"
+      ],
+      "expectedBehavior": "综合拓扑、灰度用户、隔离、人工回退与指标证据边界，区分案例方法论和产品承诺",
+      "baselineAssessment": "多页正式资料互补，可完整回答设计原则但不能承诺 98% 或 30%",
+      "expectedIssueCenter": false
+    },
+    {
+      "id": "R5G06",
+      "matrixType": "general_card_colloquial_boundary",
+      "question": "我们只知道客户口头说有兴趣，领导却要我今天报 80% 赢率；我该怎么汇报，接下来核验什么？",
+      "session": "win-rate",
+      "expectedScope": "general",
+      "expectedTarget": "复用现有赢率证据答案卡",
+      "expectedCardId": "GEN-OPPORTUNITY-WIN-RATE-EVIDENCE",
+      "expectedEvidence": [
+        "wiki/queries/客户信息不足时能否给出精确赢率.md"
+      ],
+      "requiredFactGroups": [
+        ["不能", "不要", "不应"],
+        ["已确认事实", "假设", "未知信息"],
+        ["业务问题", "决策角色", "预算", "竞争规则", "关键日期"],
+        ["最小验证动作", "责任人", "日期"]
+      ],
+      "forbiddenClaims": [
+        "销售乐观判断可以代替客户证据",
+        "口头有兴趣就能证明80%赢率"
+      ],
+      "expectedBehavior": "拒绝伪精确赢率，改用证据、假设、缺口和下一步动作汇报",
+      "baselineAssessment": "已批准答案卡直接覆盖该场景",
+      "expectedIssueCenter": false
+    },
+    {
+      "id": "R5G07",
+      "matrixType": "general_card_conflict_boundary",
+      "question": "客户在会上发火，还要求我立刻认错并承诺全部整改；我下一句该怎么说，怎样既降温又守住边界？",
+      "session": "conflict",
+      "expectedScope": "general",
+      "expectedTarget": "复用现有 NVC 冲突回应答案卡",
+      "expectedCardId": "GEN-CONFLICT-NVC-RESPONSE",
+      "expectedEvidence": [
+        "wiki/queries/客户情绪激动或指责时如何回应.md"
+      ],
+      "requiredFactGroups": [
+        ["观察", "事实"],
+        ["感受", "影响", "需要"],
+        ["具体请求", "可观察行动", "邀请回应"],
+        ["理解不等于同意", "行为边界"],
+        ["替代路径", "升级"]
+      ],
+      "forbiddenClaims": [
+        "同理就等于同意对方全部要求",
+        "保持同理意味着无限让步"
+      ],
+      "expectedBehavior": "给出可直接使用的一句话和后续结构，同时保留行为、承诺与升级边界",
+      "baselineAssessment": "已批准答案卡与 NVC 方法页可完整支持",
+      "expectedIssueCenter": false
+    },
+    {
+      "id": "R5N08",
+      "matrixType": "normal_direct_rewrite",
+      "question": "请把“先确认目标，再核对证据，最后给出边界”改写成一句更简洁的话。",
+      "session": "direct-rewrite",
+      "expectedScope": "normal",
+      "expectedTarget": "直接回答，不检索知识库",
+      "expectedEvidence": [],
+      "requiredFactGroups": [
+        ["目标"],
+        ["证据"],
+        ["边界"]
+      ],
+      "forbiddenClaims": [
+        "Coremail"
+      ],
+      "expectedBehavior": "用一句简洁中文改写且不附知识库引用",
+      "baselineAssessment": "通用写作任务，无需企业内部证据",
+      "expectedIssueCenter": false
+    },
+    {
+      "id": "R5H09",
+      "matrixType": "professional_context_follow_up",
+      "question": "如果那两台灰度前端都异常，具体怎么隔离？哪些用户理论上不应受影响，哪些结论还得现场验证？",
+      "session": "ai-rollout",
+      "useConversationContext": true,
+      "expectedScope": "professional",
+      "expectedTarget": "使用 R5P05 真实问答上下文并回到专业证据",
+      "expectedEvidence": [
+        "wiki/concepts/coremail-ai-模块灰度部署架构.md"
+      ],
+      "requiredFactGroups": [
+        ["负载均衡中摘除", "摘除"],
+        ["非灰度用户", "大部分用户不受影响"],
+        ["现场验证", "故障演练", "实际可用性"]
+      ],
+      "forbiddenClaims": [
+        "所有用户一定完全不受影响",
+        "无需演练即可保证秒级恢复"
+      ],
+      "expectedBehavior": "正确解析两台前端的指代，说明资料中的隔离原则并限定现场演练结论",
+      "baselineAssessment": "依赖上一轮真实回答与灰度架构页",
+      "expectedIssueCenter": false
+    },
+    {
+      "id": "R5H10",
+      "matrixType": "context_topic_switch_to_normal",
+      "question": "换个话题：什么是接口幂等性，为什么自动重试时重要？",
+      "session": "ai-rollout",
+      "useConversationContext": true,
+      "expectedScope": "normal",
+      "expectedTarget": "识别话题切换并直接回答，不继承 Coremail AI 答案卡或证据",
+      "expectedEvidence": [],
+      "requiredFactGroups": [
+        ["重复请求", "多次执行"],
+        ["结果一致", "只生效一次"],
+        ["防止重复创建", "避免重复扣款", "避免重复副作用"],
+        ["自动重试"]
+      ],
+      "forbiddenClaims": [
+        "Coremail AI",
+        "灰度前端"
+      ],
+      "expectedBehavior": "contextUsed 应为 false，scope 为 normal，无内部知识引用",
+      "baselineAssessment": "与上一题主题完全不同，用于验证旧上下文不污染新问题",
+      "expectedIssueCenter": false
+    }
+  ],
+  "supplementCases": [],
+  "postPublishCases": []
+}

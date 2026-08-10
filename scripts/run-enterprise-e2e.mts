@@ -31,8 +31,12 @@ const matrixPath = configuredMatrixPath === undefined || configuredMatrixPath ==
   : configuredMatrixPath;
 const firstRoundMatrix = JSON.parse(await readFile(firstRoundMatrixPath, "utf8")) as AcceptanceMatrix;
 const isStrictSecondRound = matrixPath !== firstRoundMatrixPath;
+const configuredPhase1Count = Number(process.env.E2E_PHASE1_COUNT ?? (isStrictSecondRound ? "20" : "19"));
+if (!Number.isSafeInteger(configuredPhase1Count) || configuredPhase1Count < 1) {
+  throw new Error("enterprise_e2e_phase1_count_invalid");
+}
 const matrix = validateAcceptanceMatrix(JSON.parse(await readFile(matrixPath, "utf8")), {
-  phase1Count: isStrictSecondRound ? 20 : 19,
+  phase1Count: configuredPhase1Count,
   supplementCount: isStrictSecondRound ? 0 : 4,
   postPublishCount: isStrictSecondRound ? 0 : 5,
   forbiddenQuestions: isStrictSecondRound
