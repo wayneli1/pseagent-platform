@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.js";
 import type { PseAnswerExecution } from "../apps/pseagent/src/answer-service.js";
-import { answerResultSchema } from "../apps/pseagent/src/contracts.js";
+import { answerResultSchema, type AnswerResult } from "../apps/pseagent/src/contracts.js";
 import { createPseMcpServer, formatMcpText } from "../apps/pseagent/src/mcp-server.js";
 import { missingExplicitComparisonLabels } from "../apps/pseagent/src/comparison-question.js";
 import {
@@ -150,34 +150,65 @@ try {
       expectedIssueCenter: testCase.expectedIssueCenter,
     };
     process.stdout.write(`${JSON.stringify({ type: "case_started", expectation })}\n`);
-    const executionIndex = executions.length;
     const startedAt = new Date().toISOString();
     const started = performance.now();
-    let rawResult: Awaited<ReturnType<Client["callTool"]>>;
-    try {
-      rawResult = await client.callTool(
-        {
-          name: "pse_answer",
-          arguments: {
-            question: testCase.question,
-            ...(conversationContext === undefined ? {} : { conversationContext }),
+    let execution: PseAnswerExecution | undefined;
+    let result: AnswerResult | undefined;
+    let failure: string | undefined;
+    let attemptCount = 0;
+    const retryStopReasons: string[] = [];
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const executionIndex = executions.length;
+      let rawResult: Awaited<ReturnType<Client["callTool"]>>;
+      try {
+        rawResult = await client.callTool(
+          {
+            name: "pse_answer",
+            arguments: {
+              question: testCase.question,
+              ...(conversationContext === undefined ? {} : { conversationContext }),
+            },
           },
-        },
-        undefined,
-        { timeout: 330_000, maxTotalTimeout: 330_000 },
-      );
-    } catch (error) {
+          undefined,
+          { timeout: 330_000, maxTotalTimeout: 330_000 },
+        );
+      } catch (error) {
+        failure = error instanceof Error ? `${error.name}:${error.message}` : "unknown_error";
+        break;
+      }
+      const candidate = executions[executionIndex];
+      if (candidate === undefined || executions.length !== executionIndex + 1) {
+        throw new Error(`pse_answer_execution_correlation_failed:${testCase.id}`);
+      }
+      const candidateResult = answerResultSchema.parse(rawResult.structuredContent);
+      attemptCount = attempt;
+      if (
+        candidateResult.status === "temporarily_unavailable" &&
+        candidate.retryable &&
+        attempt === 1
+      ) {
+        retryStopReasons.push(candidate.stopReason);
+        process.stdout.write(`${JSON.stringify({
+          type: "case_retrying",
+          testId: testCase.id,
+          attempt,
+          stopReason: candidate.stopReason,
+        })}\n`);
+        continue;
+      }
+      execution = candidate;
+      result = candidateResult;
+      break;
+    }
+    if (failure !== undefined) {
       const completedAt = new Date().toISOString();
-      const failure = error instanceof Error ? `${error.name}:${error.message}` : "unknown_error";
-      records.push({ expectation, conversationContext: conversationContext ?? "", startedAt, completedAt, failure });
+      records.push({ expectation, conversationContext: conversationContext ?? "", startedAt, completedAt, failure, attemptCount, retryStopReasons });
       process.stdout.write(`${JSON.stringify({ type: "case_failed", testId: testCase.id, failure, completedAt })}\n`);
       continue;
     }
-    const execution = executions[executionIndex];
-    if (execution === undefined || executions.length !== executionIndex + 1) {
-      throw new Error(`pse_answer_execution_correlation_failed:${testCase.id}`);
+    if (execution === undefined || result === undefined) {
+      throw new Error(`pse_answer_retry_exhausted_without_result:${testCase.id}`);
     }
-    const result = answerResultSchema.parse(rawResult.structuredContent);
     const completedAt = new Date().toISOString();
     const latencyMs = Math.round(performance.now() - started);
     const match = execution.answerCardMatch;
@@ -257,6 +288,8 @@ try {
       startedAt,
       completedAt,
       latencyMs,
+      attemptCount,
+      retryStopReasons,
       requestId: execution.requestId,
       actualScope: result.scope,
       answerStatus: result.status,
