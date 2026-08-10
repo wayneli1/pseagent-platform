@@ -38,3 +38,8 @@ export {
   internalPublicAnswerTerms,
   sanitizeFormalAnswer,
 } from "./public-answer.js";
+export {
+  explicitComparisonSubjects,
+  isDirectComparisonQuestion,
+  missingExplicitComparisonLabels,
+} from "./comparison-question.js";

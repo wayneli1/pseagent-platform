@@ -7,8 +7,11 @@ import {
   AnswerCardRegistry,
   DefaultAnswerCardMatcher,
   collectionEnumerationIssue,
+  explicitComparisonSubjects,
   hashAnswerCardIdentifier,
+  isDirectComparisonQuestion,
   missingExplicitFrameworkItems,
+  missingExplicitComparisonLabels,
   missingStrictFrameworkBoundaries,
   internalPublicAnswerTerms,
   type AnswerCardCatalog,
@@ -124,7 +127,7 @@ export function enforceDeterministicReview(
   modelResult:AnswerReviewResult,
 ):AnswerReviewResult{
   const projectData=evaluateProjectDataAnswer({question:input.question,answer:input.answer,evidence:input.evidence});
-  const modelDefects=modelResult.defects.filter((defect)=>
+  const modelDefects=modelResult.defects.map((defect)=>normalizeEvidenceBoundedComparisonDefect(defect,input)).filter((defect)=>
     !isRuntimeCitationNumberingDefect(defect)&&
     !isSupportedProjectDataFalsePositive(defect,projectData.diagnostics.length)&&
     !isDirectEvidenceSupportFalsePositive(defect,input.evidence)&&
@@ -132,7 +135,7 @@ export function enforceDeterministicReview(
     !isClaimedMissingDimensionFalsePositive(defect,input.answer)&&
     !isAcknowledgedEvidenceGapFalsePositive(defect,input)&&
     !isInactiveCardObligationDefect(defect,input));
-  const defects=[...modelDefects,...projectData.defects];
+  const defects=[...evidenceBoundedComparisonDefects(input),...modelDefects,...projectData.defects];
   let forceFail=false;
   if(projectData.defects.some((defect)=>defect.severity==="critical"))forceFail=true;
   if(input.answerStatus!=="answered"&&input.answerStatus!=="not_covered"&&input.answerStatus!=="partially_answered"){
@@ -250,6 +253,32 @@ function isInactiveCardObligationDefect(
   if(activeIds===undefined)return false;
   const mentioned=[...diagnostic.matchAll(/\bO\d+\b/giu)].map((match)=>match[0]!.toUpperCase());
   return mentioned.length>0&&mentioned.every((id)=>!activeIds.has(id));
+}
+
+function evidenceBoundedComparisonDefects(
+  input:IndependentAnswerReviewInput,
+):AnswerReviewResult["defects"]{
+  return isEvidenceBoundedIncompleteComparison(input)?[evidenceBoundedComparisonDefect()]:[];
+}
+
+function normalizeEvidenceBoundedComparisonDefect(
+  defect:AnswerReviewResult["defects"][number],
+  input:IndependentAnswerReviewInput,
+):AnswerReviewResult["defects"][number]{
+  if(!isEvidenceBoundedIncompleteComparison(input))return defect;
+  if(defect.category!=="planning_gap"&&defect.category!=="coverage_gap")return defect;
+  return evidenceBoundedComparisonDefect();
+}
+
+function evidenceBoundedComparisonDefect():AnswerReviewResult["defects"][number]{
+  return{category:"coverage_gap",severity:"major",summary:"正式资料不足，当前只能完成安全的部分对比",evidence:"两个点名对象均已出现；完整功能、部署依赖或适用场景矩阵仍需补充正式资料。"};
+}
+
+function isEvidenceBoundedIncompleteComparison(input:IndependentAnswerReviewInput):boolean{
+  if(input.answerStatus!=="partially_answered"||!isDirectComparisonQuestion(input.question))return false;
+  const subjects=explicitComparisonSubjects(input.question);
+  if(subjects.length!==2||missingExplicitComparisonLabels(input.question,input.answer).length>0)return false;
+  return /(?:现有正式资料仅部分覆盖|正式(?:知识库|资料).{0,32}(?:缺少|不足|未覆盖)|完整.{0,16}(?:功能|部署|场景|能力).{0,16}(?:矩阵|资料).{0,16}(?:缺少|不足|未提供)|其余部分暂无法确认)/u.test(input.answer);
 }
 
 function isUnmappedCardActivation(activation:Record<string,unknown>|undefined):boolean{
