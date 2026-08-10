@@ -1088,12 +1088,6 @@ describe("AnswerService", () => {
     },
     {
       scope: "professional",
-      status: "partially_answered",
-      answer: "部分正式回答",
-      references: [formalReference],
-    },
-    {
-      scope: "professional",
       status: "temporarily_unavailable",
       answer: "知识问答服务暂时不可用，请稍后重试。",
       references: [],
@@ -1111,6 +1105,35 @@ describe("AnswerService", () => {
       expect(historicalProvider.answer).not.toHaveBeenCalled();
     },
   );
+
+  it("supplements a verified partial Coremail answer without replacing formal evidence", async () => {
+    const primary: AnswerResult = {
+      scope: "professional",
+      status: "partially_answered",
+      answer: "部分正式回答",
+      references: [formalReference],
+    };
+    const historicalProvider = {
+      answer: vi.fn(async () => displayedHistoricalLookup),
+      close: vi.fn(async () => undefined),
+    } satisfies HistoricalAnswerProvider;
+    const { service } = createProfessionalService(primary, historicalProvider);
+
+    const execution = await service.answerDetailed("Coremail 两个产品的能力对比");
+
+    expect(execution).toMatchObject({
+      draftCoverage: ["partial"],
+      verifiedCoverage: ["partial"],
+      historicalGateReason: "eligible",
+      historicalAttempted: true,
+      historicalUsed: true,
+      result: {
+        ...primary,
+        historicalAnswer,
+      },
+    });
+    expect(historicalProvider.answer).toHaveBeenCalledOnce();
+  });
 
   it("exposes verified formal-support counts without evaluating the historical gate", async () => {
     const primary: AnswerResult = {

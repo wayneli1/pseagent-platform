@@ -1017,8 +1017,13 @@ export class AnswerService {
     readonly domainsUsed?: readonly KnowledgeDomain[];
     readonly evidenceMetadata?: ExecutionEvidenceMetadata;
   }): Promise<PseAnswerExecution> {
+    const hasVerifiedCoverageGap = input.trace.verifiedCoverage?.some(
+      (coverage) => coverage !== "complete",
+    ) === true;
+    const canConsiderHistorical = input.primary.status === "not_covered" ||
+      (input.primary.status === "partially_answered" && hasVerifiedCoverageGap);
     if (
-      input.primary.status !== "not_covered" ||
+      !canConsiderHistorical ||
       this.dependencies.historicalProvider === undefined ||
       (input.domainsUsed !== undefined && !isPureProfessional(input.domainsUsed))
     ) {
@@ -1032,7 +1037,11 @@ export class AnswerService {
         input.evidenceMetadata,
       );
     }
-    const historicalGate = evaluateHistoricalGate(input.question, input.trace);
+    const historicalGate = evaluateHistoricalGate(
+      input.question,
+      input.trace,
+      input.primary.status,
+    );
     recordDiagnostic(input.trace, {
       event: "historical_gate",
       eligible: historicalGate === "eligible",
@@ -1604,10 +1613,19 @@ function sumRequirementCounts(
 function evaluateHistoricalGate(
   question: string,
   trace: OutcomeTrace,
+  primaryStatus: AnswerResult["status"],
 ): Extract<DiagnosticEvent, { event: "historical_gate" }>["reason"] {
   if (trace.structuralFallback) return "structural_fallback";
   if (!trace.formalCoverageVerified) return "formal_verification_incomplete";
-  if (trace.verifiedHasFormalSupport) return "formal_support_present";
+  const hasVerifiedCoverageGap = trace.verifiedCoverage?.some(
+    (coverage) => coverage !== "complete",
+  ) === true;
+  if (
+    (primaryStatus === "partially_answered" && !hasVerifiedCoverageGap) ||
+    (primaryStatus === "not_covered" && trace.verifiedHasFormalSupport)
+  ) {
+    return "formal_support_present";
+  }
   if (!/coremail/iu.test(question)) return "question_not_explicit_coremail";
   return "eligible";
 }
