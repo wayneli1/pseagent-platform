@@ -329,6 +329,12 @@ function evaluate(
     { id: "scope", passed: execution.result.scope === testCase.expectedScope, expected: testCase.expectedScope, actual: execution.result.scope },
     { id: "card", passed: testCase.expectedCardId === undefined || expectedCardIds.some((cardId) => cardIds.includes(cardId)), expected: testCase.expectedCardId ?? "none_required", actual: cardIds },
     {
+      id: "card_activation",
+      passed: testCase.expectedCardId === undefined || execution.answerCardActivation?.activated === true,
+      expected: testCase.expectedCardId === undefined ? "not_required" : "activated",
+      actual: execution.answerCardActivation ?? "not_attempted",
+    },
+    {
       id: "comparison_subjects",
       passed: missingExplicitComparisonLabels(testCase.question, visibleAnswer).length === 0,
       expected: "all_explicit_subjects_addressed",

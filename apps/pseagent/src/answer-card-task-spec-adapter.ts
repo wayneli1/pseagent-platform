@@ -423,6 +423,11 @@ function canCompileWholeFamily(
     !match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)))) {
     return false;
   }
+  // Once every explicit request clause is covered by one reviewed card family,
+  // the governed contract is more stable than the model's stochastic task
+  // decomposition. Keep the old overlay check only for questions from which no
+  // explicit request clause can be recovered.
+  if (requestClauses.length > 0) return true;
   return taskSpec.deliverables.every((deliverable) =>
     !deliverable.required || deliverable.obligations.every((obligation) =>
       !obligation.required || match.bindings.some((binding) =>

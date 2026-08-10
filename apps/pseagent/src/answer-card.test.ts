@@ -1076,6 +1076,71 @@ describe("answer card TaskSpec adapter", () => {
     ]);
   });
 
+  it("uses the reviewed family contract when explicit clauses are covered despite a noisy model task", () => {
+    const question = "信息不全时如何汇报精确赢率，接下来要核验哪些业务、决策、预算和时间证据？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "机会汇报", role: "subject", sourceText: question }],
+      deliverables: [{
+        id: "D1",
+        label: "内部沟通形式",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "选择内部沟通形式",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "customer_input",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "选择口头或书面汇报形式",
+        }],
+      }],
+    });
+    const binding = (
+      id: string,
+      label: string,
+      evidencePolicy: "direct" | "synthesis",
+      requiredConcepts: readonly string[],
+    ): Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] => ({
+      obligationId: id,
+      cardObligationId: id,
+      cardId: "GEN-OPPORTUNITY-WIN-RATE-EVIDENCE",
+      label,
+      domain: "presales-general",
+      domains: ["presales-general"],
+      required: true,
+      evidencePolicy,
+      requiredConcepts,
+      forbiddenClaims: [],
+      preferredEvidencePaths: [],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "c".repeat(64),
+      familyId: "opportunity_win_rate_evidence",
+      bindings: [
+        binding("O1", "拒绝把缺少客户证据的主观判断包装成精确赢率", "direct", ["精确赢率", "汇报"]),
+        binding("O2", "列出影响机会判断且仍需核验的业务、决策、资源和时间证据", "synthesis", ["业务", "决策", "预算", "时间证据"]),
+      ],
+      cardIdHashes: ["d".repeat(64)],
+      expectedRevisions: { "presales-general": generalRevision },
+      candidateCount: 1,
+    };
+
+    const adapted = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    });
+
+    expect(adapted).toMatchObject({ activated: true });
+    if (!adapted.activated) return;
+    expect(adapted.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2"]);
+  });
+
   it("rejects an ambiguous family binding instead of attaching it to the first task", () => {
     const question = "比较甲方案和乙方案的部署差异。";
     const taskSpec = taskSpecSchema.parse({
