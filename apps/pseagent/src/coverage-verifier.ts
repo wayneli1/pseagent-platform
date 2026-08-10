@@ -119,6 +119,17 @@ export function notCoveredRequirementAnswer(question: string): string {
   return `现有资料未覆盖“${target}”，无法根据正式知识库确认。`;
 }
 
+export function partiallyCoveredRequirementAnswer(question: string): string {
+  const target = [...question.trim()]
+    .slice(0, 160)
+    .join("")
+    .replace(/[。！？!?；;：:]+$/u, "");
+  if (!target) {
+    return "现有正式资料仅能覆盖部分内容；以上仅保留有证据支持的结论，其余部分暂无法确认。";
+  }
+  return `现有正式资料仅部分覆盖以下问题：${target}。以上仅保留有证据支持的结论，其余部分暂无法确认。`;
+}
+
 export async function verifyKnowledgeCoverage(
   input: CoverageVerifierInput,
 ): Promise<FinalAction> {
@@ -137,6 +148,8 @@ export async function verifyKnowledgeCoverage(
   });
   const modelResponseSchema = coverageVerificationModelResponseSchema(input.draft);
   let verified: CoverageVerificationAction | undefined;
+  let conservativePartialFallback: CoverageVerificationAction | undefined;
+  let usedConservativePartialFallback = false;
   let lastInvalidReason = "invalid_model_payload";
   let structuralFailureCount = 0;
   let recoverableDecisionFailureCount = 0;
@@ -170,6 +183,17 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
       if (invalidReason === undefined) {
         verified = normalizedCandidate;
         break;
+      }
+      if (
+        invalidReason.startsWith("explicit_scenario_choice_omitted:") &&
+        validateVerification(
+          input,
+          normalizedCandidate,
+          targetSegments,
+          { allowPartialComparisonGap: true },
+        ) === undefined
+      ) {
+        conservativePartialFallback = normalizedCandidate;
       }
       lastInvalidReason = invalidReason;
       if (isRecoverableDecisionShapeReason(invalidReason)) {
@@ -233,6 +257,17 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
           verified = fallback;
           break;
         }
+        if (
+          invalidReason.startsWith("explicit_scenario_choice_omitted:") &&
+          validateVerification(
+            input,
+            fallback,
+            targetSegments,
+            { allowPartialComparisonGap: true },
+          ) === undefined
+        ) {
+          conservativePartialFallback = fallback;
+        }
         lastInvalidReason = invalidReason;
         input.onInvalid?.({
           attempt: 3 + fallbackAttempt,
@@ -253,6 +288,11 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
         });
       }
     }
+  }
+
+  if (verified === undefined && conservativePartialFallback !== undefined) {
+    verified = conservativePartialFallback;
+    usedConservativePartialFallback = true;
   }
 
   if (verified === undefined) {
@@ -282,18 +322,28 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
     input.evidence,
     input.draft,
   );
-  const materialized = enforceAspectCoverage(
+  let materialized = enforceAspectCoverage(
     materializeVerification(
       input.draft,
       verified,
       targetSegments,
       input.plan,
       input.question,
+      { appendPartialComparisonGap: usedConservativePartialFallback },
     ),
     input.plan,
     summaries,
     input.draft,
   );
+  if (usedConservativePartialFallback) {
+    materialized = {
+      ...materialized,
+      requirements: materialized.requirements.map((requirement, index) =>
+        verified.requirements[index]?.targetDecision === "retain_partial"
+          ? { ...requirement, coverage: "partial" as const }
+          : requirement),
+    };
+  }
   input.onVerified?.(summaries.map(stripAspectIds));
   input.onReport?.(coverageVerificationReport(materialized, summaries));
   return materialized;
@@ -566,6 +616,55 @@ export function inferCoverageVerificationReport(
   };
 }
 
+export function reconcileDeterministicSingleAspectCoverage(
+  action: FinalAction,
+  plan: KnowledgePlan,
+  report: CoverageVerificationReport,
+  evidence: readonly CoverageEvidenceDocument[],
+): FinalAction {
+  let changed = false;
+  const requirements = action.requirements.map((requirement, index) => {
+    const planned = plan.requirements[index];
+    const summary = report.summaries[index];
+    if (
+      requirement.coverage !== "partial" ||
+      planned === undefined ||
+      summary === undefined ||
+      planned.id !== requirement.id ||
+      summary.id !== requirement.id ||
+      planned.evidenceAspects.length !== 1 ||
+      summary.coveredAspectCount !== 0 ||
+      summary.missingAspectCount !== 1 ||
+      summary.retainedDirectSegmentCount + summary.retainedSynthesizedSegmentCount === 0 ||
+      !/(?:不能|不可|不得|不应|不宜).{0,20}(?:承诺|宣称|对外)|(?:证据|资料|数据).{0,12}(?:边界|不足|缺失|口径)/u.test(
+        planned.question,
+      ) ||
+      hasExplicitCoverageGap(requirement.answer)
+    ) {
+      return requirement;
+    }
+    const aspect = planned.evidenceAspects[0]!;
+    if (!matchingPlannedAspectIds(planned, requirement.answer).includes(aspect.id)) {
+      return requirement;
+    }
+    const citations = new Set(requirement.citations);
+    const retainedVerifierCitations = new Set(
+      summary.claimDecisions
+        .filter((claim) => claim.status !== "removed")
+        .flatMap((claim) => claim.citations),
+    );
+    const hasBoundCitedEvidence = evidence.some((document) =>
+      document.requirementId === requirement.id &&
+      (citations.has(document.citation) ||
+        retainedVerifierCitations.has(document.citation)) &&
+      document.aspectIds?.includes(aspect.id));
+    if (!hasBoundCitedEvidence) return requirement;
+    changed = true;
+    return { ...requirement, coverage: "complete" as const };
+  });
+  return changed ? { ...action, requirements } : action;
+}
+
 function coverageVerificationModelResponseSchema(draft: FinalAction) {
   return z.preprocess(
     (value) => normalizeModelReasons(value, draft),
@@ -817,6 +916,7 @@ function validateVerification(
     readonly id: string;
     readonly segments: readonly TargetSegment[];
   }[],
+  options: { readonly allowPartialComparisonGap?: boolean } = {},
 ): string | undefined {
   if (
     input.draft.requirements.length !== input.plan.requirements.length ||
@@ -943,7 +1043,12 @@ function validateVerification(
         retainedAnswer,
       );
       if (missingChoiceLabels.length > 0) {
-        return `explicit_scenario_choice_omitted:${decision.id}:${missingChoiceLabels.join(",")}`;
+        if (!(
+          options.allowPartialComparisonGap === true &&
+          decision.targetDecision === "retain_partial"
+        )) {
+          return `explicit_scenario_choice_omitted:${decision.id}:${missingChoiceLabels.join(",")}`;
+        }
       }
     }
     for (const relatedIndex of decision.retainedRelatedContextIndexes) {
@@ -971,6 +1076,7 @@ function materializeVerification(
   }[],
   plan: KnowledgePlan,
   originalQuestion: string,
+  options: { readonly appendPartialComparisonGap?: boolean } = {},
 ): FinalAction {
   const requirements = verified.requirements.map((decision, index) => {
     const draftRequirement = draft.requirements[index]!;
@@ -990,16 +1096,22 @@ function materializeVerification(
       const retained = decision.retainedTargetSegmentIndexes.map(
         (segmentIndex) => segments[segmentIndex]!,
       );
+      const retainedAnswer = addSynthesisDisclosureIfNeeded(
+        materializeRetainedTargetSegments(
+          segments,
+          decision.retainedTargetSegmentIndexes,
+        ),
+        hasSynthesis,
+      );
+      const question = plan.requirements[index]?.question ?? "";
       return {
         id: draftRequirement.id,
         coverage: "partial" as const,
-        answer: addSynthesisDisclosureIfNeeded(
-          materializeRetainedTargetSegments(
-            segments,
-            decision.retainedTargetSegmentIndexes,
-          ),
-          hasSynthesis,
-        ),
+        answer: options.appendPartialComparisonGap === true
+          ? [retainedAnswer, partiallyCoveredRequirementAnswer(question)]
+              .filter(Boolean)
+              .join("\n")
+          : retainedAnswer,
         citations: stableUnique(retained.flatMap((segment) => segment.citations)),
       };
     }
@@ -1102,11 +1214,22 @@ function verificationSummaries(
       : matchingPlannedAspectIds(plannedRequirement, coverageText).filter(
         (aspectId) => supportedAspectIds.has(aspectId),
       );
-    const coveredAspectIdSet = new Set(
-      decision.coveredAspectIds === undefined
+    // Aspect ids are retrieval navigation metadata, not independent evidence.
+    // For a single-aspect requirement, recover an accidentally omitted id only
+    // when both the actually retained text and one of its cited documents are
+    // bound to that aspect. Multi-aspect omissions stay authoritative because
+    // they may represent a real partial result.
+    const deterministicSingleAspectRecovery =
+      plannedAspectIds.length === 1 &&
+        decision.coveredAspectIds !== undefined &&
+        decision.coveredAspectIds.length === 0 &&
+        lexicallyCoveredAspectIds.length === 1
         ? lexicallyCoveredAspectIds
-        : decision.coveredAspectIds,
-    );
+        : [];
+    const coveredAspectIdSet = new Set([
+      ...(decision.coveredAspectIds ?? lexicallyCoveredAspectIds),
+      ...deterministicSingleAspectRecovery,
+    ]);
     const coveredAspectIds = plannedAspectIds.filter((aspectId) =>
       coveredAspectIdSet.has(aspectId));
     const missingAspectIds = plannedAspectIds.filter((aspectId) =>
@@ -1243,6 +1366,27 @@ function enforceAspectCoverage(
     if (summary === undefined || plannedAspectCount === 0) {
       return requirement;
     }
+    const materializedHasExplicitGap = hasExplicitCoverageGap(requirement.answer);
+    const draftHasExplicitGap = hasExplicitCoverageGap(
+      draft.requirements[index]?.answer ?? "",
+    );
+    if (
+      requirement.coverage !== "none" &&
+      (materializedHasExplicitGap || draftHasExplicitGap)
+    ) {
+      return {
+        ...requirement,
+        coverage: "partial" as const,
+        answer: materializedHasExplicitGap
+          ? requirement.answer
+          : [
+              requirement.answer,
+              partiallyCoveredRequirementAnswer(
+                plan.requirements[index]?.question ?? "",
+              ),
+            ].filter(Boolean).join("\n"),
+      };
+    }
     const retainedSegmentCount = summary.retainedDirectSegmentCount +
       summary.retainedSynthesizedSegmentCount;
     const allPlannedAspectsCovered = retainedSegmentCount > 0 &&
@@ -1294,6 +1438,11 @@ function enforceAspectCoverage(
       ]),
     ),
   };
+}
+
+function hasExplicitCoverageGap(answer: string): boolean {
+  return /(?:未(?:检索到|找到|提供|覆盖|明确|提及|包含)|无法(?:确认|判断|核实|给出)|待(?:确认|补充|核实)|资料(?:不足|缺失|不完整)|缺少(?:资料|信息|完整))/u
+    .test(answer);
 }
 
 function addSynthesisDisclosureIfNeeded(

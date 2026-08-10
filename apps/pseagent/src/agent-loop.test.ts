@@ -170,6 +170,7 @@ function fakeSession(options: {
   readonly failedReadPaths?: readonly string[];
   readonly failedReadAttempts?: number;
   readonly pageType?: string;
+  readonly pageTitles?: Readonly<Record<string, string>>;
   readonly pageSources?: readonly string[];
   readonly pageBodies?: Readonly<Record<string, string>>;
 } = {}) {
@@ -225,7 +226,7 @@ function fakeSession(options: {
     return {
       project: "coremail-professional" as const,
       path,
-      title: path,
+      title: options.pageTitles?.[path] ?? path,
       type: options.pageType ?? "guide",
       tags: [],
       related: [],
@@ -1190,6 +1191,71 @@ describe("runKnowledgeAgent", () => {
       candidateCount: 3,
       readCandidateCount: 0,
     }]);
+  });
+
+  it("preloads the first candidate for each named comparison subject", async () => {
+    const question = "Alpha 和 Beta 有哪些区别？";
+    const plan: KnowledgePlan = {
+      subject: question,
+      requirements: [{
+        id: "R1",
+        question,
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "两侧差异",
+          terms: ["Alpha", "Beta", "区别"],
+        }],
+        queries: [
+          { text: "Alpha Beta 区别", aspectIds: ["A1"] },
+        ],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        Alpha: [{ path: "wiki/entities/alpha.md", title: "Alpha" }],
+        Beta: [{ path: "wiki/entities/beta.md", title: "Beta" }],
+        "Alpha Beta 区别": [{
+          path: "wiki/comparisons/alpha-vs-beta.md",
+          title: "Alpha 与 Beta 区别",
+        }],
+      },
+      pageTitles: {
+        "wiki/entities/alpha.md": "Alpha",
+        "wiki/entities/beta.md": "Beta",
+        "wiki/comparisons/alpha-vs-beta.md": "Alpha 与 Beta 区别",
+      },
+    });
+    const model = scriptedAgentModel([
+      final(
+        "complete",
+        "Alpha 的资料边界待确认，Beta 使用服务模式 [2]。",
+        [2],
+      ),
+      final(
+        "complete",
+        "Alpha 使用本地模式 [1]，Beta 使用服务模式 [2]。",
+        [1, 2],
+      ),
+    ]);
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question,
+    });
+
+    expect(result.status).toBe("answered");
+    expect(model.calls).toBe(2);
+    expect(session.readPage).toHaveBeenNthCalledWith(
+      1,
+      "wiki/entities/alpha.md",
+      undefined,
+    );
+    expect(session.readPage).toHaveBeenNthCalledWith(
+      2,
+      "wiki/entities/beta.md",
+      undefined,
+    );
   });
 
   it("prioritizes an exact direct-evidence title over a broader multi-aspect hit", async () => {

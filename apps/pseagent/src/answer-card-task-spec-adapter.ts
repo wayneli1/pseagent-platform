@@ -3,6 +3,7 @@ import type {
   AnswerCardMatch,
   AnswerCardMatchBinding,
 } from "./answer-card-matcher.js";
+import { analyzeObligationSource } from "./obligation-semantics.js";
 import type { ResolvedQuestion } from "./question-resolver.js";
 import { knowledgePlanSchema, type KnowledgePlan } from "./contracts.js";
 import {
@@ -86,24 +87,14 @@ function compileSingleCardAnswerCardTaskSpec(input: {
       required: true,
       sourceText: question,
       obligations: input.match.bindings.map((binding, index) => ({
+        ...compiledCardObligationPolicy(
+          binding,
+          question,
+          input.match.matchType === "family" && !input.resolvedQuestion.contextUsed,
+        ),
         id: `O${index + 1}`,
         label: binding.label,
         targetEntityIds: ["E1"],
-        evidencePolicy: binding.evidencePolicy,
-        evidenceCondition: binding.evidencePolicy === "customer_input"
-          ? {
-              inputState: "missing" as const,
-              ambiguous: false,
-              conflictDetected: false,
-              freshness: "not_assessed" as const,
-            }
-          : {
-              inputState: "not_applicable" as const,
-              ambiguous: false,
-              conflictDetected: false,
-              freshness: "not_assessed" as const,
-            },
-        domains: taskDomainsForBinding(binding),
         required: binding.required,
         sourceText: question,
       })),
@@ -164,6 +155,12 @@ export function adaptAnswerCardToTaskSpec(input: {
   }
   if (input.match.matchType === "exact") {
     return compileExactAnswerCardTaskSpec({
+      match: input.match,
+      resolvedQuestion: input.resolvedQuestion,
+    });
+  }
+  if (canCompileWholeFamily(input.match, input.resolvedQuestion, input.taskSpec)) {
+    return compileSingleCardAnswerCardTaskSpec({
       match: input.match,
       resolvedQuestion: input.resolvedQuestion,
     });
@@ -410,6 +407,29 @@ function canCompileContextualFamily(
     match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)));
 }
 
+function canCompileWholeFamily(
+  match: Exclude<AnswerCardMatch, { matchType: "none" }>,
+  resolvedQuestion: ResolvedQuestion,
+  taskSpec: TaskSpec,
+): boolean {
+  if (!(match.matchType === "family" &&
+    match.confidence === "high" &&
+    !resolvedQuestion.contextUsed &&
+    new Set(match.bindings.map((binding) => binding.cardId)).size === 1)) return false;
+  const requestClauses = extractExplicitQuestionSignals(
+    resolvedQuestion.standaloneQuestion,
+  ).requestClauses;
+  if (requestClauses.some((clause) =>
+    !match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)))) {
+    return false;
+  }
+  return taskSpec.deliverables.every((deliverable) =>
+    !deliverable.required || deliverable.obligations.every((obligation) =>
+      !obligation.required || match.bindings.some((binding) =>
+        bindingCanOverlay(binding, obligation) &&
+        obligationSimilarity(binding, obligation) > 0)));
+}
+
 export function applyAnswerCardPoliciesToPlan(input: {
   readonly plan: KnowledgePlan;
   readonly obligationIds: readonly string[];
@@ -532,6 +552,46 @@ function createCardObligation(
           conflictDetected: source.evidenceCondition?.conflictDetected ?? false,
           freshness: source.evidenceCondition?.freshness ?? "not_assessed",
         },
+    domains: taskDomainsForBinding(binding),
+  };
+}
+
+function compiledCardObligationPolicy(
+  binding: AnswerCardMatchBinding,
+  sourceText: string,
+  allowAdvisorySynthesis: boolean,
+): Pick<
+  TaskSpec["deliverables"][number]["obligations"][number],
+  "evidencePolicy" | "evidenceCondition" | "domains"
+> {
+  const currentCaseInputRequested = binding.evidencePolicy === "customer_input" &&
+    analyzeObligationSource(sourceText).customerInputEligible;
+  if (
+    allowAdvisorySynthesis &&
+    binding.evidencePolicy === "customer_input" &&
+    !currentCaseInputRequested
+  ) {
+    return {
+      evidencePolicy: "synthesis",
+      evidenceCondition: {
+        inputState: "not_applicable",
+        ambiguous: false,
+        conflictDetected: false,
+        freshness: "not_assessed",
+      },
+      domains: [...binding.domains] as KnowledgeDomain[],
+    };
+  }
+  return {
+    evidencePolicy: binding.evidencePolicy,
+    evidenceCondition: {
+      inputState: binding.evidencePolicy === "customer_input"
+        ? "missing"
+        : "not_applicable",
+      ambiguous: false,
+      conflictDetected: false,
+      freshness: "not_assessed",
+    },
     domains: taskDomainsForBinding(binding),
   };
 }

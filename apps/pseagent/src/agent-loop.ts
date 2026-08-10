@@ -19,6 +19,7 @@ import {
   coverageVerificationReport,
   inferCoverageVerificationReport,
   notCoveredRequirementAnswer,
+  reconcileDeterministicSingleAspectCoverage,
   verifyKnowledgeCoverage,
   type CoverageEvidenceDocument,
   type CoverageVerificationReport,
@@ -65,6 +66,7 @@ import {
   violatesAnswerCardForbiddenClaims,
 } from "./answer-card-policy.js";
 import {
+  explicitComparisonSubjects,
   isDirectComparisonQuestion,
   missingExplicitComparisonLabels,
 } from "./comparison-question.js";
@@ -72,7 +74,9 @@ import {
   hasBrokenCollectionEnumeration,
   missingDirectQueryOperationalConditions,
   missingExplicitFrameworkItems,
+  missingRequestedEvidenceBoundaries,
   missingStrictFrameworkBoundaries,
+  requestedEvidenceBoundaries,
   strictFrameworkBoundaries,
   usesExplicitFrameworkCollection,
   verifierOrphanedOrderedSequence,
@@ -260,6 +264,7 @@ async function runKnowledgeAgentCore(
   const state = createAgentState(input);
   prepareGovernedEvidenceCandidates(input, state);
   await executeSeedSearches(input, state);
+  await preloadComparisonSubjectEvidence(input, state);
   await preloadGovernedEvidence(input, state);
   const governedEvidencePreloaded = governedEvidenceReady(input, state);
   const hasRetrievalRequirement = [...state.requirements.keys()].some(
@@ -521,6 +526,7 @@ async function runKnowledgeAgentCore(
         const projected = applyGroundedStrictFrameworkBoundaries(
           normalizedAction,
           state,
+          input.plan,
         );
         if (pendingFrameworkBoundaryRepairs(projected, state).length > 0) {
           return fallbackUnavailable(input, "invalid_final");
@@ -779,6 +785,7 @@ async function runKnowledgeAgentCore(
         const projected = applyGroundedStrictFrameworkBoundaries(
           auditedAction,
           state,
+          input.plan,
         );
         if (
           pendingStructuredCoverageRepairs(
@@ -826,9 +833,25 @@ async function runKnowledgeAgentCore(
         ),
         verificationReport,
       );
-      if (reconciledAction !== auditedAction || projectedAfterVerification) {
-        auditedAction = reconciledAction;
-        if (projectedAfterVerification) {
+      const answerCardReconciled = reconciledAction !== auditedAction;
+      auditedAction = reconciledAction;
+      const deterministicCoverageAction = verificationReport === undefined
+        ? auditedAction
+        : reconcileDeterministicSingleAspectCoverage(
+          auditedAction,
+          input.plan,
+          verificationReport,
+          readEvidence(state),
+        );
+      const deterministicCoverageReconciled =
+        deterministicCoverageAction !== auditedAction;
+      auditedAction = deterministicCoverageAction;
+      if (
+        answerCardReconciled ||
+        projectedAfterVerification ||
+        deterministicCoverageReconciled
+      ) {
+        if (projectedAfterVerification || deterministicCoverageReconciled) {
           try {
             verificationReport = inferCoverageVerificationReport(
               auditedAction,
@@ -852,6 +875,7 @@ async function runKnowledgeAgentCore(
           type: "answer_card_coverage_reconciled",
           partialRequirements: missingCardConcepts.map((item) => item.requirementId),
           groundedProjection: projectedAfterVerification,
+          deterministicCoverageReconciled,
         });
       }
       if (violatesAnswerCardForbiddenClaims(
@@ -974,6 +998,57 @@ async function preloadCoverageUnitEvidence(
   );
   if (action === undefined) return;
   await executeToolAction(action, input, state);
+}
+
+async function preloadComparisonSubjectEvidence(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+): Promise<void> {
+  for (const requirementState of state.requirements.values()) {
+    if (!isDirectComparisonRequirement(requirementState.requirement)) continue;
+    const subjects = explicitComparisonSubjects(requirementState.requirement.question);
+    for (const subject of subjects) {
+      if (!hasRemainingReadCapacity(requirementState)) break;
+      const normalizedSubject = normalizeQuery(subject);
+      const candidate = [...requirementState.candidatePaths.values()]
+        .filter((item) =>
+          !requirementState.readPaths.has(item.path) &&
+          !hasUnresolvedReadFailure(requirementState, item.path))
+        .flatMap((item) => {
+          const ranking = item.rankings
+            .filter((entry) => normalizeQuery(entry.query) === normalizedSubject)
+            .sort((left, right) =>
+              left.rank - right.rank || right.score - left.score)[0];
+          return ranking === undefined ? [] : [{ item, ranking }];
+        })
+        .sort((left, right) =>
+          left.ranking.rank - right.ranking.rank ||
+          right.ranking.score - left.ranking.score ||
+          left.item.path.localeCompare(right.item.path))[0]?.item;
+      if (candidate === undefined) continue;
+      try {
+        await executeRead(
+          {
+            action: "tool",
+            tool: "kb.read_page",
+            input: {
+              requirementId: requirementState.requirement.id,
+              path: candidate.path,
+            },
+          },
+          input,
+          state,
+          requirementState,
+        );
+      } catch {
+        observe(state, {
+          type: "tool_unavailable",
+          requirementId: requirementState.requirement.id,
+          tool: "kb.read_page",
+        });
+      }
+    }
+  }
 }
 
 function prepareGovernedEvidenceCandidates(
@@ -1995,7 +2070,78 @@ async function executeRead(
     reference.index,
     content,
   );
+  await preloadEntityRelatedEvidence(
+    input,
+    state,
+    requirementState,
+    page,
+  );
   return { page, citation: reference.index, content };
+}
+
+async function preloadEntityRelatedEvidence(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+  requirementState: RequirementState,
+  page: KnowledgePage,
+): Promise<void> {
+  if (
+    input.plan.retrievalStrategy !== "coverage_units" ||
+    page.type !== "entity" ||
+    !hasRemainingReadCapacity(requirementState) ||
+    requirementState.graphActions >= MAX_GRAPH_ACTIONS_PER_REQUIREMENT
+  ) {
+    return;
+  }
+  let relatedPaths: readonly string[];
+  try {
+    relatedPaths = await executeGraph({
+      action: "tool",
+      tool: "kb.graph",
+      input: {
+        requirementId: requirementState.requirement.id,
+        path: page.path,
+        topK: 6,
+      },
+    }, input, state, requirementState);
+  } catch {
+    observe(state, {
+      type: "tool_unavailable",
+      requirementId: requirementState.requirement.id,
+      tool: "kb.graph",
+    });
+    return;
+  }
+  const candidates = relatedPaths.filter((path) =>
+    !/\/entities\//u.test(path) &&
+    requirementState.candidatePaths.has(path) &&
+    !requirementState.readPaths.has(path) &&
+    !evidencePathAlreadyRead(state, path) &&
+    !hasUnresolvedReadFailure(requirementState, path));
+  for (const path of candidates.slice(0, 2)) {
+    if (!hasRemainingReadCapacity(requirementState)) break;
+    try {
+      await executeRead({
+        action: "tool",
+        tool: "kb.read_page",
+        input: {
+          requirementId: requirementState.requirement.id,
+          path,
+        },
+      }, input, state, requirementState);
+    } catch {
+      observe(state, {
+        type: "tool_unavailable",
+        requirementId: requirementState.requirement.id,
+        tool: "kb.read_page",
+      });
+    }
+  }
+}
+
+function evidencePathAlreadyRead(state: AgentState, path: string): boolean {
+  return [...state.evidenceDocuments.values()].some((documents) =>
+    [...documents.values()].some((document) => document.path === path));
 }
 
 function recordReadFailure(
@@ -2245,7 +2391,7 @@ async function executeGraph(
   input: KnowledgeAgentInput,
   state: AgentState,
   requirementState: RequirementState,
-): Promise<void> {
+): Promise<readonly string[]> {
   const sourceCandidate = requirementState.candidatePaths.get(action.input.path);
   if (
     requirementState.graphActions >= MAX_GRAPH_ACTIONS_PER_REQUIREMENT ||
@@ -2256,7 +2402,7 @@ async function executeGraph(
       requirementId: requirementState.requirement.id,
       path: action.input.path,
     });
-    return;
+    return [];
   }
   if (
     input.plan.retrievalStrategy === "coverage_units" &&
@@ -2267,7 +2413,7 @@ async function executeGraph(
       requirementId: requirementState.requirement.id,
       path: action.input.path,
     });
-    return;
+    return [];
   }
   requirementState.graphActions += 1;
   let result: KnowledgeGraphResult;
@@ -2295,6 +2441,7 @@ async function executeGraph(
   requirementState.noGainRounds = gained ? 0 : requirementState.noGainRounds + 1;
   if (requirementState.noGainRounds >= 2) requirementState.searchStopped = true;
   observeCandidates(state, requirementState, "graph_result", input.trace);
+  return result.hits.map((hit) => hit.path);
 }
 
 function mergeSearchResults(
@@ -3341,12 +3488,39 @@ function pendingComparisonSubjectRepairs(
       return [];
     }
     return hasAmbiguousComparisonClaim(result.answer) ||
+        missesComparisonSubjectAnchorCitation(result, requirementState, state) ||
         missingExplicitComparisonLabels(
           requirementState.requirement.question,
           result.answer,
         ).length > 0
       ? [result.id]
       : [];
+  });
+}
+
+function missesComparisonSubjectAnchorCitation(
+  result: FinalAction["requirements"][number],
+  requirementState: RequirementState,
+  state: AgentState,
+): boolean {
+  const subjects = explicitComparisonSubjects(requirementState.requirement.question);
+  if (subjects.length < 2) return false;
+  const documents = state.evidenceDocuments.get(result.id);
+  if (documents === undefined) return false;
+  return subjects.some((subject) => {
+    const normalizedSubject = normalizeQuery(subject);
+    const anchor = [...requirementState.candidatePaths.values()]
+      .filter((candidate) =>
+        candidate.rankings.some((ranking) =>
+          normalizeQuery(ranking.query) === normalizedSubject && ranking.rank === 1) &&
+        titleCoverageScoreForValues(candidate.title, [subject], true) > 0)
+      .sort((left, right) => left.path.localeCompare(right.path))[0];
+    if (anchor === undefined || !requirementState.directReadPaths.has(anchor.path)) {
+      return false;
+    }
+    const citation = [...documents.entries()].find(([, document]) =>
+      document.path === anchor.path)?.[0];
+    return citation !== undefined && !result.citations.includes(citation);
   });
 }
 
@@ -3498,23 +3672,35 @@ function applyGroundedOperationalConditions(
 function applyGroundedStrictFrameworkBoundaries(
   action: FinalAction,
   state: AgentState,
+  plan: KnowledgePlan,
 ): FinalAction {
   let changed = false;
+  const missingRequested = explicitlyRequestsEvidenceBoundaries(plan)
+    ? missingRequestedEvidenceBoundaries(
+      action.requirements.map((requirement) => requirement.answer).join("\n"),
+      readEvidence(state),
+    )
+    : [];
   const requirements = action.requirements.map((requirement) => {
     if (requirement.coverage === "none") return requirement;
     const documents = [...(
       state.evidenceDocuments.get(requirement.id)?.entries() ?? []
     )];
     const evidence = documents.map(([, document]) => document);
-    const missing = missingStrictFrameworkBoundaries(
+    const missingStrict = missingStrictFrameworkBoundaries(
       requirement.answer,
       evidence,
     );
+    const missingEvidence = missingRequested.filter((boundary) =>
+      documents.some(([, document]) =>
+        requestedEvidenceBoundaries([document]).includes(boundary)));
+    const missing = [...new Set([...missingStrict, ...missingEvidence])];
     if (missing.length === 0) return requirement;
 
     const additions = missing.flatMap((boundary) => {
       const citation = documents.find(([, document]) =>
-        strictFrameworkBoundaries([document]).includes(boundary)
+        strictFrameworkBoundaries([document]).includes(boundary) ||
+        requestedEvidenceBoundaries([document]).includes(boundary)
       )?.[0];
       return citation === undefined
         ? []
@@ -3582,6 +3768,20 @@ function pendingStructuredCoverageRepairs(
   const draftById = new Map(
     draft.requirements.map((requirement) => [requirement.id, requirement] as const),
   );
+  const missingRequested = explicitlyRequestsEvidenceBoundaries(plan)
+    ? missingRequestedEvidenceBoundaries(
+      audited.requirements.map((requirement) => requirement.answer).join("\n"),
+      readEvidence(state),
+    )
+    : [];
+  const requestedBoundaryOwners = new Set(
+    [...state.evidenceDocuments.entries()].flatMap(([requirementId, documents]) =>
+      [...documents.values()].some((document) =>
+          requestedEvidenceBoundaries([document]).some((boundary) =>
+            missingRequested.includes(boundary)))
+        ? [requirementId]
+        : []),
+  );
   return audited.requirements.flatMap((requirement, index) => {
     const planned = plan.requirements[index];
     const original = draftById.get(requirement.id);
@@ -3594,6 +3794,8 @@ function pendingStructuredCoverageRepairs(
         missingExplicitFrameworkItems(requirement.answer, documents).length > 0) ||
       (requirement.coverage !== "none" &&
         missingStrictFrameworkBoundaries(requirement.answer, documents).length > 0) ||
+      (requirement.coverage !== "none" &&
+        requestedBoundaryOwners.has(requirement.id)) ||
       (original !== undefined && verifierOrphanedOrderedSequence(
         original.answer,
         requirement.answer,
@@ -3608,6 +3810,14 @@ function pendingStructuredCoverageRepairs(
       ? [requirement.id]
       : [];
   });
+}
+
+const EXPLICIT_EVIDENCE_BOUNDARY_QUESTION_PATTERN =
+  /(?:不能|不可|不应|不得|不宜|避免).{0,20}(?:承诺|宣称|对外)|(?:哪些|什么).{0,12}(?:数字|指标).{0,12}(?:不能|不可|不应|不得).{0,8}(?:承诺|宣称)|(?:证据|资料|数据).{0,12}(?:边界|不足|缺失|口径)/u;
+
+function explicitlyRequestsEvidenceBoundaries(plan: KnowledgePlan): boolean {
+  return plan.requirements.some((requirement) =>
+    EXPLICIT_EVIDENCE_BOUNDARY_QUESTION_PATTERN.test(requirement.question));
 }
 
 function requiresStructuredCompleteness(question: string): boolean {
@@ -3920,6 +4130,12 @@ function expandSeedQueries(
     aspectIds: Set<string>;
     plannedQueryIndexes: Set<number>;
   }>();
+  if (isDirectComparisonRequirement(requirement)) {
+    const aspectIds = requirement.evidenceAspects.map((aspect) => aspect.id);
+    for (const subject of explicitComparisonSubjects(requirement.question)) {
+      addExpandedQuery(expanded, subject, aspectIds, []);
+    }
+  }
   for (const [plannedQueryIndex, query] of requirement.queries.entries()) {
     const queryText = enrichSynthesisQuery(
       requirement,

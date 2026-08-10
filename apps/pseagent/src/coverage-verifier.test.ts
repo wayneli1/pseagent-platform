@@ -11,6 +11,7 @@ import {
   inferCoverageVerificationReport,
   InvalidCoverageVerificationError,
   notCoveredRequirementAnswer,
+  reconcileDeterministicSingleAspectCoverage,
   type CoverageVerifierInput,
   verifyKnowledgeCoverage,
 } from "./coverage-verifier.js";
@@ -236,6 +237,110 @@ describe("verifyKnowledgeCoverage", () => {
     expect(completeJson).toHaveBeenCalledTimes(2);
     expect(result.requirements[0]?.coverage).toBe("complete");
     expect(result.requirements[0]?.answer).toContain("CNAME");
+  });
+
+  it("degrades repeated comparison-label omissions to an explicit partial answer", async () => {
+    const plan: KnowledgePlan = {
+      subject: "AI platform comparison",
+      requirements: [{
+        id: "R1",
+        question: "AIHUB 和 CMAI 各自适合什么场景？",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "scenario comparison",
+          terms: ["AIHUB", "CMAI", "scenario"],
+        }],
+        queries: [{ text: "AIHUB CMAI scenarios", aspectIds: ["A1"] }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "CMAI is suitable for the verified mail scenario [1].\nAIHUB details are not established.",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => {
+      if (input.schemaDescription === "pse_whole_requirement_verification") {
+        throw new InvalidModelPayloadError("invalid_schema:test_fallback");
+      }
+      return input.schema.parse({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain_partial",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
+          reason: "partial_support",
+        }],
+      });
+    });
+
+    const result = await verifyKnowledgeCoverage({
+      question: plan.subject,
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "CMAI scenario",
+        path: "wiki/entities/cmai.md",
+        content: "CMAI is used in the mail scenario.",
+      }],
+      model: { completeJson } as unknown as ModelClient,
+    });
+
+    expect(completeJson).toHaveBeenCalledTimes(5);
+    expect(result.requirements[0]?.coverage).toBe("partial");
+    expect(result.requirements[0]?.answer).toContain("CMAI");
+    expect(result.requirements[0]?.answer).toContain("AIHUB");
+    expect(result.requirements[0]?.answer).toContain("仅部分覆盖");
+  });
+
+  it("does not upgrade an answer with an explicit evidence gap to complete", async () => {
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "partial",
+        answer: "已确认现有模块能力 [1]。\n正式知识库未检索到 AIHUB 的完整资料，无法确认其余能力。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      action: "verify",
+      requirements: [{
+        id: "R1",
+        targetDecision: "retain",
+        retainedTargetSegmentIndexes: [0, 1],
+        synthesizedTargetSegmentIndexes: [],
+        retainedRelatedContextIndexes: [],
+        coveredAspectIds: ["A1"],
+        reason: "direct_support",
+      }],
+    }));
+
+    const result = await verifyKnowledgeCoverage({
+      question: singleRequirementPlan.subject,
+      plan: singleRequirementPlan,
+      draft,
+      evidence,
+      model: { completeJson } as unknown as ModelClient,
+    });
+
+    expect(result.requirements[0]?.coverage).toBe("partial");
+    expect(result.requirements[0]?.answer).toContain("无法确认");
   });
 
   it.each(["；", "。"])(
@@ -487,6 +592,102 @@ describe("verifyKnowledgeCoverage", () => {
     });
 
     expect(result.requirements[0]).toEqual(draft.requirements[0]);
+  });
+
+  it("recovers an omitted aspect id from a retained cited segment", async () => {
+    const result = await verifyKnowledgeCoverage({
+      question: "是否支持目标协议",
+      plan: singleRequirementPlan,
+      draft: {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: "正式资料确认支持目标协议[1]。",
+          citations: [1],
+        }],
+        citations: [1],
+      },
+      evidence: [{
+        ...evidence[0],
+        aspectIds: ["A1"],
+      }],
+      model: scriptedVerifier({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: [],
+          reason: "direct_support",
+        }],
+      } as CoverageVerificationAction),
+    });
+
+    expect(result.requirements[0]?.coverage).toBe("complete");
+  });
+
+  it("recomputes a safe single-aspect partial after final grounded repair", () => {
+    const boundaryPlan: KnowledgePlan = {
+      subject: "产品指标承诺",
+      requirements: [{
+        id: "R1",
+        question: "哪些数字不能直接承诺",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "不能直接承诺的数字",
+          terms: ["不能直接承诺的数字", "承诺边界"],
+        }],
+        queries: [{ text: "产品指标承诺边界", aspectIds: ["A1"] }],
+      }],
+    };
+    const action: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "partial",
+        answer: "正式资料说明这些是不能直接承诺的数字[1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const baseReport = inferCoverageVerificationReport(
+      action,
+      boundaryPlan,
+    );
+    const missingReport = {
+      ...baseReport,
+      summaries: [{
+        ...baseReport.summaries[0]!,
+        retainedDirectSegmentCount: 1,
+        coveredAspectCount: 0,
+        missingAspectCount: 1,
+        coveredAspectIds: [],
+        missingAspectIds: ["A1"],
+      }],
+    };
+
+    expect(reconcileDeterministicSingleAspectCoverage(
+      action,
+      boundaryPlan,
+      missingReport,
+      [{ ...evidence[0]!, aspectIds: ["A1"] }],
+    ).requirements[0]?.coverage).toBe("complete");
+    expect(reconcileDeterministicSingleAspectCoverage(
+      {
+        ...action,
+        requirements: [{
+          ...action.requirements[0]!,
+          answer: "正式资料仍未覆盖不能直接承诺的数字，无法确认[1]。",
+        }],
+      },
+      boundaryPlan,
+      missingReport,
+      [{ ...evidence[0]!, aspectIds: ["A1"] }],
+    ).requirements[0]?.coverage).toBe("partial");
   });
 
   it("audits an uncited factual segment, removes it, and keeps its structural heading", async () => {

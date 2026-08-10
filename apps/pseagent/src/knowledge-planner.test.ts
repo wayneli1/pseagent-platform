@@ -294,6 +294,72 @@ describe("ModelKnowledgePlanner", () => {
     ]);
   });
 
+  it("adds bounded subject-anchor queries for a named product comparison", async () => {
+    const question = "找一下 AIHUB 和 Coremail AI系统的功能区别：分别解决什么问题？";
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: question,
+      requirements: [{
+        id: "R1",
+        question,
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "功能区别",
+          terms: ["功能区别"],
+        }],
+        queries: [{ text: "AI 平台功能对比", aspectIds: ["A1"] }],
+      }],
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({ ...plannerInput(), question });
+
+    expect(result.requirements[0]?.queries.map((query) => query.text)).toEqual([
+      "AIHUB",
+      "Coremail AI系统",
+      "AI 平台功能对比 功能区别",
+    ]);
+  });
+
+  it("keeps both subject anchors when the model splits comparison dimensions", async () => {
+    const question = "AIHUB 和 Coremail AI系统的功能、部署有什么区别？";
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => input.schema.parse({
+      subject: question,
+      requirements: ["功能", "部署"].map((dimension, index) => ({
+        id: `R${index + 1}`,
+        question: `${dimension}情况`,
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: dimension,
+          terms: [dimension],
+        }],
+        queries: [{ text: `AI 平台${dimension}`, aspectIds: ["A1"] }],
+      })),
+    }));
+    const planner = new ModelKnowledgePlanner({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await planner.plan({ ...plannerInput(), question });
+
+    expect(result.requirements).toHaveLength(2);
+    for (const requirement of result.requirements) {
+      expect(requirement.queries.slice(0, 2).map((query) => query.text)).toEqual([
+        "AIHUB",
+        "Coremail AI系统",
+      ]);
+    }
+  });
+
   it("preserves model planning for a migration question without product-specific injection", async () => {
     const completeJson = vi.fn(async (
       input: Parameters<ModelClient["completeJson"]>[0],

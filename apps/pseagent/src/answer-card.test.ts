@@ -981,6 +981,101 @@ describe("answer card TaskSpec adapter", () => {
     ]);
   });
 
+  it("uses one whole-card contract for a fully governed independent family", () => {
+    const question = "为了让 POC 看起来更丰富，合同没买、现场也暂时测不了的功能，能不能先放进去演？";
+    const direct = (id: string) => ({
+      id,
+      label: "判断 POC 演示范围",
+      targetEntityIds: ["E1"],
+      evidencePolicy: "direct" as const,
+      domains: ["coremail-professional" as const],
+      required: true,
+      sourceText: question,
+    });
+    const first = direct("O1");
+    const second = direct("O2");
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "POC 演示范围", role: "subject", sourceText: question }],
+      deliverables: [{
+        id: "D1",
+        label: "是否纳入演示",
+        kind: "fact",
+        required: true,
+        sourceText: question,
+        obligations: [first],
+      }, {
+        id: "D2",
+        label: "演示范围建议",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: [second],
+      }],
+    });
+    const binding = (
+      id: string,
+      label: string,
+      evidencePolicy: "direct" | "customer_input",
+      concepts: readonly string[],
+    ): Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] => ({
+      obligationId: id,
+      cardObligationId: id,
+      cardId: "PRO-POC-UNPURCHASED-FUNCTIONS",
+      label,
+      domain: "coremail-professional",
+      domains: ["coremail-professional"],
+      required: true,
+      evidencePolicy,
+      requiredConcepts: concepts,
+      forbiddenClaims: [],
+      preferredEvidencePaths: ["wiki/concepts/POC范围控制原则.md"],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "c".repeat(64),
+      familyId: "POC-SCOPE-FAMILY",
+      bindings: [
+        binding("O1", "明确默认不纳入未购买或无法测试的功能", "direct", [
+          "POC范围控制",
+          "未购买功能",
+        ]),
+        binding("O2", "提示具体功能必须结合合同和客户现状人工确认", "customer_input", [
+          "合同范围",
+          "客户现状",
+          "人工确认",
+        ]),
+      ],
+      cardIdHashes: ["d".repeat(64)],
+      expectedRevisions: { "coremail-professional": professionalRevision },
+      candidateCount: 1,
+    };
+
+    const adapted = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    });
+
+    expect(adapted).toMatchObject({ activated: true });
+    if (!adapted.activated) return;
+    expect(adapted.taskSpec.deliverables).toHaveLength(1);
+    expect(adapted.taskSpec.deliverables[0]?.obligations).toEqual([
+      expect.objectContaining({
+        id: "O1",
+        evidencePolicy: "direct",
+        domains: ["coremail-professional"],
+      }),
+      expect.objectContaining({
+        id: "O2",
+        evidencePolicy: "synthesis",
+        evidenceCondition: expect.objectContaining({ inputState: "not_applicable" }),
+        domains: ["coremail-professional"],
+      }),
+    ]);
+  });
+
   it("rejects an ambiguous family binding instead of attaching it to the first task", () => {
     const question = "比较甲方案和乙方案的部署差异。";
     const taskSpec = taskSpecSchema.parse({

@@ -184,6 +184,63 @@ export function missingStrictFrameworkBoundaries(
     !strictFrameworkBoundaryCovered(normalizedAnswer, boundary));
 }
 
+export function missingRequestedEvidenceBoundaries(
+  answer: string,
+  documents: readonly { readonly content: string }[],
+): readonly string[] {
+  const normalizedAnswer = normalizeFrameworkText(answer);
+  return requestedEvidenceBoundaries(documents).filter((boundary) =>
+    !requestedEvidenceBoundaryCovered(normalizedAnswer, boundary));
+}
+
+const REQUESTED_EVIDENCE_BOUNDARY_PATTERN =
+  /(?:缺少|未提供|未说明|没有).{0,100}(?:样本|统计|定义|基准|验证|证据|报告|范围|版本)|(?:待核实|不能|不得|不应|无法).{0,80}(?:承诺|宣称|指标|结论|标准|依据)/u;
+const DEICTIC_EVIDENCE_BOUNDARY_PATTERN = /(?:这些|上述|该等)(?:数字|指标|结果|数据|宣称)/u;
+const EVIDENCE_LIMITATION_DETAIL_PATTERN =
+  /(?:样本规模|统计周期|准确率定义|指标定义|基准线|独立验证|待核实宣称)/u;
+const NON_COMMITMENT_BOUNDARY_PATTERN =
+  /(?:不能|不可|不应|不得|无法).{0,24}(?:通用|普遍|对外|产品|正式)?.{0,12}(?:承诺|宣称|指标|标准)|待核实宣称/u;
+
+function requestedEvidenceBoundaryCovered(
+  normalizedAnswer: string,
+  boundary: string,
+): boolean {
+  const normalizedBoundary = normalizeFrameworkText(boundary);
+  if (
+    EVIDENCE_LIMITATION_DETAIL_PATTERN.test(normalizedBoundary) &&
+    NON_COMMITMENT_BOUNDARY_PATTERN.test(normalizedBoundary)
+  ) {
+    return EVIDENCE_LIMITATION_DETAIL_PATTERN.test(normalizedAnswer) &&
+      NON_COMMITMENT_BOUNDARY_PATTERN.test(normalizedAnswer);
+  }
+  return hasCommonSubstring(normalizedAnswer, normalizedBoundary, 6);
+}
+
+export function requestedEvidenceBoundaries(
+  documents: readonly { readonly content: string }[],
+): string[] {
+  const boundaries: string[] = [];
+  for (const document of documents) {
+    const sentences = answerableDocumentBody(document.content)
+      .replace(/\r?\n+/gu, "。")
+      .split(/[。；;]+/u)
+      .map((sentence) => sentence.replace(/^\s*[-*+]\s*/u, "").trim())
+      .filter(Boolean);
+    for (const [index, sentence] of sentences.entries()) {
+      if (!REQUESTED_EVIDENCE_BOUNDARY_PATTERN.test(sentence)) continue;
+      const previous = sentences[index - 1];
+      const boundary = previous !== undefined &&
+          DEICTIC_EVIDENCE_BOUNDARY_PATTERN.test(sentence) &&
+          /\d/u.test(previous)
+        ? `${previous}。${sentence}`
+        : sentence;
+      if (!boundaries.includes(boundary)) boundaries.push(boundary);
+      if (boundaries.length >= 6) return boundaries;
+    }
+  }
+  return boundaries;
+}
+
 const STRONG_EPISTEMIC_BOUNDARY_PATTERN =
   /(?:不足以|不能|无法).{0,32}(?:证明|确认)|未(?:提供|有).{0,24}(?:足够|充分)?证据.{0,20}(?:证明|确认)|(?:不得|不能|不应).{0,24}(?:据此|直接).{0,40}(?:生成|推断|承诺|认定|得出)/u;
 

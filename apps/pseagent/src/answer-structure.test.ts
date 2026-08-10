@@ -5,7 +5,9 @@ import {
   hasBrokenCollectionEnumeration,
   missingExplicitFrameworkItems,
   missingDirectQueryOperationalConditions,
+  missingRequestedEvidenceBoundaries,
   missingStrictFrameworkBoundaries,
+  requestedEvidenceBoundaries,
   usesExplicitFrameworkCollection,
   verifierOrphanedOrderedSequence,
 } from "./answer-structure.js";
@@ -206,6 +208,26 @@ describe("collection enumeration integrity", () => {
     ]);
     expect(missingStrictFrameworkBoundaries(
       "检查发信 IP 规则、发件人规则、组织白名单和 CAC；材料排列不足以证明完整固定优先级，不能据此生成确定性优先级表。",
+      evidence,
+    )).toEqual([]);
+  });
+
+  it("retains an explicit evidence limitation when the user asks what cannot be promised", () => {
+    const evidence = [{ content: [
+      "本案例日均处理 1000 封邮件，识别准确率为 98%，人工处理耗时减少 30%。",
+      "由于缺少样本规模、统计周期、准确率定义、基准线和独立验证，这些数字只能作为本案例的待核实宣称，不能作为通用产品承诺。",
+    ].join("\n") }];
+    const boundaries = requestedEvidenceBoundaries(evidence);
+
+    expect(boundaries).toEqual([
+      "本案例日均处理 1000 封邮件，识别准确率为 98%，人工处理耗时减少 30%。由于缺少样本规模、统计周期、准确率定义、基准线和独立验证，这些数字只能作为本案例的待核实宣称，不能作为通用产品承诺",
+    ]);
+    expect(missingRequestedEvidenceBoundaries(
+      "验收时关注处理量、准确率和人工处理耗时。",
+      evidence,
+    )).toEqual(boundaries);
+    expect(missingRequestedEvidenceBoundaries(
+      `验收时关注处理量、准确率和人工处理耗时。${boundaries[0]}`,
       evidence,
     )).toEqual([]);
   });

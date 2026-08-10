@@ -190,7 +190,7 @@ export function adaptTaskSpecToKnowledgePlan(
       deliverableSourceText,
       comparisonContext,
     ]);
-    const primaryQuery = buildSemanticQuery([
+    const broadPrimaryQuery = buildSemanticQuery([
       leadingTopicAnchor,
       ...entitySourceTexts,
       obligationSourceText,
@@ -201,29 +201,50 @@ export function adaptTaskSpecToKnowledgePlan(
     const safeLabel = safeLabelExpansion(
       item.obligation.label,
       entitySourceTexts,
-      primaryQuery,
+      broadPrimaryQuery,
     );
-    const useAtomicLabel = safeLabel !== "" &&
-      (labelsBySourceScope.get(
+    const repeatedBroadSource = (labelsBySourceScope.get(
         taskSourceScopeKey(item.deliverable, item.obligation),
       )?.size ?? 0) > 1;
+    const cumulativeSource = isCumulativeObligationSource(
+      applicable,
+      index,
+    );
+    const useAtomicLabel = safeLabel !== "" &&
+      (repeatedBroadSource || cumulativeSource);
+    const primaryQuery = useAtomicLabel && cumulativeSource
+      ? buildSemanticQuery([
+          leadingTopicAnchor,
+          ...entitySourceTexts,
+          safeLabel,
+          requiredParallelContext || parallelLeadingContext,
+        ])
+      : broadPrimaryQuery;
     const requirementQuestion = buildSemanticQuery([
       useAtomicLabel
         ? buildSemanticQuery([leadingTopicAnchor, safeLabel])
         : baseRequirementQuestion,
       requiredParallelContext || parallelLeadingContext,
     ]);
-    const terms = buildAspectTerms(
-      entitySourceTexts,
-      obligationSourceText,
-      deliverableSourceText,
-      comparisonContext,
-      selectionContext,
-      safeLabel,
-      requiredParallelContext,
-      parallelLeadingContext,
-      leadingTopicAnchor,
-    );
+    const terms = useAtomicLabel && cumulativeSource
+      ? buildAspectTerms(
+          entitySourceTexts,
+          safeLabel,
+          requiredParallelContext,
+          parallelLeadingContext,
+          leadingTopicAnchor,
+        )
+      : buildAspectTerms(
+          entitySourceTexts,
+          obligationSourceText,
+          deliverableSourceText,
+          comparisonContext,
+          selectionContext,
+          safeLabel,
+          requiredParallelContext,
+          parallelLeadingContext,
+          leadingTopicAnchor,
+        );
     const comparisonDimensions = explicitComparisonDimensions(
       obligationContext,
     );
@@ -339,7 +360,9 @@ export function adaptTaskSpecToKnowledgePlan(
   return {
     activated: true,
     plan: {
-      ...parsed.data,
+      ...expandPlanRetrievalIntents(
+        normalizeCumulativePlanRequirements(parsed.data),
+      ),
       retrievalStrategy: "coverage_units",
     },
     obligationIds: applicable.map(({ obligation }) => obligation.id),
@@ -350,6 +373,107 @@ export function adaptTaskSpecToKnowledgePlan(
   };
 }
 
+const OUTCOME_EVALUATION_INTENT_PATTERN =
+  /验收.{0,8}(?:指标|数据|结果|证据|标准)|(?:试用|效果|成效).{0,8}(?:评估|指标|数据|验收)|(?:评估|度量).{0,8}(?:效果|成效|指标|数据)|(?:准确率|处理量|耗时).{0,12}(?:指标|验收|评估)?/u;
+const EVIDENCE_BOUNDARY_INTENT_PATTERN =
+  /(?:不能|不可|不得|不应|不宜).{0,20}(?:承诺|宣称|对外)|(?:证据|资料|数据).{0,12}(?:边界|不足|缺失|口径)|(?:样本|统计).{0,8}(?:规模|周期|口径)/u;
+
+function expandPlanRetrievalIntents(plan: KnowledgePlan): KnowledgePlan {
+  const requirements = plan.requirements.map((requirement) => {
+    const context = [
+      requirement.question,
+      ...requirement.evidenceAspects.flatMap((aspect) => [
+        aspect.label,
+        ...aspect.terms,
+      ]),
+    ].join(" ");
+    const intentTerms: string[] = [];
+    if (OUTCOME_EVALUATION_INTENT_PATTERN.test(context)) {
+      intentTerms.push("试用效果评估", "验收指标", "评估证据");
+    }
+    if (EVIDENCE_BOUNDARY_INTENT_PATTERN.test(context)) {
+      intentTerms.push("数据证据", "统计口径", "样本验证", "承诺边界");
+    }
+    if (intentTerms.length === 0) return requirement;
+    const intentQuery = buildSemanticQuery([plan.subject, ...intentTerms]);
+    if (
+      characterLength(intentQuery) === 0 ||
+      characterLength(intentQuery) > MAX_QUERY_CHARACTERS ||
+      requirement.queries.some((query) =>
+        normalizeSemanticText(query.text) === normalizeSemanticText(intentQuery))
+    ) {
+      return requirement;
+    }
+    const queries = [
+      ...requirement.queries.slice(0, 2),
+      { text: intentQuery, aspectIds: requirement.evidenceAspects.map((aspect) => aspect.id) },
+    ];
+    return { ...requirement, queries };
+  });
+  return knowledgePlanSchema.parse({ ...plan, requirements });
+}
+
+function normalizeCumulativePlanRequirements(plan: KnowledgePlan): KnowledgePlan {
+  const originalRequirements = plan.requirements;
+  const requirements = originalRequirements.map((requirement, index) => {
+    const previous = originalRequirements[index - 1];
+    if (previous === undefined || requirement.evidenceAspects.length !== 1) {
+      return requirement;
+    }
+    const currentQuestion = normalizeSemanticText(requirement.question);
+    const previousQuestion = normalizeSemanticText(previous.question);
+    if (
+      previousQuestion.length < 4 ||
+      currentQuestion === previousQuestion ||
+      !currentQuestion.startsWith(previousQuestion) ||
+      currentQuestion.length - previousQuestion.length < 2
+    ) {
+      return requirement;
+    }
+    const rawSuffix = requirement.question.startsWith(previous.question)
+      ? requirement.question.slice(previous.question.length).trim()
+      : "";
+    const aspect = requirement.evidenceAspects[0]!;
+    const novelTerms = stableUniqueText([
+      rawSuffix,
+      aspect.label,
+      ...aspect.terms,
+    ]).filter((term) => {
+      const normalized = normalizeSemanticText(term);
+      return normalized.length >= 2 &&
+        normalized.length <= 96 &&
+        !previousQuestion.includes(normalized) &&
+        !normalized.includes(previousQuestion);
+    }).sort((left, right) =>
+      normalizeSemanticText(left).length - normalizeSemanticText(right).length);
+    const atomicTerm = novelTerms[0];
+    if (atomicTerm === undefined) return requirement;
+    const question = buildSemanticQuery([plan.subject, atomicTerm]);
+    const queryTexts = stableUniqueText([
+      question,
+      buildSemanticQuery([plan.subject, ...novelTerms.slice(0, 3)]),
+    ]).slice(0, 3);
+    return {
+      ...requirement,
+      question,
+      evidenceAspects: [{
+        ...aspect,
+        label: atomicTerm,
+        terms: stableUniqueText([
+          atomicTerm,
+          ...novelTerms,
+          plan.subject,
+        ]).slice(0, MAX_ASPECT_TERMS),
+      }],
+      queries: queryTexts.map((text) => ({
+        text,
+        aspectIds: [aspect.id],
+      })),
+    };
+  });
+  return knowledgePlanSchema.parse({ ...plan, requirements });
+}
+
 function taskSourceScopeKey(
   deliverable: TaskSpec["deliverables"][number],
   obligation: TaskSpec["deliverables"][number]["obligations"][number],
@@ -357,6 +481,31 @@ function taskSourceScopeKey(
   return [deliverable.sourceText, obligation.sourceText]
     .map(normalizeSemanticText)
     .join("\u0000");
+}
+
+function isCumulativeObligationSource(
+  items: readonly {
+    readonly deliverable: TaskSpec["deliverables"][number];
+    readonly obligation: TaskSpec["deliverables"][number]["obligations"][number];
+  }[],
+  currentIndex: number,
+): boolean {
+  const currentItem = items[currentIndex];
+  if (currentItem === undefined) return false;
+  const currentSources = [
+    currentItem.deliverable.sourceText,
+    currentItem.obligation.sourceText,
+  ].map(normalizeSemanticText).filter((value) => value.length >= 6);
+  return items.some(({ deliverable, obligation }, itemIndex) => {
+    if (itemIndex === currentIndex) return false;
+    const siblingSources = [deliverable.sourceText, obligation.sourceText]
+      .map(normalizeSemanticText)
+      .filter((value) => value.length >= 4);
+    return currentSources.some((current) => siblingSources.some((sibling) =>
+      current !== sibling &&
+      current.includes(sibling) &&
+      current.length - sibling.length >= 2));
+  });
 }
 
 interface RequiredParallelScope {

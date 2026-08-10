@@ -4,6 +4,9 @@ import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { analyzeObligationSource } from "./obligation-semantics.js";
 import { knowledgePlanMessages } from "./prompts.js";
 import { extractExplicitQuestionSignals } from "./task-spec.js";
+import {
+  explicitComparisonSubjects,
+} from "./comparison-question.js";
 
 export interface KnowledgePlanInput {
   readonly scope: Exclude<Scope, "normal">;
@@ -26,7 +29,9 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
     const messages = knowledgePlanMessages(input);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        return normalizeDirectQueryAspectTerms(
+        return ensureComparisonSubjectQueries(
+          input.question,
+          normalizeDirectQueryAspectTerms(
           normalizeDirectComparisonAspects(
             input.question,
             enforceProtectedEvidenceModes(
@@ -48,6 +53,7 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
                 ),
               ),
             ),
+          ),
           ),
         );
       } catch (error) {
@@ -77,6 +83,29 @@ export class ModelKnowledgePlanner implements KnowledgePlanner {
       ...(signal === undefined ? {} : { signal }),
     });
   }
+}
+
+function ensureComparisonSubjectQueries(
+  question: string,
+  plan: KnowledgePlan,
+): KnowledgePlan {
+  const subjects = explicitComparisonSubjects(question);
+  if (subjects.length !== 2) return plan;
+  return knowledgePlanSchema.parse({
+    ...plan,
+    requirements: plan.requirements.map((requirement) => {
+      const aspectId = requirement.evidenceAspects[0]?.id;
+      if (aspectId === undefined) return requirement;
+      const candidates = [
+        ...subjects.map((subject) => ({ text: subject, aspectIds: [aspectId] })),
+        ...requirement.queries,
+      ];
+      const queries = [...new Map(
+        candidates.map((query) => [normalizePlannerText(query.text), query] as const),
+      ).values()].slice(0, 3);
+      return { ...requirement, queries };
+    }),
+  });
 }
 
 function deterministicKnowledgePlan(input: KnowledgePlanInput): KnowledgePlan {

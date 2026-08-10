@@ -222,6 +222,78 @@ describe("adaptTaskSpecToKnowledgePlan", () => {
       .toBe(true);
   });
 
+  it("removes earlier dimensions from cumulative model sources", () => {
+    const question =
+      "金融客户想先小范围上线 Coremail AI，灰度拓扑 用户控制 故障隔离 验收指标 不能直接承诺的数字应该怎么设计？";
+    const sources = [
+      "灰度拓扑",
+      "灰度拓扑 用户控制",
+      "灰度拓扑 用户控制 故障隔离",
+      "灰度拓扑 用户控制 故障隔离 验收指标",
+      "灰度拓扑 用户控制 故障隔离 验收指标 不能直接承诺的数字",
+    ];
+    const labels = [
+      "设计灰度拓扑",
+      "设计用户控制机制",
+      "设计故障隔离方案",
+      "设计验收指标",
+      "识别不能直接承诺的数字",
+    ];
+    const spec: TaskSpec = {
+      subject: "Coremail AI 小范围上线方案",
+      entities: [],
+      deliverables: labels.map((label, index) => ({
+        id: `D${index + 1}`,
+        label,
+        kind: "fact",
+        required: true,
+        sourceText: sources[index]!,
+        obligations: [{
+          id: `O${index + 1}`,
+          label,
+          targetEntityIds: [],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: sources[index]!,
+        }],
+      })),
+    };
+
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: {
+        ...resolvedQuestion,
+        rawQuestion: question,
+        standaloneQuestion: question,
+      },
+      taskSpec: spec,
+      guardResult: passingGuard,
+    });
+
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+    const topology = result.plan.requirements[0]!;
+    expect(topology.question).toContain("灰度拓扑");
+    expect(topology.question).not.toMatch(/用户控制|故障隔离|验收指标/u);
+    const acceptance = result.plan.requirements[3]!;
+    expect(acceptance.question).toContain("Coremail AI");
+    expect(acceptance.question).toContain("设计验收指标");
+    expect(acceptance.queries.map((query) => query.text).join(" "))
+      .not.toMatch(/灰度拓扑|用户控制|故障隔离/u);
+    expect(acceptance.queries.map((query) => query.text).join(" "))
+      .toContain("试用效果评估");
+    expect(acceptance.evidenceAspects[0]?.terms.join(" "))
+      .not.toMatch(/灰度拓扑|用户控制|故障隔离/u);
+    const promises = result.plan.requirements[4]!;
+    expect(promises.queries.map((query) => query.text).join(" "))
+      .toContain("不能直接承诺的数字");
+    expect(promises.queries.map((query) => query.text).join(" "))
+      .not.toMatch(/灰度拓扑|用户控制|故障隔离|验收指标/u);
+    expect(promises.queries.map((query) => query.text).join(" "))
+      .toContain("统计口径");
+  });
+
   it("keeps leading topic context for required parallel items without a trailing request", () => {
     const question =
       "Coremail 归档检索异常时，什么时候可以重建索引，执行前后需要哪些检查和风险控制？";
