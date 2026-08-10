@@ -75,6 +75,50 @@ describe("ScopeRouter", () => {
   });
 
   it.each([
+    "产品中性的 POC 应该怎样组织、分工和控制范围？",
+    "邮件项目的合同边界、变更流程和责任分工应该怎样约定？",
+    "验收流程应该包含哪些角色、检查点和升级机制？",
+    "POC 结束后如何组织验收评审并沟通未通过项？",
+    "售前如何向客户说明合同承诺边界和风险升级路径？",
+  ])("routes product-neutral POC, contract and acceptance governance to general: %s", async (question) => {
+    const completeJson = vi.fn();
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    expect(isUnambiguouslyGeneralPresalesQuestion(question)).toBe(true);
+    await expect(new ScopeRouter(model).route(
+      question,
+      "此前正在讨论 Coremail XT6 的接口与版本。",
+    )).resolves.toBe("general");
+    expect(completeJson).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "Coremail POC 要验证哪些模块和接口？",
+    "XT6 在验收时如何核验 SMTP 与 LDAP 兼容性？",
+    "Exchange 迁移到 Coremail 时要验证哪些产品能力？",
+    "Coremail 归档模块的版本边界和验收指标是什么？",
+  ])("keeps technical POC and acceptance counterexamples professional: %s", async (question) => {
+    const completeJson = vi.fn();
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    expect(isUnambiguouslyProfessionalQuestion(question)).toBe(true);
+    expect(isUnambiguouslyGeneralPresalesQuestion(question)).toBe(false);
+    await expect(new ScopeRouter(model).route(question)).resolves.toBe("professional");
+    expect(completeJson).not.toHaveBeenCalled();
+  });
+
+  it("does not inherit an old professional domain when the new topic is neutral governance", async () => {
+    const completeJson = vi.fn();
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    await expect(new ScopeRouter(model).route(
+      "换到一个新项目，POC 的职责分工和验收升级机制怎么设计？",
+      "刚才在核验 Coremail XT6 归档模块。",
+    )).resolves.toBe("general");
+    expect(completeJson).not.toHaveBeenCalled();
+  });
+
+  it.each([
     "售前如何用 SPIN 做需求访谈？",
     "市场活动线索怎样按 MTL 评分、培育和移交？",
   ])("does not treat a presales-method acronym as a product capability: %s", async (question) => {

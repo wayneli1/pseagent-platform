@@ -454,6 +454,8 @@ obligation evidencePolicy 只能是 direct、synthesis、customer_input；domain
 保留用户明确点名的全部并列对象、互不替代的全部交付目标和约束；每个明确对象必须被必答 obligation 覆盖，不能被另一个对象替代。比较任务允许同一 obligation 同时绑定多个比较对象，避免按“维度 × 对象”重复拆分。
 数字、版本、功能、存在性、支持性、兼容性、授权、认证和穷举结论必须使用 direct。
 诊断与建议可以使用 synthesis；依赖当前客户事实才能判断的内容使用 customer_input，并归入 presales-general。
+POC、合同和验收本身是活动，不是产品技术事实：产品中性的组织、流程、职责、范围、风险沟通和升级机制归入 presales-general；明确产品版本、模块、接口、协议、兼容性或技术能力核验归入 coremail-professional。
+同一问题同时要求产品技术事实和售前治理方法时，必须拆成独立 obligations 并分别分配两个知识域；不能因出现 POC、合同、验收或产品名而把整题吞并到单一域。
 sourceText 必须逐字复制 standaloneQuestion 中能够追溯该实体、交付项或 obligation 的最短片段。
 planningOverview 只能用于识别知识域和术语，不是事实证据。
 不得套用历史测试问题的固定维度，不得写具体客户专用规则，不生成查询、答案、引用、页面路径或解释。
@@ -595,6 +597,12 @@ const DETERMINISTIC_GENERAL_DOMAIN_PATTERN =
   /(?:售前|销售|商机|赢率|胜率|成交|机会|项目评估|评估项目|下一步|预算|竞争|决策链|客户信息|采购|POC|沟通|表达|客户关系|需求发现|业务价值)/iu;
 const DETERMINISTIC_PROFESSIONAL_DOMAIN_PATTERN =
   /(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b|邮件|邮箱|电子信箱|网关|反垃圾|归档|迁移|部署|版本|兼容|授权|容灾|多活|镜像|AD|LDAP|RPO|RTO)/iu;
+const PRODUCT_NEUTRAL_GOVERNANCE_DELIVERABLE_PATTERN =
+  /(?:POC|合同(?:边界|条款|承诺|责任|变更)?|验收(?:流程|评审|标准|边界|检查点)?|职责分工|责任分工|范围控制|变更流程|风险沟通|升级(?:路径|流程|机制)|交付边界)/iu;
+const GOVERNANCE_DELIVERABLE_METHOD_PATTERN =
+  /(?:如何|怎样|怎么|应该|应当|哪些|什么|流程|原则|模板|清单|组织|分工|约定|沟通|控制|机制|路径|检查点|边界)/u;
+const EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN =
+  /(?:(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b).{0,48}(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾)|(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾).{0,48}(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b))|(?:(?:POC|验收|核验|验证).{0,32}(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配)|(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配).{0,32}(?:POC|验收|核验|验证))/iu;
 const EXPLICIT_CONFLICT_PATTERN = /(?:冲突|不一致|相互矛盾|口径差异|结论差异)/u;
 const EXPLICIT_AMBIGUITY_PATTERN = /(?:不明确|不清楚|模糊|歧义|不确定)/u;
 const EXPLICIT_FRESHNESS_PATTERN = /(?:过期|历史资料|旧案例|时效|现行|最新|昨天.*今天)/u;
@@ -710,8 +718,25 @@ function repairProfessionalDirectDomains(
     ...taskSpec,
     deliverables: taskSpec.deliverables.map((deliverable) => ({
       ...deliverable,
-      obligations: deliverable.obligations.map((obligation) =>
-        obligation.evidencePolicy === "direct" ||
+      obligations: deliverable.obligations.map((obligation) => {
+        const semanticText = `${obligation.label} ${obligation.sourceText}`;
+        const governance = isProductNeutralGovernanceDeliverable(semanticText);
+        const productFact = EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(
+          semanticText,
+        );
+        if (governance && productFact) {
+          return {
+            ...obligation,
+            domains: [
+              "coremail-professional" as const,
+              "presales-general" as const,
+            ],
+          };
+        }
+        if (governance) {
+          return { ...obligation, domains: ["presales-general" as const] };
+        }
+        return obligation.evidencePolicy === "direct" ||
             (
               obligation.evidencePolicy === "synthesis" &&
               (
@@ -720,9 +745,15 @@ function repairProfessionalDirectDomains(
               )
             )
           ? { ...obligation, domains: ["coremail-professional"] }
-          : obligation),
+          : obligation;
+      }),
     })),
   });
+}
+
+function isProductNeutralGovernanceDeliverable(value: string): boolean {
+  return PRODUCT_NEUTRAL_GOVERNANCE_DELIVERABLE_PATTERN.test(value) &&
+    GOVERNANCE_DELIVERABLE_METHOD_PATTERN.test(value);
 }
 
 function deterministicDeliverableKind(

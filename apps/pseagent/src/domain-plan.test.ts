@@ -136,6 +136,58 @@ describe("deriveDomainKnowledgePlans", () => {
     ]);
   });
 
+  it("keeps product facts and POC governance in independent domain plans", () => {
+    const taskSpec = mixedTaskSpec();
+    taskSpec.deliverables = [
+      {
+        id: "D1",
+        label: "确认 Coremail 归档接口",
+        kind: "fact",
+        required: true,
+        sourceText: "Coremail 支持哪些归档接口",
+        obligations: [{
+          id: "O1",
+          label: "确认 Coremail 归档接口",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "Coremail 支持哪些归档接口",
+        }],
+      },
+      {
+        id: "D2",
+        label: "组织 POC 验收与角色分工",
+        kind: "procedure",
+        required: true,
+        sourceText: "POC 验收流程和角色分工怎么组织",
+        obligations: [{
+          id: "O2",
+          label: "组织 POC 验收与角色分工",
+          targetEntityIds: ["E2"],
+          evidencePolicy: "synthesis",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: "POC 验收流程和角色分工怎么组织",
+        }],
+      },
+    ];
+
+    const result = deriveDomainKnowledgePlans({
+      resolvedQuestion,
+      taskSpec,
+      guardResult: passingGuard,
+    });
+
+    expect(result).toMatchObject({
+      activated: true,
+      plans: [
+        { domain: "coremail-professional", bindings: [{ obligationId: "O1" }] },
+        { domain: "presales-general", bindings: [{ obligationId: "O2" }] },
+      ],
+    });
+  });
+
   it("does not open a domain for an optional deliverable", () => {
     const taskSpec = mixedTaskSpec();
     taskSpec.deliverables[1]!.required = false;

@@ -2098,6 +2098,93 @@ describe("ModelTaskCompiler", () => {
     expect(result.deliverables[0]?.obligations[0]?.evidencePolicy).toBe("synthesis");
   });
 
+  it("repairs product-neutral contract and acceptance governance to general knowledge", async () => {
+    const question = "邮件项目的合同边界、变更流程和责任分工应该怎样约定？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "合同与变更治理",
+      entities: [{ id: "E1", label: "邮件项目", role: "subject", sourceText: "邮件项目" }],
+      deliverables: [{
+        id: "D1",
+        label: "约定合同边界、变更流程和责任分工",
+        kind: "procedure",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "约定合同边界、变更流程和责任分工",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile(compilerInput(question, "professional"));
+
+    expect(result.deliverables[0]?.obligations[0]?.domains)
+      .toEqual(["presales-general"]);
+  });
+
+  it("keeps product facts professional while repairing POC governance to general", async () => {
+    const question = "Coremail 支持哪些归档接口，以及 POC 验收流程和角色分工怎么组织？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "Coremail 归档验证与 POC 治理",
+      entities: [{ id: "E1", label: "Coremail", role: "product", sourceText: "Coremail" }],
+      deliverables: [
+        {
+          id: "D1",
+          label: "确认归档接口",
+          kind: "fact",
+          required: true,
+          sourceText: "Coremail 支持哪些归档接口",
+          obligations: [{
+            id: "O1",
+            label: "确认 Coremail 归档接口支持情况",
+            targetEntityIds: ["E1"],
+            evidencePolicy: "direct",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: "Coremail 支持哪些归档接口",
+          }],
+        },
+        {
+          id: "D2",
+          label: "组织 POC 验收与角色分工",
+          kind: "procedure",
+          required: true,
+          sourceText: "POC 验收流程和角色分工怎么组织",
+          obligations: [{
+            id: "O2",
+            label: "组织 POC 验收与角色分工",
+            targetEntityIds: [],
+            evidencePolicy: "synthesis",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: "POC 验收流程和角色分工怎么组织",
+          }],
+        },
+      ],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile(compilerInput(question, "professional"));
+    const obligations = result.deliverables.flatMap((item) => item.obligations);
+
+    expect(obligations.map((item) => [item.id, item.domains])).toEqual([
+      ["O1", ["coremail-professional"]],
+      ["O2", ["presales-general"]],
+    ]);
+  });
+
   it("derives explicit conflict state without client-specific rules", async () => {
     const question = "两份正式资料结论冲突时，应该怎样设计分批切换？";
     const modelTaskSpec = taskSpecSchema.parse({
@@ -2154,6 +2241,8 @@ describe("ModelTaskCompiler", () => {
       expect(input.messages[0]?.content).toContain("每个 obligation 必须输出 evidenceCondition");
       expect(input.messages[0]?.content).toContain("必须拆成互不替代的 customer_input 与 synthesis obligations");
       expect(input.messages[0]?.content).toContain("不得套用历史测试问题的固定维度");
+      expect(input.messages[0]?.content).toContain("POC、合同和验收本身是活动");
+      expect(input.messages[0]?.content).toContain("必须拆成独立 obligations 并分别分配两个知识域");
       expect(input.messages[1]?.content).toContain('"standaloneQuestion"');
       expect(input.messages[1]?.content).toContain('"legacyPlan"');
       return input.schema.parse(taskSpec);
@@ -2650,3 +2739,24 @@ describe("ModelTaskCompiler", () => {
     }));
   });
 });
+
+function compilerInput(
+  question: string,
+  scopeHint: "professional" | "general",
+): Parameters<ModelTaskCompiler["compile"]>[0] {
+  return {
+    resolvedQuestion: {
+      rawQuestion: question,
+      standaloneQuestion: question,
+      contextUsed: false,
+      inheritedSubjects: [],
+      corrections: [],
+    },
+    scopeHint,
+    knowledgeContext: {
+      purpose: "知识边界",
+      schema: "知识结构",
+      planningOverview: "产品事实与售前治理",
+    },
+  };
+}

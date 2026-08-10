@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "frozenAt": "2026-08-10T14:42:00.000Z",
+  "minimumPerCategory": 5,
+  "cases": [
+    { "id": "RG001", "category": "poc_governance", "question": "产品中性的 POC 应该怎样组织、分工和控制范围？", "expectedScope": "general" },
+    { "id": "RG002", "category": "poc_governance", "question": "POC 期间不断新增需求时，如何控制范围并保留变更记录？", "expectedScope": "general" },
+    { "id": "RG003", "category": "poc_governance", "question": "POC 中销售、售前、客户和项目经理的职责应该怎样分工？", "expectedScope": "general" },
+    { "id": "RG004", "category": "poc_governance", "question": "POC 风险应该如何沟通，什么情况下启动升级机制？", "expectedScope": "general" },
+    { "id": "RG005", "category": "poc_governance", "question": "POC 结束后怎样组织复盘、退出和下一步决策？", "expectedScope": "general" },
+
+    { "id": "RG006", "category": "contract_governance", "question": "邮件项目的合同边界、变更流程和责任分工应该怎样约定？", "expectedScope": "general" },
+    { "id": "RG007", "category": "contract_governance", "question": "合同变更流程应该包含哪些审批、沟通和检查点？", "expectedScope": "general" },
+    { "id": "RG008", "category": "contract_governance", "question": "售前如何说明合同承诺边界，避免形成越权承诺？", "expectedScope": "general" },
+    { "id": "RG009", "category": "contract_governance", "question": "合同中的销售、售前和交付责任应该怎么分工？", "expectedScope": "general" },
+    { "id": "RG010", "category": "contract_governance", "question": "合同风险出现分歧时如何沟通并启动升级路径？", "expectedScope": "general" },
+
+    { "id": "RG011", "category": "acceptance_governance", "question": "验收流程应该包含哪些角色、检查点和升级机制？", "expectedScope": "general" },
+    { "id": "RG012", "category": "acceptance_governance", "question": "POC 结束后如何组织验收评审并沟通未通过项？", "expectedScope": "general" },
+    { "id": "RG013", "category": "acceptance_governance", "question": "产品中性的验收标准应该如何制定和确认？", "expectedScope": "general" },
+    { "id": "RG014", "category": "acceptance_governance", "question": "验收检查点、责任人和证据清单应该怎样组织？", "expectedScope": "general" },
+    { "id": "RG015", "category": "acceptance_governance", "question": "验收未通过时应该怎样记录风险、沟通和升级？", "expectedScope": "general" },
+
+    { "id": "RG016", "category": "professional_poc_technical", "question": "Coremail POC 要验证哪些模块和接口？", "expectedScope": "professional" },
+    { "id": "RG017", "category": "professional_poc_technical", "question": "XT6 在验收时如何核验 SMTP 与 LDAP 兼容性？", "expectedScope": "professional" },
+    { "id": "RG018", "category": "professional_poc_technical", "question": "POC 中如何验证 SMTP 协议和归档接口的支持情况？", "expectedScope": "professional" },
+    { "id": "RG019", "category": "professional_poc_technical", "question": "验收时要怎样核验 DLP 模块、OCR 和移动端审核能力？", "expectedScope": "professional" },
+    { "id": "RG020", "category": "professional_poc_technical", "question": "技术 POC 应如何验证 LDAP 接口、版本限制和兼容性？", "expectedScope": "professional" },
+
+    { "id": "RG021", "category": "professional_product_fact", "question": "Coremail XT6 的归档模块支持哪些检索接口？", "expectedScope": "professional" },
+    { "id": "RG022", "category": "professional_product_fact", "question": "Exchange 与 Coremail 共存时邮件域名转发怎样配置？", "expectedScope": "professional" },
+    { "id": "RG023", "category": "professional_product_fact", "question": "Coremail 邮件迁移支持哪些源系统和协议？", "expectedScope": "professional" },
+    { "id": "RG024", "category": "professional_product_fact", "question": "网关反垃圾模块的版本边界和部署方式是什么？", "expectedScope": "professional" },
+    { "id": "RG025", "category": "professional_product_fact", "question": "邮件系统两地三中心的 RPO、RTO 和故障切换如何设计？", "expectedScope": "professional" },
+
+    { "id": "RG026", "category": "mixed_product_method", "question": "Coremail 支持哪些归档接口，以及 POC 验收流程和角色分工怎么组织？", "expectedScope": "professional" },
+    { "id": "RG027", "category": "mixed_product_method", "question": "XT6 支持哪些认证协议，同时验收评审应该怎样分工？", "expectedScope": "professional" },
+    { "id": "RG028", "category": "mixed_product_method", "question": "对比 Exchange 与 Coremail 的迁移能力，并说明合同边界如何沟通。", "expectedScope": "professional" },
+    { "id": "RG029", "category": "mixed_product_method", "question": "核验 Coremail DLP 模块能力后，POC 风险应该怎样向客户沟通？", "expectedScope": "professional" },
+    { "id": "RG030", "category": "mixed_product_method", "question": "Coremail API 的版本限制是什么，问题升级流程又该怎么组织？", "expectedScope": "professional" },
+
+    { "id": "RG031", "category": "normal_reset", "question": "换个话题，写一首四行的夏日短诗。", "expectedScope": "normal", "conversationContext": "此前一直讨论 Coremail XT6。" },
+    { "id": "RG032", "category": "normal_reset", "question": "顺便解释一下 HTTP 404 是什么意思。", "expectedScope": "normal", "conversationContext": "此前一直讨论邮件迁移。" },
+    { "id": "RG033", "category": "normal_reset", "question": "题外话，创作一个关于星空的短故事。", "expectedScope": "normal", "conversationContext": "此前一直讨论网关接口。" },
+    { "id": "RG034", "category": "normal_reset", "question": "另外写一个三句的小故事。", "expectedScope": "normal", "conversationContext": "此前一直讨论验收。" },
+    { "id": "RG035", "category": "normal_reset", "question": "转换话题，解释 HTTP 500 的含义。", "expectedScope": "normal", "conversationContext": "此前一直讨论 Coremail 模块。" }
+  ]
+}

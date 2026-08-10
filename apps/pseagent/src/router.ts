@@ -68,6 +68,12 @@ const GENERAL_PRESALES_ACTIVITY_PATTERN =
   /(?:职责|工作|方法|需求|访谈|话术|方案组织|价值表达|异议|沟通|冲突|演示|机会管理|项目推进|可信顾问|范围|变更|非标|客户关系|承诺|免费|控制)/u;
 const PRODUCT_NEUTRAL_OPPORTUNITY_PATTERN =
   /(?:销售|赢率|胜率|成交概率|机会质量|陪标|决策链|决策人|内部支持者|客户信息|采购意向|预算状态|竞争对手)/u;
+const PRODUCT_NEUTRAL_GOVERNANCE_PATTERN =
+  /(?:POC|合同(?:边界|条款|承诺|责任|变更)?|验收(?:流程|评审|标准|边界|检查点)?|职责分工|责任分工|范围控制|变更流程|风险沟通|升级(?:路径|流程|机制)|交付边界)/iu;
+const GOVERNANCE_METHOD_CUE_PATTERN =
+  /(?:如何|怎样|怎么|应该|应当|流程|原则|模板|清单|组织|分工|约定|沟通|控制|机制|路径|检查点)/u;
+const EXPLICIT_PRODUCT_TECHNICAL_SIGNAL_PATTERN =
+  /(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b)|(?:(?:POC|验收|核验|验证).{0,40}(?:产品能力|技术能力|模块|接口|协议|版本|兼容|适配|部署|配置|归档|网关|反垃圾)|(?:产品能力|技术能力|模块|接口|协议|版本|兼容|适配|部署|配置|归档|网关|反垃圾).{0,40}(?:POC|验收|核验|验证))/iu;
 const EXPLICIT_GENERAL_METHOD_PATTERN =
   /(?:(?:报价|价格).{0,16}(?:压价|业务价值|价值异议)|压价.{0,16}(?:业务价值|价值|异议)|(?:讲不清|说不清|不明确).{0,16}(?:需求|目标)|(?:需求|目标).{0,16}(?:讲不清|说不清|不明确|继续追问)|继续追问|澄清需求|需求访谈)/u;
 const PROFESSIONAL_ARCHITECTURE_CUE_PATTERN =
@@ -130,6 +136,13 @@ export function isUnambiguouslyGeneralPresalesQuestion(
   question: string,
 ): boolean {
   if (EXPLICIT_GENERAL_METHOD_PATTERN.test(question)) return true;
+  if (
+    PRODUCT_NEUTRAL_GOVERNANCE_PATTERN.test(question) &&
+    GOVERNANCE_METHOD_CUE_PATTERN.test(question) &&
+    !EXPLICIT_PRODUCT_TECHNICAL_SIGNAL_PATTERN.test(question)
+  ) {
+    return true;
+  }
   return (
     (/售前/u.test(question) && GENERAL_PRESALES_ACTIVITY_PATTERN.test(question)) ||
     PRODUCT_NEUTRAL_OPPORTUNITY_PATTERN.test(question)
