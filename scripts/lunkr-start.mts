@@ -128,8 +128,8 @@ const socket = new LunkrSocketClient(config, session, {
     const message = normalizeDirectMessage(data, session.selfUid);
     if (message === undefined) return;
     void bridge.handle(message)
-      .catch(() => {
-        process.stderr.write("lunkr.dm.failed\n");
+      .catch((error: unknown) => {
+        process.stderr.write(`lunkr.dm.failed reason=${safeError(error)}\n`);
       });
   },
 });
@@ -141,8 +141,14 @@ const stop = async () => {
   socket.close();
   await runtime.close();
 };
-process.once("SIGINT", () => void stop());
-process.once("SIGTERM", () => void stop());
+process.once("SIGINT", () => {
+  process.stderr.write("pseagent.lunkr.stopping signal=SIGINT\n");
+  void stop();
+});
+process.once("SIGTERM", () => {
+  process.stderr.write("pseagent.lunkr.stopping signal=SIGTERM\n");
+  void stop();
+});
 
 try {
   await socket.connect();
@@ -153,4 +159,5 @@ try {
   process.exitCode = 1;
 } finally {
   await stop();
+  process.stderr.write("pseagent.lunkr.stopped\n");
 }
