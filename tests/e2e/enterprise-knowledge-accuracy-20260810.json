@@ -15,7 +15,8 @@
         "wiki/entities/Coremail-AI邮件系统.md"
       ],
       "requiredFactGroups": [
-        ["AIHUB", "大模型对接模块", "AI中间件"],
+        ["AIHUB"],
+        ["大模型对接模块", "AI中间件"],
         ["大语言模型", "LLM", "模型对接"],
         ["Coremail AI邮件系统", "CMAI"],
         ["未提供产品能力", "缺少完整功能矩阵", "不能直接完成一一对比", "仅部分覆盖", "需要补充正式资料"]

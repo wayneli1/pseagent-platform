@@ -27,6 +27,7 @@
     "probe:layered-evidence": "node --env-file=.env.local --import tsx scripts/probe-layered-evidence.mts",
     "probe:exchange-comparison": "node --env-file=.env.local --import tsx scripts/probe-exchange-comparison.mts",
     "probe:enterprise": "node --env-file=.env.local --import tsx scripts/probe-enterprise-scenarios.mts",
+    "probe:enterprise:cumulative": "node --env-file=.env.local --import tsx scripts/run-cumulative-enterprise-e2e.mts",
     "probe:release-quality": "node --env-file=.env.local --import tsx scripts/probe-release-quality.mts",
     "probe:stability": "node --env-file=.env.local --import tsx scripts/probe-stability.mts",
     "test:regression": "npm exec -w @pseagent/app -- vitest run src/regression.test.ts",

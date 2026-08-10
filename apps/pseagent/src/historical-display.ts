@@ -4,6 +4,7 @@ import {
   type HistoricalReference,
   type HistoricalRejectionReason,
 } from "./contracts.js";
+import { sanitizeFormalAnswer } from "./public-answer.js";
 
 export const HISTORICAL_NOTICE_MESSAGES: Record<
   HistoricalRejectionReason,
@@ -22,6 +23,11 @@ export const HISTORICAL_REFERENCE_LIMIT = 3;
 export const HISTORICAL_BLOCK_MAX_CHARS = 3_000;
 
 const URL_PATTERN = /https?:\/\/[^\s)\]}>，。；;]+/giu;
+const INTERNAL_OPERATOR_PATTERN =
+  /(?:\bUse\s+(?:get|list|search)_[A-Za-z0-9_]+|structuredContent|next_action|list_attachments|get_wiki_page|get_jira_issue)/iu;
+const SHELL_PROMPT_PATTERN = /\[[^\]\r\n]{1,80}@[^\]\r\n]{1,80}\]\s*[#$]/u;
+const UNC_PATH_PATTERN = /\\\\(?:[^\s\\]+\\){2,}[^\s，。；;]*/gu;
+const REDACTED_CONTENT_PATTERN = /\[REDACTED(?:_[A-Z_]+)?\]/u;
 
 export function prepareHistoricalAnswerForDisplay(
   historical: HistoricalAnswer,
@@ -40,9 +46,14 @@ export function prepareHistoricalAnswerForDisplay(
 }
 
 export function sanitizeHistoricalBody(value: string): string {
-  const withoutUrls = value.replace(URL_PATTERN, "");
+  const withoutUrls = sanitizeFormalAnswer(value)
+    .replace(URL_PATTERN, "")
+    .replace(UNC_PATH_PATTERN, "[内部路径已省略]");
   const retainedLines = withoutUrls.split(/\r?\n/gu).filter((line) =>
-    !/^\s*(?:链接|地址|url|来源链接|内部链接)[：:]?\s*$/iu.test(line)
+    !/^\s*(?:链接|地址|url|来源链接|内部链接)[：:]?\s*$/iu.test(line) &&
+    !INTERNAL_OPERATOR_PATTERN.test(line) &&
+    !SHELL_PROMPT_PATTERN.test(line) &&
+    !REDACTED_CONTENT_PATTERN.test(line)
   );
   return truncateText(
     retainedLines.join("\n").replace(/\n{3,}/gu, "\n\n").trim(),

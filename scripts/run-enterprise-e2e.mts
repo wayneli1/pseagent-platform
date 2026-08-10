@@ -9,6 +9,8 @@ import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.js";
 import type { PseAnswerExecution } from "../apps/pseagent/src/answer-service.js";
 import { answerResultSchema } from "../apps/pseagent/src/contracts.js";
 import { createPseMcpServer } from "../apps/pseagent/src/mcp-server.js";
+import { missingExplicitComparisonLabels } from "../apps/pseagent/src/comparison-question.js";
+import { sanitizeHistoricalBody } from "../apps/pseagent/src/historical-display.js";
 import {
   acceptanceFactGroupCovered,
   selectAcceptanceCases,
@@ -243,7 +245,18 @@ try {
         answerReviewSubmitted = false;
       }
     }
-    const deterministicChecks = evaluate(testCase, execution, matchedCardIds);
+    const visibleAnswer = [
+      result.answer,
+      ...(result.historicalAnswer === undefined
+        ? []
+        : [sanitizeHistoricalBody(result.historicalAnswer.answer)]),
+    ].filter(Boolean).join("\n\n");
+    const deterministicChecks = evaluate(
+      testCase,
+      execution,
+      matchedCardIds,
+      visibleAnswer,
+    );
     const record = {
       expectation,
       conversationContext: conversationContext ?? "",
@@ -254,6 +267,7 @@ try {
       actualScope: result.scope,
       answerStatus: result.status,
       answer: result.answer,
+      visibleAnswer,
       references: result.references,
       evidencePaths: result.references.map((reference) => reference.path),
       evidenceRevisions: [...new Set(result.references.map((reference) => reference.revision))],
@@ -306,8 +320,13 @@ const reportPath = join(reportDirectory, `${phase}-${Date.now()}.json`);
 await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 process.stdout.write(`${JSON.stringify({ type: "phase_summary", reportPath, caseCount: records.length })}\n`);
 
-function evaluate(testCase: AcceptanceCase, execution: PseAnswerExecution, cardIds: readonly string[]) {
-  const answer = execution.result.answer.normalize("NFKC").toLocaleLowerCase("zh-CN");
+function evaluate(
+  testCase: AcceptanceCase,
+  execution: PseAnswerExecution,
+  cardIds: readonly string[],
+  visibleAnswer: string,
+) {
+  const answer = visibleAnswer.normalize("NFKC").toLocaleLowerCase("zh-CN");
   const paths = new Set(execution.result.references.map((reference) => reference.path));
   const expectedCardIds = testCase.expectedCardId === undefined
     ? []
@@ -315,8 +334,20 @@ function evaluate(testCase: AcceptanceCase, execution: PseAnswerExecution, cardI
   return [
     { id: "scope", passed: execution.result.scope === testCase.expectedScope, expected: testCase.expectedScope, actual: execution.result.scope },
     { id: "card", passed: testCase.expectedCardId === undefined || expectedCardIds.some((cardId) => cardIds.includes(cardId)), expected: testCase.expectedCardId ?? "none_required", actual: cardIds },
+    {
+      id: "comparison_subjects",
+      passed: missingExplicitComparisonLabels(testCase.question, visibleAnswer).length === 0,
+      expected: "all_explicit_subjects_addressed",
+      actual: missingExplicitComparisonLabels(testCase.question, visibleAnswer),
+    },
+    {
+      id: "public_answer_internal_artifacts",
+      passed: !/(?:\bUse\s+(?:get|list|search)_[A-Za-z0-9_]+|structuredContent|next_action|list_attachments|get_wiki_page|get_jira_issue|\[[^\]\r\n]{1,80}@[^\]\r\n]{1,80}\]\s*[#$]|\\\\[^\s\\]+\\|\[REDACTED(?:_[A-Z_]+)?\])/iu.test(visibleAnswer),
+      expected: "absent",
+      actual: "visible_answer",
+    },
     ...testCase.expectedEvidence.map((path) => ({ id: `evidence:${path}`, passed: paths.has(path), expected: path, actual: [...paths] })),
-    ...testCase.requiredFactGroups.map((group, index) => ({ id: `fact:${index + 1}`, passed: acceptanceFactGroupCovered(execution.result.answer, testCase.question, group), expected: group, actual: "answer" })),
+    ...testCase.requiredFactGroups.map((group, index) => ({ id: `fact:${index + 1}`, passed: acceptanceFactGroupCovered(visibleAnswer, testCase.question, group), expected: group, actual: "visible_answer" })),
     ...testCase.forbiddenClaims.map((claim) => ({ id: `forbidden:${claim}`, passed: !answer.includes(claim.normalize("NFKC").toLocaleLowerCase("zh-CN")), expected: "absent", actual: "answer" })),
   ];
 }
