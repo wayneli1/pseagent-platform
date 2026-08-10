@@ -1010,8 +1010,11 @@ const REQUEST_ACTION_PATTERN =
 
 function requestClauseBoundaries(segment: string): number[] {
   const actionMatches = [...segment.matchAll(REQUEST_ACTION_PATTERN)];
+  const directComparisonSegment = /(?:对比|比较|区别|差异|差别)/u.test(segment);
   const positions = [
     ...[...segment.matchAll(REQUEST_INTERROGATIVE_PATTERN)]
+      .filter((match) =>
+        !directComparisonSegment || !/^(?:怎么|什么)$/u.test(match[0]))
       .filter((match) => !actionMatches.some((action) => {
         const actionStart = action.index;
         const actionEnd = actionStart + action[0].length;

@@ -1437,6 +1437,14 @@ describe("DeterministicTaskSpecGuard", () => {
     ]);
   });
 
+  it("does not duplicate direct comparison dimensions as colloquial requests", () => {
+    const signals = extractExplicitQuestionSignals(
+      "找一下 AIHUB 和 Coremail AI系统的功能区别：两者分别解决什么问题，主要功能、部署依赖和适用场景怎么对比？",
+    );
+
+    expect(signals.requestClauses).toEqual([]);
+  });
+
   it("keeps timing requests and removes a duplicated parallel parent clause", () => {
     const signals = extractExplicitQuestionSignals(
       "Coremail 归档检索异常时，什么时候可以重建索引，执行前后需要哪些检查和风险控制？",
