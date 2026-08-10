@@ -122,7 +122,7 @@ export class KnowledgeRepairAgent {
     let candidate:z.infer<typeof repairCandidateSchema>|undefined;let lastError:unknown;let retryInstruction:string|undefined;
     for(let attempt=1;attempt<=2;attempt+=1){
       try{candidate=await this.model.completeJson({messages:retryInstruction===undefined?messages:[...messages,{role:"user",content:retryInstruction}],schema:repairCandidateInputSchema,schemaDescription:"knowledge repair draft with answer, structured obligation objects, evidence paths and five regression questions",...(input.signal===undefined?{}:{signal:input.signal})});}
-      catch(error){candidate=recoverWrappedRepairCandidate(error);if(candidate===undefined){lastError=error;if(!(error instanceof InvalidModelPayloadError)||attempt===2)throw error;retryInstruction="上一次输出未通过严格 Schema。请只依据 evidence 修正；把 title 等字段直接放在 JSON 根节点；obligations 必须是对象数组，每项含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths；保持五类回归问题各一个。";continue;}}
+      catch(error){candidate=recoverWrappedRepairCandidate(error);if(candidate===undefined){lastError=error;if(!(error instanceof InvalidModelPayloadError)||attempt===2)throw error;retryInstruction=repairSchemaRetryInstruction(error);continue;}}
       const proposal=enforceRepairCandidate(input,candidate);
       const abstractConcepts=proposal.obligations.flatMap((item)=>item.requiredConcepts.filter(isUnverifiableRequiredConcept).map((concept)=>`${item.id}：${concept}`));
       if(abstractConcepts.length===0)return proposal;
@@ -299,8 +299,21 @@ function recoverWrappedRepairCandidate(error:unknown):z.infer<typeof repairCandi
 }
 function normalizeRepairCandidateShape(value:unknown):unknown{
   if(typeof value!=="object"||value===null||Array.isArray(value))return value;const source=value as Record<string,unknown>,raw=source.obligations;
-  if(raw===undefined)return source;const entries=normalizeObligationCollection(raw);if(entries===undefined)return source;const obligations=entries.map((item,index)=>{if(typeof item!=="object"||item===null||Array.isArray(item))return item;const obligation=item as Record<string,unknown>,rawId=typeof obligation.id==="string"?obligation.id.trim().toUpperCase():"",id=/^O\d+$/u.test(rawId)?rawId:`O${index+1}`;return{id,label:obligation.label,evidencePolicy:obligation.evidencePolicy,requiredConcepts:obligation.requiredConcepts,forbiddenClaims:obligation.forbiddenClaims,preferredEvidencePaths:obligation.preferredEvidencePaths};});
+  if(raw===undefined)return source;const entries=normalizeObligationCollection(raw);if(entries===undefined)return source;
+  const normalized=entries.map((item,index)=>{if(typeof item!=="object"||item===null||Array.isArray(item))return item;const obligation=item as Record<string,unknown>,rawId=typeof obligation.id==="string"?obligation.id.trim().toUpperCase():"",id=/^O\d+$/u.test(rawId)?rawId:`O${index+1}`;return{id,label:obligation.label,evidencePolicy:obligation.evidencePolicy,requiredConcepts:normalizeStringList(obligation.requiredConcepts),forbiddenClaims:obligation.forbiddenClaims,preferredEvidencePaths:obligation.preferredEvidencePaths};});
+  const usedIds=new Set(normalized.flatMap((item)=>{if(typeof item!=="object"||item===null||Array.isArray(item))return[];const id=(item as Record<string,unknown>).id;return typeof id==="string"?[id]:[];}));let nextId=1;
+  const allocateId=()=>{while(usedIds.has(`O${nextId}`))nextId+=1;const id=`O${nextId}`;usedIds.add(id);nextId+=1;return id;};
+  const obligations=normalized.flatMap((item)=>{if(typeof item!=="object"||item===null||Array.isArray(item))return[item];const obligation=item as Record<string,unknown>,concepts=obligation.requiredConcepts;if(!Array.isArray(concepts)||concepts.length<=20)return[item];return Array.from({length:Math.ceil(concepts.length/20)},(_,chunkIndex)=>({...obligation,id:chunkIndex===0?obligation.id:allocateId(),requiredConcepts:concepts.slice(chunkIndex*20,(chunkIndex+1)*20)}));});
   return{...source,obligations};
+}
+function normalizeStringList(value:unknown):unknown{
+  if(!Array.isArray(value)||!value.every((item)=>typeof item==="string"))return value;const seen=new Set<string>(),result:string[]=[];
+  for(const raw of value){const item=raw.trim();if(item==="")continue;const key=item.normalize("NFKC").toLocaleLowerCase("zh-CN");if(seen.has(key))continue;seen.add(key);result.push(item);}
+  return result;
+}
+function repairSchemaRetryInstruction(error:InvalidModelPayloadError):string{
+  const conceptLimit=error.code.includes("requiredConcepts:too_big")?" requiredConcepts 每项最多 20 个原子概念；如确有更多内容，请拆成多个 obligations，不得丢弃证据支持的必要事实。":"";
+  return `上一次输出未通过严格 Schema（${error.code}）。请只依据 evidence 修正；把 title 等字段直接放在 JSON 根节点；obligations 必须是对象数组，每项含 id、label、evidencePolicy、requiredConcepts、forbiddenClaims、preferredEvidencePaths；保持五类回归问题各一个。${conceptLimit}`;
 }
 function normalizeRepairCandidateEnvelope(value:unknown):unknown{
   let candidate=value;for(let depth=0;depth<3;depth+=1){if(typeof candidate!=="object"||candidate===null||Array.isArray(candidate))break;const source=candidate as Record<string,unknown>;if("title" in source&&"canonicalQuestion" in source)break;const nested=["proposal","data","result","draft"].map((key)=>source[key]).find((item)=>typeof item==="object"&&item!==null&&!Array.isArray(item));if(nested===undefined)break;candidate=nested;}return normalizeRepairCandidateShape(candidate);

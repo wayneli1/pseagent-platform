@@ -32,7 +32,7 @@ export class KnowledgeOpsWorker {
         await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.retry_scheduled",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:draft.issueId,errorCode:code,attempt:job.attempts,maxAttempts:3,availableAt},createdAt:new Date().toISOString()});
         return;
       }
-      if(draft!==undefined){await this.dependencies.store.updateRepairDraft(draftId,{status:"failed",errorCode:code});await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.failed",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:draft.issueId,errorCode:code,attempt:job.attempts,maxAttempts:3},createdAt:new Date().toISOString()});}
+      if(draft!==undefined){await this.dependencies.store.updateRepairDraft(draftId,{status:"failed",errorCode:code});await this.dependencies.store.updateIssue(draft.issueId,"open");await this.dependencies.store.appendAudit({auditId:randomUUID(),actorId:this.workerId,action:"repair.draft.failed",resourceType:"repair_draft",resourceId:draftId,metadata:{issueId:draft.issueId,errorCode:code,attempt:job.attempts,maxAttempts:3},createdAt:new Date().toISOString()});}
     }
     if(job.type==="validate_repair_draft"){
       const draftId=requireString(job.payload,"draftId"),validationId=requireString(job.payload,"validationId"),draft=await this.dependencies.store.getRepairDraft(draftId);

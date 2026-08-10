@@ -29,6 +29,16 @@ describe("KnowledgeRepairAgent",()=>{
     await expect(agent.generate({issueId:"00000000-0000-4000-8000-000000000013",rootCause:"coverage_gap",records:[{question:"contract limit",answer:"incomplete"}],evidence:[{title:"migration",path:candidate.obligations[0]!.preferredEvidencePaths[0]!,content:candidate.answerTemplate}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",baseGitRevision:"a".repeat(40),publishableAllowed:true}})).resolves.toMatchObject({publishable:true});
     expect(completeJson).toHaveBeenCalledOnce();
   });
+  it("preserves oversized atomic concept lists by splitting them into bounded obligations",async()=>{
+    const concepts=Array.from({length:23},(_,index)=>`配置项-${index+1}`);
+    const oversized={...candidate,obligations:[{...candidate.obligations[0]!,requiredConcepts:concepts}]};
+    const completeJson=vi.fn(async(input:Parameters<ModelClient["completeJson"]>[0])=>input.schema.parse(oversized));
+    const result=await new KnowledgeRepairAgent(model(completeJson)).generate({issueId:"00000000-0000-4000-8000-000000000015",rootCause:"coverage_gap",records:[{question:"需要核对哪些配置？",answer:"原回答不完整"}],evidence:[{title:"迁移",path:"wiki/concepts/腾讯迁移.md",content:candidate.answerTemplate}],route:{targetKind:"answer_card",targetDomain:"coremail-professional",baseGitRevision:"a".repeat(40),publishableAllowed:true}});
+    expect(result.obligations).toHaveLength(2);
+    expect(result.obligations.every((item)=>item.requiredConcepts.length<=20)).toBe(true);
+    expect(result.obligations.flatMap((item)=>item.requiredConcepts)).toEqual(concepts);
+    expect(new Set(result.obligations.map((item)=>item.id)).size).toBe(2);
+  });
   it("regenerates abstract required concepts as evidence-backed atomic facts",async()=>{
     const abstract={...candidate,title:"Coremail DA 与 MTA 的区别",canonicalQuestion:"DA 与 MTA 有什么区别？",answerTemplate:"MTA 使用双处理队列；在入信链路中，deliveragent 负责病毒扫描和反垃圾检查。",obligations:[{...candidate.obligations[0]!,requiredConcepts:["MTA 双处理队列","deliveragent 核心功能","入信链路"],preferredEvidencePaths:["wiki/entities/deliveragent.md"]}]};
     const corrected={...abstract,obligations:[{...abstract.obligations[0]!,requiredConcepts:["MTA 双处理队列","病毒扫描","反垃圾检查","入信链路"]}]};
