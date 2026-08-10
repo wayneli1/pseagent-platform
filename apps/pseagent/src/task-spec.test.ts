@@ -1426,6 +1426,17 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(signals.requestClauses.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("recognizes colloquial how-to and what-to-check requests", () => {
+    const signals = extractExplicitQuestionSignals(
+      "我们只知道客户口头说有兴趣，领导却要我今天报 80% 赢率；我该怎么汇报，接下来核验什么？",
+    );
+
+    expect(signals.requestClauses).toEqual([
+      "我该怎么汇报",
+      "接下来核验什么",
+    ]);
+  });
+
   it("keeps timing requests and removes a duplicated parallel parent clause", () => {
     const signals = extractExplicitQuestionSignals(
       "Coremail 归档检索异常时，什么时候可以重建索引，执行前后需要哪些检查和风险控制？",

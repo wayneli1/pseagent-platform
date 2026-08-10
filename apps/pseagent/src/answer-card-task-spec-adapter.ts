@@ -420,7 +420,8 @@ function canCompileWholeFamily(
     resolvedQuestion.standaloneQuestion,
   ).requestClauses;
   if (requestClauses.some((clause) =>
-    !match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)))) {
+    !match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)) &&
+    !isGenericCardRequestClause(clause))) {
     return false;
   }
   // Once every explicit request clause is covered by one reviewed card family,
@@ -773,6 +774,13 @@ function trustedCardSourceText(
 
 const TRUSTED_REQUEST_SCAFFOLD_PATTERN =
   /(?:哪些|什么|如何|怎么|怎样|接下来|还要|需要|后续|对齐|确认|判断|检查|核对|说明|给出|列出)/gu;
+
+const GENERIC_CARD_REQUEST_CLAUSE_PATTERN =
+  /^(?:我(?:们)?|你(?:们)?|该|应该|应当|可以|能否|是否|怎么|如何|怎样|接下来|后续|然后|再|要|需要|汇报|核验|确认|检查|处理|安排|推进|说明|给出|列出|什么|哪些)+$/u;
+
+function isGenericCardRequestClause(clause: string): boolean {
+  return GENERIC_CARD_REQUEST_CLAUSE_PATTERN.test(normalizeText(clause));
+}
 
 function trustedCardClauseMatches(
   clause: string,

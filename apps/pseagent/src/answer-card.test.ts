@@ -1077,7 +1077,7 @@ describe("answer card TaskSpec adapter", () => {
   });
 
   it("uses the reviewed family contract when explicit clauses are covered despite a noisy model task", () => {
-    const question = "信息不全时如何汇报精确赢率，接下来要核验哪些业务、决策、预算和时间证据？";
+    const question = "我们只知道客户口头说有兴趣，领导却要我今天报 80% 赢率；我该怎么汇报，接下来核验什么？";
     const taskSpec = taskSpecSchema.parse({
       subject: question,
       entities: [{ id: "E1", label: "机会汇报", role: "subject", sourceText: question }],
@@ -1122,8 +1122,9 @@ describe("answer card TaskSpec adapter", () => {
       catalogHash: "c".repeat(64),
       familyId: "opportunity_win_rate_evidence",
       bindings: [
-        binding("O1", "拒绝把缺少客户证据的主观判断包装成精确赢率", "direct", ["精确赢率", "汇报"]),
-        binding("O2", "列出影响机会判断且仍需核验的业务、决策、资源和时间证据", "synthesis", ["业务", "决策", "预算", "时间证据"]),
+        binding("O1", "拒绝把缺少客户证据的主观判断包装成精确赢率", "direct", ["客户证据", "事实", "假设", "未知"]),
+        binding("O2", "列出影响机会判断且仍需核验的业务、决策、资源和时间证据", "synthesis", ["业务问题", "决策角色", "预算资源", "竞争规则", "关键日期"]),
+        binding("O3", "用证据等级、假设和最小验证动作替代伪精确数字", "synthesis", ["证据缺口", "假设", "最小验证动作", "下一步"]),
       ],
       cardIdHashes: ["d".repeat(64)],
       expectedRevisions: { "presales-general": generalRevision },
@@ -1138,7 +1139,7 @@ describe("answer card TaskSpec adapter", () => {
 
     expect(adapted).toMatchObject({ activated: true });
     if (!adapted.activated) return;
-    expect(adapted.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2"]);
+    expect(adapted.policies.map((policy) => policy.cardObligationId)).toEqual(["O1", "O2", "O3"]);
   });
 
   it("rejects an ambiguous family binding instead of attaching it to the first task", () => {
