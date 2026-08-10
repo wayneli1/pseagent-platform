@@ -1,4 +1,10 @@
 import type { z } from "zod";
+import {
+  ModelQueueError,
+  ModelRequestScheduler,
+  type ModelRequestLease,
+} from "./model-request-scheduler.js";
+import { reportModelCallMetrics } from "./model-metrics-context.js";
 
 export interface ModelMessage {
   readonly role: "system" | "user" | "assistant";
@@ -17,16 +23,24 @@ export interface ModelRoleClients {
   readonly synthesizer: ModelClient;
   readonly verifier: ModelClient;
 }
+export interface ModelCallMetrics {
+  readonly attemptCount: number;
+  readonly queueElapsedMs: number;
+  readonly executionElapsedMs: number;
+}
+export type ModelCallMetricsReporter = (metrics: ModelCallMetrics) => void;
 export interface ModelClient {
   completeJson<T>(input: {
     readonly messages: readonly ModelMessage[];
     readonly schema: z.ZodType<T>;
     readonly schemaDescription: string;
     readonly signal?: AbortSignal;
+    readonly onMetrics?: ModelCallMetricsReporter;
   }): Promise<T>;
   completeText(input: {
     readonly messages: readonly ModelMessage[];
     readonly signal?: AbortSignal;
+    readonly onMetrics?: ModelCallMetricsReporter;
   }): Promise<string>;
 }
 export class ModelUnavailableError extends Error {
@@ -54,6 +68,7 @@ export class OpenAiCompatibleModelClient implements ModelClient {
     timeoutMs: number;
     maxTokens: number;
     jsonResponseFormat?: boolean;
+    scheduler?: ModelRequestScheduler;
   }) {}
 
   async completeJson<T>(input: {
@@ -61,8 +76,14 @@ export class OpenAiCompatibleModelClient implements ModelClient {
     schema: z.ZodType<T>;
     schemaDescription: string;
     signal?: AbortSignal;
+    onMetrics?: ModelCallMetricsReporter;
   }): Promise<T> {
-    const completion = await this.complete(input.messages, true, input.signal);
+    const completion = await this.complete(
+      input.messages,
+      true,
+      input.signal,
+      input.onMetrics,
+    );
     const content = completion.content;
     let structuredContent: string;
     try {
@@ -106,20 +127,41 @@ export class OpenAiCompatibleModelClient implements ModelClient {
     return parsed.data;
   }
 
-  async completeText(input: { messages: readonly ModelMessage[]; signal?: AbortSignal }): Promise<string> {
-    return (await this.complete(input.messages, false, input.signal)).content;
+  async completeText(input: {
+    messages: readonly ModelMessage[];
+    signal?: AbortSignal;
+    onMetrics?: ModelCallMetricsReporter;
+  }): Promise<string> {
+    return (await this.complete(
+      input.messages,
+      false,
+      input.signal,
+      input.onMetrics,
+    )).content;
   }
 
   private async complete(
     messages: readonly ModelMessage[],
     json: boolean,
     callerSignal?: AbortSignal,
+    onMetrics?: ModelCallMetricsReporter,
   ): Promise<{ readonly content: string; readonly finishReason?: string }> {
     const timeout = AbortSignal.timeout(this.config.timeoutMs);
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
-    let releaseModelSlot:(()=>void)|undefined;
+    let modelLease: ModelRequestLease | undefined;
+    let attemptCount = 0;
+    let executionStartedAt: number | undefined;
     try {
-    releaseModelSlot = await acquireModelSlot(signal);
+    try {
+      modelLease = await (this.config.scheduler ?? DEFAULT_MODEL_REQUEST_SCHEDULER)
+        .acquire(signal);
+    } catch (error) {
+      if (error instanceof ModelQueueError) {
+        throw new ModelUnavailableError(error.code);
+      }
+      throw error;
+    }
+    executionStartedAt = Date.now();
     const body = {
       model: this.config.model,
       temperature: 0,
@@ -141,6 +183,7 @@ export class OpenAiCompatibleModelClient implements ModelClient {
     } satisfies RequestInit;
     let lastFailureCode = "model_unavailable";
     for (let attempt = 0; attempt < MODEL_TRANSPORT_MAX_ATTEMPTS; attempt += 1) {
+      attemptCount = attempt + 1;
       let response: Response;
       try {
         response = await fetch(url, request);
@@ -205,7 +248,20 @@ export class OpenAiCompatibleModelClient implements ModelClient {
       }
       throw error;
     } finally {
-      releaseModelSlot?.();
+      try {
+        const metrics = {
+          attemptCount,
+          queueElapsedMs: modelLease?.queueElapsedMs ?? 0,
+          executionElapsedMs: executionStartedAt === undefined
+            ? 0
+            : Math.max(0, Date.now() - executionStartedAt),
+        };
+        onMetrics?.(metrics);
+        reportModelCallMetrics(metrics);
+      } catch {
+        // Metrics are diagnostic-only and must never change the answer path.
+      }
+      modelLease?.release();
     }
   }
 }
@@ -213,52 +269,11 @@ export class OpenAiCompatibleModelClient implements ModelClient {
 const MODEL_TRANSPORT_MAX_ATTEMPTS = 4;
 const MODEL_TRANSPORT_RETRY_MS = [1_000, 3_000, 10_000] as const;
 const MODEL_TRANSIENT_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
-const MODEL_MAX_CONCURRENT_REQUESTS = 3;
-
-interface ModelSlotWaiter {
-  readonly signal: AbortSignal;
-  readonly resolve: (release: () => void) => void;
-  readonly reject: (error: ModelUnavailableError) => void;
-  readonly onAbort: () => void;
-}
-
-let activeModelRequests = 0;
-const modelSlotWaiters: ModelSlotWaiter[] = [];
-
-function acquireModelSlot(signal: AbortSignal): Promise<() => void> {
-  if (signal.aborted) return Promise.reject(new ModelUnavailableError());
-  if (activeModelRequests < MODEL_MAX_CONCURRENT_REQUESTS) {
-    activeModelRequests += 1;
-    return Promise.resolve(modelSlotRelease());
-  }
-  return new Promise<() => void>((resolve, reject) => {
-    const onAbort = (): void => {
-      const index = modelSlotWaiters.findIndex((waiter) => waiter.onAbort === onAbort);
-      if (index >= 0) modelSlotWaiters.splice(index, 1);
-      reject(new ModelUnavailableError());
-    };
-    const waiter = { signal, resolve, reject, onAbort };
-    modelSlotWaiters.push(waiter);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-function modelSlotRelease(): () => void {
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    activeModelRequests = Math.max(0, activeModelRequests - 1);
-    while (modelSlotWaiters.length > 0) {
-      const waiter = modelSlotWaiters.shift()!;
-      waiter.signal.removeEventListener("abort", waiter.onAbort);
-      if (waiter.signal.aborted) continue;
-      activeModelRequests += 1;
-      waiter.resolve(modelSlotRelease());
-      break;
-    }
-  };
-}
+const DEFAULT_MODEL_REQUEST_SCHEDULER = new ModelRequestScheduler({
+  maxConcurrency: 3,
+  maxQueueSize: 64,
+  queueTimeoutMs: 30_000,
+});
 
 function retryAfterMs(value: string | null): number | undefined {
   if (value === null) return undefined;

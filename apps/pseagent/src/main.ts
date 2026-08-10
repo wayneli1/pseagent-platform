@@ -26,6 +26,7 @@ import {
   type ModelClient,
   type ModelRoleClients,
 } from "./model-client.js";
+import { ModelRequestScheduler } from "./model-request-scheduler.js";
 import { ScopeRouter } from "./router.js";
 import {
   ModelQuestionResolver,
@@ -227,6 +228,7 @@ export async function runPseAgent(
 function defaultCreateModel(
   config: AppConfig,
   model = config.PSE_MODEL_NAME,
+  scheduler?: ModelRequestScheduler,
 ): ModelClient {
   return new OpenAiCompatibleModelClient({
     baseUrl: config.PSE_MODEL_BASE_URL,
@@ -235,6 +237,7 @@ function defaultCreateModel(
     timeoutMs: config.PSE_MODEL_TIMEOUT_MS,
     maxTokens: config.PSE_MODEL_MAX_TOKENS,
     jsonResponseFormat: config.modelCapabilities.jsonResponseFormat,
+    ...(scheduler === undefined ? {} : { scheduler }),
   });
 }
 
@@ -254,7 +257,12 @@ function createModelRoles(
       verifier: shared,
     };
   }
-  const create = (model: string) => defaultCreateModel(config, model);
+  const scheduler = new ModelRequestScheduler({
+    maxConcurrency: config.PSE_MODEL_MAX_CONCURRENCY,
+    maxQueueSize: config.PSE_MODEL_MAX_QUEUE,
+    queueTimeoutMs: config.PSE_MODEL_QUEUE_TIMEOUT_MS,
+  });
+  const create = (model: string) => defaultCreateModel(config, model, scheduler);
   return {
     resolver: create(config.modelRoles.resolver),
     planner: create(config.modelRoles.planner),

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { InvalidModelPayloadError, ModelUnavailableError, OpenAiCompatibleModelClient } from "./model-client.js";
+import { ModelRequestScheduler } from "./model-request-scheduler.js";
 
 afterEach(() => vi.unstubAllGlobals());
 const client = (overrides: Partial<ConstructorParameters<typeof OpenAiCompatibleModelClient>[0]> = {}) => new OpenAiCompatibleModelClient({
@@ -86,9 +87,18 @@ describe("model client", () => {
       }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(client({ timeoutMs: 3_000 }).completeText({ messages: [] }))
+    const metrics = vi.fn();
+    await expect(client({ timeoutMs: 3_000 }).completeText({
+      messages: [],
+      onMetrics: metrics,
+    }))
       .resolves.toBe("recovered");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(metrics).toHaveBeenCalledWith(expect.objectContaining({
+      attemptCount: 2,
+      queueElapsedMs: expect.any(Number),
+      executionElapsedMs: expect.any(Number),
+    }));
   });
 
   it("does not retry a non-transient authentication failure", async () => {
@@ -119,7 +129,7 @@ describe("model client", () => {
     await expect(completion).rejects.toMatchObject({code:"model_request_aborted"});
   });
 
-  it("queues model traffic above the process-wide concurrency limit", async () => {
+  it("shares the injected concurrency limit across model clients", async () => {
     let active = 0;
     let maximumActive = 0;
     const fetchMock = vi.fn(async () => {
@@ -130,12 +140,17 @@ describe("model client", () => {
       return Response.json({ choices: [{ message: { content: "ok" } }] });
     });
     vi.stubGlobal("fetch", fetchMock);
+    const scheduler = new ModelRequestScheduler({
+      maxConcurrency: 2,
+      maxQueueSize: 10,
+      queueTimeoutMs: 1_000,
+    });
 
     await Promise.all(Array.from({ length: 7 }, () =>
-      client().completeText({ messages: [] })));
+      client({ scheduler }).completeText({ messages: [] })));
 
     expect(fetchMock).toHaveBeenCalledTimes(7);
-    expect(maximumActive).toBeLessThanOrEqual(3);
+    expect(maximumActive).toBeLessThanOrEqual(2);
   });
 
   it("accepts one strict JSON object wrapped by a leading think block and JSON fence", async () => {

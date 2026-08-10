@@ -167,6 +167,9 @@ export type DiagnosticEvent =
         | "verify";
       readonly outcome: "completed" | "failed";
       readonly elapsedMs: number;
+      readonly attemptCount?: number;
+      readonly queueElapsedMs?: number;
+      readonly executionElapsedMs?: number;
       readonly errorClass?:
         | "invalid_json"
         | "invalid_schema"
@@ -734,6 +737,9 @@ function allowlistDiagnosticEvent(
         ),
         outcome: safeEnum(event.outcome, ["completed", "failed"] as const),
         elapsedMs: safeCount(event.elapsedMs),
+        ...safeOptionalCountField("attemptCount", event.attemptCount),
+        ...safeOptionalCountField("queueElapsedMs", event.queueElapsedMs),
+        ...safeOptionalCountField("executionElapsedMs", event.executionElapsedMs),
         ...safeOptionalEnumField(
           "errorClass",
           event.errorClass,

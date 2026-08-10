@@ -93,6 +93,7 @@ export const MAX_BATCH_READS_PER_REQUIREMENT = 2;
 export const MAX_GRAPH_ACTIONS_PER_REQUIREMENT = 1;
 export const MAX_AGENT_TURNS_PER_REQUIREMENT = 7;
 const MAX_CITATION_REPAIR_ATTEMPTS = 2;
+const MIN_VERIFIER_EXECUTION_MS = 5_000;
 const RRF_K = 60;
 const SEED_TOP_K = 10;
 const SYNTHESIS_SEED_TOP_K_LIMIT = 20;
@@ -646,7 +647,7 @@ async function runKnowledgeAgentCore(
         "draft",
         deadlineReached(input) ? "deadline" : "final",
       );
-      if (deadlineReached(input)) {
+      if (!hasExecutionReserve(input, MIN_VERIFIER_EXECUTION_MS)) {
         recordDiagnostic(input.trace, {
           event: "stop",
           reason: "coverage_verifier_unavailable",
@@ -4348,6 +4349,14 @@ function aspectStatuses(
 
 function deadlineReached(input: KnowledgeAgentInput): boolean {
   return input.deadlineAt !== undefined && Date.now() >= input.deadlineAt;
+}
+
+function hasExecutionReserve(
+  input: KnowledgeAgentInput,
+  minimumMs: number,
+): boolean {
+  return input.deadlineAt === undefined ||
+    Date.now() + minimumMs <= input.deadlineAt;
 }
 
 const activeSignalByInput = new WeakMap<KnowledgeAgentInput, AbortSignal | null>();

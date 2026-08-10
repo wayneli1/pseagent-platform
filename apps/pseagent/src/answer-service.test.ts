@@ -2358,7 +2358,9 @@ describe("AnswerService", () => {
 
     it("retries one isolated domain after a transient detailed-agent failure", async () => {
       const detailed = vi.fn<DetailedAgentRunner>()
-        .mockResolvedValueOnce({
+        .mockImplementationOnce(async (input) => {
+          input.trace.record({ event: "stop", reason: "model_unavailable" });
+          return {
           outcome: "unavailable",
           result: {
             scope: "general",
@@ -2366,6 +2368,7 @@ describe("AnswerService", () => {
             answer: "temporarily unavailable",
             references: [],
           },
+          };
         })
         .mockImplementation(async (input) => ({
           outcome: "verified",
@@ -2403,6 +2406,25 @@ describe("AnswerService", () => {
         stopReason: "final",
         result: { status: "answered" },
       });
+    });
+
+    it("does not rerun a whole domain after a non-transient invalid final", async () => {
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => {
+        input.trace.record({ event: "stop", reason: "invalid_final" });
+        return {
+          outcome: "unavailable",
+          result: temporaryUnavailableResult("general"),
+        };
+      });
+      const { service } = createMixedService({
+        detailed,
+        shadow: singleDomainShadow("presales-general"),
+      });
+
+      await expect(service.answerDetailed(mixedQuestion)).resolves.toMatchObject({
+        result: { status: "temporarily_unavailable" },
+      });
+      expect(detailed).toHaveBeenCalledOnce();
     });
 
     it("fails closed when an execution session belongs to the wrong project snapshot", async () => {

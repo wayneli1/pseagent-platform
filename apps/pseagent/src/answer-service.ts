@@ -85,10 +85,12 @@ import {
   type ResolvedQuestion,
 } from "./question-resolver.js";
 import { normalAnswerNeedsRepair, stripUnrequestedExamples } from "./normal-answer.js";
+import { RequestBudget } from "./request-budget.js";
 
-export const PSE_REQUEST_TIMEOUT_MS = 300_000;
-export const PSE_ACTIVE_DEADLINE_MS = 270_000;
-const DOMAIN_AGENT_RETRY_RESERVE_MS = 30_000;
+export const PSE_REQUEST_TIMEOUT_MS = 180_000;
+export const PSE_ACTIVE_DEADLINE_MS = 165_000;
+export const PSE_RETURN_RESERVE_MS = 5_000;
+const DOMAIN_AGENT_RETRY_RESERVE_MS = 60_000;
 
 export interface KnowledgeSessionFactory {
   open(scope: Exclude<Scope, "normal">, signal?: AbortSignal): Promise<KnowledgeSession>;
@@ -217,11 +219,22 @@ export class AnswerService {
     progressObserver?: AnswerProgressObserver,
   ): Promise<PseAnswerExecution> {
     const startedAt = Date.now();
-    const deadlineAt =
-      startedAt +
-      (this.dependencies.activeDeadlineMs ?? PSE_ACTIVE_DEADLINE_MS);
+    const requestTimeoutMs =
+      this.dependencies.requestTimeoutMs ?? PSE_REQUEST_TIMEOUT_MS;
+    const activeDeadlineMs =
+      this.dependencies.activeDeadlineMs ?? PSE_ACTIVE_DEADLINE_MS;
+    const budget = new RequestBudget({
+      startedAt,
+      requestTimeoutMs,
+      activeDeadlineMs,
+      returnReserveMs: Math.min(
+        PSE_RETURN_RESERVE_MS,
+        Math.max(0, requestTimeoutMs - activeDeadlineMs),
+      ),
+    });
+    const deadlineAt = budget.activeDeadlineAt;
     const timeoutSignal = AbortSignal.timeout(
-      this.dependencies.requestTimeoutMs ?? PSE_REQUEST_TIMEOUT_MS,
+      requestTimeoutMs,
     );
     const requestSignal = signal === undefined
       ? timeoutSignal
@@ -857,6 +870,7 @@ export class AnswerService {
         if (
           detailed.outcome === "unavailable" &&
           input.plans.length === 1 &&
+          isRetryableDomainStopReason(input.trace.stopReason) &&
           !sharedSignal.aborted &&
           Date.now() + DOMAIN_AGENT_RETRY_RESERVE_MS < input.deadlineAt
         ) {
@@ -1117,6 +1131,15 @@ export class AnswerService {
       );
     }
   }
+}
+
+function isRetryableDomainStopReason(
+  reason: PseStopReason | undefined,
+): boolean {
+  return reason === "model_unavailable" ||
+    reason === "seed_unavailable" ||
+    reason === "evidence_review_unavailable" ||
+    reason === "coverage_verifier_unavailable";
 }
 
 function explicitScopeForResolvedQuestion(question: string): Scope | undefined {

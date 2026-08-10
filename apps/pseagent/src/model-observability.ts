@@ -6,8 +6,11 @@ import {
 import {
   InvalidModelPayloadError,
   ModelUnavailableError,
+  type ModelCallMetrics,
+  type ModelCallMetricsReporter,
   type ModelRole,
 } from "./model-client.js";
+import { withModelMetricsReporter } from "./model-metrics-context.js";
 
 type ModelOperation = Extract<
   Parameters<DiagnosticTrace["record"]>[0],
@@ -23,7 +26,7 @@ export async function observeModelCall<T>(input: {
   readonly role: ModelRole;
   readonly operation: ModelOperation;
   readonly signal?: AbortSignal;
-  readonly call: () => Promise<T>;
+  readonly call: (reportMetrics: ModelCallMetricsReporter) => Promise<T>;
 }): Promise<T> {
   recordDiagnosticProgress(input.trace, {
     event: "model_call_started",
@@ -31,14 +34,22 @@ export async function observeModelCall<T>(input: {
     operation: input.operation,
   });
   const startedAt = Date.now();
+  let metrics: ModelCallMetrics | undefined;
+  const reportMetrics: ModelCallMetricsReporter = (reported) => {
+    metrics = reported;
+  };
   try {
-    const result = await input.call();
+    const result = await withModelMetricsReporter(
+      reportMetrics,
+      () => input.call(reportMetrics),
+    );
     recordDiagnostic(input.trace, {
       event: "model_call",
       role: input.role,
       operation: input.operation,
       outcome: "completed",
       elapsedMs: Math.max(0, Date.now() - startedAt),
+      ...(metrics === undefined ? {} : metrics),
     });
     return result;
   } catch (error) {
@@ -49,6 +60,7 @@ export async function observeModelCall<T>(input: {
       outcome: "failed",
       elapsedMs: Math.max(0, Date.now() - startedAt),
       errorClass: classifyModelError(error, input.signal),
+      ...(metrics === undefined ? {} : metrics),
     });
     throw error;
   }

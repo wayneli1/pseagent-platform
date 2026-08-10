@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   DiagnosticEvent,
   DiagnosticProgressEvent,
@@ -7,8 +7,11 @@ import type {
 import {
   InvalidModelPayloadError,
   ModelUnavailableError,
+  OpenAiCompatibleModelClient,
 } from "./model-client.js";
 import { observeModelCall } from "./model-observability.js";
+
+afterEach(() => vi.unstubAllGlobals());
 
 function trace(events: DiagnosticEvent[]): DiagnosticTrace {
   return {
@@ -58,6 +61,57 @@ describe("model role observability", () => {
       call,
     })).resolves.toBe("answer");
     expect(call).toHaveBeenCalledOnce();
+  });
+
+  it("records content-free scheduler and transport metrics", async () => {
+    const events: DiagnosticEvent[] = [];
+    await observeModelCall({
+      trace: trace(events),
+      role: "resolver",
+      operation: "route",
+      call: async (reportMetrics) => {
+        reportMetrics({
+          attemptCount: 2,
+          queueElapsedMs: 17,
+          executionElapsedMs: 43,
+        });
+        return "professional";
+      },
+    });
+
+    expect(events).toEqual([expect.objectContaining({
+      event: "model_call",
+      attemptCount: 2,
+      queueElapsedMs: 17,
+      executionElapsedMs: 43,
+    })]);
+  });
+
+  it("collects metrics from a nested model client without plumbing callbacks", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      choices: [{ message: { content: "professional" } }],
+    })));
+    const model = new OpenAiCompatibleModelClient({
+      baseUrl: "https://model.example/v1",
+      apiKey: "secret",
+      model: "model",
+      timeoutMs: 1_000,
+      maxTokens: 1_024,
+    });
+    const events: DiagnosticEvent[] = [];
+
+    await observeModelCall({
+      trace: trace(events),
+      role: "resolver",
+      operation: "route",
+      call: async () => model.completeText({ messages: [] }),
+    });
+
+    expect(events).toEqual([expect.objectContaining({
+      attemptCount: 1,
+      queueElapsedMs: expect.any(Number),
+      executionElapsedMs: expect.any(Number),
+    })]);
   });
 
   it.each([

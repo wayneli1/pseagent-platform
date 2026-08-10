@@ -13,8 +13,11 @@ const baseEnvSchema = z.object({
   PSE_MODEL_JSON_RESPONSE_FORMAT: z.enum(["true", "false"]).default("true"),
   PSE_MODEL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(180_000).default(60_000),
   PSE_MODEL_MAX_TOKENS: z.coerce.number().int().min(1_024).max(32_768).default(8_192),
-  PSE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(1_800_000).default(300_000),
-  PSE_ACTIVE_DEADLINE_MS: z.coerce.number().int().min(30_000).max(1_800_000).default(270_000),
+  PSE_MODEL_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(3),
+  PSE_MODEL_MAX_QUEUE: z.coerce.number().int().min(0).max(1_024).default(32),
+  PSE_MODEL_QUEUE_TIMEOUT_MS: z.coerce.number().int().min(100).max(180_000).default(15_000),
+  PSE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(1_800_000).default(180_000),
+  PSE_ACTIVE_DEADLINE_MS: z.coerce.number().int().min(30_000).max(1_800_000).default(165_000),
   KNOWLEDGE_MCP_COMMAND: z.string().trim().min(1),
   KNOWLEDGE_MCP_ENTRY_PATH: z.string().trim().min(1),
 }).strict();
@@ -82,6 +85,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     PSE_MODEL_JSON_RESPONSE_FORMAT: env.PSE_MODEL_JSON_RESPONSE_FORMAT,
     PSE_MODEL_TIMEOUT_MS: env.PSE_MODEL_TIMEOUT_MS,
     PSE_MODEL_MAX_TOKENS: env.PSE_MODEL_MAX_TOKENS,
+    PSE_MODEL_MAX_CONCURRENCY: env.PSE_MODEL_MAX_CONCURRENCY,
+    PSE_MODEL_MAX_QUEUE: env.PSE_MODEL_MAX_QUEUE,
+    PSE_MODEL_QUEUE_TIMEOUT_MS: env.PSE_MODEL_QUEUE_TIMEOUT_MS,
     PSE_REQUEST_TIMEOUT_MS: env.PSE_REQUEST_TIMEOUT_MS,
     PSE_ACTIVE_DEADLINE_MS: env.PSE_ACTIVE_DEADLINE_MS,
     KNOWLEDGE_MCP_COMMAND: env.KNOWLEDGE_MCP_COMMAND,
@@ -282,7 +288,7 @@ function loadTaskSpecShadowConfig(
   if (enabled === "false") return { enabled: false };
   const activeRequested = env.PSE_TASK_SPEC_ACTIVE_ENABLED === "true";
   const timeoutMs = z.coerce.number().int().min(1_000).max(180_000)
-    .default(activeRequested ? 120_000 : 15_000)
+    .default(activeRequested ? 60_000 : 15_000)
     .parse(env.PSE_TASK_SPEC_SHADOW_TIMEOUT_MS);
   return { enabled: true, timeoutMs };
 }

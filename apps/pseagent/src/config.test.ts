@@ -20,8 +20,11 @@ describe("loadConfig", () => {
     });
     expect(config.PSE_MODEL_NAME).toBe("model");
     expect(config.PSE_MODEL_MAX_TOKENS).toBe(8_192);
-    expect(config.PSE_REQUEST_TIMEOUT_MS).toBe(300_000);
-    expect(config.PSE_ACTIVE_DEADLINE_MS).toBe(270_000);
+    expect(config.PSE_MODEL_MAX_CONCURRENCY).toBe(3);
+    expect(config.PSE_MODEL_MAX_QUEUE).toBe(32);
+    expect(config.PSE_MODEL_QUEUE_TIMEOUT_MS).toBe(15_000);
+    expect(config.PSE_REQUEST_TIMEOUT_MS).toBe(180_000);
+    expect(config.PSE_ACTIVE_DEADLINE_MS).toBe(165_000);
     expect(config.taskSpecShadow).toEqual({ enabled: false });
     expect(config.taskSpecActiveEnabled).toBe(false);
     expect(config.multiDomainActiveEnabled).toBe(false);
@@ -93,11 +96,13 @@ describe("loadConfig", () => {
   });
 
   it("requires TaskSpec shadow analysis before active plan replacement", () => {
-    expect(loadConfig({
+    const active = loadConfig({
       ...baseEnv,
       PSE_TASK_SPEC_SHADOW_ENABLED: "true",
       PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
-    }).taskSpecActiveEnabled).toBe(true);
+    });
+    expect(active.taskSpecActiveEnabled).toBe(true);
+    expect(active.taskSpecShadow).toEqual({ enabled: true, timeoutMs: 60_000 });
     expect(() => loadConfig({
       ...baseEnv,
       PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
@@ -262,6 +267,30 @@ describe("loadConfig", () => {
     expect(() => loadConfig({
       ...baseEnv,
       PSE_MODEL_MAX_TOKENS: "32769",
+    })).toThrow();
+  });
+
+  it("loads bounded model admission controls", () => {
+    const config = loadConfig({
+      ...baseEnv,
+      PSE_MODEL_MAX_CONCURRENCY: "4",
+      PSE_MODEL_MAX_QUEUE: "40",
+      PSE_MODEL_QUEUE_TIMEOUT_MS: "12000",
+    });
+    expect(config.PSE_MODEL_MAX_CONCURRENCY).toBe(4);
+    expect(config.PSE_MODEL_MAX_QUEUE).toBe(40);
+    expect(config.PSE_MODEL_QUEUE_TIMEOUT_MS).toBe(12_000);
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_MODEL_MAX_CONCURRENCY: "0",
+    })).toThrow();
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_MODEL_MAX_QUEUE: "1025",
+    })).toThrow();
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_MODEL_QUEUE_TIMEOUT_MS: "180001",
     })).toThrow();
   });
 

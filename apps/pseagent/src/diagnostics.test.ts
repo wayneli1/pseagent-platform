@@ -96,6 +96,9 @@ describe("development diagnostic trace", () => {
       operation: "plan",
       outcome: "completed",
       elapsedMs: 21,
+      attemptCount: 2,
+      queueElapsedMs: 3,
+      executionElapsedMs: 18,
     });
     trace.record({
       event: "model_payload",
@@ -186,6 +189,11 @@ describe("development diagnostic trace", () => {
     expect(records.find((record) => record.event === "finish")).toMatchObject({
       knowledgeCoverage: "complete",
       caseAssessability: "insufficient",
+    });
+    expect(records.find((record) => record.event === "model_call")).toMatchObject({
+      attemptCount: 2,
+      queueElapsedMs: 3,
+      executionElapsedMs: 18,
     });
     expect(records.find((record) => record.event === "answer_card_activation"))
       .toMatchObject({

@@ -6024,4 +6024,19 @@ describe("runKnowledgeAgent", () => {
     expect(result.outcome).toBe("unavailable");
     expect(verifyCoverage).not.toHaveBeenCalled();
   });
+
+  it("does not start the coverage verifier without a minimum execution reserve", async () => {
+    const session = fakeSession({ hits: { "seed-r1": [] } });
+    const model = scriptedAgentModel([final("none", "当前资料未覆盖该问题")]);
+    const verifyCoverage = vi.fn(async ({ draft }: CoverageVerifierInput) => draft);
+
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(model, session),
+      deadlineAt: Date.now() + 1_000,
+      verifyCoverage,
+    });
+
+    expect(result.outcome).toBe("unavailable");
+    expect(verifyCoverage).not.toHaveBeenCalled();
+  });
 });

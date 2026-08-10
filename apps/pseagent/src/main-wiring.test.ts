@@ -50,6 +50,72 @@ const plan = {
 };
 
 describe("main wiring", () => {
+  it("applies the configured scheduler when all model roles share one model", async () => {
+    let releaseFetch!: () => void;
+    let notifyFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      notifyFetchStarted = resolve;
+    });
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      notifyFetchStarted();
+      await fetchGate;
+      return new Response(JSON.stringify({
+        choices: [{
+          message: { content: "normal answer" },
+          finish_reason: "stop",
+        }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const caller = {
+      connect: vi.fn(async () => undefined),
+      call: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } satisfies KnowledgeToolCaller;
+    const server = { close: vi.fn(async () => undefined) } as unknown as McpServer;
+    const runtime = await createPseAgentRuntime({
+      ...configEnv,
+      PSE_MODEL_MAX_CONCURRENCY: "1",
+      PSE_MODEL_MAX_QUEUE: "0",
+      PSE_MODEL_QUEUE_TIMEOUT_MS: "1000",
+    }, {
+      createRouter: () => ({ route: vi.fn(async () => "normal" as const) }),
+      createKnowledgePlanner: () => ({ plan: vi.fn(async () => plan) }),
+      createKnowledgeCaller: () => caller,
+      createKnowledgeSessionFactory: () => ({ open: vi.fn() }),
+      createServer: () => server,
+    });
+
+    try {
+      const first = runtime.answer("hello");
+      await fetchStarted;
+      const second = await Promise.race([
+        runtime.answer("hello again"),
+        new Promise<"scheduler_timeout">((resolve) => {
+          setTimeout(() => resolve("scheduler_timeout"), 100);
+        }),
+      ]);
+      expect(second).not.toBe("scheduler_timeout");
+      expect(second).toMatchObject({ status: "temporarily_unavailable" });
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      releaseFetch();
+      await expect(first).resolves.toMatchObject({
+        scope: "normal",
+        status: "answered",
+        answer: "normal answer",
+      });
+    } finally {
+      releaseFetch();
+      await runtime.close();
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("uses one model for routing, planning, normal answers, and the knowledge agent", async () => {
     const model = {
       completeJson: vi.fn(),
@@ -277,7 +343,7 @@ describe("main wiring", () => {
     expect(createTaskAnalysisShadow).toHaveBeenCalledWith(
       model,
       expect.objectContaining({
-        taskSpecShadow: { enabled: true, timeoutMs: 120_000 },
+        taskSpecShadow: { enabled: true, timeoutMs: 60_000 },
         taskSpecActiveEnabled: true,
       }),
     );
