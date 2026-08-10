@@ -10,11 +10,11 @@ export const HISTORICAL_NOTICE_MESSAGES: Record<
   string
 > = {
   topic_mismatch:
-    "补充说明：已检索 Coremail MCP 历史资料，但检索内容与当前问题不匹配，因此未展示。",
+    "补充说明：已检索补充历史资料，但内容与当前问题不匹配，因此未展示。",
   low_confidence:
-    "补充说明：已检索 Coremail MCP 历史资料，但结果置信度较低，因此未展示。",
+    "补充说明：已检索补充历史资料，但结果置信度较低，因此未展示。",
   no_reliable_source:
-    "补充说明：已检索 Coremail MCP 历史资料，但未找到与当前问题可靠匹配的内容。",
+    "补充说明：已检索补充历史资料，但未找到与当前问题可靠匹配的内容。",
 };
 
 export const HISTORICAL_BODY_MAX_CHARS = 2_000;

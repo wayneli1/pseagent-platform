@@ -97,9 +97,16 @@ export function presentAnswer(
 }
 
 export function normalizeAnswerText(text: string): string {
-  return normalizeCitationOrder(text)
+  return plainTextPresentation(normalizeCitationOrder(text))
     .replace(/\r\n?/gu, "\n")
     .trim();
+}
+
+function plainTextPresentation(value: string): string {
+  return value
+    .replace(/^\s{0,3}#{1,6}[ \t]+/gmu, "")
+    .replace(/\*\*(?=\S)([^*\n]*?\S)\*\*/gu, "$1")
+    .replace(/__(?=\S)([^_\n]*?\S)__/gu, "$1");
 }
 
 export function normalizeCitationOrder(text: string): string {

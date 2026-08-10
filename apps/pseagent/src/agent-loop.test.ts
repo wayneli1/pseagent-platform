@@ -2037,6 +2037,59 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("does not duplicate an operational condition already covered by a sibling requirement", async () => {
+    const plan: KnowledgePlan = {
+      subject: "插件同步配置与版本边界",
+      requirements: [{
+        id: "R1",
+        question: "插件同步的具体配置和设置是什么",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{ id: "A1", label: "同步配置", terms: ["同步", "配置"] }],
+        queries: [{ text: "插件同步配置", aspectIds: ["A1"] }],
+      }, {
+        id: "R2",
+        question: "插件同步配置的版本边界是什么",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{ id: "A1", label: "版本边界", terms: ["版本", "边界"] }],
+        queries: [{ text: "插件同步边界", aspectIds: ["A1"] }],
+      }],
+    };
+    const path = "wiki/queries/plugin-sync.md";
+    const session = fakeSession({
+      hits: {
+        "插件同步配置": [{ path, title: "插件同步配置" }],
+        "插件同步边界": [{ path, title: "插件同步配置" }],
+      },
+      pageBodies: {
+        [path]: "先配置同步范围。插件语言切换后需要重启 Outlook。不同版本界面可能不同。",
+      },
+    });
+    const model = scriptedAgentModel([
+      readPages({ requirementId: "R1", path }, { requirementId: "R2", path }),
+      {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: "先配置同步范围；切换语言后重启 Outlook [1]。",
+          citations: [1],
+        }, {
+          id: "R2",
+          coverage: "complete",
+          answer: "不同版本的界面可能不同 [1]。",
+          citations: [1],
+        }],
+        citations: [1],
+      },
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(result.answer.match(/重启 Outlook/gu)).toHaveLength(1);
+    expect(model.calls).toBe(2);
+  });
+
   it("rewrites an ordered taxonomy when verification removes its leading items", async () => {
     const plan: KnowledgePlan = {
       subject: "购买影响角色",

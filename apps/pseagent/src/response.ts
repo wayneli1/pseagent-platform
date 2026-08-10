@@ -17,6 +17,7 @@ import {
   type StructuredAnswerBinding,
 } from "./structured-answer.js";
 import type { KnowledgeDomain } from "./task-spec.js";
+import { sanitizeFormalAnswer } from "./public-answer.js";
 
 export const NOT_COVERED_TEXT = "当前知识库暂未覆盖该问题，暂时无法给出可靠答案。";
 export const KNOWLEDGE_UNAVAILABLE_TEXT = "知识问答服务暂时不可用，请稍后重试。";
@@ -271,7 +272,7 @@ export function formatAnswerResult(input: {
       ...(input.caseAssessability === undefined
         ? {}
         : { caseAssessability: input.caseAssessability }),
-      answer: input.answer.trim(),
+      answer: sanitizeFormalAnswer(input.answer),
       references: [...input.references],
     };
   }
@@ -284,7 +285,7 @@ export function formatAnswerResult(input: {
     };
   }
 
-  const answer = input.answer.trim();
+  const answer = sanitizeFormalAnswer(input.answer);
   const sources = input.references
     .map((reference) => `[${reference.index}] ${reference.title} — ${reference.project}/${reference.path}`)
     .join("\n");
@@ -297,7 +298,9 @@ export function formatAnswerResult(input: {
     ...(input.caseAssessability === undefined
       ? {}
       : { caseAssessability: input.caseAssessability }),
-    answer: sources === "" ? answer : `${answer}\n\n资料来源：\n${sources}`,
+    answer: sanitizeFormalAnswer(
+      sources === "" ? answer : `${answer}\n\n资料来源：\n${sources}`,
+    ),
     references: [...input.references],
   };
 }

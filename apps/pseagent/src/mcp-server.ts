@@ -61,9 +61,9 @@ export function formatMcpText(result: AnswerResult): string {
     ].join("\n\n");
   }
   const historicalBlock = [
-    "⚠️ Coremail MCP 低可信历史线索（可能不正确）",
+    "⚠️ 补充历史线索（可能不正确）",
     historical.warning,
-    `MCP 自报置信度：${confidenceLabels[historical.confidence]}（不代表内容正确）`,
+    `线索置信度：${confidenceLabels[historical.confidence]}（不代表内容正确）`,
     sanitizeHistoricalBody(historical.answer),
     "历史来源：",
     ...historical.references

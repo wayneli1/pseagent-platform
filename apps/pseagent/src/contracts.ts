@@ -295,7 +295,7 @@ export const referenceSchema = z.object({
   contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
 }).strict();
 export const HISTORICAL_ANSWER_WARNING =
-  "以下内容由 Coremail MCP 根据 Jira/Wiki 历史资料自动整理，并非正式知识库答案，也未经过产品或售前人员验证。内容可能存在较多错误、过时信息、资料缺失或版本不匹配，请仅作为继续检索的线索，不能直接用于客户答复、投标、部署、升级或变更决策。";
+  "以下内容来自补充历史资料，并非正式知识库答案，也未经过产品或售前人员验证。内容可能存在较多错误、过时信息、资料缺失或版本不匹配，请仅作为继续核实的线索，不能直接用于客户答复、投标、部署、升级或变更决策。";
 export const historicalReferenceSchema = z.object({
   sourceType: z.enum(["jira", "wiki"]),
   id: z.string().min(1).optional(),

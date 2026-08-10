@@ -177,6 +177,18 @@ describe("knowledge response", () => {
     expect(result.references).toEqual([reference]);
   });
 
+  it("rewrites internal retrieval instructions before returning a formal answer", () => {
+    const result = formatAnswerResult({
+      scope: "professional",
+      status: "answered",
+      answer: "遇到界面变化时应重新核实，必要时回退查询 Coremail MCP [1]。",
+      references: [reference],
+    });
+
+    expect(result.answer).toContain("必要时进一步核实正式资料 [1]");
+    expect(result.answer).not.toContain("Coremail MCP");
+  });
+
   it("uses the structured renderer to deduplicate cross-obligation text", () => {
     const result = formatKnowledgeFinal("professional", {
       action: "final",

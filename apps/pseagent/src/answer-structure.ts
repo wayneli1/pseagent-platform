@@ -118,7 +118,7 @@ export function missingDirectQueryOperationalConditions(
     if (document.path !== undefined && !document.path.startsWith("wiki/queries/")) {
       continue;
     }
-    for (const sentence of document.content.split(/[。；;\n]+/u)) {
+    for (const sentence of answerableDocumentBody(document.content).split(/[。；;\n]+/u)) {
       const condition = operationalCondition(sentence);
       if (condition === undefined || operationalConditionCovered(normalizedAnswer, condition)) {
         continue;
@@ -141,11 +141,21 @@ function operationalCondition(value: string): {
   const tail = value.match(/(?:需要|需|必须|应当|应|才(?:能|会))(?<tail>[^。；;\n]{1,80})/u)
     ?.groups?.tail?.trim();
   if (tail === undefined) return undefined;
+  if (/(?:完成|执行|做好|进行).{0,12}(?:以下|如下).{0,24}[：:]/u.test(tail)) {
+    return undefined;
+  }
   const action = tail.match(/(?:重新启动|重启|刷新|保存|启用|开启|关闭|配置|确认|校验|同步|安装|授权|登录|切换)/u)?.[0];
   if (action === undefined) return undefined;
   const object = tail.match(/[A-Za-z][A-Za-z0-9._+-]{2,}/u)?.[0]
     ?.toLocaleLowerCase("zh-CN");
   return { action, ...(object === undefined ? {} : { object }), tail };
+}
+
+function answerableDocumentBody(value: string): string {
+  const normalized = value.replace(/^\uFEFF/u, "");
+  if (!/^---\s*(?:\r?\n|$)/u.test(normalized)) return normalized;
+  const closing = normalized.match(/^---\s*\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/u);
+  return closing === null ? normalized : normalized.slice(closing[0].length);
 }
 
 function operationalConditionCovered(

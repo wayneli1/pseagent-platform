@@ -11,6 +11,7 @@ import {
 } from "./bridge.js";
 import type { BridgeAnswerReviewSubmission, BridgeReviewReference } from "./answer-review-submission.js";
 import type { BridgeFeedbackSubmission } from "./feedback-receipt-store.js";
+import { normalizeAnswerText } from "./answer-presenter.js";
 
 const config: LunkrDirectConfig = {
   baseUrl: "https://lunkr.example.test",
@@ -100,7 +101,7 @@ describe("LunkrPseBridge", () => {
   it("shows a hidden-history notice without storing a not-covered answer", async () => {
     const formalAnswer = "当前知识库暂未覆盖该问题，暂时无法给出可靠答案。";
     const historicalNotice =
-      "补充说明：已检索 Coremail MCP 历史资料，但检索内容与当前问题不匹配，因此未展示。";
+      "补充说明：已检索补充历史资料，但内容与当前问题不匹配，因此未展示。";
     const answer = vi.fn<Answer>(async () => ({
       answer: formalAnswer,
       status: "not_covered",
@@ -1084,7 +1085,7 @@ describe("LunkrPseBridge", () => {
     expect(sendTextFile).toHaveBeenCalledWith(
       "#a#U",
       "问题#1-完整回答.txt",
-      longAnswer,
+      normalizeAnswerText(longAnswer),
       [
         "问题 #1 已处理完成",
         "本次回答涵盖：压测场景设计、关键性能指标。完整内容见附件。",

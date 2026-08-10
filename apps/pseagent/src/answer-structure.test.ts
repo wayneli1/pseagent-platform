@@ -169,6 +169,28 @@ describe("collection enumeration integrity", () => {
     )).toEqual([]);
   });
 
+  it("ignores answer-card frontmatter and list lead-ins when detecting operational conditions", () => {
+    const evidence = [{
+      path: "wiki/queries/tencent-migration.md",
+      content: [
+        "---",
+        "aliases:",
+        "  - 完成这些准备后，下一步还需要确认什么？",
+        "---",
+        "根据当前资料，迁移前至少需要完成以下旧系统准备：先登录旧邮箱；开启安全登录；启用 IMAP/SMTP。",
+      ].join("\n"),
+    }];
+
+    expect(missingDirectQueryOperationalConditions(
+      "迁移前需登录旧邮箱、开启安全登录并启用 IMAP/SMTP。",
+      evidence,
+    )).toEqual([]);
+    expect(missingDirectQueryOperationalConditions(
+      "当前资料只说明迁移范围边界。",
+      evidence,
+    )).toEqual([]);
+  });
+
   it("requires an explicit evidence boundary before presenting a formal list", () => {
     const evidence = [{ content: [
       "应同时检查发信 IP 规则、发件人规则、组织白名单和 CAC 检查。",

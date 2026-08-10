@@ -447,7 +447,7 @@ export class LunkrPseBridge<Result> {
       const caption = presentLongAnswerNotice(
         start.questionId,
         question,
-        normalizedAnswer,
+        answer,
       );
       try {
         await this.dependencies.sendTextFile(

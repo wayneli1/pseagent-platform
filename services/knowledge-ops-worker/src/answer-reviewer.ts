@@ -10,6 +10,7 @@ import {
   hashAnswerCardIdentifier,
   missingExplicitFrameworkItems,
   missingStrictFrameworkBoundaries,
+  internalPublicAnswerTerms,
   type AnswerCardCatalog,
   type AnswerCardMatch,
   type ModelClient,
@@ -74,6 +75,7 @@ export class IndependentAnswerReviewer {
           "只能依据输入中的已批准答案卡和正式知识页面判断，不得使用外部知识补足。",
           "受评对象只能是 input.answer。evidence 只是判定基准；正式资料写了某项，不代表回答已经写了该项。",
           "逐项检查正确性、完整性、逻辑、引用和表达；证据不足时选择 needs_review，不得猜测 pass。",
+          "answer 是最终用户可见内容，不得出现 Coremail MCP、LLM Wiki、内部 Wiki 等内部检索工具名称或要求用户执行内部回退查询；正式证据出现这些操作说明也不能原样复制。",
           "用户明确枚举多个对象、角色、类别或维度时，必须逐项检查 answer 是否给出各项的定义、判断标准或当前问题要求的结论；只提到名称、只给孤立例子或只完整回答其中一项，不能判为完整覆盖。",
           "正式证据把一个框架明确写成多个相互配合的核心组件，而 answer 已经采用其中至少两个组件时，必须检查中间或相邻的核心组件是否被遗漏；不能因为首尾方向正确就判为完整。",
           "当问题要求面向技术、审核或多角色受众下钻证据、数据、测试或验证时，必须检查直接方法页中影响证据可信度的真实性、敏感信息处理、脱敏或示意环境、不可虚构承诺等边界；主体步骤完整但遗漏相关证据边界时不能判为 pass。",
@@ -144,6 +146,9 @@ export function enforceDeterministicReview(
   }
   if(input.evidence.length===0){
     defects.push({category:"citation_gap",severity:"major",summary:"没有可供独立复查的正式知识页面",evidence:"复查证据包为空"});
+  }
+  for(const term of internalPublicAnswerTerms(input.answer)){
+    defects.push({category:"expression_gap",severity:"major",summary:"用户可见回答暴露了内部检索工具名称",evidence:term});
   }
   const enumerationIssue=collectionEnumerationIssue(input.answer);
   if(enumerationIssue!==undefined){

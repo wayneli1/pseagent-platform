@@ -82,6 +82,18 @@ describe("presentAnswer", () => {
     );
   });
 
+  it("renders markdown headings and emphasis as plain text for Lunkr delivery", () => {
+    expect(normalizeAnswerText([
+      "## 准备事项",
+      "- **生效与操作条件**",
+      "  请重新核实正式资料。",
+    ].join("\n"))).toBe([
+      "准备事项",
+      "- 生效与操作条件",
+      "  请重新核实正式资料。",
+    ].join("\n"));
+  });
+
   it("preserves non-whitespace body character order across chunks", () => {
     const answer = [
       "甲段包含若干文字和句号。",

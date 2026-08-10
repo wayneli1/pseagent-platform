@@ -34,3 +34,7 @@ export {
   missingStrictFrameworkBoundaries,
   usesExplicitFrameworkCollection,
 } from "./answer-structure.js";
+export {
+  internalPublicAnswerTerms,
+  sanitizeFormalAnswer,
+} from "./public-answer.js";

@@ -135,9 +135,9 @@ describe("PSEAgent MCP", () => {
     const text = formatMcpText(result);
 
     expect(text).toContain(result.answer);
-    expect(text).toContain("⚠️ Coremail MCP 低可信历史线索（可能不正确）");
+    expect(text).toContain("⚠️ 补充历史线索（可能不正确）");
     expect(text).toContain(HISTORICAL_ANSWER_WARNING);
-    expect(text).toContain("MCP 自报置信度：中（不代表内容正确）");
+    expect(text).toContain("线索置信度：中（不代表内容正确）");
     expect(text).toContain("原始历史答案。");
     expect(text).toContain("```mermaid");
     expect(text).toContain("版本：5.0、5.1");
@@ -152,15 +152,15 @@ describe("PSEAgent MCP", () => {
   it.each([
     [
       "topic_mismatch",
-      "补充说明：已检索 Coremail MCP 历史资料，但检索内容与当前问题不匹配，因此未展示。",
+      "补充说明：已检索补充历史资料，但内容与当前问题不匹配，因此未展示。",
     ],
     [
       "low_confidence",
-      "补充说明：已检索 Coremail MCP 历史资料，但结果置信度较低，因此未展示。",
+      "补充说明：已检索补充历史资料，但结果置信度较低，因此未展示。",
     ],
     [
       "no_reliable_source",
-      "补充说明：已检索 Coremail MCP 历史资料，但未找到与当前问题可靠匹配的内容。",
+      "补充说明：已检索补充历史资料，但未找到与当前问题可靠匹配的内容。",
     ],
   ] as const)("renders only the fixed hidden-history notice for %s", (reason, notice) => {
     const result: AnswerResult = {
@@ -179,7 +179,8 @@ describe("PSEAgent MCP", () => {
     const text = formatMcpText(result);
 
     expect(text).toBe(`${result.answer}\n\n${notice}`);
-    expect(text).not.toContain("⚠️ Coremail MCP 低可信历史线索");
+    expect(text).not.toContain("⚠️ 补充历史线索");
+    expect(text).not.toContain("Coremail MCP");
     expect(text).not.toContain("历史来源：");
     expect(text).not.toContain("http");
   });
@@ -208,7 +209,7 @@ describe("PSEAgent MCP", () => {
 
     expect(text).toBe([
       result.answer,
-      "补充说明：已检索 Coremail MCP 历史资料，但结果置信度较低，因此未展示。",
+      "补充说明：已检索补充历史资料，但结果置信度较低，因此未展示。",
     ].join("\n\n"));
     expect(text).not.toContain("不应显示的低置信度正文");
     expect(text).not.toContain("LOW-1");

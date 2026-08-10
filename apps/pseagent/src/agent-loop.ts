@@ -3399,6 +3399,13 @@ function pendingOperationalConditionRepairs(
   plan: KnowledgePlan,
   state: AgentState,
 ): string[] {
+  const completeAnswer = action.requirements
+    .filter((requirement) => requirement.coverage !== "none")
+    .flatMap((requirement) => [
+      requirement.answer,
+      ...(requirement.relatedContext ?? []).map((item) => item.statement),
+    ])
+    .join("\n");
   const plannedById = new Map(
     plan.requirements.map((requirement) => [requirement.id, requirement] as const),
   );
@@ -3415,7 +3422,7 @@ function pendingOperationalConditionRepairs(
     const documents = [...(
       state.evidenceDocuments.get(requirement.id)?.values() ?? []
     )];
-    return missingDirectQueryOperationalConditions(requirement.answer, documents)
+    return missingDirectQueryOperationalConditions(completeAnswer, documents)
         .length > 0
       ? [requirement.id]
       : [];
@@ -3430,6 +3437,13 @@ function applyGroundedOperationalConditions(
   const plannedById = new Map(
     plan.requirements.map((requirement) => [requirement.id, requirement] as const),
   );
+  let completeAnswer = action.requirements
+    .filter((requirement) => requirement.coverage !== "none")
+    .flatMap((requirement) => [
+      requirement.answer,
+      ...(requirement.relatedContext ?? []).map((item) => item.statement),
+    ])
+    .join("\n");
   let changed = false;
   const requirements = action.requirements.map((requirement) => {
     const planned = plannedById.get(requirement.id);
@@ -3445,7 +3459,7 @@ function applyGroundedOperationalConditions(
       state.evidenceDocuments.get(requirement.id)?.entries() ?? []
     )];
     const missing = missingDirectQueryOperationalConditions(
-      requirement.answer,
+      completeAnswer,
       documents.map(([, document]) => document),
     );
     const additions = missing.flatMap((condition) => {
@@ -3460,9 +3474,11 @@ function applyGroundedOperationalConditions(
     const projected = additions.map(({ condition, citation }) =>
       `- ${condition.replace(/[。；;]+$/u, "")} [${citation}]。`
     ).join("\n");
+    const projectedAnswer = `${requirement.answer.trimEnd()}\n\n生效与操作条件：\n${projected}`;
+    completeAnswer = `${completeAnswer}\n${projected}`;
     return {
       ...requirement,
-      answer: `${requirement.answer.trimEnd()}\n\n**生效与操作条件**\n${projected}`,
+      answer: projectedAnswer,
       citations: stableUniqueNumbers([
         ...requirement.citations,
         ...additions.map(({ citation }) => citation),
