@@ -8,9 +8,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.js";
 import type { PseAnswerExecution } from "../apps/pseagent/src/answer-service.js";
 import { answerResultSchema } from "../apps/pseagent/src/contracts.js";
-import { createPseMcpServer } from "../apps/pseagent/src/mcp-server.js";
+import { createPseMcpServer, formatMcpText } from "../apps/pseagent/src/mcp-server.js";
 import { missingExplicitComparisonLabels } from "../apps/pseagent/src/comparison-question.js";
-import { sanitizeHistoricalBody } from "../apps/pseagent/src/historical-display.js";
 import {
   acceptanceFactGroupCovered,
   selectAcceptanceCases,
@@ -220,6 +219,7 @@ try {
         conversationPersisted = false;
       }
     }
+    const visibleAnswer = formatMcpText(result);
     let answerReviewSubmitted: boolean | undefined;
     if (result.scope === "professional" || result.scope === "general") {
       try {
@@ -230,7 +230,7 @@ try {
           userDisplayName: matrix.userDisplayName,
           questionId,
           question: testCase.question,
-          answer: result.answer,
+          answer: visibleAnswer,
           answerStatus: result.status,
           scope: result.scope,
           references: result.references,
@@ -245,12 +245,6 @@ try {
         answerReviewSubmitted = false;
       }
     }
-    const visibleAnswer = [
-      result.answer,
-      ...(result.historicalAnswer === undefined
-        ? []
-        : [sanitizeHistoricalBody(result.historicalAnswer.answer)]),
-    ].filter(Boolean).join("\n\n");
     const deterministicChecks = evaluate(
       testCase,
       execution,
