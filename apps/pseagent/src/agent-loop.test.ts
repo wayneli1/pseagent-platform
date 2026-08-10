@@ -3481,6 +3481,50 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
+  it("stops a no-gain search per requirement without blocking another requirement", async () => {
+    const plan: KnowledgePlan = {
+      subject: "独立检索预算",
+      requirements: [
+        {
+          id: "R1",
+          question: "核验甲项证据",
+          ...plannedEvidence("seed-r1"),
+          evidenceMode: "direct_only",
+        },
+        {
+          id: "R2",
+          question: "核验乙项证据",
+          ...plannedEvidence("seed-r2"),
+          evidenceMode: "direct_only",
+        },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [],
+        "seed-r2": [],
+        "r1-miss": [],
+        "r1-ignored": [],
+        "r2-miss": [],
+      },
+    });
+    const model = scriptedAgentModel([
+      search("R1", "r1-miss"),
+      search("R1", "r1-ignored"),
+      search("R2", "r2-miss"),
+      final("none", "当前正式资料未覆盖", [], [
+        { id: "R1", coverage: "none", citations: [] },
+        { id: "R2", coverage: "none", citations: [] },
+      ]),
+    ]);
+
+    await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(session.search).toHaveBeenCalledWith("r1-miss", 5, undefined);
+    expect(session.search).not.toHaveBeenCalledWith("r1-ignored", 5, undefined);
+    expect(session.search).toHaveBeenCalledWith("r2-miss", 5, undefined);
+  });
+
   it("reads up to six distinct pages for a synthesis requirement", async () => {
     const paths = Array.from(
       { length: 7 },
@@ -4337,6 +4381,11 @@ describe("runKnowledgeAgent", () => {
       requirementId: "R1",
       source: "seed_search_result",
       candidateCount: 1,
+      rankedCandidates: [expect.objectContaining({
+        pathHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        position: 1,
+        sourceTier: expect.any(Number),
+      })],
       aspects: [{ id: "A1", candidateCount: 1, readCandidateCount: 0 }],
     });
     expect(events.find((event) => event.event === "read")).toEqual({
@@ -5023,7 +5072,7 @@ describe("runKnowledgeAgent", () => {
         id: "G1",
         requirementId: "R1",
         gapClass: "knowledge",
-        reason: "no_matching_page",
+          reason: "source_absent",
         missingAspect: "测试证据面",
       }],
     });
@@ -5766,7 +5815,7 @@ describe("runKnowledgeAgent", () => {
       expect(result.coverageGaps?.[0]).toMatchObject(
         failGraph
           ? { gapClass: "retrieval", reason: "tool_unavailable" }
-          : { gapClass: "knowledge", reason: "read_pages_do_not_support" },
+          : { gapClass: "knowledge", reason: "evidence_insufficient" },
       );
     }
   });

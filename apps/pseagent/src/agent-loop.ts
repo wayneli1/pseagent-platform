@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   agentActionSchema,
   finalOnlyActionSchema,
@@ -85,6 +86,12 @@ import {
   explicitNamedMethods,
   normalizeNamedMethod,
 } from "./named-method.js";
+import {
+  rankRetrievalCandidates,
+  type CandidateScore,
+  type RankedRetrievalCandidate,
+} from "./candidate-ranking.js";
+import { obligationRetrievalVariants } from "./obligation-semantics.js";
 
 export const MAX_SUPPLEMENTAL_SEARCHES_PER_REQUIREMENT = 3;
 export const DIRECT_ONLY_READ_LIMIT = 3;
@@ -165,6 +172,9 @@ type Candidate = {
   readonly aspectIds: Set<string>;
   readonly ledgerSources: Set<EvidenceCandidateSource>;
   requirementSpecificMatch: boolean;
+  pageType?: string;
+  reviewStatus?: string;
+  obligationVariantRank?: number;
 };
 
 type RequirementState = {
@@ -2456,6 +2466,10 @@ function mergeSearchResults(
   ledgerSource: EvidenceCandidateSource = "seed",
 ): boolean {
   let gained = false;
+  const obligationVariantQueries = new Set(
+    obligationRetrievalVariants(requirementState.requirement.question)
+      .map(normalizeQuery),
+  );
   for (const { query, aspectIds, result } of searches) {
     result.hits.forEach((hit, index) => {
       const existing = requirementState.candidatePaths.get(hit.path);
@@ -2474,6 +2488,14 @@ function mergeSearchResults(
         requirementSpecificMatch: false,
       };
       candidate.title = hit.title;
+      if (hit.pageType !== undefined) candidate.pageType = hit.pageType;
+      if (hit.reviewStatus !== undefined) candidate.reviewStatus = hit.reviewStatus;
+      if (obligationVariantQueries.has(normalizeQuery(query))) {
+        candidate.obligationVariantRank = Math.min(
+          candidate.obligationVariantRank ?? Number.POSITIVE_INFINITY,
+          index + 1,
+        );
+      }
       candidate.requirementSpecificMatch ||= requirementSpecific;
       candidate.ledgerSources.add(ledgerSource);
       candidate.rrfScore += 1 / (RRF_K + index + 1);
@@ -2561,6 +2583,19 @@ function observeCandidates(
     requirementId: requirementState.requirement.id,
     source: type,
     candidateCount: requirementState.candidatePaths.size,
+    rankedCandidates: rankedCandidates(requirementState).slice(0, 5).map(
+      ({ candidate, score }, index) => ({
+        pathHash: createHash("sha256").update(candidate.path, "utf8").digest("hex"),
+        position: index + 1,
+        sourceTier: score.sourceTier,
+        titleCoverage: score.titleCoverage,
+        obligationFit: score.obligationFit,
+        aspectCoverage: score.aspectCoverage,
+        directness: score.directness,
+        freshness: score.freshness,
+        rrfMicros: Math.max(0, Math.round(score.rrf * 1_000_000)),
+      }),
+    ),
     aspects: aspectStatuses(requirementState).map((aspect) => ({
       id: aspect.id,
       candidateCount: aspect.candidateCount,
@@ -2765,9 +2800,9 @@ function buildEvidenceLedger(
       }
 
       const missingAspectIds = new Set(verification.missingAspectIds);
-      const candidates: EvidenceCandidateDraft[] = sortedCandidates(
+      const candidates: EvidenceCandidateDraft[] = rankedCandidates(
         requirementState,
-      ).map((candidate) => {
+      ).map(({ candidate, score }, index) => {
         const overlapsMissingAspect = [...candidate.aspectIds].some((id) =>
           missingAspectIds.has(id));
         const relevantToMissingEvidence = missingAspectIds.size === 0
@@ -2781,11 +2816,13 @@ function buildEvidenceLedger(
           reviewRequired:
             result.coverage !== "complete" &&
             relevantToMissingEvidence &&
+            index < readLimitFor(requirementState.requirement) &&
             !shouldDeferAdjacentComparisonRead(
               requirementState,
               candidate.path,
               false,
             ),
+          ranking: candidateRankingRecord(index + 1, score),
         };
       });
       const knownCandidatePaths = new Set(
@@ -3861,56 +3898,79 @@ function hasAmbiguousComparisonClaim(answer: string): boolean {
 }
 
 function sortedCandidates(requirementState: RequirementState): Candidate[] {
-  return [...requirementState.candidatePaths.values()]
-    .sort((left, right) => {
-      const pathPriority =
-        candidatePathPriority(left, requirementState.requirement) -
-        candidatePathPriority(right, requirementState.requirement);
-      const directQueryPagePriority =
-        directQueryPageTitleCoverageScore(right, requirementState) -
-        directQueryPageTitleCoverageScore(left, requirementState);
-      const questionTitlePriority =
-        directQuestionTitleCoverageScore(
-          right.title,
-          requirementState.requirement,
-        ) -
-        directQuestionTitleCoverageScore(
-          left.title,
-          requirementState.requirement,
-        );
-      const subjectTitlePriority =
-        titleCoverageScoreForValues(right.title, [requirementState.subject]) -
-        titleCoverageScoreForValues(left.title, [requirementState.subject]);
-      const titlePriority =
-        titleCoverageScore(
-          right.title,
-          requirementState.requirement,
-          requirementState.queries,
-        ) -
-        titleCoverageScore(
-          left.title,
-          requirementState.requirement,
-          requirementState.queries,
-        );
-      const relevancePriority = right.rrfScore - left.rrfScore;
-      const aspectPriority =
-        candidateAspectGain(right, requirementState) -
-        candidateAspectGain(left, requirementState);
-      return requirementState.requirement.evidenceMode === "direct_only"
-        ? pathPriority ||
-          directQueryPagePriority ||
-          questionTitlePriority ||
-          subjectTitlePriority ||
-          titlePriority ||
-          relevancePriority ||
-          aspectPriority ||
-          left.path.localeCompare(right.path)
-        : aspectPriority ||
-          pathPriority ||
-          titlePriority ||
-          relevancePriority ||
-          left.path.localeCompare(right.path);
-    });
+  return rankedCandidates(requirementState).map((item) => item.candidate);
+}
+
+function rankedCandidates(
+  requirementState: RequirementState,
+): RankedRetrievalCandidate<Candidate>[] {
+  const missingAspectIds = requirementState.requirement.evidenceAspects
+    .map((aspect) => aspect.id)
+    .filter((aspectId) => !requirementState.readAspectIds.has(aspectId));
+  const ranked = rankRetrievalCandidates({
+    question: requirementState.requirement.question,
+    queries: [
+      ...requirementState.requirement.queries.map((query) => query.text),
+      ...requirementState.queries,
+    ],
+    evidenceMode: requirementState.requirement.evidenceMode,
+    missingAspectIds: missingAspectIds.length > 0
+      ? missingAspectIds
+      : requirementState.requirement.evidenceAspects.map((aspect) => aspect.id),
+    candidates: [...requirementState.candidatePaths.values()],
+  });
+  return ranked.sort((left, right) => {
+    const leftCandidate = left.candidate;
+    const rightCandidate = right.candidate;
+    const pathPriority =
+      candidatePathPriority(leftCandidate, requirementState.requirement) -
+      candidatePathPriority(rightCandidate, requirementState.requirement);
+    const directQueryPagePriority =
+      directQueryPageTitleCoverageScore(rightCandidate, requirementState) -
+      directQueryPageTitleCoverageScore(leftCandidate, requirementState);
+    const questionTitlePriority =
+      directQuestionTitleCoverageScore(
+        rightCandidate.title,
+        requirementState.requirement,
+      ) -
+      directQuestionTitleCoverageScore(
+        leftCandidate.title,
+        requirementState.requirement,
+      );
+    const subjectTitlePriority =
+      titleCoverageScoreForValues(
+        rightCandidate.title,
+        [requirementState.subject],
+      ) -
+      titleCoverageScoreForValues(
+        leftCandidate.title,
+        [requirementState.subject],
+      );
+    const titlePriority =
+      titleCoverageScore(
+        rightCandidate.title,
+        requirementState.requirement,
+        requirementState.queries,
+      ) -
+      titleCoverageScore(
+        leftCandidate.title,
+        requirementState.requirement,
+        requirementState.queries,
+      );
+    const sourceTierPriority = left.score.sourceTier - right.score.sourceTier;
+    const relevancePriority = rightCandidate.rrfScore - leftCandidate.rrfScore;
+    const aspectPriority =
+      candidateAspectGain(rightCandidate, requirementState) -
+      candidateAspectGain(leftCandidate, requirementState);
+    const obligationPriority = right.score.obligationFit - left.score.obligationFit;
+    return requirementState.requirement.evidenceMode === "direct_only"
+      ? obligationPriority || pathPriority || directQueryPagePriority || questionTitlePriority ||
+        subjectTitlePriority || titlePriority || sourceTierPriority ||
+        relevancePriority || aspectPriority ||
+        leftCandidate.path.localeCompare(rightCandidate.path)
+      : obligationPriority || aspectPriority || pathPriority || titlePriority || sourceTierPriority ||
+        relevancePriority || leftCandidate.path.localeCompare(rightCandidate.path);
+  });
 }
 
 function directQueryPageTitleCoverageScore(
@@ -4136,6 +4196,10 @@ function expandSeedQueries(
     for (const subject of explicitComparisonSubjects(requirement.question)) {
       addExpandedQuery(expanded, subject, aspectIds, []);
     }
+  }
+  const obligationAspectIds = requirement.evidenceAspects.map((aspect) => aspect.id);
+  for (const variant of obligationRetrievalVariants(requirement.question)) {
+    addExpandedQuery(expanded, variant, obligationAspectIds, []);
   }
   for (const [plannedQueryIndex, query] of requirement.queries.entries()) {
     const queryText = enrichSynthesisQuery(
@@ -4385,6 +4449,19 @@ function observe(state: AgentState, value: unknown): void {
 
 function roundedScore(score: number): number {
   return Number(score.toFixed(6));
+}
+
+function candidateRankingRecord(position: number, score: CandidateScore) {
+  return {
+    position,
+    titleCoverage: score.titleCoverage,
+    obligationFit: score.obligationFit,
+    aspectCoverage: score.aspectCoverage,
+    directness: score.directness,
+    sourceTier: score.sourceTier,
+    freshness: score.freshness,
+    rrf: roundedScore(score.rrf),
+  };
 }
 
 function markdownHeadings(content: string): string[] {

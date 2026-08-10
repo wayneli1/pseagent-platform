@@ -1,0 +1,68 @@
+[
+  {
+    "id": "RG01",
+    "category": "migration_capability",
+    "question": "Coremail云转自建的数据迁移应该怎么做？",
+    "evidenceMode": "direct_only",
+    "aspects": ["migration_steps", "migration_boundary"],
+    "expectedTopId": "direct-migration",
+    "candidates": [
+      { "id": "direct-migration", "path": "wiki/queries/Coremail云转自建数据迁移分阶段操作指引.md", "title": "Coremail云转自建数据迁移分阶段操作指引", "pageType": "query", "aspectIds": ["migration_steps", "migration_boundary"], "rrfScore": 0.015 },
+      { "id": "o365", "path": "wiki/findings/O365迁移前置信息.md", "title": "O365迁移前置信息收集", "pageType": "finding", "aspectIds": ["migration_steps"], "rrfScore": 0.021 },
+      { "id": "carrier-case", "path": "wiki/findings/运营商十万用户迁移案例.md", "title": "运营商十万用户迁移案例", "pageType": "finding", "aspectIds": ["migration_steps"], "rrfScore": 0.020 },
+      { "id": "pricing", "path": "wiki/findings/Coremail迁移服务报价参考.md", "title": "Coremail迁移服务报价参考", "pageType": "pricing", "aspectIds": [], "rrfScore": 0.022 }
+    ]
+  },
+  {
+    "id": "RG02",
+    "category": "technical_troubleshooting",
+    "question": "wmsvr访问MD超时导致发信慢时如何排障？",
+    "evidenceMode": "direct_only",
+    "aspects": ["symptom", "diagnosis", "recovery"],
+    "expectedTopId": "direct-troubleshooting",
+    "candidates": [
+      { "id": "direct-troubleshooting", "path": "wiki/queries/wmsvr访问MD超时导致发信慢如何处理.md", "title": "wmsvr访问MD超时导致发信慢如何处理", "pageType": "query", "aspectIds": ["symptom", "diagnosis", "recovery"], "rrfScore": 0.014 },
+      { "id": "generic-case", "path": "wiki/findings/邮件系统发信慢案例.md", "title": "邮件系统发信慢案例", "pageType": "finding", "aspectIds": ["symptom"], "rrfScore": 0.023 },
+      { "id": "price", "path": "wiki/findings/运维服务价格.md", "title": "运维服务价格", "pageType": "pricing", "aspectIds": [], "rrfScore": 0.025 }
+    ]
+  },
+  {
+    "id": "RG03",
+    "category": "product_boundary",
+    "question": "AIR客户端AI功能的离线与版本支持边界是什么？",
+    "evidenceMode": "direct_only",
+    "aspects": ["offline", "version", "boundary"],
+    "expectedTopId": "direct-boundary",
+    "candidates": [
+      { "id": "direct-boundary", "path": "wiki/queries/AIR客户端AI功能离线与版本支持边界.md", "title": "AIR客户端AI功能离线与版本支持边界", "pageType": "query", "aspectIds": ["offline", "version", "boundary"], "rrfScore": 0.013 },
+      { "id": "ai-case", "path": "wiki/findings/AI辅助撰写项目材料.md", "title": "AI辅助撰写项目材料", "pageType": "finding", "aspectIds": ["offline"], "rrfScore": 0.024 },
+      { "id": "client-overview", "path": "wiki/overview.md", "title": "AIR客户端概览", "pageType": "overview", "aspectIds": ["version"], "rrfScore": 0.020 }
+    ]
+  },
+  {
+    "id": "RG04",
+    "category": "presales_method",
+    "question": "如何用SPIN组织客户需求访谈？",
+    "evidenceMode": "synthesis_allowed",
+    "aspects": ["situation", "problem", "implication", "need_payoff"],
+    "expectedTopId": "spin-method",
+    "candidates": [
+      { "id": "spin-method", "path": "wiki/concepts/SPIN提问法.md", "title": "SPIN提问法", "pageType": "concept", "aspectIds": ["situation", "problem", "implication", "need_payoff"], "rrfScore": 0.014 },
+      { "id": "interview-case", "path": "wiki/findings/客户访谈案例.md", "title": "客户访谈案例", "pageType": "finding", "aspectIds": ["situation", "problem"], "rrfScore": 0.026 },
+      { "id": "proposal", "path": "wiki/sources/某项目建议书.md", "title": "某项目建议书", "pageType": "source", "aspectIds": ["need_payoff"], "rrfScore": 0.022 }
+    ]
+  },
+  {
+    "id": "RG05",
+    "category": "insufficient_evidence",
+    "question": "现有资料能否证明某版本必然兼容全部国产数据库？",
+    "evidenceMode": "direct_only",
+    "aspects": ["version", "compatibility", "scope"],
+    "expectedTopId": "formal-boundary",
+    "candidates": [
+      { "id": "formal-boundary", "path": "wiki/queries/国产数据库兼容性适用边界.md", "title": "国产数据库兼容性适用边界", "pageType": "query", "aspectIds": ["version", "compatibility", "scope"], "rrfScore": 0.012 },
+      { "id": "customer-case", "path": "wiki/findings/某客户国产数据库上线记录.md", "title": "某客户国产数据库上线记录", "pageType": "finding", "aspectIds": ["compatibility"], "rrfScore": 0.027 },
+      { "id": "quote", "path": "wiki/findings/国产数据库适配报价.md", "title": "国产数据库适配报价", "pageType": "pricing", "aspectIds": [], "rrfScore": 0.029 }
+    ]
+  }
+]

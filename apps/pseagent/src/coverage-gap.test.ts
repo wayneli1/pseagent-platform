@@ -142,6 +142,88 @@ describe("analyzeCoverageGaps", () => {
       expected: ["retrieval", "tool_unavailable"],
     },
     {
+      name: "candidate recalled for another aspect",
+      draft: missingUnit({
+        requirement: {
+          ...missingUnit().requirement,
+          evidenceAspects: [
+            ...missingUnit().requirement.evidenceAspects,
+            { id: "A2", label: "鍏朵粬鑳藉姏", terms: ["鍏朵粬鑳藉姏"] },
+          ],
+          queries: [
+            ...missingUnit().requirement.queries,
+            { text: "鐩爣绯荤粺 鍏朵粬鑳藉姏", aspectIds: ["A2"] },
+          ],
+        },
+        queries: [
+          ...missingUnit().queries,
+          {
+            phase: "seed",
+            query: "鐩爣绯荤粺 鍏朵粬鑳藉姏",
+            aspectIds: ["A2"],
+            status: "success",
+            plannedQueryIndexes: [1],
+          },
+        ],
+        candidates: [{
+          path: "wiki/other.md",
+          title: "鍏朵粬璧勬枡",
+          sources: ["seed"],
+          aspectIds: ["A2"],
+          reviewRequired: false,
+        }],
+        verification: {
+          coverage: "partial",
+          reason: "target_omitted",
+          coveredAspectIds: ["A2"],
+          missingAspectIds: ["A1"],
+        },
+      }),
+      expected: ["retrieval", "candidate_not_recalled"],
+    },
+    {
+      name: "relevant candidate not ranked into the review budget",
+      draft: missingUnit({
+        candidates: [{
+          path: "wiki/target.md",
+          title: "鐩爣璧勬枡",
+          sources: ["seed"],
+          aspectIds: ["A1"],
+          reviewRequired: false,
+        }],
+      }),
+      expected: ["retrieval", "candidate_not_ranked"],
+    },
+    {
+      name: "lower ranked relevant candidate remains after reviewed evidence is insufficient",
+      draft: missingUnit({
+        candidates: [
+          {
+            path: "wiki/reviewed.md",
+            title: "宸叉牳楠岃祫鏂?",
+            sources: ["seed"],
+            aspectIds: ["A1"],
+            reviewRequired: true,
+          },
+          {
+            path: "wiki/unranked.md",
+            title: "鏈繘鍏ヨ椤甸绠楃殑璧勬枡",
+            sources: ["seed"],
+            aspectIds: ["A1"],
+            reviewRequired: false,
+          },
+        ],
+        reads: [{
+          path: "wiki/reviewed.md",
+          status: "success",
+          citation: 1,
+          pageType: "guide",
+          sources: [],
+        }],
+      }),
+      expected: ["retrieval", "candidate_not_ranked"],
+    },
+    {
       name: "unread candidate",
       draft: missingUnit({
         candidates: [{
@@ -241,7 +323,7 @@ describe("analyzeCoverageGaps", () => {
     {
       name: "true no matching page",
       draft: missingUnit(),
-      expected: ["knowledge", "no_matching_page"],
+      expected: ["knowledge", "source_absent"],
     },
     {
       name: "all candidate pages read without support",
@@ -268,7 +350,7 @@ describe("analyzeCoverageGaps", () => {
           sources: [],
         }],
       }),
-      expected: ["knowledge", "read_pages_do_not_support"],
+      expected: ["knowledge", "evidence_insufficient"],
     },
   ])("classifies $name with deterministic priority", ({ draft, expected }) => {
     expect(gaps(draft)).toEqual([
@@ -325,7 +407,7 @@ describe("analyzeCoverageGaps", () => {
       ],
     }))).toMatchObject([{
       gapClass: "knowledge",
-      reason: "read_pages_do_not_support",
+      reason: "evidence_insufficient",
     }]);
   });
 
@@ -442,7 +524,7 @@ describe("analyzeCoverageGaps", () => {
     ])).toEqual([
       ["G1", "未读候选方面", "retrieval", "candidate_not_read"],
       ["G2", "仅摘要方面", "source", "summary_only"],
-      ["G3", "无匹配页面方面", "knowledge", "no_matching_page"],
+      ["G3", "无匹配页面方面", "retrieval", "candidate_not_recalled"],
     ]);
   });
 
@@ -490,7 +572,7 @@ describe("analyzeCoverageGaps", () => {
     expect(gaps(draft).map((gap) => [gap.missingAspect, gap.gapClass, gap.reason]))
       .toEqual([
         ["检索失败方面", "retrieval", "tool_unavailable"],
-        ["正常检索方面", "knowledge", "no_matching_page"],
+        ["正常检索方面", "knowledge", "source_absent"],
       ]);
   });
 
@@ -544,8 +626,8 @@ describe("analyzeCoverageGaps", () => {
 
     expect(gaps(draft).map((gap) => [gap.missingAspect, gap.gapClass, gap.reason]))
       .toEqual([
-        ["恢复检索方面", "knowledge", "no_matching_page"],
-        ["正常检索方面", "knowledge", "no_matching_page"],
+        ["恢复检索方面", "knowledge", "source_absent"],
+        ["正常检索方面", "knowledge", "source_absent"],
       ]);
   });
 

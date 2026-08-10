@@ -85,6 +85,40 @@ function unit(
 }
 
 describe("finalizeEvidenceLedger", () => {
+  it("preserves immutable candidate ranking evidence without answer content", () => {
+    const ledger = finalizeEvidenceLedger({
+      project: "coremail-professional",
+      revision,
+      units: [unit({
+        candidates: [{
+          ...unit().candidates[0]!,
+          ranking: {
+            position: 1,
+            titleCoverage: 8,
+            obligationFit: 10,
+            aspectCoverage: 1,
+            directness: 1,
+            sourceTier: 0,
+            freshness: 1,
+            rrf: 0.015,
+          },
+        }],
+      })],
+    });
+
+    expect(ledger.units[0]?.candidates[0]?.ranking).toEqual({
+      position: 1,
+      titleCoverage: 8,
+      obligationFit: 10,
+      aspectCoverage: 1,
+      directness: 1,
+      sourceTier: 0,
+      freshness: 1,
+      rrf: 0.015,
+    });
+    expect(Object.isFrozen(ledger.units[0]?.candidates[0]?.ranking)).toBe(true);
+  });
+
   it("creates an immutable, independently bound snapshot with stable record ids", () => {
     const professional = unit();
     const general: EvidenceLedgerDraftUnit = {

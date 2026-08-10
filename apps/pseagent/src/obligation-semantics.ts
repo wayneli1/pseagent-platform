@@ -1219,3 +1219,37 @@ function trimSpan(sourceText: string, span: SourceSpan): SourceSpan | undefined 
   while (end > start && /\s/u.test(sourceText[end - 1]!)) end -= 1;
   return start < end ? { start, end } : undefined;
 }
+
+/**
+ * Produces small, source-shaped query variants from an obligation family.
+ * The variants are domain semantics, never customer names or full test questions.
+ */
+export function obligationRetrievalVariants(sourceText: string): string[] {
+  const normalized = sourceText.normalize("NFKC").toLocaleLowerCase("zh-CN");
+  const variants: string[] = [];
+  if (
+    (
+      /迁移/u.test(normalized) && /(?:邮件|邮箱)/u.test(normalized)
+    ) || (
+      /替换/u.test(normalized) && /(?:邮件系统|企业邮箱|邮箱系统)/u.test(normalized)
+    )
+  ) {
+    variants.push(
+      "第三方邮件系统 迁移方式 对比",
+      "第三方邮件系统 迁移 前置评估 范围边界",
+    );
+  }
+  if (
+    /(?:超时|失败|报错|异常|发信慢|投递慢)/u.test(normalized) &&
+    /(?:如何|排查|排障|处理|恢复|定位)/u.test(normalized)
+  ) {
+    variants.push(`${sourceText.trim()} 排障 诊断 恢复`);
+  }
+  if (
+    /(?:离线|版本|兼容)/u.test(normalized) &&
+    /(?:支持|边界|范围)/u.test(normalized)
+  ) {
+    variants.push(`${sourceText.trim()} 适用版本 支持边界`);
+  }
+  return [...new Set(variants)];
+}

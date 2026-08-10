@@ -2,8 +2,30 @@ import { describe, expect, it } from "vitest";
 import {
   analyzeObligationSource,
   createObligationSourceAnalyzer,
+  obligationRetrievalVariants,
   type SourceSpan,
 } from "./obligation-semantics.js";
+
+describe("obligationRetrievalVariants", () => {
+  it.each([
+    "Coremail邮件迁移项目通常要考虑哪些产品能力？",
+    "替换现有企业邮箱时，邮件迁移范围和评估要点有哪些？",
+  ])("expands migration obligations to a source-shaped query: %s", (question) => {
+    expect(obligationRetrievalVariants(question)).toContain(
+      "第三方邮件系统 迁移方式 对比",
+    );
+  });
+
+  it("does not add migration vocabulary to an unrelated obligation", () => {
+    for (const question of [
+      "如何组织一次通用售前访谈？",
+      "如何替换邮件安全网关证书？",
+    ]) {
+      expect(obligationRetrievalVariants(question))
+        .not.toContain("第三方邮件系统 迁移方式 对比");
+    }
+  });
+});
 
 function assertPartition(
   sourceText: string,

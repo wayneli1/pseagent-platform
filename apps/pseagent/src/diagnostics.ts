@@ -203,6 +203,17 @@ export type DiagnosticEvent =
       readonly requirementId: string;
       readonly source: "seed_search_result" | "supplemental_search_result" | "graph_result";
       readonly candidateCount: number;
+      readonly rankedCandidates?: readonly {
+        readonly pathHash: string;
+        readonly position: number;
+        readonly sourceTier: number;
+        readonly titleCoverage: number;
+        readonly obligationFit: number;
+        readonly aspectCoverage: number;
+        readonly directness: number;
+        readonly freshness: number;
+        readonly rrfMicros: number;
+      }[];
       readonly aspects: readonly {
         readonly id: string;
         readonly candidateCount: number;
@@ -793,6 +804,24 @@ function allowlistDiagnosticEvent(
           ] as const,
         ),
         candidateCount: safeCount(event.candidateCount),
+        ...(event.rankedCandidates === undefined
+          ? {}
+          : {
+              rankedCandidates: safeArray(event.rankedCandidates, (item) => {
+                const candidate = safeRecord(item);
+                return {
+                  pathHash: safeSha256(candidate.pathHash),
+                  position: safePositiveInteger(candidate.position),
+                  sourceTier: safeCount(candidate.sourceTier),
+                  titleCoverage: safeCount(candidate.titleCoverage),
+                  obligationFit: safeCount(candidate.obligationFit),
+                  aspectCoverage: safeCount(candidate.aspectCoverage),
+                  directness: safeCount(candidate.directness),
+                  freshness: safeCount(candidate.freshness),
+                  rrfMicros: safeCount(candidate.rrfMicros),
+                };
+              }, 5),
+            }),
         aspects: safeArray(event.aspects, (item) => {
           const aspect = safeRecord(item);
           return {

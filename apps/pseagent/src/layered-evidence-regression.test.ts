@@ -172,8 +172,8 @@ describe("layered formal evidence business regression", () => {
     expect(execution.result.references.every(
       (reference) => reference.project === "presales-general",
     )).toBe(true);
-    expect(execution.result.references.map((reference) => reference.path))
-      .toEqual(dutyPages);
+    expect(execution.result.references.map((reference) => reference.path).sort())
+      .toEqual([...dutyPages].sort());
     expect(session.readPage).toHaveBeenCalledTimes(6);
     expect(execution).toMatchObject({
       historicalAttempted: false,

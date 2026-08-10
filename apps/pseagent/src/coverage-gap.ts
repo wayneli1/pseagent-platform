@@ -18,6 +18,10 @@ export const coverageGapClassSchema = z.enum([
 ]);
 
 export const coverageGapReasonSchema = z.enum([
+  "source_absent",
+  "candidate_not_recalled",
+  "candidate_not_ranked",
+  "evidence_insufficient",
   "no_matching_page",
   "read_pages_do_not_support",
   "summary_only",
@@ -156,8 +160,18 @@ function classifyGap(
   ) {
     return { gapClass: "retrieval", reason: "retrieval_budget_exhausted" };
   }
+  if (relevantCandidates.length === 0 && unit.candidates.length > 0) {
+    return { gapClass: "retrieval", reason: "candidate_not_recalled" };
+  }
+  if (relevantCandidates.length > 0 && reviewCandidates.length === 0) {
+    return { gapClass: "retrieval", reason: "candidate_not_ranked" };
+  }
   if (reviewCandidates.some((candidate) => !successfulReadPaths.has(candidate.path))) {
     return { gapClass: "retrieval", reason: "candidate_not_read" };
+  }
+  if (relevantCandidates.some((candidate) =>
+    !candidate.reviewRequired && !successfulReadPaths.has(candidate.path))) {
+    return { gapClass: "retrieval", reason: "candidate_not_ranked" };
   }
 
   const sourceBoundary = sourceBoundaryForAspect(relevantReads);
@@ -179,14 +193,14 @@ function classifyGap(
 
   const allPlannedQueriesCompleted = plannedQueriesCompleted(unit, aspectId);
   if (allPlannedQueriesCompleted && reviewCandidates.length === 0) {
-    return { gapClass: "knowledge", reason: "no_matching_page" };
+    return { gapClass: "knowledge", reason: "source_absent" };
   }
   if (
     allPlannedQueriesCompleted &&
     reviewCandidates.length > 0 &&
     reviewCandidates.every((candidate) => successfulReadPaths.has(candidate.path))
   ) {
-    return { gapClass: "knowledge", reason: "read_pages_do_not_support" };
+    return { gapClass: "knowledge", reason: "evidence_insufficient" };
   }
   return { gapClass: "retrieval", reason: "tool_unavailable" };
 }
@@ -302,6 +316,26 @@ function gapGuidance(
 ): { readonly confirmedBoundary: string; readonly nextAction: string } {
   const label = missingAspect.label;
   switch (attribution.reason) {
+    case "source_absent":
+      return {
+        confirmedBoundary: `已完成“${label}”的必要查询，但未召回可供核验的正式知识来源。`,
+        nextAction: `补充“${label}”的正式知识来源，或由知识负责人确认该项不在当前知识边界内。`,
+      };
+    case "candidate_not_recalled":
+      return {
+        confirmedBoundary: `本次检索召回了资料，但没有候选被归属到“${label}”。`,
+        nextAction: `调整“${label}”对应的查询与方面归属后重新检索。`,
+      };
+    case "candidate_not_ranked":
+      return {
+        confirmedBoundary: `存在与“${label}”相关的候选，但它未进入本次受限读页队列。`,
+        nextAction: `复核“${label}”候选的义务覆盖和来源等级评分。`,
+      };
+    case "evidence_insufficient":
+      return {
+        confirmedBoundary: `与“${label}”相关的候选已读，但正式正文仍不足以支持该结论。`,
+        nextAction: `补充能够直接支持“${label}”的正式证据，或降低结论强度。`,
+      };
     case "required_customer_input_missing":
       return {
         confirmedBoundary: `缺少判断“${label}”所必需的当次客户输入，因此当前无法可靠判断。`,

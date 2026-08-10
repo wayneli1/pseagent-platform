@@ -47,6 +47,18 @@ export interface EvidenceCandidateDraft {
   readonly sources: readonly EvidenceCandidateSource[];
   readonly aspectIds: readonly string[];
   readonly reviewRequired: boolean;
+  readonly ranking?: EvidenceCandidateRanking;
+}
+
+export interface EvidenceCandidateRanking {
+  readonly position: number;
+  readonly titleCoverage: number;
+  readonly obligationFit: number;
+  readonly aspectCoverage: number;
+  readonly directness: number;
+  readonly sourceTier: number;
+  readonly freshness: number;
+  readonly rrf: number;
 }
 
 export interface EvidenceReadDraft {
@@ -327,6 +339,9 @@ export function finalizeEvidenceLedger(input: {
           throw new EvidenceLedgerValidationError("duplicate_candidate");
         }
         validateAspectIds(candidate.aspectIds, knownAspectIds, "candidate_aspect_invalid");
+        if (candidate.ranking !== undefined && !validCandidateRanking(candidate.ranking)) {
+          throw new EvidenceLedgerValidationError("candidate_ranking_invalid");
+        }
         const id = `C${index + 1}` as const;
         candidateIdByPath.set(candidate.path, id);
         return {
@@ -336,6 +351,9 @@ export function finalizeEvidenceLedger(input: {
           sources: stableUnique(candidate.sources),
           aspectIds: stableUnique(candidate.aspectIds),
           reviewRequired: candidate.reviewRequired,
+          ...(candidate.ranking === undefined
+            ? {}
+            : { ranking: { ...candidate.ranking } }),
         };
       },
     );
@@ -464,6 +482,20 @@ export function finalizeEvidenceLedger(input: {
     revision: input.revision,
     units,
   });
+}
+
+function validCandidateRanking(value: EvidenceCandidateRanking): boolean {
+  return Number.isSafeInteger(value.position) && value.position > 0 &&
+    [
+      value.titleCoverage,
+      value.obligationFit,
+      value.aspectCoverage,
+      value.directness,
+      value.sourceTier,
+      value.freshness,
+      value.rrf,
+    ].every((item) => Number.isFinite(item) && item >= 0) &&
+    Number.isSafeInteger(value.sourceTier);
 }
 
 function cloneRequirement(requirement: KnowledgeRequirement): KnowledgeRequirement {

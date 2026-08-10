@@ -288,6 +288,50 @@ describe("development diagnostic trace", () => {
     });
   });
 
+  it("persists only hashed candidate ranking decomposition", () => {
+    const directory = mkdtempSync(join(tmpdir(), "pseagent-diagnostics-ranking-"));
+    temporaryDirectories.push(directory);
+    const trace = new JsonlDiagnosticTraceFactory(directory).start();
+    const pathHash = "a".repeat(64);
+    const pathCanary = "wiki/secret-candidate-path.md";
+
+    trace.record({
+      event: "candidates",
+      requirementId: "R1",
+      source: "seed_search_result",
+      candidateCount: 1,
+      rankedCandidates: [{
+        pathHash,
+        position: 1,
+        sourceTier: 0,
+        titleCoverage: 8,
+        obligationFit: 10,
+        aspectCoverage: 2,
+        directness: 1,
+        freshness: 1,
+        rrfMicros: 16_000,
+        path: pathCanary,
+      }],
+      aspects: [{ id: "A1", candidateCount: 1, readCandidateCount: 0 }],
+    } as unknown as DiagnosticEvent);
+
+    const content = readFileSync(join(directory, readdirSync(directory)[0] ?? ""), "utf8");
+    expect(content).not.toContain(pathCanary);
+    expect(JSON.parse(content)).toMatchObject({
+      rankedCandidates: [{
+        pathHash,
+        position: 1,
+        sourceTier: 0,
+        titleCoverage: 8,
+        obligationFit: 10,
+        aspectCoverage: 2,
+        directness: 1,
+        freshness: 1,
+        rrfMicros: 16_000,
+      }],
+    });
+  });
+
   it("downgrades illegal diagnostic identifiers and reasons without persisting them", () => {
     const directory = mkdtempSync(join(tmpdir(), "pseagent-diagnostics-string-canary-"));
     temporaryDirectories.push(directory);
