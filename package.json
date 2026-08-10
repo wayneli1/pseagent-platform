@@ -31,6 +31,7 @@
     "probe:release-quality": "node --env-file=.env.local --import tsx scripts/probe-release-quality.mts",
     "probe:stability": "node --env-file=.env.local --import tsx scripts/probe-stability.mts",
     "probe:reliability-load": "node --env-file=.env.local --import tsx scripts/probe-reliability-load.mts",
+    "probe:coverage-calibration": "node --env-file=.env.local --import tsx scripts/probe-coverage-calibration.mts",
     "test:regression": "npm exec -w @pseagent/app -- vitest run src/regression.test.ts",
     "lunkr:login": "node --import tsx scripts/lunkr-login.mts",
     "lunkr:forget-password": "node --import tsx scripts/lunkr-forget-password.mts",

@@ -4372,6 +4372,7 @@ describe("runKnowledgeAgent", () => {
       "read",
       "model_call",
       "coverage",
+      "coverage_gate",
       "model_call",
       "coverage",
       "coverage_gaps",
@@ -4408,6 +4409,99 @@ describe("runKnowledgeAgent", () => {
     expect(JSON.stringify(events)).not.toContain("body:wiki/r1.md");
     expect(JSON.stringify(events)).not.toContain("wiki/r1.md");
     expect(JSON.stringify(events)).not.toContain("读取后确认");
+  });
+
+  it("skips semantic verification for a low-risk grounded method answer", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/r1.md"),
+      final("complete", "建议先确认目标[1]。", [1]),
+    ]);
+    const completeJson = vi.fn(async () => {
+      throw new ModelUnavailableError();
+    });
+    const verifierModel = {
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient;
+    const events: DiagnosticEvent[] = [];
+    const { verifyCoverage: _customVerifier, ...base } = agentInput(
+      model,
+      session,
+      synthesisPlan,
+    );
+
+    const result = await runKnowledgeAgent({
+      ...base,
+      verifierModel,
+      trace: {
+        requestId: "low-risk-gate",
+        record(event: DiagnosticEvent) {
+          events.push(event);
+        },
+      },
+    });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      event: "coverage_gate",
+      disposition: "deterministic_accept",
+    }));
+    expect(completeJson).not.toHaveBeenCalled();
+    expect(result.status).toBe("answered");
+  });
+
+  it("fails closed when a high-risk compatibility answer cannot be semantically verified", async () => {
+    const plan: KnowledgePlan = {
+      subject: "兼容能力",
+      requirements: [{
+        id: "R1",
+        question: "是否支持目标协议",
+        evidenceMode: "direct_only",
+        ...plannedEvidence("seed-r1"),
+      }],
+    };
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/r1.md" }] },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/r1.md"),
+      final("complete", "系统支持目标协议[1]。", [1]),
+    ]);
+    const completeJson = vi.fn(async () => {
+      throw new ModelUnavailableError();
+    });
+    const verifierModel = {
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient;
+    const events: DiagnosticEvent[] = [];
+    const { verifyCoverage: _customVerifier, ...base } = agentInput(
+      model,
+      session,
+      plan,
+    );
+
+    const result = await runKnowledgeAgent({
+      ...base,
+      verifierModel,
+      trace: {
+        requestId: "high-risk-gate",
+        record(event: DiagnosticEvent) {
+          events.push(event);
+        },
+      },
+    });
+
+    expect(result.status).toBe("temporarily_unavailable");
+    expect(completeJson).toHaveBeenCalledOnce();
+    expect(events).toContainEqual(expect.objectContaining({
+      event: "coverage_gate",
+      disposition: "semantic_required",
+      risk: "high",
+      reasons: expect.arrayContaining(["compatibility"]),
+    }));
   });
 
   it.each([

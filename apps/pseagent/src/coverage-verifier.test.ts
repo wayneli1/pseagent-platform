@@ -733,7 +733,7 @@ describe("verifyKnowledgeCoverage", () => {
 
     expect(result.requirements[0]).toEqual({
       id: "R1",
-      coverage: "complete",
+      coverage: "partial",
       answer: "**1. 核心能力**\n正文直接确认目标协议[1]。",
       citations: [1],
     });
@@ -790,7 +790,7 @@ describe("verifyKnowledgeCoverage", () => {
 
     expect(completeJson).toHaveBeenCalledOnce();
     expect(result.requirements[0]).toMatchObject({
-      coverage: "complete",
+      coverage: "partial",
       answer: "正文直接确认目标协议[1]。",
       citations: [1],
     });
@@ -1068,7 +1068,7 @@ describe("verifyKnowledgeCoverage", () => {
     }));
   });
 
-  it("restores complete after unsupported extras are removed when every aspect remains covered", async () => {
+  it("keeps partial after unsupported claims are removed even when every aspect remains covered", async () => {
     const plan: KnowledgePlan = {
       subject: "审计能力",
       requirements: [{
@@ -1140,7 +1140,7 @@ describe("verifyKnowledgeCoverage", () => {
 
     expect(result.requirements[0]).toEqual({
       id: "R1",
-      coverage: "complete",
+      coverage: "partial",
       answer: [
         "审计记录会保留审计日志 [1]。",
         "权限控制采用三员分立 [2]。",

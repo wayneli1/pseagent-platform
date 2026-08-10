@@ -17,7 +17,9 @@ import type {
 } from "./knowledge-session.js";
 import {
   InvalidCoverageVerificationError,
+  SYNTHESIS_DISCLOSURE,
   coverageVerificationReport,
+  deterministicCoverageVerificationReport,
   inferCoverageVerificationReport,
   notCoveredRequirementAnswer,
   reconcileDeterministicSingleAspectCoverage,
@@ -57,6 +59,7 @@ import {
   type RequirementEvidenceCondition,
 } from "./evidence-ledger.js";
 import { analyzeCoverageGaps, type CoverageGap } from "./coverage-gap.js";
+import { evaluateDeterministicCoverageGate } from "./deterministic-coverage-gate.js";
 import type { DomainRequirementBinding } from "./domain-plan.js";
 import { observeModelCall } from "./model-observability.js";
 import {
@@ -657,70 +660,110 @@ async function runKnowledgeAgentCore(
         "draft",
         deadlineReached(input) ? "deadline" : "final",
       );
-      if (!hasExecutionReserve(input, MIN_VERIFIER_EXECUTION_MS)) {
-        recordDiagnostic(input.trace, {
-          event: "stop",
-          reason: "coverage_verifier_unavailable",
-        });
-        return unavailableResult(input.scope);
+      const coverageDocuments = coverageEvidence(normalizedAction, state);
+      const coverageGate = evaluateDeterministicCoverageGate({
+        question: input.question,
+        plan: input.plan,
+        draft: normalizedAction,
+        evidence: coverageDocuments,
+        conditions: [...state.evidenceConditions.values()],
+      });
+      recordDiagnostic(input.trace, {
+        event: "coverage_gate",
+        disposition: coverageGate.disposition,
+        risk: coverageGate.risk,
+        reasons: coverageGate.reasons,
+        missingInputCount: coverageGate.missingInputRequirementIds.length,
+        knowledgeMissingCount:
+          coverageGate.knowledgeMissingRequirementIds.length,
+      });
+      if (coverageGate.disposition === "reject") {
+        return fallbackUnavailable(input, "coverage_verifier_invalid");
       }
-      let auditedAction: FinalAction;
+      let auditedAction: FinalAction = normalizedAction;
       let verificationSummaries:
         readonly CoverageVerificationSummary[] | undefined;
       let verificationReport: CoverageVerificationReport | undefined;
-      try {
-        const activeSignal = toolSignal(input);
-        auditedAction = await observeModelCall({
-          trace: input.trace,
-          role: "verifier",
-          operation: "verify",
-          ...(activeSignal === undefined ? {} : { signal: activeSignal }),
-          call: () => (input.verifyCoverage ?? verifyKnowledgeCoverage)({
-            question: input.question,
-            plan: input.plan,
-            draft: normalizedAction,
-            evidence: coverageEvidence(normalizedAction, state),
-            model: input.verifierModel ?? input.model,
+      const semanticVerificationRequired =
+        coverageGate.disposition === "semantic_required" ||
+        input.verifyCoverage !== undefined;
+      if (!semanticVerificationRequired) {
+        try {
+          auditedAction = addDeterministicSynthesisDisclosure(
+            auditedAction,
+            input.plan,
+          );
+          verificationReport = deterministicCoverageVerificationReport(
+            auditedAction,
+            input.plan,
+            coverageDocuments,
+          );
+          verificationSummaries = verificationReport.summaries;
+        } catch {
+          return fallbackUnavailable(input, "coverage_verifier_invalid");
+        }
+      } else {
+        if (!hasExecutionReserve(input, MIN_VERIFIER_EXECUTION_MS)) {
+          recordDiagnostic(input.trace, {
+            event: "stop",
+            reason: "coverage_verifier_unavailable",
+          });
+          return unavailableResult(input.scope);
+        }
+        try {
+          const activeSignal = toolSignal(input);
+          auditedAction = await observeModelCall({
+            trace: input.trace,
+            role: "verifier",
+            operation: "verify",
             ...(activeSignal === undefined ? {} : { signal: activeSignal }),
-            onVerified(summaries) {
-              verificationSummaries = summaries;
-            },
-            onReport(report) {
-              verificationReport = report;
-            },
-            onInvalid(invalid) {
+            call: () => (input.verifyCoverage ?? verifyKnowledgeCoverage)({
+              question: input.question,
+              plan: input.plan,
+              draft: normalizedAction,
+              evidence: coverageDocuments,
+              model: input.verifierModel ?? input.model,
+              ...(activeSignal === undefined ? {} : { signal: activeSignal }),
+              onVerified(summaries) {
+                verificationSummaries = summaries;
+              },
+              onReport(report) {
+                verificationReport = report;
+              },
+              onInvalid(invalid) {
+                recordDiagnostic(input.trace, {
+                  event: "model_payload",
+                  result: "rejected",
+                  reason: invalid.reason,
+                  repairAttempt: invalid.attempt,
+                  ...(invalid.rawPayloadLength === undefined
+                    ? {}
+                    : { rawPayloadLength: invalid.rawPayloadLength }),
+                  ...(invalid.finishReason === undefined
+                    ? {}
+                    : { finishReason: invalid.finishReason }),
+                });
+              },
+            }),
+          });
+        } catch (error) {
+          if (!(error instanceof ModelUnavailableError)) {
+            if (error instanceof InvalidCoverageVerificationError) {
               recordDiagnostic(input.trace, {
                 event: "model_payload",
                 result: "rejected",
-                reason: invalid.reason,
-                repairAttempt: invalid.attempt,
-                ...(invalid.rawPayloadLength === undefined
-                  ? {}
-                  : { rawPayloadLength: invalid.rawPayloadLength }),
-                ...(invalid.finishReason === undefined
-                  ? {}
-                  : { finishReason: invalid.finishReason }),
+                reason: error.code,
+                repairAttempt: 3,
               });
-            },
-          }),
-        });
-      } catch (error) {
-        if (!(error instanceof ModelUnavailableError)) {
-          if (error instanceof InvalidCoverageVerificationError) {
-            recordDiagnostic(input.trace, {
-              event: "model_payload",
-              result: "rejected",
-              reason: error.code,
-              repairAttempt: 3,
-            });
+            }
+            return fallbackUnavailable(input, "coverage_verifier_invalid");
           }
-          return fallbackUnavailable(input, "coverage_verifier_invalid");
+          recordDiagnostic(input.trace, {
+            event: "stop",
+            reason: "coverage_verifier_unavailable",
+          });
+          return unavailableResult(input.scope);
         }
-        recordDiagnostic(input.trace, {
-          event: "stop",
-          reason: "coverage_verifier_unavailable",
-        });
-        return unavailableResult(input.scope);
       }
       const missingAuditedCardConcepts = missingAnswerCardRequiredConcepts(
         auditedAction,
@@ -997,6 +1040,28 @@ async function runKnowledgeAgentCore(
     }
   }
   return fallbackUnavailable(input, "turn_budget_exhausted");
+}
+
+function addDeterministicSynthesisDisclosure(
+  action: FinalAction,
+  plan: KnowledgePlan,
+): FinalAction {
+  let changed = false;
+  const requirements = action.requirements.map((requirement, index) => {
+    if (
+      requirement.coverage === "none" ||
+      plan.requirements[index]?.evidenceMode !== "synthesis_allowed" ||
+      requirement.answer.startsWith(SYNTHESIS_DISCLOSURE)
+    ) {
+      return requirement;
+    }
+    changed = true;
+    return {
+      ...requirement,
+      answer: `${SYNTHESIS_DISCLOSURE}\n${requirement.answer}`,
+    };
+  });
+  return changed ? { ...action, requirements } : action;
 }
 
 async function preloadCoverageUnitEvidence(

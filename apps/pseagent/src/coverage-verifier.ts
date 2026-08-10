@@ -95,6 +95,89 @@ export interface CoverageVerifierInput {
   }) => void;
 }
 
+export interface CoverageVerifierEnvelopeRequirement {
+  readonly id: string;
+  readonly targetSegmentIndexes: readonly number[];
+  readonly relatedContextIndexes: readonly number[];
+  readonly evidenceCitations: readonly number[];
+}
+
+/**
+ * Immutable authority boundary for semantic coverage verification. The model
+ * may classify only these existing segments; it cannot create obligations,
+ * evidence ids, related context, or replacement answer text.
+ */
+export interface CoverageVerifierEnvelope {
+  readonly requirements: readonly CoverageVerifierEnvelopeRequirement[];
+}
+
+export function buildCoverageVerifierEnvelope(input: {
+  readonly plan: KnowledgePlan;
+  readonly draft: FinalAction;
+  readonly evidence: readonly CoverageEvidenceDocument[];
+}): CoverageVerifierEnvelope {
+  const requirements = input.plan.requirements.map((planned, index) => {
+    const draft = input.draft.requirements[index];
+    const requirement: CoverageVerifierEnvelopeRequirement = Object.freeze({
+      id: planned.id,
+      targetSegmentIndexes: Object.freeze(
+        draft?.coverage === "none"
+          ? []
+          : splitTargetSegments(draft?.answer ?? "").map((segment) =>
+              segment.index),
+      ),
+      relatedContextIndexes: Object.freeze(
+        (draft?.relatedContext ?? []).map((_item, itemIndex) => itemIndex),
+      ),
+      evidenceCitations: Object.freeze(
+        stableUnique(
+          input.evidence
+            .filter((document) => document.requirementId === planned.id)
+            .map((document) => document.citation),
+        ),
+      ),
+    });
+    return requirement;
+  });
+  return Object.freeze({ requirements: Object.freeze(requirements) });
+}
+
+export function validateCoverageVerifierEnvelope(
+  envelope: CoverageVerifierEnvelope,
+  decision: CoverageVerificationAction,
+): string | undefined {
+  if (decision.requirements.length !== envelope.requirements.length) {
+    return "requirement_count_mismatch";
+  }
+  for (const [index, requirement] of decision.requirements.entries()) {
+    const frozen = envelope.requirements[index];
+    if (frozen === undefined || frozen.id !== requirement.id) {
+      return "requirement_order_mismatch";
+    }
+    const targetIndexes = new Set(frozen.targetSegmentIndexes);
+    const unknownTargetIndex = requirement.retainedTargetSegmentIndexes.find(
+      (segmentIndex) => !targetIndexes.has(segmentIndex),
+    );
+    if (unknownTargetIndex !== undefined) {
+      return `target_segment_index_out_of_range:${requirement.id}:${unknownTargetIndex}`;
+    }
+    const unknownSynthesizedIndex =
+      requirement.synthesizedTargetSegmentIndexes.find((segmentIndex) =>
+        !targetIndexes.has(segmentIndex));
+    if (unknownSynthesizedIndex !== undefined) {
+      return `target_segment_index_out_of_range:${requirement.id}:${unknownSynthesizedIndex}`;
+    }
+    const relatedIndexes = new Set(frozen.relatedContextIndexes);
+    const unknownRelatedIndex = requirement.retainedRelatedContextIndexes.find(
+      (relatedIndex) => !relatedIndexes.has(relatedIndex),
+    );
+    if (unknownRelatedIndex !== undefined) {
+      return `related_context_index_out_of_range:${requirement.id}:${unknownRelatedIndex}`;
+    }
+  }
+  return undefined;
+}
+
 export class InvalidCoverageVerificationError extends Error {
   constructor(readonly code = "invalid_coverage_verification") {
     super(code);
@@ -133,6 +216,7 @@ export function partiallyCoveredRequirementAnswer(question: string): string {
 export async function verifyKnowledgeCoverage(
   input: CoverageVerifierInput,
 ): Promise<FinalAction> {
+  const verifierEnvelope = buildCoverageVerifierEnvelope(input);
   const targetSegments = input.draft.requirements.map((requirement) => ({
     id: requirement.id,
     segments: requirement.coverage === "none"
@@ -175,11 +259,10 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
         input.plan,
         targetSegments,
       );
-      const invalidReason = validateVerification(
-        input,
+      const invalidReason = validateCoverageVerifierEnvelope(
+        verifierEnvelope,
         normalizedCandidate,
-        targetSegments,
-      );
+      ) ?? validateVerification(input, normalizedCandidate, targetSegments);
       if (invalidReason === undefined) {
         verified = normalizedCandidate;
         break;
@@ -609,6 +692,69 @@ export function inferCoverageVerificationReport(
         claimDecisions,
       };
     },
+  );
+  return {
+    ...coverageVerificationReport(action, summaries),
+    inferred: true,
+  };
+}
+
+export function deterministicCoverageVerificationReport(
+  action: FinalAction,
+  plan: KnowledgePlan,
+  evidence: readonly CoverageEvidenceDocument[],
+): CoverageVerificationReport {
+  if (action.requirements.length !== plan.requirements.length) {
+    throw new InvalidCoverageVerificationError("verification_plan_mismatch");
+  }
+  const targetSegments = action.requirements.map((requirement) => ({
+    id: requirement.id,
+    segments: requirement.coverage === "none"
+      ? []
+      : splitTargetSegments(
+          requirement.answer.startsWith(`${SYNTHESIS_DISCLOSURE}\n`)
+            ? requirement.answer.slice(SYNTHESIS_DISCLOSURE.length + 1)
+            : requirement.answer,
+        ),
+  }));
+  const verified: CoverageVerificationAction = {
+    action: "verify",
+    requirements: action.requirements.map((requirement, index) => {
+      const planned = plan.requirements[index];
+      if (planned === undefined || planned.id !== requirement.id) {
+        throw new InvalidCoverageVerificationError("verification_plan_mismatch");
+      }
+      const indexes = targetSegments[index]!.segments.map((segment) =>
+        segment.index);
+      const retained = requirement.coverage !== "none";
+      return {
+        id: requirement.id,
+        targetDecision: retained ? "retain" as const : "not_covered" as const,
+        retainedTargetSegmentIndexes: retained ? indexes : [],
+        synthesizedTargetSegmentIndexes:
+          retained && planned.evidenceMode === "synthesis_allowed"
+            ? indexes
+            : [],
+        retainedRelatedContextIndexes: [],
+        coveredAspectIds: requirement.coverage === "complete"
+          ? planned.evidenceAspects.map((aspect) => aspect.id)
+          : [],
+        reason: requirement.coverage === "none"
+          ? "target_omitted" as const
+          : requirement.coverage === "partial"
+            ? "partial_support" as const
+            : planned.evidenceMode === "synthesis_allowed"
+              ? "synthesized_support" as const
+              : "direct_support" as const,
+      };
+    }),
+  };
+  const summaries = verificationSummaries(
+    verified,
+    targetSegments,
+    plan,
+    evidence,
+    action,
   );
   return {
     ...coverageVerificationReport(action, summaries),
@@ -1393,18 +1539,10 @@ function enforceAspectCoverage(
       summary.coveredAspectCount === plannedAspectCount &&
       summary.missingAspectCount === 0;
     const allClaimsRetained = summary.removedSegmentCount === 0;
-    const onlyUnsupportedExtrasRemoved = summary.removedSegmentCount > 0 &&
-      summary.removedSegmentCount <= retainedSegmentCount &&
-      (
-        draft.requirements[index]?.coverage === "partial" ||
-        !/(?:认证流程|处理流程|操作流程|关键步骤|完整步骤|关键配置|配置项|配置参数)/u.test(
-          plan.requirements[index]?.question ?? "",
-        )
-      );
     if (
       requirement.coverage === "partial" &&
       allPlannedAspectsCovered &&
-      (allClaimsRetained || onlyUnsupportedExtrasRemoved)
+      allClaimsRetained
     ) {
       return {
         ...requirement,

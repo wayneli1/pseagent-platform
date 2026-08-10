@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "frozenAt": "2026-08-10T14:28:00.000Z",
+  "cases": [
+    {
+      "id": "CVC001",
+      "category": "low_risk_method",
+      "question": "售前访谈应该按什么步骤开展？",
+      "gold": { "coverage": "complete", "authority": "人工逐句核对正式方法正文" },
+      "expectedGate": { "disposition": "deterministic_accept", "risk": "low" },
+      "plan": {
+        "subject": "售前访谈方法",
+        "requirements": [{
+          "id": "R1",
+          "question": "售前访谈的主要步骤",
+          "evidenceMode": "synthesis_allowed",
+          "evidenceAspects": [{ "id": "A1", "label": "访谈步骤", "terms": ["目标", "角色", "下一步"] }],
+          "queries": [{ "text": "售前访谈 目标 角色 下一步", "aspectIds": ["A1"] }]
+        }]
+      },
+      "draft": {
+        "action": "final",
+        "requirements": [{ "id": "R1", "coverage": "complete", "answer": "先确认目标，再访谈关键角色，最后记录下一步 [1]。", "citations": [1] }],
+        "citations": [1]
+      },
+      "evidence": [{ "requirementId": "R1", "citation": 1, "title": "售前访谈方法", "path": "wiki/concepts/售前访谈方法.md", "content": "访谈开始前确认目标，访谈关键角色，并在结束时记录下一步。", "aspectIds": ["A1"] }],
+      "conditions": []
+    },
+    {
+      "id": "CVC002",
+      "category": "customer_input_missing",
+      "question": "现在的容量是否足够支撑未来三年？",
+      "gold": { "coverage": "none", "authority": "缺少当前客户容量与增长输入，非知识缺口" },
+      "expectedGate": { "disposition": "deterministic_accept", "risk": "low" },
+      "plan": {
+        "subject": "当前容量判断",
+        "requirements": [{
+          "id": "R1",
+          "question": "判断当前容量是否足够",
+          "evidenceMode": "synthesis_allowed",
+          "evidenceAspects": [{ "id": "A1", "label": "客户容量输入", "terms": ["容量", "增长"] }],
+          "queries": [{ "text": "容量评估 所需输入", "aspectIds": ["A1"] }]
+        }]
+      },
+      "draft": {
+        "action": "final",
+        "requirements": [{ "id": "R1", "coverage": "none", "answer": "缺少判断“当前容量是否足够”所需的当次客户输入，暂不形成当前个案结论。", "citations": [] }],
+        "citations": []
+      },
+      "evidence": [],
+      "conditions": [{ "requirementId": "R1", "conflictDetected": false, "freshness": "not_assessed", "inputState": "missing", "ambiguous": false }]
+    },
+    {
+      "id": "CVC003",
+      "category": "partial_support",
+      "question": "迁移前要确认什么，是否一定能零停机？",
+      "gold": { "coverage": "partial", "authority": "正文仅支持前置确认，不支持零停机保证" },
+      "expectedGate": { "disposition": "semantic_required", "risk": "high" },
+      "plan": {
+        "subject": "迁移前置与停机边界",
+        "requirements": [{
+          "id": "R1",
+          "question": "迁移前置确认与停机边界",
+          "evidenceMode": "direct_only",
+          "evidenceAspects": [{ "id": "A1", "label": "迁移边界", "terms": ["账号范围", "停机"] }],
+          "queries": [{ "text": "邮件迁移 账号范围 停机边界", "aspectIds": ["A1"] }]
+        }]
+      },
+      "draft": {
+        "action": "final",
+        "requirements": [{ "id": "R1", "coverage": "complete", "answer": "迁移前需确认账号范围 [1]。迁移一定可以零停机完成 [1]。", "citations": [1] }],
+        "citations": [1]
+      },
+      "evidence": [{ "requirementId": "R1", "citation": 1, "title": "迁移前置评估", "path": "wiki/concepts/迁移前置评估.md", "content": "迁移前必须确认账号范围。是否停机取决于源系统能力和迁移窗口，本文不作零停机保证。", "aspectIds": ["A1"] }],
+      "conditions": [{ "requirementId": "R1", "conflictDetected": false, "freshness": "current", "inputState": "not_applicable", "ambiguous": true }]
+    },
+    {
+      "id": "CVC004",
+      "category": "version_capability",
+      "question": "V6.0 是否支持归档检索？",
+      "gold": { "coverage": "complete", "authority": "版本能力正文直接确认" },
+      "expectedGate": { "disposition": "semantic_required", "risk": "high" },
+      "plan": {
+        "subject": "版本归档能力",
+        "requirements": [{
+          "id": "R1",
+          "question": "V6.0 的归档检索支持情况",
+          "evidenceMode": "direct_only",
+          "evidenceAspects": [{ "id": "A1", "label": "版本能力", "terms": ["V6.0", "归档检索"] }],
+          "queries": [{ "text": "V6.0 归档检索 支持", "aspectIds": ["A1"] }]
+        }]
+      },
+      "draft": {
+        "action": "final",
+        "requirements": [{ "id": "R1", "coverage": "complete", "answer": "V6.0 支持归档邮件检索 [1]。", "citations": [1] }],
+        "citations": [1]
+      },
+      "evidence": [{ "requirementId": "R1", "citation": 1, "title": "V6.0归档能力", "path": "wiki/concepts/V6.0归档能力.md", "content": "V6.0 支持对归档邮件执行检索。", "aspectIds": ["A1"] }],
+      "conditions": []
+    },
+    {
+      "id": "CVC005",
+      "category": "numeric_promise",
+      "question": "能否对外承诺 99.99% SLA？",
+      "gold": { "coverage": "none", "authority": "正文明确禁止在未签署条款前作 SLA 承诺" },
+      "expectedGate": { "disposition": "semantic_required", "risk": "high" },
+      "plan": {
+        "subject": "SLA承诺",
+        "requirements": [{
+          "id": "R1",
+          "question": "99.99% SLA 是否可以承诺",
+          "evidenceMode": "direct_only",
+          "evidenceAspects": [{ "id": "A1", "label": "SLA边界", "terms": ["SLA", "承诺"] }],
+          "queries": [{ "text": "SLA 对外承诺 边界", "aspectIds": ["A1"] }]
+        }]
+      },
+      "draft": {
+        "action": "final",
+        "requirements": [{ "id": "R1", "coverage": "complete", "answer": "可以对外承诺 99.99% SLA [1]。", "citations": [1] }],
+        "citations": [1]
+      },
+      "evidence": [{ "requirementId": "R1", "citation": 1, "title": "SLA口径边界", "path": "wiki/concepts/SLA口径边界.md", "content": "在双方签署具体服务条款前，不得对外承诺任何确定的 SLA 百分比。", "aspectIds": ["A1"] }],
+      "conditions": []
+    },
+    {
+      "id": "CVC006",
+      "category": "legal_contract",
+      "question": "合同责任应该怎么表述？",
+      "gold": { "coverage": "partial", "authority": "正文支持法务确认要求，不支持原厂承担全部责任" },
+      "expectedGate": { "disposition": "semantic_required", "risk": "high" },
+      "plan": {
+        "subject": "合同责任边界",
+        "requirements": [{
+          "id": "R1",
+          "question": "合同责任的对外表述边界",
+          "evidenceMode": "direct_only",
+          "evidenceAspects": [{ "id": "A1", "label": "法务确认", "terms": ["合同", "法务"] }],
+          "queries": [{ "text": "合同责任 法务确认 边界", "aspectIds": ["A1"] }]
+        }]
+      },
+      "draft": {
+        "action": "final",
+        "requirements": [{ "id": "R1", "coverage": "complete", "answer": "合同责任条款需经法务确认 [1]。原厂承担全部责任 [1]。", "citations": [1] }],
+        "citations": [1]
+      },
+      "evidence": [{ "requirementId": "R1", "citation": 1, "title": "合同表述边界", "path": "wiki/concepts/合同表述边界.md", "content": "合同责任条款必须提交法务确认；具体责任主体与范围以签署合同为准。", "aspectIds": ["A1"] }],
+      "conditions": []
+    },
+    {
+      "id": "CVC007",
+      "category": "conflicting_evidence",
+      "question": "两份容量资料冲突时应该给什么结论？",
+      "gold": { "coverage": "complete", "authority": "答案完整披露冲突并拒绝合并成确定结论" },
+      "expectedGate": { "disposition": "semantic_required", "risk": "high" },
+      "plan": {
+        "subject": "容量资料冲突",
+        "requirements": [{
+          "id": "R1",
+          "question": "容量口径冲突的结论边界",
+          "evidenceMode": "direct_only",
+          "evidenceAspects": [{ "id": "A1", "label": "冲突披露", "terms": ["冲突", "无法确认"] }],
+          "queries": [{ "text": "容量口径 冲突 披露", "aspectIds": ["A1"] }]
+        }]
+      },
+      "draft": {
+        "action": "final",
+        "requirements": [{ "id": "R1", "coverage": "complete", "answer": "两份正式资料的容量口径冲突，当前无法形成单一确定结论 [1][2]。", "citations": [1, 2] }],
+        "citations": [1, 2]
+      },
+      "evidence": [
+        { "requirementId": "R1", "citation": 1, "title": "容量口径甲", "path": "wiki/concepts/容量口径甲.md", "content": "容量口径甲给出的上限为一万。", "aspectIds": ["A1"] },
+        { "requirementId": "R1", "citation": 2, "title": "容量口径乙", "path": "wiki/concepts/容量口径乙.md", "content": "容量口径乙给出的上限为两万，与口径甲冲突，未核实前不得合并为确定结论。", "aspectIds": ["A1"] }
+      ],
+      "conditions": [{ "requirementId": "R1", "conflictDetected": true, "freshness": "not_assessed", "inputState": "not_applicable", "ambiguous": false }]
+    },
+    {
+      "id": "CVC008",
+      "category": "unsupported_compatibility",
+      "question": "系统支持量子卫星邮件协议吗？",
+      "gold": { "coverage": "none", "authority": "正式正文仅列基础协议，未提及目标协议" },
+      "expectedGate": { "disposition": "semantic_required", "risk": "high" },
+      "plan": {
+        "subject": "目标协议兼容性",
+        "requirements": [{
+          "id": "R1",
+          "question": "量子卫星邮件协议支持情况",
+          "evidenceMode": "direct_only",
+          "evidenceAspects": [{ "id": "A1", "label": "目标协议", "terms": ["量子卫星", "协议"] }],
+          "queries": [{ "text": "量子卫星 邮件协议 支持", "aspectIds": ["A1"] }]
+        }]
+      },
+      "draft": {
+        "action": "final",
+        "requirements": [{ "id": "R1", "coverage": "complete", "answer": "系统支持量子卫星邮件协议 [1]。", "citations": [1] }],
+        "citations": [1]
+      },
+      "evidence": [{ "requirementId": "R1", "citation": 1, "title": "基础邮件协议", "path": "wiki/concepts/基础邮件协议.md", "content": "系统支持 SMTP、POP3 与 IMAP 基础邮件协议，正文未提及量子卫星邮件协议。", "aspectIds": ["A1"] }],
+      "conditions": []
+    }
+  ]
+}

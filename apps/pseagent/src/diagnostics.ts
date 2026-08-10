@@ -18,6 +18,7 @@ import type {
   CoverageGapClass,
   CoverageGapReason,
 } from "./coverage-gap.js";
+import type { CoverageGateRiskReason } from "./deterministic-coverage-gate.js";
 
 export type PseStopReason =
   | "seed_unavailable"
@@ -259,6 +260,17 @@ export type DiagnosticEvent =
       }[];
       readonly citations: readonly number[];
       readonly stopReason: "final" | "deadline";
+    }
+  | {
+      readonly event: "coverage_gate";
+      readonly disposition:
+        | "deterministic_accept"
+        | "semantic_required"
+        | "reject";
+      readonly risk: "low" | "high";
+      readonly reasons: readonly CoverageGateRiskReason[];
+      readonly missingInputCount: number;
+      readonly knowledgeMissingCount: number;
     }
   | {
       /** Content-free attribution counters; never includes queries, paths, or answer text. */
