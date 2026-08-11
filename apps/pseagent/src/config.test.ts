@@ -29,6 +29,7 @@ describe("loadConfig", () => {
     expect(config.taskSpecActiveEnabled).toBe(false);
     expect(config.multiDomainActiveEnabled).toBe(false);
     expect(config.reliabilityControlPlaneEnabled).toBe(false);
+    expect(config.qualifiedCache).toEqual({ enabled: false });
     expect(config.answerCards).toEqual({
       enabled: false,
       required: false,
@@ -155,6 +156,40 @@ describe("loadConfig", () => {
     })).toThrow(
       "PSE_RELIABILITY_CONTROL_PLANE_ENABLED requires active TaskSpec and multi-domain execution",
     );
+  });
+
+  it("requires a reliable control plane, absolute directory, and release for qualified cache", () => {
+    const enabled = loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
+      PSE_QUALIFIED_CACHE_ENABLED: "true",
+      PSE_QUALIFIED_CACHE_DIRECTORY: "C:\\cache\\qualified",
+      PSE_RELEASE_ID: "release-20260812",
+    });
+    expect(enabled.qualifiedCache).toEqual({
+      enabled: true,
+      directory: "C:\\cache\\qualified",
+      releaseId: "release-20260812",
+    });
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_QUALIFIED_CACHE_ENABLED: "true",
+      PSE_QUALIFIED_CACHE_DIRECTORY: "C:\\cache\\qualified",
+      PSE_RELEASE_ID: "release-20260812",
+    })).toThrow("requires PSE_RELIABILITY_CONTROL_PLANE_ENABLED=true");
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
+      PSE_QUALIFIED_CACHE_ENABLED: "true",
+      PSE_QUALIFIED_CACHE_DIRECTORY: "relative/cache",
+      PSE_RELEASE_ID: "release-20260812",
+    })).toThrow("must be absolute");
   });
 
   it("rejects an invalid multi-domain feature flag instead of silently enabling it", () => {

@@ -24,7 +24,10 @@ import { ScopeRouter } from "./router.js";
 import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
 import { taskSpecSchema, type TaskSpec } from "./task-spec.js";
 import type { ResolvedQuestion } from "./question-resolver.js";
-import { finalizeEvidenceLedger } from "./evidence-ledger.js";
+import {
+  finalizeEvidenceLedger,
+  type EvidenceLedger,
+} from "./evidence-ledger.js";
 import { analyzeCoverageGaps } from "./coverage-gap.js";
 import {
   compileAtomicObligationContract,
@@ -33,6 +36,10 @@ import {
 } from "./atomic-obligation.js";
 import type { ReliableAnswerPipeline } from "./reliable-answer-pipeline.js";
 import { StageBudgetAllocator } from "./stage-budget.js";
+import type {
+  QualifiedAnswerCache,
+  ReleaseFingerprintProvider,
+} from "./qualified-answer-cache.js";
 
 const knowledgePlan = {
   subject: "Coremail",
@@ -196,6 +203,74 @@ function createProfessionalService(
 }
 
 describe("AnswerService", () => {
+  it("returns a qualified cache hit before routing or model execution with a new request id", async () => {
+    const events: DiagnosticEvent[] = [];
+    const router = { route: vi.fn() };
+    const knowledge = { open: vi.fn() };
+    const runAgent = vi.fn<AgentRunner>();
+    const cachedResult: AnswerResult = {
+      scope: "professional",
+      status: "answered",
+      policyDisposition: "allowed",
+      knowledgeCoverage: "complete",
+      caseAssessability: "not_applicable",
+      answer: "缓存中的正式回答 [1]。",
+      references: [{
+        index: 1,
+        project: "coremail-professional",
+        title: "正式资料",
+        path: "wiki/formal.md",
+        revision: "a".repeat(40),
+        contentHash: "b".repeat(64),
+      }],
+    };
+    const qualifiedCache: QualifiedAnswerCache = {
+      get: vi.fn(async () => ({
+        key: "c".repeat(64),
+        result: cachedResult,
+        domainsUsed: ["coremail-professional" as const],
+        obligationSignature: "d".repeat(64),
+        qualifiedAt: "2026-08-12T00:00:00.000Z",
+      })),
+      put: vi.fn(),
+    };
+    const releaseFingerprint: ReleaseFingerprintProvider = {
+      current: vi.fn(async () => ({
+        knowledgeRevisions: {
+          "coremail-professional": "a".repeat(40),
+          "presales-general": "e".repeat(40),
+        },
+        answerCardCatalogHash: "f".repeat(64),
+      })),
+    };
+    const service = new AnswerService({
+      model: {} as ModelClient,
+      router,
+      planner: createPlanner(),
+      diagnostics: {
+        start: () => ({
+          requestId: "11111111-1111-4111-8111-111111111111",
+          record(event) { events.push(event); },
+        }),
+      },
+      knowledge,
+      runAgent,
+      qualifiedCache,
+      releaseFingerprint,
+      releaseId: "release-1",
+    });
+
+    const execution = await service.answerDetailed("Coremail 归档能力是什么？");
+
+    expect(execution.requestId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(execution.result).toBe(cachedResult);
+    expect(execution.domainsUsed).toEqual(["coremail-professional"]);
+    expect(router.route).not.toHaveBeenCalled();
+    expect(knowledge.open).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(events).toContainEqual({ event: "qualified_cache", result: "hit" });
+  });
+
   it("observes TaskSpec shadow analysis without changing the legacy answer path", async () => {
     const events: DiagnosticEvent[] = [];
     const rawQuestion = "还有华为呢？";
@@ -2105,6 +2180,9 @@ describe("AnswerService", () => {
       readonly multiDomainActiveEnabled?: boolean;
       readonly diagnostics?: DiagnosticTraceFactory;
       readonly reliablePipeline?: ReliableAnswerPipeline;
+      readonly qualifiedCache?: QualifiedAnswerCache;
+      readonly releaseFingerprint?: ReleaseFingerprintProvider;
+      readonly releaseId?: string;
     } = {}) {
       const planningSession = domainSession("coremail-professional", "a");
       const professionalSession = domainSession("coremail-professional", "b");
@@ -2166,6 +2244,13 @@ describe("AnswerService", () => {
         ...(options.reliablePipeline === undefined
           ? {}
           : { reliablePipeline: options.reliablePipeline }),
+        ...(options.qualifiedCache === undefined
+          ? {}
+          : { qualifiedCache: options.qualifiedCache }),
+        ...(options.releaseFingerprint === undefined
+          ? {}
+          : { releaseFingerprint: options.releaseFingerprint }),
+        ...(options.releaseId === undefined ? {} : { releaseId: options.releaseId }),
         ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
         ...(options.historicalProvider === undefined
           ? {}
@@ -2220,6 +2305,78 @@ describe("AnswerService", () => {
         result: { status: "answered", answer: "可靠控制面回答" },
         domainsUsed: ["coremail-professional", "presales-general"],
       });
+    });
+
+    it("writes only a qualified reliable result whose evidence revisions match the cache key", async () => {
+      const qualifiedCache: QualifiedAnswerCache = {
+        get: vi.fn(async () => undefined),
+        put: vi.fn(async () => undefined),
+      };
+      const releaseFingerprint: ReleaseFingerprintProvider = {
+        current: vi.fn(async () => ({
+          knowledgeRevisions: {
+            "coremail-professional": "b".repeat(40),
+            "presales-general": "c".repeat(40),
+          },
+          answerCardCatalogHash: "d".repeat(64),
+        })),
+      };
+      const reliablePipeline = {
+        answer: vi.fn(async (input: Parameters<ReliableAnswerPipeline["answer"]>[0]) => ({
+          result: {
+            scope: input.scope,
+            status: "answered" as const,
+            policyDisposition: "allowed" as const,
+            knowledgeCoverage: "complete" as const,
+            caseAssessability: "not_applicable" as const,
+            answer: "完整可靠回答 [1]。",
+            references: [{
+              index: 1,
+              project: "coremail-professional" as const,
+              title: "正式资料",
+              path: "wiki/formal.md",
+              revision: "b".repeat(40),
+              contentHash: "e".repeat(64),
+            }],
+          },
+          domainsUsed: input.plans.map((item) => item.domain),
+          evidenceLedgers: [
+            { project: "coremail-professional", revision: "b".repeat(40) },
+            { project: "presales-general", revision: "c".repeat(40) },
+          ] as unknown as EvidenceLedger[],
+          outcomes: input.contract.obligations.map((obligation) => ({
+            obligationId: obligation.id,
+            state: "complete" as const,
+            claims: [],
+          })),
+          callBudget: {
+            maximumOpenEndedCalls: 3,
+            usedOpenEndedCalls: 2,
+            usedStructuredCalls: 1,
+          },
+        })),
+      } satisfies ReliableAnswerPipeline;
+      const { service } = createMixedService({
+        reliablePipeline,
+        qualifiedCache,
+        releaseFingerprint,
+        releaseId: "release-1",
+      });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+
+      expect(execution.result.status).toBe("answered");
+      expect(qualifiedCache.put).toHaveBeenCalledOnce();
+      expect(qualifiedCache.put).toHaveBeenCalledWith(
+        expect.objectContaining({ releaseId: "release-1", schemaVersion: 1 }),
+        expect.objectContaining({
+          key: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          obligationSignature: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          domainsUsed: ["coremail-professional", "presales-general"],
+        }),
+      );
+      expect(JSON.stringify(vi.mocked(qualifiedCache.put).mock.calls[0]?.[1]))
+        .not.toContain(mixedQuestion);
     });
 
     it("runs mixed obligations in isolated sessions and formats one deterministic answer", async () => {

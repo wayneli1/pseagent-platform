@@ -58,6 +58,7 @@ import {
 import { formatKnowledgeFinal } from "./response.js";
 import {
   evaluatePolicyPreflight,
+  POLICY_CONTRACT_VERSION,
   type PolicySemanticClassifier,
 } from "./policy-preflight.js";
 import {
@@ -105,6 +106,16 @@ import {
   materializeGuardedTaskSpec,
 } from "./atomic-obligation.js";
 import type { ReliableAnswerPipeline } from "./reliable-answer-pipeline.js";
+import {
+  cacheKey,
+  hashConversationContext,
+  isQualifiedCacheWrite,
+  normalizeCacheQuestion,
+  obligationSignature,
+  type QualifiedAnswerCache,
+  type QualifiedAnswerCacheKeyInput,
+  type ReleaseFingerprintProvider,
+} from "./qualified-answer-cache.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 180_000;
 export const PSE_ACTIVE_DEADLINE_MS = 165_000;
@@ -223,6 +234,9 @@ export class AnswerService {
     readonly policyClassifier?: PolicySemanticClassifier;
     readonly reliabilityControlPlaneEnabled?: boolean;
     readonly reliablePipeline?: ReliableAnswerPipeline;
+    readonly qualifiedCache?: QualifiedAnswerCache;
+    readonly releaseFingerprint?: ReleaseFingerprintProvider;
+    readonly releaseId?: string;
   }) {}
 
   async answer(
@@ -266,6 +280,7 @@ export class AnswerService {
       progressObserver,
     );
     let scope: Scope | undefined;
+    let qualifiedCacheKeyInput: QualifiedAnswerCacheKeyInput | undefined;
     let questionResolution = identityResolvedQuestion(question);
     const withQuestionResolution = (execution:PseAnswerExecution):PseAnswerExecution => ({...execution,questionResolution});
     try {
@@ -278,18 +293,18 @@ export class AnswerService {
           : { classifier: this.dependencies.policyClassifier }),
         signal: preflightSignal,
       });
-      recordStageBudgetOutcome({
-        trace,
-        budget: stageBudget,
-        stage: "preflight_cache",
-        startedAt: preflightStartedAt,
-        result: preflightSignal.aborted
-          ? "timeout"
-          : policyPreflight.kind === "uncertain"
-            ? "degraded"
-            : "completed",
-      });
       if (policyPreflight.result !== undefined) {
+        recordStageBudgetOutcome({
+          trace,
+          budget: stageBudget,
+          stage: "preflight_cache",
+          startedAt: preflightStartedAt,
+          result: preflightSignal.aborted
+            ? "timeout"
+            : policyPreflight.kind === "uncertain"
+              ? "degraded"
+              : "completed",
+        });
         scope = policyPreflight.result.scope;
         recordDiagnostic(trace, { event: "route", scope });
         return withQuestionResolution(finishExecution(
@@ -300,6 +315,66 @@ export class AnswerService {
           false,
         ));
       }
+      let qualifiedCacheDegraded = false;
+      if (
+        this.dependencies.qualifiedCache !== undefined &&
+        this.dependencies.releaseFingerprint !== undefined &&
+        this.dependencies.releaseId !== undefined
+      ) {
+        try {
+          const fingerprint = await this.dependencies.releaseFingerprint.current(
+            preflightSignal,
+          );
+          qualifiedCacheKeyInput = {
+            normalizedQuestion: normalizeCacheQuestion(question),
+            conversationContextHash: hashConversationContext(conversationContext),
+            releaseId: this.dependencies.releaseId,
+            knowledgeRevisions: fingerprint.knowledgeRevisions,
+            policyVersion: POLICY_CONTRACT_VERSION,
+            answerCardCatalogHash: fingerprint.answerCardCatalogHash,
+            schemaVersion: 1,
+          };
+          const cached = await this.dependencies.qualifiedCache.get(qualifiedCacheKeyInput);
+          recordDiagnostic(trace, {
+            event: "qualified_cache",
+            result: cached === undefined ? "miss" : "hit",
+          });
+          if (cached !== undefined) {
+            recordStageBudgetOutcome({
+              trace,
+              budget: stageBudget,
+              stage: "preflight_cache",
+              startedAt: preflightStartedAt,
+              result: preflightSignal.aborted ? "timeout" : "completed",
+            });
+            scope = cached.result.scope;
+            recordDiagnostic(trace, { event: "route", scope });
+            return withQuestionResolution(finishExecution(
+              trace,
+              cached.result,
+              startedAt,
+              false,
+              false,
+              cached.domainsUsed,
+            ));
+          }
+        } catch {
+          qualifiedCacheDegraded = true;
+          qualifiedCacheKeyInput = undefined;
+          recordDiagnostic(trace, { event: "qualified_cache", result: "bypass" });
+        }
+      }
+      recordStageBudgetOutcome({
+        trace,
+        budget: stageBudget,
+        stage: "preflight_cache",
+        startedAt: preflightStartedAt,
+        result: preflightSignal.aborted
+          ? "timeout"
+          : qualifiedCacheDegraded
+            ? "degraded"
+            : "completed",
+      });
       const obligationStartedAt = Date.now();
       const obligationSignal = stageBudget.signal("obligation_compile", requestSignal);
       const exactRoute = (
@@ -711,6 +786,37 @@ export class AnswerService {
                   trace,
                   signal: requestSignal,
                 });
+                if (
+                  qualifiedCacheKeyInput !== undefined &&
+                  this.dependencies.qualifiedCache !== undefined &&
+                  isQualifiedCacheWrite(reliable) &&
+                  evidenceRevisionsMatch(
+                    reliable.evidenceLedgers,
+                    qualifiedCacheKeyInput.knowledgeRevisions,
+                  )
+                ) {
+                  try {
+                    const key = cacheKey(qualifiedCacheKeyInput);
+                    await this.dependencies.qualifiedCache.put(
+                      qualifiedCacheKeyInput,
+                      {
+                        key,
+                        result: reliable.result,
+                        domainsUsed: reliable.domainsUsed,
+                        obligationSignature: obligationSignature(
+                          taskAnalysis.obligationContract,
+                        ),
+                        qualifiedAt: new Date().toISOString(),
+                      },
+                    );
+                    recordDiagnostic(trace, { event: "qualified_cache", result: "write" });
+                  } catch {
+                    recordDiagnostic(trace, {
+                      event: "qualified_cache",
+                      result: "write_failed",
+                    });
+                  }
+                }
                 return withQuestionResolution(finishExecution(
                   trace,
                   reliable.result,
@@ -1350,6 +1456,14 @@ function latestConversationAnswerCardIdHashes(
 
 function scopeForDomain(domain: KnowledgeDomain): Exclude<Scope, "normal"> {
   return domain === "coremail-professional" ? "professional" : "general";
+}
+
+function evidenceRevisionsMatch(
+  ledgers: readonly EvidenceLedger[],
+  expected: Readonly<Record<KnowledgeDomain, string>>,
+): boolean {
+  return ledgers.length > 0 && ledgers.every((ledger) =>
+    ledger.revision === expected[ledger.project]);
 }
 
 function recordAnswerCardMatchDiagnostic(

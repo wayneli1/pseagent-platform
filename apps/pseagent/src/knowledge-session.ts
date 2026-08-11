@@ -114,6 +114,26 @@ export class KnowledgeSession {
     private readonly caller: KnowledgeToolCaller,
   ) {}
 
+  static async readRevisionSnapshot(
+    caller: KnowledgeToolCaller,
+    signal?: AbortSignal,
+  ): Promise<Readonly<Record<ProjectKey, string>>> {
+    const status = healthResultSchema.parse(
+      await caller.call("knowledge_status", {}, signal),
+    );
+    const revisions = Object.fromEntries(status.projects.map((project) => [
+      project.project,
+      project.revision,
+    ])) as Record<ProjectKey, string>;
+    if (
+      revisions["coremail-professional"] === undefined ||
+      revisions["presales-general"] === undefined
+    ) {
+      throw new KnowledgeUnavailableError("knowledge_revision_snapshot_incomplete");
+    }
+    return Object.freeze(revisions);
+  }
+
   static async open(
     scope: "professional" | "general",
     caller: KnowledgeToolCaller,

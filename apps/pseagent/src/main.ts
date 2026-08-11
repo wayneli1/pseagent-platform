@@ -58,6 +58,11 @@ import {
   ModelStructuredClaimSynthesizer,
 } from "./structured-claim.js";
 import { HighRiskConsensusGate } from "./high-risk-consensus.js";
+import {
+  FileQualifiedAnswerCache,
+  type QualifiedAnswerCache,
+  type ReleaseFingerprintProvider,
+} from "./qualified-answer-cache.js";
 
 export interface PseRuntimeDependencies {
   readonly createModel?: (config: AppConfig) => ModelClient;
@@ -89,6 +94,13 @@ export interface PseRuntimeDependencies {
     readonly knowledge: KnowledgeSessionFactory;
     readonly models: ModelRoleClients;
   }) => ReliableAnswerPipeline;
+  readonly createQualifiedAnswerCache?: (
+    config: Extract<AppConfig["qualifiedCache"], { enabled: true }>,
+  ) => QualifiedAnswerCache;
+  readonly createReleaseFingerprintProvider?: (input: {
+    readonly caller: KnowledgeToolCaller;
+    readonly answerCardMatcher?: AnswerCardMatcher;
+  }) => ReleaseFingerprintProvider;
 }
 
 export interface PseAgentRuntime {
@@ -147,6 +159,27 @@ export async function createPseAgentRuntime(
         )
       : undefined;
     const knowledge = (dependencies.createKnowledgeSessionFactory ?? defaultKnowledgeSessionFactory)(caller);
+    const qualifiedCache = config.qualifiedCache.enabled
+      ? dependencies.createQualifiedAnswerCache?.(config.qualifiedCache) ??
+        new FileQualifiedAnswerCache(config.qualifiedCache.directory)
+      : undefined;
+    const releaseFingerprint = config.qualifiedCache.enabled
+      ? dependencies.createReleaseFingerprintProvider?.({
+          caller,
+          ...(answerCardMatcher === undefined ? {} : { answerCardMatcher }),
+        }) ?? {
+          async current(signal: AbortSignal) {
+            return {
+              knowledgeRevisions: await KnowledgeSession.readRevisionSnapshot(
+                caller,
+                signal,
+              ),
+              answerCardCatalogHash: answerCardMatcher?.catalogHash?.() ??
+                "0".repeat(64),
+            };
+          },
+        }
+      : undefined;
     const reliablePipeline = config.reliabilityControlPlaneEnabled
       ? dependencies.createReliableAnswerPipeline?.({ knowledge, models }) ??
         new DeterministicReliableAnswerPipeline({
@@ -178,6 +211,11 @@ export async function createPseAgentRuntime(
       multiDomainActiveEnabled: config.multiDomainActiveEnabled,
       reliabilityControlPlaneEnabled: config.reliabilityControlPlaneEnabled,
       ...(reliablePipeline === undefined ? {} : { reliablePipeline }),
+      ...(qualifiedCache === undefined ? {} : { qualifiedCache }),
+      ...(releaseFingerprint === undefined ? {} : { releaseFingerprint }),
+      ...(config.qualifiedCache.enabled
+        ? { releaseId: config.qualifiedCache.releaseId }
+        : {}),
       answerCardExactActiveEnabled: config.answerCards.exactActiveEnabled,
       answerCardFamilyActiveEnabled: config.answerCards.familyActiveEnabled,
       questionResolver,

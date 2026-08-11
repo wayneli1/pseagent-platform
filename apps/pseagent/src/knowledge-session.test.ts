@@ -109,6 +109,21 @@ function fakeKnowledgeCaller(overrides: {
 }
 
 describe("KnowledgeSession", () => {
+  it("reads both ready revisions from one immutable health snapshot", async () => {
+    const caller = fakeKnowledgeCaller({
+      professionalRevision: revisionA,
+      generalRevision: revisionB,
+    });
+
+    await expect(KnowledgeSession.readRevisionSnapshot(caller))
+      .resolves.toEqual({
+        "coremail-professional": revisionA,
+        "presales-general": revisionB,
+      });
+    expect(caller.call).toHaveBeenCalledOnce();
+    expect(caller.call).toHaveBeenCalledWith("knowledge_status", {}, undefined);
+  });
+
   it("does not permanently close the shared caller after one open failure", async () => {
     const caller = fakeKnowledgeCaller();
     caller.call.mockRejectedValueOnce(new Error("transient status failure"));

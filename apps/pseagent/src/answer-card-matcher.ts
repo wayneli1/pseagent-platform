@@ -89,6 +89,7 @@ export interface AnswerCardContextItemResolution {
 }
 
 export interface AnswerCardMatcher {
+  catalogHash?(): string;
   routeExact?(question: string): AnswerCardRouteHint | undefined;
   routeTrustedFamily?(input: {
     readonly question: string;
@@ -108,6 +109,10 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
     private readonly registry: AnswerCardRegistry,
     private readonly model: ModelClient,
   ) {}
+
+  catalogHash(): string {
+    return this.registry.catalogHash;
+  }
 
   routeExact(question: string): AnswerCardRouteHint | undefined {
     const card = this.registry.exactCard(question);
@@ -392,6 +397,10 @@ export class ReloadingAnswerCardMatcher implements AnswerCardMatcher {
     const source=resolveActiveAnswerCardCatalog(catalogPath,snapshotRoot);
     this.sourceKey=source.key;
     this.current=this.create(source.catalogPath);
+  }
+
+  catalogHash(): string {
+    return this.matcher().catalogHash();
   }
 
   routeExact(question:string):AnswerCardRouteHint|undefined {

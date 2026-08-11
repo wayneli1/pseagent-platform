@@ -55,6 +55,7 @@ export interface ReliableAnswerPipelineResult {
   readonly evidenceLedgers: readonly EvidenceLedger[];
   readonly outcomes: readonly ObligationOutcome[];
   readonly callBudget: ModelCallBudgetSnapshot;
+  readonly consensus?: HighRiskConsensusResult;
 }
 
 export interface ReliableAnswerPipeline {
@@ -358,6 +359,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
       evidenceLedgers: Object.freeze(globalized.retrievals.map((item) => item.evidenceLedger)),
       outcomes: Object.freeze(outcomes),
       callBudget,
+      ...(consensusResult === undefined ? {} : { consensus: consensusResult }),
     });
   }
 }

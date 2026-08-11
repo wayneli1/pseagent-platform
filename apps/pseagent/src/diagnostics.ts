@@ -207,6 +207,10 @@ export type DiagnosticEvent =
       readonly agreed: boolean;
     }
   | {
+      readonly event: "qualified_cache";
+      readonly result: "hit" | "miss" | "bypass" | "write" | "write_failed";
+    }
+  | {
       readonly event: "search";
       readonly requirementId: string;
       readonly phase: "seed" | "supplemental";
@@ -885,6 +889,14 @@ function allowlistDiagnosticEvent(
         retainedCount: safeCount(event.retainedCount),
         rejectedCount: safeCount(event.rejectedCount),
         agreed: safeBoolean(event.agreed),
+      };
+    case "qualified_cache":
+      return {
+        event: event.event,
+        result: safeEnum(
+          event.result,
+          ["hit", "miss", "bypass", "write", "write_failed"] as const,
+        ),
       };
     case "search":
       return {

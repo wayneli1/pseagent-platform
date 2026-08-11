@@ -151,6 +151,10 @@ describe("answer card registry and matching", () => {
 
   it("normalizes punctuation for deterministic exact matching and binds revisions", () => {
     const registry = new AnswerCardRegistry(catalog());
+    const matcher = new DefaultAnswerCardMatcher(
+      registry,
+      { completeJson: vi.fn() } as unknown as ModelClient,
+    );
 
     expect(normalizeQuestion(" Coremail，可以怎么迁移？ ")).toBe(
       normalizeQuestion("coremail可以怎么迁移"),
@@ -159,6 +163,7 @@ describe("answer card registry and matching", () => {
       .toBe("CM-MIGRATION-001");
     expect(registry.expectedRevision("presales-general")).toBe(generalRevision);
     expect(registry.catalogHash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(matcher.catalogHash()).toBe(registry.catalogHash);
     expect(registry.activeCardCount).toBe(2);
     expect(() => registry.assertHasActiveCards()).not.toThrow();
     expect(registry.cardApplicable("CM-MIGRATION-001", "Coremail 迁移能力")).toBe(true);

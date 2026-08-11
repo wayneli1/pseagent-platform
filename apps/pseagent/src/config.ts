@@ -49,6 +49,13 @@ export type AppConfig = BaseConfig & {
   readonly taskSpecActiveEnabled: boolean;
   readonly multiDomainActiveEnabled: boolean;
   readonly reliabilityControlPlaneEnabled: boolean;
+  readonly qualifiedCache:
+    | { readonly enabled: false }
+    | {
+        readonly enabled: true;
+        readonly directory: string;
+        readonly releaseId: string;
+      };
   readonly answerCards:
     | {
         readonly enabled: false;
@@ -123,6 +130,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     taskSpecActiveEnabled,
     multiDomainActiveEnabled,
   );
+  const qualifiedCache = loadQualifiedCacheConfig(
+    env,
+    reliabilityControlPlaneEnabled,
+  );
   const answerCards = loadAnswerCardConfig(
     env,
     taskSpecShadow.enabled,
@@ -138,6 +149,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       taskSpecActiveEnabled,
       multiDomainActiveEnabled,
       reliabilityControlPlaneEnabled,
+      qualifiedCache,
       answerCards,
       modelRoles: modelRoles(parsed),
       modelCapabilities: {
@@ -172,6 +184,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     taskSpecActiveEnabled,
     multiDomainActiveEnabled,
     reliabilityControlPlaneEnabled,
+    qualifiedCache,
     answerCards,
     modelRoles: modelRoles(parsed),
     modelCapabilities: {
@@ -292,6 +305,34 @@ function loadReliabilityControlPlaneEnabled(
     );
   }
   return enabled;
+}
+
+function loadQualifiedCacheConfig(
+  env: NodeJS.ProcessEnv,
+  reliabilityControlPlaneEnabled: boolean,
+): AppConfig["qualifiedCache"] {
+  const enabled = z.enum(["true", "false"]).parse(
+    env.PSE_QUALIFIED_CACHE_ENABLED ?? "false",
+  ) === "true";
+  if (!enabled) return { enabled: false };
+  if (!reliabilityControlPlaneEnabled) {
+    throw new Error(
+      "PSE_QUALIFIED_CACHE_ENABLED requires PSE_RELIABILITY_CONTROL_PLANE_ENABLED=true.",
+    );
+  }
+  const directory = env.PSE_QUALIFIED_CACHE_DIRECTORY?.trim() ?? "";
+  const releaseId = env.PSE_RELEASE_ID?.trim() ?? "";
+  if (!path.isAbsolute(directory)) {
+    throw new Error("PSE_QUALIFIED_CACHE_DIRECTORY must be absolute when cache is enabled.");
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(releaseId)) {
+    throw new Error("PSE_RELEASE_ID is required when qualified cache is enabled.");
+  }
+  return {
+    enabled: true,
+    directory: path.normalize(directory),
+    releaseId,
+  };
 }
 
 function loadTaskSpecActiveEnabled(

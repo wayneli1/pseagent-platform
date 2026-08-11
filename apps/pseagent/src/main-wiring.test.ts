@@ -16,6 +16,10 @@ import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
 import { taskSpecSchema } from "./task-spec.js";
 import type { AnswerCardMatcher } from "./answer-card-matcher.js";
 import type { ReliableAnswerPipeline } from "./reliable-answer-pipeline.js";
+import type {
+  QualifiedAnswerCache,
+  ReleaseFingerprintProvider,
+} from "./qualified-answer-cache.js";
 
 const configEnv = {
   PSE_MODEL_BASE_URL: "https://model.example.test/v1",
@@ -579,6 +583,48 @@ describe("main wiring", () => {
       models: expect.any(Object),
     });
     expect(wiredModels?.verifier).not.toBe(wiredModels?.consensusVerifier);
+    await runtime.close();
+  });
+
+  it("wires qualified cache and immutable fingerprint providers only when enabled", async () => {
+    const caller = {
+      connect: vi.fn(async () => undefined),
+      call: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } satisfies KnowledgeToolCaller;
+    const cache = { get: vi.fn(), put: vi.fn() } as unknown as QualifiedAnswerCache;
+    const fingerprint = { current: vi.fn() } as unknown as ReleaseFingerprintProvider;
+    const createQualifiedAnswerCache = vi.fn(() => cache);
+    const createReleaseFingerprintProvider = vi.fn(() => fingerprint);
+    const server = { close: vi.fn(async () => undefined) } as unknown as McpServer;
+
+    const runtime = await createPseAgentRuntime({
+      ...configEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
+      PSE_QUALIFIED_CACHE_ENABLED: "true",
+      PSE_QUALIFIED_CACHE_DIRECTORY: "C:\\cache\\qualified",
+      PSE_RELEASE_ID: "release-20260812",
+    }, {
+      createRouter: () => ({ route: vi.fn(async () => "normal" as const) }),
+      createKnowledgePlanner: () => ({ plan: vi.fn(async () => plan) }),
+      createKnowledgeCaller: () => caller,
+      createKnowledgeSessionFactory: () => ({ open: vi.fn() }),
+      createTaskAnalysisShadow: () => ({ analyze: vi.fn() } as unknown as TaskAnalysisShadow),
+      createReliableAnswerPipeline: () => ({ answer: vi.fn() } as unknown as ReliableAnswerPipeline),
+      createQualifiedAnswerCache,
+      createReleaseFingerprintProvider,
+      createServer: () => server,
+    });
+
+    expect(createQualifiedAnswerCache).toHaveBeenCalledWith({
+      enabled: true,
+      directory: "C:\\cache\\qualified",
+      releaseId: "release-20260812",
+    });
+    expect(createReleaseFingerprintProvider).toHaveBeenCalledWith({ caller });
     await runtime.close();
   });
 
