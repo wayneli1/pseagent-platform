@@ -358,3 +358,62 @@ Lunkr 原生帖子连续三次发送失败时，才降级为不超过 1,000 字�
   `LUNKR_RECONNECT_MAX_MS` 控制。
 - 日志只记录连接、收到私聊、回复成功或脱敏错误，不记录消息正文、回答正文、
   密码、SID、Cookie 或模型密钥。
+
+## 11. 百题独立冷验收
+
+冷验收只能在已提交且工作区干净的平台仓库中运行。三轮必须使用同一代码提交、
+题集 seal、模型、知识 revision、策略版本和 release ID；任何一项漂移都会使批次
+失效。生产合格答案缓存必须关闭，缓存命中数必须为零。
+
+在启动每一轮前，在同一个 PowerShell 中显式设置以下环境。知识运营、反馈、发布
+令牌全部置空，避免验收向外部系统写入数据：
+
+```powershell
+$env:PSE_BLIND_MATRIX_PATH='tests/e2e/enterprise-blind-acceptance-20260812-fourth.json'
+$env:PSE_BLIND_SEAL_PATH='tests/e2e/enterprise-blind-acceptance-20260812-fourth.sha256'
+$env:PSE_BLIND_BATCH_DIR="$env:TEMP\pseagent-blind-acceptance-fourth"
+$env:PSE_BLIND_CONCURRENCY='4'
+$env:PSE_BLIND_TIMEOUT_MS='180000'
+$env:PSE_MODEL_NAME='deepseek_v4_flash'
+$env:PSE_RESOLVER_MODEL_NAME='deepseek_v4_flash'
+$env:PSE_PLANNER_MODEL_NAME='deepseek_v4_flash'
+$env:PSE_SYNTHESIZER_MODEL_NAME='deepseek_v4_flash'
+$env:PSE_VERIFIER_MODEL_NAME='deepseek_v4_flash'
+$env:PSE_CONSENSUS_VERIFIER_MODEL_NAME='deepseek_v4_flash'
+$env:PSE_RELIABILITY_CONTROL_PLANE_ENABLED='true'
+$env:PSE_QUALIFIED_CACHE_ENABLED='false'
+$env:PSE_RELEASE_ID='release-20260812-fourth'
+$env:COREMAIL_PROFESSIONAL_REVISION='64d768e99f137ab149bb3f981d024b75c2dc62a6'
+$env:PRESALES_GENERAL_REVISION='655ecd95fd1c2b6500810b26ccddc6035111b40a'
+$env:KNOWLEDGE_OPS_BASE_URL=''
+$env:KNOWLEDGE_OPS_SERVICE_TOKEN=''
+$env:KNOWLEDGE_OPS_FEEDBACK_URL=''
+$env:KNOWLEDGE_OPS_FEEDBACK_TOKEN=''
+$env:PSE_FEEDBACK_PSEUDONYMIZATION_KEY=''
+$env:KNOWLEDGE_OPS_RELEASE_TOKEN=''
+```
+
+先只校验题集与 seal，不调用模型：
+
+```powershell
+$env:PSE_BLIND_VALIDATE_ONLY='true'
+npm run probe:blind-acceptance
+Remove-Item Env:PSE_BLIND_VALIDATE_ONLY
+```
+
+确认 Knowledge Engine 为本次隔离实例且监听 `127.0.0.1:19849` 后，顺序执行三轮；
+轮次之间不得修改代码、题集、环境身份或知识索引：
+
+```powershell
+$env:KNOWLEDGE_ENGINE_URL='http://127.0.0.1:19849'
+$env:PSE_BLIND_ROUND='1'
+npm run probe:blind-acceptance
+$env:PSE_BLIND_ROUND='2'
+npm run probe:blind-acceptance
+$env:PSE_BLIND_ROUND='3'
+npm run probe:blind-acceptance
+```
+
+最终报告的 `runtimeIdentity.cacheMode` 必须是 `cold_disabled`，`scorerVersion` 必须
+是 `3`，300 条 observation 的缓存命中总数必须为零。暖缓存性能测试必须另建批次，
+不得合并进事实准确率、首次输出或三轮一致率。

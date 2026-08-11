@@ -26,6 +26,13 @@ export interface ReliabilityDiagnosticSummary {
     readonly rejectedCount: number;
     readonly agreed: boolean;
   };
+  readonly cache: {
+    readonly hitCount: number;
+    readonly missCount: number;
+    readonly bypassCount: number;
+    readonly writeCount: number;
+    readonly writeFailureCount: number;
+  };
   readonly rootStopReason?: PseStopReason;
   readonly finalStopReason?: PseStopReason;
   readonly stopReasons: readonly PseStopReason[];
@@ -187,6 +194,7 @@ export function summarizeReliabilityDiagnostics(
     : []);
   const consensus = [...events].reverse().find((event) =>
     event.event === "high_risk_consensus");
+  const cacheEvents = events.filter((event) => event.event === "qualified_cache");
   const taskSpec = [...events].reverse().find((event) =>
     event.event === "task_spec");
   const taskGuard = [...events].reverse().find((event) =>
@@ -285,6 +293,18 @@ export function summarizeReliabilityDiagnostics(
             agreed: consensus.agreed,
           },
         }),
+    cache: {
+      hitCount: cacheEvents.filter((event) =>
+        event.event === "qualified_cache" && event.result === "hit").length,
+      missCount: cacheEvents.filter((event) =>
+        event.event === "qualified_cache" && event.result === "miss").length,
+      bypassCount: cacheEvents.filter((event) =>
+        event.event === "qualified_cache" && event.result === "bypass").length,
+      writeCount: cacheEvents.filter((event) =>
+        event.event === "qualified_cache" && event.result === "write").length,
+      writeFailureCount: cacheEvents.filter((event) =>
+        event.event === "qualified_cache" && event.result === "write_failed").length,
+    },
     domains,
     task: {
       ...(taskSpec?.event !== "task_spec"

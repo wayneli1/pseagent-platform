@@ -106,5 +106,30 @@ function evidence(): EnterpriseReleaseEvidence {
       safetyFailures: 0,
       availabilityFailures: 0,
     },
+    verificationArtifacts: verificationArtifacts(),
+  };
+}
+
+function verificationArtifacts(): EnterpriseReleaseEvidence["verificationArtifacts"] {
+  const sha256 = "a".repeat(64);
+  return {
+    scorerCalibration: {
+      passed: true, sha256, scorerVersion: 3,
+      labelledCaseCount: 25, dangerousFalseNegatives: 0,
+    },
+    modelCallBudget: {
+      passed: true, sha256, allowedMaximumOpenEndedCalls: 3,
+      observedMaximumOpenEndedCalls: 3,
+    },
+    stageBudgetFaultInjection: { passed: true, sha256, scenarioCount: 6 },
+    coldCacheIsolation: {
+      passed: true, sha256, cacheMode: "cold_disabled",
+      cacheHitCount: 0, observationCount: 300,
+    },
+    loadGate: {
+      passed: true, sha256, concurrency: 4,
+      chainSuccessRate: 1, p95LatencyMs: 100_000, p99LatencyMs: 150_000,
+    },
+    historicalRegression: { passed: true, sha256, suiteCount: 4 },
   };
 }

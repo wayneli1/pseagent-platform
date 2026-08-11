@@ -6,6 +6,24 @@ import {
 } from "./reliability-diagnostics.ts";
 
 describe("reliability diagnostics", () => {
+  it("summarizes cache events so cold runs can reject every hit", () => {
+    const summary = summarizeReliabilityDiagnostics([
+      { event: "qualified_cache", result: "miss" },
+      { event: "qualified_cache", result: "hit" },
+      { event: "qualified_cache", result: "bypass" },
+      { event: "qualified_cache", result: "write" },
+      { event: "qualified_cache", result: "write_failed" },
+    ]);
+
+    expect(summary.cache).toEqual({
+      hitCount: 1,
+      missCount: 1,
+      bypassCount: 1,
+      writeCount: 1,
+      writeFailureCount: 1,
+    });
+  });
+
   it("summarizes the reliable model call budget without content", () => {
     const summary = summarizeReliabilityDiagnostics([{
       event: "model_call_budget",

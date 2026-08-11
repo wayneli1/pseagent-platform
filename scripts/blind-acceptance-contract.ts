@@ -73,6 +73,11 @@ export interface BlindAcceptanceObservation {
   readonly codeCommit: string;
   readonly model: string;
   readonly knowledgeRevisions: Readonly<Record<BlindProject, string>>;
+  /** Present on scorer-v3 cold runs; omitted only by preserved historical reports. */
+  readonly cacheMode?: "cold_disabled";
+  readonly scorerVersion?: number;
+  readonly policyVersion?: string;
+  readonly releaseId?: string;
   readonly scope?: BlindScope;
   readonly status?: string;
   readonly policyDisposition?: Exclude<BlindPolicyDisposition, "unknown">;
@@ -189,6 +194,9 @@ export function validateBlindAcceptanceRun(
     const key = `${item.caseId}/${item.round}`;
     if (keys.has(key)) throw new Error("duplicate_blind_acceptance_observation");
     keys.add(key);
+    if ((item.diagnostics?.cache?.hitCount ?? 0) > 0) {
+      throw new Error("blind_acceptance_cache_hit_forbidden");
+    }
   }
   for (const item of dataset.cases) {
     const rounds = observations.filter((observation) => observation.caseId === item.id)
@@ -201,6 +209,10 @@ export function validateBlindAcceptanceRun(
     codeCommit: item.codeCommit,
     model: item.model,
     knowledgeRevisions: item.knowledgeRevisions,
+    cacheMode: item.cacheMode,
+    scorerVersion: item.scorerVersion,
+    policyVersion: item.policyVersion,
+    releaseId: item.releaseId,
   })));
   if (runtimeKeys.size !== 1) throw new Error("blind_acceptance_runtime_drift");
 }

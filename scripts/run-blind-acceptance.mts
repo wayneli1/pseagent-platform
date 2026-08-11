@@ -14,16 +14,23 @@ import { basename, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import iconv from "iconv-lite";
 import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.ts";
+import { POLICY_CONTRACT_VERSION } from "../apps/pseagent/src/policy-preflight.ts";
 import {
+  blindAcceptanceScorerVersion,
   buildBlindAcceptanceReport,
   hashBlindQuestion,
   parseBlindAcceptanceDataset,
   type BlindAcceptanceObservation,
   type BlindProject,
 } from "./blind-acceptance-contract.ts";
+import {
+  assertPinnedKnowledgeRevisions,
+  BLIND_ACCEPTANCE_REQUIRED_MODEL,
+  requirePinnedKnowledgeRevisions,
+  validateColdRunEnvironment,
+} from "./blind-run-contract.ts";
 import { ReliabilityDiagnosticCollector } from "./reliability-diagnostics.ts";
 
-const REQUIRED_MODEL = "deepseek_v4_flash";
 const matrixPath = resolve(process.env.PSE_BLIND_MATRIX_PATH ??
   "tests/e2e/enterprise-blind-acceptance-20260810.json");
 const sealPath = resolve(process.env.PSE_BLIND_SEAL_PATH ??
@@ -70,23 +77,28 @@ if (process.env.PSE_BLIND_VALIDATE_ONLY === "true") {
 }
 
 assertCleanWorktree();
-assertFixedModel(process.env);
+const coldIdentity = validateColdRunEnvironment(process.env);
+const pinnedKnowledgeRevisions = requirePinnedKnowledgeRevisions(process.env);
 const round = parseRound(process.env.PSE_BLIND_ROUND);
 const concurrency = positiveInteger(process.env.PSE_BLIND_CONCURRENCY, 4);
 if (concurrency > 4) throw new Error("blind_acceptance_concurrency_above_four");
 const timeoutMs = positiveInteger(process.env.PSE_BLIND_TIMEOUT_MS, 180_000);
 const codeCommit = gitCommit();
 const knowledgeRevisions = await readKnowledgeRevisions();
+assertPinnedKnowledgeRevisions(pinnedKnowledgeRevisions, knowledgeRevisions);
 const batchRoot = resolve(process.env.PSE_BLIND_BATCH_DIR ??
   join(tmpdir(), `pseagent-blind-acceptance-${matrixSha256.slice(0, 12)}`));
 mkdirSync(batchRoot, { recursive: true });
 const batchManifestPath = join(batchRoot, "batch.json");
 const runtimeIdentity = {
   codeCommit,
-  model: REQUIRED_MODEL,
+  model: BLIND_ACCEPTANCE_REQUIRED_MODEL,
   knowledgeRevisions,
   matrixSha256,
   exclusionHashesSha256,
+  ...coldIdentity,
+  scorerVersion: blindAcceptanceScorerVersion,
+  policyVersion: POLICY_CONTRACT_VERSION,
 };
 if (existsSync(batchManifestPath)) {
   const previous = JSON.parse(readFileSync(batchManifestPath, "utf8"));
@@ -173,6 +185,7 @@ try {
           failure: observation.failure,
           rootStopReason: observation.diagnostics?.rootStopReason,
           modelAttemptCount: observation.diagnostics?.model.attemptCount,
+          cacheHitCount: observation.diagnostics?.cache.hitCount,
         })}\n`, "utf8");
         process.stdout.write(`${JSON.stringify({
           type: "blind_progress",
@@ -183,6 +196,7 @@ try {
           status: observation.status,
           stopReason: observation.stopReason,
           rootStopReason: observation.diagnostics?.rootStopReason,
+          cacheHitCount: observation.diagnostics?.cache.hitCount,
           latencyMs: observation.latencyMs,
         })}\n`);
       }
@@ -192,8 +206,24 @@ try {
 } finally {
   await runtime.close();
 }
+if (observations.some((observation) =>
+  (observation.diagnostics?.cache.hitCount ?? 0) > 0)) {
+  throw new Error("blind_acceptance_cache_hit_forbidden");
+}
 const endingRevisions = await readKnowledgeRevisions();
-if (JSON.stringify(endingRevisions) !== JSON.stringify(knowledgeRevisions)) {
+assertPinnedKnowledgeRevisions(pinnedKnowledgeRevisions, endingRevisions);
+const endingRuntimeIdentity = {
+  codeCommit: gitCommit(),
+  model: BLIND_ACCEPTANCE_REQUIRED_MODEL,
+  knowledgeRevisions: endingRevisions,
+  matrixSha256,
+  exclusionHashesSha256,
+  ...validateColdRunEnvironment(process.env),
+  scorerVersion: blindAcceptanceScorerVersion,
+  policyVersion: POLICY_CONTRACT_VERSION,
+};
+assertCleanWorktree();
+if (JSON.stringify(endingRuntimeIdentity) !== JSON.stringify(runtimeIdentity)) {
   throw new Error("blind_acceptance_runtime_drift");
 }
 observations.sort((left, right) => left.caseId.localeCompare(right.caseId, "en"));
@@ -338,19 +368,6 @@ function gitCommit(): string {
   const value = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   if (!/^[a-f0-9]{40}$/u.test(value)) throw new Error("invalid_git_commit");
   return value;
-}
-
-function assertFixedModel(env: NodeJS.ProcessEnv): void {
-  const values = [
-    env.PSE_MODEL_NAME,
-    env.PSE_RESOLVER_MODEL_NAME ?? env.PSE_MODEL_NAME,
-    env.PSE_PLANNER_MODEL_NAME ?? env.PSE_MODEL_NAME,
-    env.PSE_SYNTHESIZER_MODEL_NAME ?? env.PSE_MODEL_NAME,
-    env.PSE_VERIFIER_MODEL_NAME ?? env.PSE_MODEL_NAME,
-  ];
-  if (values.some((value) => value !== REQUIRED_MODEL)) {
-    throw new Error(`blind_acceptance_requires_${REQUIRED_MODEL}`);
-  }
 }
 
 async function readKnowledgeRevisions(): Promise<Record<BlindProject, string>> {

@@ -2,6 +2,10 @@ import type {
   BlindAcceptanceHardGate,
   BlindAcceptanceReport,
 } from "./blind-acceptance-contract.ts";
+import {
+  blindAcceptanceScorerVersion,
+  enterpriseLatencyThresholds,
+} from "./blind-acceptance-contract.ts";
 
 export const enterpriseReleaseThresholds = Object.freeze({
   retrievalRecall: 0.95,
@@ -25,6 +29,46 @@ export interface EnterpriseReleaseEvidence {
     readonly safetyFailures: number;
     readonly availabilityFailures: number;
     readonly latencyPassed: boolean;
+  };
+  readonly verificationArtifacts: {
+    readonly scorerCalibration: {
+      readonly passed: boolean;
+      readonly sha256: string;
+      readonly scorerVersion: number;
+      readonly labelledCaseCount: number;
+      readonly dangerousFalseNegatives: number;
+    };
+    readonly modelCallBudget: {
+      readonly passed: boolean;
+      readonly sha256: string;
+      readonly allowedMaximumOpenEndedCalls: number;
+      readonly observedMaximumOpenEndedCalls: number;
+    };
+    readonly stageBudgetFaultInjection: {
+      readonly passed: boolean;
+      readonly sha256: string;
+      readonly scenarioCount: number;
+    };
+    readonly coldCacheIsolation: {
+      readonly passed: boolean;
+      readonly sha256: string;
+      readonly cacheMode: "cold_disabled";
+      readonly cacheHitCount: number;
+      readonly observationCount: number;
+    };
+    readonly loadGate: {
+      readonly passed: boolean;
+      readonly sha256: string;
+      readonly concurrency: number;
+      readonly chainSuccessRate: number;
+      readonly p95LatencyMs: number;
+      readonly p99LatencyMs: number;
+    };
+    readonly historicalRegression: {
+      readonly passed: boolean;
+      readonly sha256: string;
+      readonly suiteCount: number;
+    };
   };
 }
 
@@ -51,6 +95,16 @@ export interface EnterpriseReleaseDecision {
 export function evaluateEnterpriseReleaseGate(
   evidence: EnterpriseReleaseEvidence,
 ): EnterpriseReleaseDecision {
+  if (!isRecord(evidence.verificationArtifacts)) {
+    throw new Error("enterprise_release_verification_artifacts_required");
+  }
+  const artifacts = evidence.verificationArtifacts;
+  for (const [name, artifact] of Object.entries(artifacts)) {
+    if (!isRecord(artifact) || typeof artifact.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(artifact.sha256)) {
+      throw new Error(`invalid_enterprise_release_artifact_${name}`);
+    }
+  }
   assertCount("retrieval.total", evidence.retrieval.total);
   assertBoundedCount("retrieval.recalled", evidence.retrieval.recalled,
     evidence.retrieval.total);
@@ -80,7 +134,41 @@ export function evaluateEnterpriseReleaseGate(
     0,
     historicalBaselinePassRate - historicalCurrentPassRate,
   ));
+  const artifactChecks: EnterpriseReleaseCheck[] = [
+    trueGate("artifacts.scorer_calibration",
+      artifacts.scorerCalibration.passed &&
+      artifacts.scorerCalibration.scorerVersion === blindAcceptanceScorerVersion &&
+      Number.isSafeInteger(artifacts.scorerCalibration.labelledCaseCount) &&
+      artifacts.scorerCalibration.labelledCaseCount >= 25 &&
+      artifacts.scorerCalibration.dangerousFalseNegatives === 0),
+    trueGate("artifacts.model_call_budget",
+      artifacts.modelCallBudget.passed &&
+      artifacts.modelCallBudget.allowedMaximumOpenEndedCalls === 3 &&
+      artifacts.modelCallBudget.observedMaximumOpenEndedCalls <=
+        artifacts.modelCallBudget.allowedMaximumOpenEndedCalls),
+    trueGate("artifacts.stage_budget_fault_injection",
+      artifacts.stageBudgetFaultInjection.passed &&
+      Number.isSafeInteger(artifacts.stageBudgetFaultInjection.scenarioCount) &&
+      artifacts.stageBudgetFaultInjection.scenarioCount > 0),
+    trueGate("artifacts.cold_cache_isolation",
+      artifacts.coldCacheIsolation.passed &&
+      artifacts.coldCacheIsolation.cacheMode === "cold_disabled" &&
+      artifacts.coldCacheIsolation.cacheHitCount === 0 &&
+      artifacts.coldCacheIsolation.observationCount === 300),
+    trueGate("artifacts.load_gate",
+      artifacts.loadGate.passed &&
+      Number.isSafeInteger(artifacts.loadGate.concurrency) &&
+      artifacts.loadGate.concurrency >= 1 && artifacts.loadGate.concurrency <= 4 &&
+      artifacts.loadGate.chainSuccessRate >= 0.995 &&
+      artifacts.loadGate.p95LatencyMs <= enterpriseLatencyThresholds.p95Ms &&
+      artifacts.loadGate.p99LatencyMs <= enterpriseLatencyThresholds.p99Ms),
+    trueGate("artifacts.historical_regression",
+      artifacts.historicalRegression.passed &&
+      Number.isSafeInteger(artifacts.historicalRegression.suiteCount) &&
+      artifacts.historicalRegression.suiteCount > 0),
+  ];
   const checks: EnterpriseReleaseCheck[] = [
+    ...artifactChecks,
     ...evidence.blindAcceptance.hardGates.map(fromBlindGate),
     trueGate("blind_acceptance.qualified", evidence.blindAcceptance.qualified),
     minimumGate("retrieval.recall_rate", retrievalRecallRate,
@@ -146,4 +234,8 @@ function assertNonNegativeInteger(id: string, value: number): void {
 function assertBoundedCount(id: string, value: number, total: number): void {
   assertNonNegativeInteger(id, value);
   if (value > total) throw new Error(`invalid_${id}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
