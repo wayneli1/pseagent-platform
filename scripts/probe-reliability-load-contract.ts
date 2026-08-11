@@ -91,6 +91,76 @@ export interface ReliabilityLoadSummary {
   readonly stopReasons: Readonly<Record<string, number>>;
 }
 
+export const reliabilityLoadGateThresholds = Object.freeze({
+  requiredConcurrencies: Object.freeze([1, 2, 4, 10] as const),
+  successRate: 0.995,
+  p95Ms: 120_000,
+  p99Ms: 180_000,
+});
+
+export interface ReliabilityLoadHardGate {
+  readonly id: string;
+  readonly observed: number;
+  readonly comparison: "minimum" | "maximum";
+  readonly threshold: number;
+  readonly passed: boolean;
+}
+
+export interface ReliabilityLoadGate {
+  readonly qualified: boolean;
+  readonly thresholds: typeof reliabilityLoadGateThresholds;
+  readonly missingConcurrencies: readonly number[];
+  readonly hardGates: readonly ReliabilityLoadHardGate[];
+}
+
+export function evaluateReliabilityLoadGate(
+  summaries: readonly ReliabilityLoadSummary[],
+): ReliabilityLoadGate {
+  const byConcurrency = new Map<number, ReliabilityLoadSummary>();
+  for (const summary of summaries) {
+    if (byConcurrency.has(summary.concurrency)) {
+      throw new Error("duplicate_reliability_load_concurrency");
+    }
+    if (!reliabilityLoadGateThresholds.requiredConcurrencies.includes(
+      summary.concurrency as 1 | 2 | 4 | 10,
+    )) {
+      throw new Error("unexpected_reliability_load_concurrency");
+    }
+    byConcurrency.set(summary.concurrency, summary);
+  }
+  const missingConcurrencies = reliabilityLoadGateThresholds.requiredConcurrencies
+    .filter((concurrency) => !byConcurrency.has(concurrency));
+  const hardGates = reliabilityLoadGateThresholds.requiredConcurrencies
+    .flatMap((concurrency): ReliabilityLoadHardGate[] => {
+      const summary = byConcurrency.get(concurrency);
+      if (summary === undefined) return [];
+      return [
+        minimumGate(
+          `concurrency_${concurrency}.success_rate`,
+          summary.successRate,
+          reliabilityLoadGateThresholds.successRate,
+        ),
+        maximumGate(
+          `concurrency_${concurrency}.p95_latency_ms`,
+          summary.p95Ms,
+          reliabilityLoadGateThresholds.p95Ms,
+        ),
+        maximumGate(
+          `concurrency_${concurrency}.p99_latency_ms`,
+          summary.p99Ms,
+          reliabilityLoadGateThresholds.p99Ms,
+        ),
+      ];
+    });
+  return {
+    qualified: missingConcurrencies.length === 0 &&
+      hardGates.every((gate) => gate.passed),
+    thresholds: reliabilityLoadGateThresholds,
+    missingConcurrencies,
+    hardGates,
+  };
+}
+
 export function summarizeReliabilityLoad(
   concurrency: number,
   observations: readonly ReliabilityLoadObservation[],
@@ -140,6 +210,34 @@ function percentile(values: readonly number[], probability: number): number {
   const sorted = [...values].sort((left, right) => left - right);
   const index = Math.max(0, Math.ceil(probability * sorted.length) - 1);
   return sorted[index]!;
+}
+
+function minimumGate(
+  id: string,
+  observed: number,
+  threshold: number,
+): ReliabilityLoadHardGate {
+  return {
+    id,
+    observed,
+    comparison: "minimum",
+    threshold,
+    passed: observed >= threshold,
+  };
+}
+
+function maximumGate(
+  id: string,
+  observed: number,
+  threshold: number,
+): ReliabilityLoadHardGate {
+  return {
+    id,
+    observed,
+    comparison: "maximum",
+    threshold,
+    passed: observed <= threshold,
+  };
 }
 
 function nonNegativeNumber(value: unknown): number {

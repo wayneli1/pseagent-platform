@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.ts";
 import {
+  evaluateReliabilityLoadGate,
   parseReliabilityKnowledgeHealth,
   selectReliabilityCases,
   summarizeReliabilityLoad,
@@ -162,15 +163,26 @@ for (const concurrency of profiles) {
   }
 }
 
+const gate = evaluateReliabilityLoadGate(
+  report.profiles.map((profile) => profile.summary),
+);
+const persistedReport = {
+  ...report,
+  gate,
+  qualified: gate.qualified,
+};
 const directory = join(tmpdir(), "pseagent-reliability-load");
 mkdirSync(directory, { recursive: true });
 const reportPath = join(directory, `reliability-load-${Date.now()}.json`);
-writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+writeFileSync(reportPath, `${JSON.stringify(persistedReport, null, 2)}\n`, "utf8");
 process.stdout.write(`${JSON.stringify({
   type: "summary",
   reportPath,
+  qualified: gate.qualified,
+  hardGates: gate.hardGates,
   profiles: report.profiles.map((profile) => profile.summary),
 })}\n`);
+if (!gate.qualified) process.exitCode = 1;
 
 function parseCases(value: unknown): ProbeCase[] {
   const records = Array.isArray(value)

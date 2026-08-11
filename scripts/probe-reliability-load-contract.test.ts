@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collectReliabilityModelMetrics,
+  evaluateReliabilityLoadGate,
   parseReliabilityKnowledgeHealth,
   selectReliabilityCases,
   summarizeReliabilityLoad,
@@ -102,4 +103,109 @@ describe("reliability load report", () => {
   it("rejects an empty profile instead of reporting a false pass", () => {
     expect(() => summarizeReliabilityLoad(4, [])).toThrow("empty_load_profile");
   });
+
+  it("qualifies only when all four required concurrency profiles meet every hard gate", () => {
+    const result = evaluateReliabilityLoadGate([
+      loadSummary(1),
+      loadSummary(2),
+      loadSummary(4),
+      loadSummary(10),
+    ]);
+
+    expect(result).toMatchObject({
+      qualified: true,
+      missingConcurrencies: [],
+    });
+    expect(result.hardGates).toHaveLength(12);
+    expect(result.hardGates.every((gate) => gate.passed)).toBe(true);
+  });
+
+  it("fails the profile that misses success or enterprise latency thresholds", () => {
+    const result = evaluateReliabilityLoadGate([
+      loadSummary(1),
+      loadSummary(2),
+      loadSummary(4),
+      loadSummary(10, {
+        successful: 9,
+        successRate: 0.9,
+        p95Ms: 120_001,
+        p99Ms: 180_001,
+      }),
+    ]);
+
+    expect(result.qualified).toBe(false);
+    expect(result.hardGates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "concurrency_10.success_rate",
+        observed: 0.9,
+        threshold: 0.995,
+        passed: false,
+      }),
+      expect.objectContaining({
+        id: "concurrency_10.p95_latency_ms",
+        observed: 120_001,
+        threshold: 120_000,
+        passed: false,
+      }),
+      expect.objectContaining({
+        id: "concurrency_10.p99_latency_ms",
+        observed: 180_001,
+        threshold: 180_000,
+        passed: false,
+      }),
+    ]));
+  });
+
+  it("fails closed when a required concurrency profile is missing", () => {
+    const result = evaluateReliabilityLoadGate([
+      loadSummary(1),
+      loadSummary(2),
+      loadSummary(4),
+    ]);
+
+    expect(result).toMatchObject({
+      qualified: false,
+      missingConcurrencies: [10],
+    });
+  });
+
+  it("rejects duplicate concurrency profiles instead of choosing one", () => {
+    expect(() => evaluateReliabilityLoadGate([
+      loadSummary(1),
+      loadSummary(2),
+      loadSummary(4),
+      loadSummary(10),
+      loadSummary(10),
+    ])).toThrow("duplicate_reliability_load_concurrency");
+  });
+
+  it("rejects an unapproved concurrency profile instead of hiding it", () => {
+    expect(() => evaluateReliabilityLoadGate([
+      loadSummary(1),
+      loadSummary(2),
+      loadSummary(4),
+      loadSummary(8),
+      loadSummary(10),
+    ])).toThrow("unexpected_reliability_load_concurrency");
+  });
 });
+
+function loadSummary(
+  concurrency: number,
+  overrides: Partial<ReturnType<typeof summarizeReliabilityLoad>> = {},
+): ReturnType<typeof summarizeReliabilityLoad> {
+  return {
+    concurrency,
+    total: 10,
+    successful: 10,
+    unavailable: 0,
+    failures: 0,
+    successRate: 1,
+    p50Ms: 10_000,
+    p95Ms: 20_000,
+    p99Ms: 25_000,
+    queueP95Ms: 1_000,
+    stopReasons: { final: 10 },
+    ...overrides,
+  };
+}
