@@ -174,6 +174,48 @@ describe("reliability diagnostics", () => {
     });
   });
 
+  it("retains content-free task routing and activation diagnostics", () => {
+    const events: DiagnosticEvent[] = [
+      {
+        event: "task_spec",
+        domainCount: 2,
+        entityCount: 1,
+        deliverableCount: 1,
+        coverageUnitCount: 2,
+        directUnitCount: 1,
+        synthesisUnitCount: 1,
+        customerInputUnitCount: 0,
+      },
+      {
+        event: "task_spec_guard",
+        ok: false,
+        issueCodes: ["explicit_request_unmapped"],
+        explicitEntityCount: 1,
+        mappedExplicitEntityCount: 1,
+        explicitRequestCount: 2,
+        mappedExplicitRequestCount: 1,
+      },
+      {
+        event: "task_spec_activation",
+        activated: false,
+        reason: "guard_rejected",
+        requirementCount: 0,
+      },
+    ];
+
+    expect(summarizeReliabilityDiagnostics(events).task).toEqual({
+      domainCount: 2,
+      coverageUnitCount: 2,
+      guardOk: false,
+      guardIssueCodes: ["explicit_request_unmapped"],
+      activation: {
+        activated: false,
+        reason: "guard_rejected",
+        requirementCount: 0,
+      },
+    });
+  });
+
   it("removes completed requests from the collector", () => {
     const collector = new ReliabilityDiagnosticCollector();
     const trace = collector.start();

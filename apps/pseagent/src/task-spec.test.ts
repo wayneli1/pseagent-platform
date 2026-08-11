@@ -1599,6 +1599,13 @@ describe("DeterministicTaskSpecGuard", () => {
     expect(signals.entityGroups).toEqual([]);
   });
 
+  it.each([
+    "监管邮件审计项目中，如何把 Coremail 检索与导出能力同客户、实施方和审批人的责任边界写清楚？",
+    "比较 Coremail 单机与多机部署时，怎样同时呈现技术前提和许可、硬件、迁移、运维的 TCO 边界？",
+  ])("does not treat a product capability phrase as an entity search list: %s", (question) => {
+    expect(extractExplicitQuestionSignals(question).entityGroups).toEqual([]);
+  });
+
   it("does not treat named sections of a previous comparison as parallel entities", () => {
     const signals = extractExplicitQuestionSignals(
       "只看刚才对比中的安全和信创两部分，给出可核验的能力、限制和 POC 验证项。",
@@ -2129,6 +2136,239 @@ describe("ModelTaskCompiler", () => {
 
     expect(result.deliverables[0]?.obligations[0]?.domains)
       .toEqual(["presales-general"]);
+  });
+
+  it.each([
+    "明确成功指标、责任人和退出条件",
+    "建立投诉基线、测量周期和通过口径",
+    "梳理采购评价、最终决策人和审批人",
+    "给出 RACI、风险升级规则和截止时间",
+  ])("repairs strong product-neutral governance to general knowledge: %s", async (request) => {
+    const question = `邮件项目需要${request}。`;
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "邮件项目治理",
+      entities: [{ id: "E1", label: "邮件项目", role: "subject", sourceText: "邮件项目" }],
+      deliverables: [{
+        id: "D1",
+        label: request,
+        kind: "procedure",
+        required: true,
+        sourceText: request,
+        obligations: [{
+          id: "O1",
+          label: request,
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: request,
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile(compilerInput(question, "professional"));
+
+    expect(result.deliverables[0]?.obligations[0]?.domains)
+      .toEqual(["presales-general"]);
+  });
+
+  it("keeps technical TCO inputs and governance boundaries across both domains", async () => {
+    const question = "请界定 Coremail 许可、硬件、迁移和运维的 TCO 边界。";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "Coremail TCO 边界",
+      entities: [{ id: "E1", label: "Coremail", role: "product", sourceText: "Coremail" }],
+      deliverables: [{
+        id: "D1",
+        label: "界定许可、硬件、迁移和运维的 TCO 边界",
+        kind: "comparison",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "界定 Coremail 许可、硬件、迁移和运维的 TCO 边界",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile(compilerInput(question, "professional"));
+    const domains = new Set(result.deliverables.flatMap((deliverable) =>
+      deliverable.obligations.flatMap((obligation) => obligation.domains)));
+
+    expect(domains).toEqual(new Set([
+      "coremail-professional",
+      "presales-general",
+    ]));
+  });
+
+  it("does not mistake TCO dimensions for explicit comparison entities", async () => {
+    const question = "比较 Coremail 单机与多机部署时，怎样同时呈现技术前提和许可、硬件、迁移、运维的 TCO 边界？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "Coremail 单机与多机 TCO 对比",
+      entities: [
+        { id: "E1", label: "单机部署", role: "target", sourceText: "单机" },
+        { id: "E2", label: "多机部署", role: "target", sourceText: "多机" },
+      ],
+      deliverables: [{
+        id: "D1",
+        label: "比较单机与多机部署的技术前提和 TCO 边界",
+        kind: "comparison",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "比较单机与多机部署",
+          targetEntityIds: ["E1", "E2"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile(compilerInput(question, "professional"));
+    const obligations = result.deliverables.flatMap((deliverable) =>
+      deliverable.obligations);
+    const guard = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: compilerInput(question, "professional").resolvedQuestion,
+      taskSpec: result,
+    });
+
+    expect(obligations.map((obligation) => obligation.targetEntityIds)).toEqual([
+      ["E1", "E2"],
+    ]);
+    expect(new Set(obligations.flatMap((obligation) => obligation.domains))).toEqual(
+      new Set(["coremail-professional", "presales-general"]),
+    );
+    expect(guard.ok).toBe(true);
+  });
+
+  it("restores a missing product domain after a mixed request is split into governance obligations", async () => {
+    const question = "为 Coremail 历史邮件检索制定验收时，怎样把功能证据转成可重复步骤、通过口径和缺陷升级规则？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "历史邮件检索验收",
+      entities: [{ id: "E1", label: "Coremail", role: "product", sourceText: "Coremail" }],
+      deliverables: [
+        ["D1", "O1", "可重复步骤"],
+        ["D2", "O2", "通过口径"],
+        ["D3", "O3", "缺陷升级规则"],
+      ].map(([deliverableId, obligationId, sourceText]) => ({
+        id: deliverableId,
+        label: sourceText,
+        kind: "procedure" as const,
+        required: true,
+        sourceText,
+        obligations: [{
+          id: obligationId,
+          label: sourceText,
+          targetEntityIds: [],
+          evidencePolicy: "synthesis" as const,
+          domains: ["presales-general" as const],
+          required: true,
+          sourceText,
+        }],
+      })),
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile(compilerInput(question, "professional"));
+
+    expect(new Set(result.deliverables.flatMap((deliverable) =>
+      deliverable.obligations.flatMap((obligation) => obligation.domains)))).toEqual(
+      new Set(["coremail-professional", "presales-general"]),
+    );
+  });
+
+  it("splits a combined product fact and governance obligation across both domains", async () => {
+    const question = "说明 Coremail AI 功能，并明确成功指标、责任人和退出条件。";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "Coremail AI 能力与验证治理",
+      entities: [{ id: "E1", label: "Coremail", role: "product", sourceText: "Coremail" }],
+      deliverables: [{
+        id: "D1",
+        label: "说明功能并明确验证治理",
+        kind: "fact",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: question,
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile(compilerInput(question, "professional"));
+
+    expect(result.deliverables[0]?.obligations[0]?.domains).toEqual([
+      "coremail-professional",
+      "presales-general",
+    ]);
+  });
+
+  it("restores both domains when a mixed request is collapsed into one product-only obligation", async () => {
+    const question = "客户希望降低垃圾邮件投诉，如何把 Coremail 过滤能力与投诉基线、测量周期和成功口径结合？";
+    const modelTaskSpec = taskSpecSchema.parse({
+      subject: "Coremail 过滤能力验证",
+      entities: [{ id: "E1", label: "Coremail", role: "product", sourceText: "Coremail" }],
+      deliverables: [{
+        id: "D1",
+        label: "确认 Coremail 过滤能力",
+        kind: "fact",
+        required: true,
+        sourceText: "Coremail 过滤能力",
+        obligations: [{
+          id: "O1",
+          label: "确认 Coremail 过滤能力",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: "Coremail 过滤能力",
+        }],
+      }],
+    });
+    const compiler = new ModelTaskCompiler({
+      completeJson: vi.fn(async () => modelTaskSpec as never),
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    const result = await compiler.compile(compilerInput(question, "professional"));
+    const domains = new Set(result.deliverables.flatMap((deliverable) =>
+      deliverable.obligations.flatMap((obligation) => obligation.domains)));
+
+    expect(domains).toEqual(new Set([
+      "coremail-professional",
+      "presales-general",
+    ]));
   });
 
   it("keeps product facts professional while repairing POC governance to general", async () => {

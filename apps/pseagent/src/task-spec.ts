@@ -513,6 +513,7 @@ export class ModelTaskCompiler implements TaskCompiler {
                   repairUnambiguousCustomerInputSourceBinding(
                     input.resolvedQuestion.standaloneQuestion,
                     repairExplicitEntityObligationBindings(
+                      input.resolvedQuestion.standaloneQuestion,
                       repairTraceableTaskSources(
                         input.resolvedQuestion.standaloneQuestion,
                         modelTaskSpec,
@@ -598,9 +599,11 @@ const DETERMINISTIC_GENERAL_DOMAIN_PATTERN =
 const DETERMINISTIC_PROFESSIONAL_DOMAIN_PATTERN =
   /(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b|邮件|邮箱|电子信箱|网关|反垃圾|归档|迁移|部署|版本|兼容|授权|容灾|多活|镜像|AD|LDAP|RPO|RTO)/iu;
 const PRODUCT_NEUTRAL_GOVERNANCE_DELIVERABLE_PATTERN =
-  /(?:POC|合同(?:边界|条款|承诺|责任|变更)?|验收(?:流程|评审|标准|边界|检查点)?|职责分工|责任分工|范围控制|变更流程|风险沟通|升级(?:路径|流程|机制)|交付边界)/iu;
+  /(?:POC|合同(?:边界|条款|承诺|责任|变更)?|验收(?:流程|评审|标准|边界|检查点)?|职责分工|责任分工|责任边界|范围控制|变更流程|风险沟通|升级(?:路径|流程|机制|规则)|交付边界|成功(?:指标|标准|口径)|退出条件|投诉基线|测量周期|采购(?:评价|标准)|决策(?:人|标准|记录)|审批人|通过(?:口径|标准)|缺陷升级|业务情境|预算|内部支持者|总拥有成本|TCO|截止时间|RACI)/iu;
 const GOVERNANCE_DELIVERABLE_METHOD_PATTERN =
   /(?:如何|怎样|怎么|应该|应当|哪些|什么|流程|原则|模板|清单|组织|分工|约定|沟通|控制|机制|路径|检查点|边界)/u;
+const STRONG_PRODUCT_NEUTRAL_GOVERNANCE_PATTERN =
+  /(?:成功(?:指标|标准|口径)|退出条件|责任(?:人|边界|分工)|职责分工|RACI|投诉基线|测量周期|合同(?:承诺|责任)|客户输入|升级(?:路径|机制|规则)|采购(?:评价|标准)|最终决策人|决策(?:标准|记录)|审批人|通过(?:口径|标准)|缺陷升级|风险沟通|业务情境|预算|内部支持者|TCO|总拥有成本|截止时间)/iu;
 const EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN =
   /(?:(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b).{0,48}(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾)|(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾).{0,48}(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b))|(?:(?:POC|验收|核验|验证).{0,32}(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配)|(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配).{0,32}(?:POC|验收|核验|验证))/iu;
 const EXPLICIT_CONFLICT_PATTERN = /(?:冲突|不一致|相互矛盾|口径差异|结论差异)/u;
@@ -714,7 +717,10 @@ function repairProfessionalDirectDomains(
   }
   const structuredTechnicalRequirement =
     isStructuredTechnicalCapabilityRequirement(question);
-  return taskSpecSchema.parse({
+  const singleObligationMixedRequest = requiredObligationCount(taskSpec) === 1 &&
+    isProductNeutralGovernanceDeliverable(question) &&
+    EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(question);
+  const repaired = taskSpecSchema.parse({
     ...taskSpec,
     deliverables: taskSpec.deliverables.map((deliverable) => ({
       ...deliverable,
@@ -724,7 +730,7 @@ function repairProfessionalDirectDomains(
         const productFact = EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(
           semanticText,
         );
-        if (governance && productFact) {
+        if ((governance && productFact) || singleObligationMixedRequest) {
           return {
             ...obligation,
             domains: [
@@ -749,11 +755,68 @@ function repairProfessionalDirectDomains(
       }),
     })),
   });
+  return ensureQuestionLevelMixedDomainCoverage(question, repaired);
+}
+
+function ensureQuestionLevelMixedDomainCoverage(
+  question: string,
+  taskSpec: TaskSpec,
+): TaskSpec {
+  if (
+    !isProductNeutralGovernanceDeliverable(question) ||
+    !EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(question)
+  ) {
+    return taskSpec;
+  }
+  const existingDomains = new Set(taskSpec.deliverables.flatMap((deliverable) =>
+    deliverable.obligations.flatMap((obligation) => obligation.domains)));
+  const missingDomain = !existingDomains.has("coremail-professional")
+    ? "coremail-professional" as const
+    : !existingDomains.has("presales-general")
+      ? "presales-general" as const
+      : undefined;
+  if (missingDomain === undefined) return taskSpec;
+
+  const obligations = taskSpec.deliverables.flatMap((deliverable) =>
+    deliverable.obligations.filter((obligation) => obligation.required));
+  const preferred = obligations.find((obligation) => {
+    const semanticText = `${obligation.label} ${obligation.sourceText}`;
+    return missingDomain === "coremail-professional"
+      ? EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(semanticText)
+      : isProductNeutralGovernanceDeliverable(semanticText);
+  }) ?? obligations.find((obligation) =>
+    missingDomain === "coremail-professional"
+      ? obligation.evidencePolicy === "direct"
+      : obligation.evidencePolicy === "synthesis") ?? obligations[0];
+  if (preferred === undefined) return taskSpec;
+
+  const mergedClaimCount = obligations.reduce(
+    (count, obligation) => count + obligation.domains.length,
+    0,
+  );
+  return taskSpecSchema.parse({
+    ...taskSpec,
+    deliverables: taskSpec.deliverables.map((deliverable) => ({
+      ...deliverable,
+      obligations: deliverable.obligations.map((obligation) =>
+        obligation.id !== preferred.id
+          ? obligation
+          : {
+              ...obligation,
+              domains: mergedClaimCount < 6
+                ? [...obligation.domains, missingDomain]
+                : [missingDomain],
+            }),
+    })),
+  });
 }
 
 function isProductNeutralGovernanceDeliverable(value: string): boolean {
-  return PRODUCT_NEUTRAL_GOVERNANCE_DELIVERABLE_PATTERN.test(value) &&
-    GOVERNANCE_DELIVERABLE_METHOD_PATTERN.test(value);
+  return STRONG_PRODUCT_NEUTRAL_GOVERNANCE_PATTERN.test(value) ||
+    (
+      PRODUCT_NEUTRAL_GOVERNANCE_DELIVERABLE_PATTERN.test(value) &&
+      GOVERNANCE_DELIVERABLE_METHOD_PATTERN.test(value)
+    );
 }
 
 function deterministicDeliverableKind(
@@ -879,6 +942,14 @@ export function extractExplicitQuestionSignals(
   for (const match of question.matchAll(listPattern)) {
     const sourceText = match.groups?.list?.trim();
     if (!sourceText) continue;
+    if (
+      /^(?:与|和|及|、)/u.test(sourceText) ||
+      /(?:什么时候|何时|如何|怎样|怎么|为什么|哪些|多少|是否|能否|有没有|是什么)/u.test(
+        sourceText,
+      )
+    ) {
+      continue;
+    }
     const items = parallelEntityItems(sourceText, false);
     if (items.length >= 2) entityGroups.push({ sourceText, items: [...items] });
   }
@@ -1441,22 +1512,48 @@ function repairTraceableTaskSources(
   });
 }
 
-function repairExplicitEntityObligationBindings(taskSpec: TaskSpec): TaskSpec {
+function repairExplicitEntityObligationBindings(
+  question: string,
+  taskSpec: TaskSpec,
+): TaskSpec {
+  const explicitEntityLabels = new Set(
+    extractExplicitQuestionSignals(question, {
+      anchoredEntitySourceTexts: taskSpecEntityAnchors(taskSpec.entities, question),
+    }).entityGroups.flatMap((group) => group.items).map(normalizeSemanticText),
+  );
+  const explicitEntityIds = new Set(taskSpec.entities.flatMap((entity) =>
+    explicitEntityLabels.has(normalizeSemanticText(entity.label)) ||
+        explicitEntityLabels.has(normalizeSemanticText(entity.sourceText))
+      ? [entity.id]
+      : []));
+  let obligationIndex = 0;
   return taskSpecSchema.parse({
     ...taskSpec,
     deliverables: taskSpec.deliverables.map((deliverable) => ({
       ...deliverable,
-      obligations: deliverable.obligations.map((obligation) => {
+      obligations: deliverable.obligations.flatMap((obligation) => {
         const targetEntityIds = taskSpec.entities.flatMap((entity) =>
           semanticOverlap(obligation.label, entity.label) ||
               sameSemanticText(obligation.sourceText, entity.label) ||
               sameSemanticText(obligation.sourceText, entity.sourceText)
             ? [entity.id]
             : []);
-        return targetEntityIds.length === 0 ||
+        const repaired = targetEntityIds.length === 0 ||
             (targetEntityIds.length > 1 && obligation.targetEntityIds.length > 0)
           ? obligation
           : { ...obligation, targetEntityIds };
+        const explicitTargets = repaired.targetEntityIds.filter((entityId) =>
+          explicitEntityIds.has(entityId));
+        const expanded = repaired.required && explicitTargets.length > 1
+          ? explicitTargets.map((entityId) => ({
+              ...repaired,
+              targetEntityIds: [entityId],
+            }))
+          : [repaired];
+        return expanded.map((item) => ({
+          ...item,
+          id: `O${++obligationIndex}`,
+        }));
       }),
     })),
   });

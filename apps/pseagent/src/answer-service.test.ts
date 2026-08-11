@@ -2216,7 +2216,7 @@ describe("AnswerService", () => {
       expect(firstExecution.domainsUsed).toEqual(secondExecution.domainsUsed);
     });
 
-    it("cancels siblings and fails the whole request when one required domain is unavailable", async () => {
+    it("keeps the successful sibling and returns an explicit partial answer when one domain is unavailable", async () => {
       let siblingAborted = false;
       const detailed = vi.fn<DetailedAgentRunner>(async (input) => {
         if (input.session.project === "coremail-professional") {
@@ -2226,24 +2226,55 @@ describe("AnswerService", () => {
             stopReason: "model_unavailable",
           };
         }
-        return await new Promise((resolve) => {
-          input.signal?.addEventListener("abort", () => {
-            siblingAborted = true;
-            resolve({
-              outcome: "unavailable",
-              result: temporaryUnavailableResult("general"),
-              stopReason: "model_unavailable",
-            });
-          }, { once: true });
-        });
+        input.signal?.addEventListener("abort", () => {
+          siblingAborted = true;
+        }, { once: true });
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return {
+          outcome: "verified",
+          project: input.session.project,
+          revision: input.session.revision,
+          action: {
+            action: "final",
+            requirements: [{
+              id: "R1",
+              coverage: "complete",
+              answer: "已核验通用治理方法[1]。",
+              citations: [1],
+            }],
+            citations: [1],
+          },
+          references: [{
+            index: 1,
+            project: "presales-general",
+            revision: input.session.revision,
+            title: "售前治理资料",
+            path: "wiki/governance.md",
+            contentHash: "e".repeat(64),
+          }],
+        };
       });
       const { service } = createMixedService({ detailed });
 
-      await expect(service.answerDetailed(mixedQuestion)).resolves.toMatchObject({
-        retryable: true,
-        result: { status: "temporarily_unavailable", references: [] },
+      const execution = await service.answerDetailed(mixedQuestion);
+      expect(execution).toMatchObject({
+        retryable: false,
+        stopReason: "final",
+        domainsUsed: ["coremail-professional", "presales-general"],
+        result: {
+          status: "partially_answered",
+          references: [{ project: "presales-general" }],
+        },
       });
-      expect(siblingAborted).toBe(true);
+      expect(execution.result.answer).toContain("已核验通用治理方法");
+      expect(execution.result.answer).toContain("尚未确认的部分");
+      expect(execution.coverageGaps).toMatchObject([{
+        domain: "coremail-professional",
+        gapClass: "retrieval",
+        reason: "tool_unavailable",
+      }]);
+      expect(siblingAborted).toBe(false);
+      expect(detailed).toHaveBeenCalledTimes(2);
     });
 
     it("never invokes historical fallback for a mixed-domain not-covered result", async () => {
@@ -2442,7 +2473,7 @@ describe("AnswerService", () => {
       }));
     });
 
-    it("fails closed when an execution session belongs to the wrong project snapshot", async () => {
+    it("degrades explicitly when one execution session belongs to the wrong project snapshot", async () => {
       const { service, knowledge, runAgentDetailed } = createMixedService();
       knowledge.open.mockImplementation(async (scope) =>
         scope === "professional"
@@ -2451,11 +2482,18 @@ describe("AnswerService", () => {
 
       const execution = await service.answerDetailed(mixedQuestion);
       expect(execution).toMatchObject({
-        retryable: true,
-        stopReason: "domain_execution_unavailable",
-        result: { status: "temporarily_unavailable", references: [] },
+        retryable: false,
+        stopReason: "final",
+        domainsUsed: ["coremail-professional", "presales-general"],
+        result: { status: "partially_answered" },
       });
-      expect(runAgentDetailed).not.toHaveBeenCalled();
+      expect(execution.coverageGaps).toMatchObject([{
+        domain: "coremail-professional",
+        reason: "tool_unavailable",
+      }]);
+      expect(runAgentDetailed).toHaveBeenCalledOnce();
+      expect(runAgentDetailed.mock.calls[0]?.[0].session.project)
+        .toBe("presales-general");
     });
 
     it("fails closed on a detailed snapshot mismatch and emits content-free diagnostics", async () => {

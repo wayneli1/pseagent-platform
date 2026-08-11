@@ -33,6 +33,12 @@ export interface DetailedDomainResult {
   readonly coverageGaps?: readonly CoverageGap[];
 }
 
+export interface UnavailableDomainResult {
+  readonly domain: KnowledgeDomain;
+  readonly reason: string;
+  readonly rootReason?: string;
+}
+
 export interface MergedDomainBinding extends DomainRequirementBinding {
   readonly globalRequirementId: RequirementCoverage["id"];
 }
@@ -57,13 +63,22 @@ export class DomainAnswerMergeError extends Error {
 export function mergeDetailedDomainResults(input: {
   readonly plans: readonly DomainKnowledgePlan[];
   readonly results: readonly DetailedDomainResult[];
+  readonly failures?: readonly UnavailableDomainResult[];
 }): MergedDomainAnswer {
   const planByDomain = uniqueByDomain(input.plans, "duplicate_domain_plan");
   const resultByDomain = uniqueByDomain(input.results, "duplicate_domain_result");
+  const failureByDomain = uniqueByDomain(
+    input.failures ?? [],
+    "duplicate_domain_failure",
+  );
   if (
     planByDomain.size === 0 ||
-    planByDomain.size !== resultByDomain.size ||
-    [...planByDomain.keys()].some((domain) => !resultByDomain.has(domain))
+    planByDomain.size !== resultByDomain.size + failureByDomain.size ||
+    [...resultByDomain.keys()].some((domain) => failureByDomain.has(domain)) ||
+    [...planByDomain.keys()].some((domain) =>
+      !resultByDomain.has(domain) && !failureByDomain.has(domain)) ||
+    [...resultByDomain.keys(), ...failureByDomain.keys()].some((domain) =>
+      !planByDomain.has(domain))
   ) {
     throw new DomainAnswerMergeError("domain_result_mismatch");
   }
@@ -71,10 +86,13 @@ export function mergeDetailedDomainResults(input: {
   const domainsUsed = KNOWLEDGE_DOMAIN_ORDER.filter((domain) => planByDomain.has(domain));
   const localContexts = new Map<KnowledgeDomain, LocalDomainContext>();
   for (const domain of domainsUsed) {
-    localContexts.set(
-      domain,
-      validateLocalDomain(planByDomain.get(domain)!, resultByDomain.get(domain)!),
-    );
+    const result = resultByDomain.get(domain);
+    if (result !== undefined) {
+      localContexts.set(
+        domain,
+        validateLocalDomain(planByDomain.get(domain)!, result),
+      );
+    }
   }
 
   const orderedBindings = domainsUsed.flatMap((domain) => {
@@ -96,41 +114,43 @@ export function mergeDetailedDomainResults(input: {
   const globalRequirementIdByLocal = new Map<string, RequirementCoverage["id"]>();
 
   for (const [globalIndex, item] of orderedBindings.entries()) {
-    const context = localContexts.get(item.binding.domain)!;
-    const localRequirement = context.result.action.requirements[item.localIndex]!;
-    const citationMap = (localCitation: number): number => {
-      const localReference = context.referenceByIndex.get(localCitation);
-      if (localReference === undefined) {
-        throw new DomainAnswerMergeError("unknown_local_citation");
-      }
-      const identity = referenceIdentity(localReference);
-      const existingTitle = titleByIdentity.get(identity);
-      if (existingTitle !== undefined && existingTitle !== localReference.title) {
-        throw new DomainAnswerMergeError("reference_metadata_conflict");
-      }
-      const existingIndex = globalIndexByIdentity.get(identity);
-      if (existingIndex !== undefined) return existingIndex;
-      const nextIndex = references.length + 1;
-      references.push({ ...localReference, index: nextIndex });
-      globalIndexByIdentity.set(identity, nextIndex);
-      titleByIdentity.set(identity, localReference.title);
-      return nextIndex;
-    };
-
-    const rewritten = rewriteRequirement(
-      localRequirement,
-      `R${globalIndex + 1}` as RequirementCoverage["id"],
-      citationMap,
-    );
+    const context = localContexts.get(item.binding.domain);
+    const globalRequirementId = `R${globalIndex + 1}` as RequirementCoverage["id"];
+    const rewritten = context === undefined
+      ? unavailableRequirement(item.binding.domain, globalRequirementId)
+      : rewriteRequirement(
+          context.result.action.requirements[item.localIndex]!,
+          globalRequirementId,
+          (localCitation) => {
+            const localReference = context.referenceByIndex.get(localCitation);
+            if (localReference === undefined) {
+              throw new DomainAnswerMergeError("unknown_local_citation");
+            }
+            const identity = referenceIdentity(localReference);
+            const existingTitle = titleByIdentity.get(identity);
+            if (existingTitle !== undefined && existingTitle !== localReference.title) {
+              throw new DomainAnswerMergeError("reference_metadata_conflict");
+            }
+            const existingIndex = globalIndexByIdentity.get(identity);
+            if (existingIndex !== undefined) return existingIndex;
+            const nextIndex = references.length + 1;
+            references.push({ ...localReference, index: nextIndex });
+            globalIndexByIdentity.set(identity, nextIndex);
+            titleByIdentity.set(identity, localReference.title);
+            return nextIndex;
+          },
+        );
     mergedRequirements.push(rewritten);
     mergedBindings.push({
       ...item.binding,
       globalRequirementId: rewritten.id,
     });
-    globalRequirementIdByLocal.set(
-      localRequirementKey(item.binding.domain, item.binding.requirementId),
-      rewritten.id,
-    );
+    if (context !== undefined) {
+      globalRequirementIdByLocal.set(
+        localRequirementKey(item.binding.domain, item.binding.requirementId),
+        rewritten.id,
+      );
+    }
   }
 
   const action: FinalAction = {
@@ -143,14 +163,23 @@ export function mergeDetailedDomainResults(input: {
     throw new DomainAnswerMergeError("merged_action_contract_exceeded");
   }
 
-  const metadata = mergeEvidenceMetadata({
-    domainsUsed,
-    planByDomain,
-    localContexts,
-    orderedBindings,
-    globalRequirementIdByLocal,
-    globalIndexByIdentity,
-  });
+  const metadata = failureByDomain.size === 0
+    ? mergeEvidenceMetadata({
+        domainsUsed,
+        planByDomain,
+        localContexts,
+        orderedBindings,
+        globalRequirementIdByLocal,
+        globalIndexByIdentity,
+      })
+    : {
+        coverageGaps: mergeDegradedCoverageGaps({
+          orderedBindings,
+          localContexts,
+          globalRequirementIdByLocal,
+          failureByDomain,
+        }),
+      };
   return {
     action,
     references,
@@ -158,6 +187,71 @@ export function mergeDetailedDomainResults(input: {
     bindings: mergedBindings,
     ...metadata,
   };
+}
+
+function unavailableRequirement(
+  domain: KnowledgeDomain,
+  id: RequirementCoverage["id"],
+): RequirementCoverage {
+  return {
+    id,
+    coverage: "none",
+    answer: domain === "coremail-professional"
+      ? "专业知识域本次执行未完成，该项产品事实与技术边界暂未核验。"
+      : "通用售前知识域本次执行未完成，该项治理方法与责任边界暂未核验。",
+    citations: [],
+  };
+}
+
+function mergeDegradedCoverageGaps(input: {
+  readonly orderedBindings: readonly {
+    readonly plan: DomainKnowledgePlan;
+    readonly binding: DomainRequirementBinding;
+    readonly localIndex: number;
+  }[];
+  readonly localContexts: ReadonlyMap<KnowledgeDomain, LocalDomainContext>;
+  readonly globalRequirementIdByLocal: ReadonlyMap<
+    string,
+    RequirementCoverage["id"]
+  >;
+  readonly failureByDomain: ReadonlyMap<KnowledgeDomain, UnavailableDomainResult>;
+}): readonly CoverageGap[] {
+  const successfulBindings = input.orderedBindings.filter((item) =>
+    input.localContexts.has(item.binding.domain));
+  const successfulResults = [...input.localContexts.values()].map((context) =>
+    context.result);
+  const localGaps = successfulResults.length > 0 && successfulResults.every((result) =>
+      result.coverageGaps !== undefined)
+    ? [...mergeCoverageGaps(
+        successfulBindings,
+        input.localContexts,
+        input.globalRequirementIdByLocal,
+      )]
+    : [];
+  for (const item of input.orderedBindings) {
+    if (!input.failureByDomain.has(item.binding.domain)) continue;
+    const requirement = item.plan.plan.requirements[item.localIndex]!;
+    const globalRequirementId = `R${input.orderedBindings.indexOf(item) + 1}`;
+    const missingAspect = requirement.evidenceAspects
+      .map((aspect) => aspect.label.trim())
+      .filter(Boolean)
+      .join("、") || requirement.question;
+    localGaps.push(Object.freeze(coverageGapSchema.parse({
+      id: `G${localGaps.length + 1}`,
+      requirementId: globalRequirementId,
+      deliverableId: item.binding.deliverableId,
+      obligationId: item.binding.obligationId,
+      domain: item.binding.domain,
+      gapClass: "retrieval",
+      reason: "tool_unavailable",
+      subject: item.plan.plan.subject.slice(0, 1_024),
+      missingAspect: missingAspect.slice(0, 1_024),
+      affectsConclusion: true,
+      confirmedBoundary: "该知识域本次执行未完成，现有结果只覆盖其他已验证义务。",
+      nextAction: "恢复该知识域后重新执行并完成正式证据核验，再形成完整结论。",
+    })));
+  }
+  return Object.freeze(localGaps);
 }
 
 function mergeEvidenceMetadata(input: {

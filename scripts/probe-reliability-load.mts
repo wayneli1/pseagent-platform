@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.ts";
 import {
@@ -17,8 +17,11 @@ interface ProbeCase {
   readonly question: string;
 }
 
+const matrixPath = process.env.PSE_RELIABILITY_MATRIX_PATH?.trim();
 const cases = parseCases(JSON.parse(readFileSync(
-  new URL("../tests/regression/questions.json", import.meta.url),
+  matrixPath === undefined || matrixPath === ""
+    ? new URL("../tests/regression/questions.json", import.meta.url)
+    : resolve(matrixPath),
   "utf8",
 )));
 const profiles = parseProfiles(process.env.PSE_RELIABILITY_CONCURRENCY ?? "1,2,4,10");
@@ -50,6 +53,11 @@ const report = {
       readonly id: string;
       readonly sequence: number;
       readonly scope?: string;
+      readonly domainsUsed?: readonly string[];
+      readonly referenceProjects?: readonly string[];
+      readonly referenceCount?: number;
+      readonly knowledgeCoverage?: string;
+      readonly gapCount?: number;
     })[];
   }>,
 };
@@ -63,6 +71,11 @@ for (const concurrency of profiles) {
     readonly id: string;
     readonly sequence: number;
     readonly scope?: string;
+    readonly domainsUsed?: readonly string[];
+    readonly referenceProjects?: readonly string[];
+    readonly referenceCount?: number;
+    readonly knowledgeCoverage?: string;
+    readonly gapCount?: number;
   }> = [];
   let nextIndex = 0;
   try {
@@ -101,6 +114,11 @@ for (const concurrency of profiles) {
     readonly id: string;
     readonly sequence: number;
     readonly scope?: string;
+    readonly domainsUsed?: readonly string[];
+    readonly referenceProjects?: readonly string[];
+    readonly referenceCount?: number;
+    readonly knowledgeCoverage?: string;
+    readonly gapCount?: number;
   }> {
     const startedAt = performance.now();
     try {
@@ -117,6 +135,16 @@ for (const concurrency of profiles) {
         scope: execution.result.scope,
         status: execution.result.status,
         stopReason: execution.stopReason,
+        ...(execution.domainsUsed === undefined
+          ? {}
+          : { domainsUsed: execution.domainsUsed }),
+        referenceProjects: [...new Set(execution.result.references.map((reference) =>
+          reference.project))],
+        referenceCount: execution.result.references.length,
+        ...(execution.result.knowledgeCoverage === undefined
+          ? {}
+          : { knowledgeCoverage: execution.result.knowledgeCoverage }),
+        gapCount: execution.coverageGaps?.length ?? 0,
         queueElapsedMs: diagnostics.model.queueElapsedMs,
         modelExecutionElapsedMs: diagnostics.model.executionElapsedMs,
         modelAttemptCount: diagnostics.model.attemptCount,
@@ -145,8 +173,14 @@ process.stdout.write(`${JSON.stringify({
 })}\n`);
 
 function parseCases(value: unknown): ProbeCase[] {
-  if (!Array.isArray(value)) throw new Error("invalid_reliability_cases");
-  return value.map((item) => {
+  const records = Array.isArray(value)
+    ? value
+    : value !== null && typeof value === "object" &&
+        "cases" in value && Array.isArray(value.cases)
+      ? value.cases
+      : undefined;
+  if (records === undefined) throw new Error("invalid_reliability_cases");
+  return records.map((item) => {
     if (
       item === null ||
       typeof item !== "object" ||

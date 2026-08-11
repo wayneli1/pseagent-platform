@@ -360,6 +360,54 @@ describe("mergeDetailedDomainResults", () => {
     });
   });
 
+  it("preserves a verified domain and exposes an explicit gap when its sibling is unavailable", () => {
+    const professionalPlan = plan("coremail-professional", "O1", 0);
+    const generalPlan = plan("presales-general", "O2", 1);
+    const general = result(
+      "presales-general",
+      complete("已核验通用治理方法[1]。"),
+      [reference("presales-general", "g-rev", "wiki/governance.md", HASH_B)],
+    );
+
+    const merged = mergeDetailedDomainResults({
+      plans: [professionalPlan, generalPlan],
+      results: [general],
+      failures: [{
+        domain: "coremail-professional",
+        reason: "agent_unavailable",
+        rootReason: "model_unavailable",
+      }],
+    });
+
+    expect(merged.domainsUsed).toEqual([
+      "coremail-professional",
+      "presales-general",
+    ]);
+    expect(merged.action).toMatchObject({
+      requirements: [
+        { id: "R1", coverage: "none", citations: [] },
+        { id: "R2", coverage: "complete", answer: "已核验通用治理方法[1]。" },
+      ],
+      citations: [1],
+    });
+    expect(merged.references).toMatchObject([{
+      index: 1,
+      project: "presales-general",
+    }]);
+    expect(merged.coverageGaps).toMatchObject([{
+      id: "G1",
+      requirementId: "R1",
+      deliverableId: "D1",
+      obligationId: "O1",
+      domain: "coremail-professional",
+      gapClass: "retrieval",
+      reason: "tool_unavailable",
+      affectsConclusion: true,
+    }]);
+    expect(merged.verification).toBeUndefined();
+    expect(merged.domainEvidenceLedgers).toBeUndefined();
+  });
+
   it("accepts sparse local registry indexes and rewrites them densely", () => {
     const domainPlan = plan("presales-general", "O1", 0);
     const merged = mergeDetailedDomainResults({

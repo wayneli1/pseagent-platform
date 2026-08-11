@@ -19,6 +19,17 @@ export interface ReliabilityDiagnosticSummary {
     readonly reason?: string;
     readonly rootReason?: PseStopReason;
   }[];
+  readonly task: {
+    readonly domainCount?: number;
+    readonly coverageUnitCount?: number;
+    readonly guardOk?: boolean;
+    readonly guardIssueCodes: readonly string[];
+    readonly activation?: {
+      readonly activated: boolean;
+      readonly reason: string;
+      readonly requirementCount: number;
+    };
+  };
   readonly model: {
     readonly callCount: number;
     readonly failedCallCount: number;
@@ -128,6 +139,12 @@ export function summarizeReliabilityDiagnostics(
             : { rootReason: event.rootReason }),
         }]
       : []);
+  const taskSpec = [...events].reverse().find((event) =>
+    event.event === "task_spec");
+  const taskGuard = [...events].reverse().find((event) =>
+    event.event === "task_spec_guard");
+  const taskActivation = [...events].reverse().find((event) =>
+    event.event === "task_spec_activation");
   const modelCalls = events.flatMap((event) =>
     event.event === "model_call"
       ? [{
@@ -195,6 +212,29 @@ export function summarizeReliabilityDiagnostics(
     ...(stops.at(-1) === undefined ? {} : { finalStopReason: stops.at(-1) }),
     stopReasons: stops,
     domains,
+    task: {
+      ...(taskSpec?.event !== "task_spec"
+        ? {}
+        : {
+            domainCount: taskSpec.domainCount,
+            coverageUnitCount: taskSpec.coverageUnitCount,
+          }),
+      ...(taskGuard?.event !== "task_spec_guard"
+        ? { guardIssueCodes: [] }
+        : {
+            guardOk: taskGuard.ok,
+            guardIssueCodes: taskGuard.issueCodes,
+          }),
+      ...(taskActivation?.event !== "task_spec_activation"
+        ? {}
+        : {
+            activation: {
+              activated: taskActivation.activated,
+              reason: taskActivation.reason,
+              requirementCount: taskActivation.requirementCount,
+            },
+          }),
+    },
     model: {
       callCount: modelCalls.length,
       failedCallCount: modelCalls.filter((call) => call.outcome === "failed").length,

@@ -53,6 +53,7 @@ import {
   mergeDetailedDomainResults,
   type DetailedDomainResult,
   type MergedDomainAnswer,
+  type UnavailableDomainResult,
 } from "./domain-answer-merge.js";
 import { formatKnowledgeFinal } from "./response.js";
 import {
@@ -792,14 +793,12 @@ export class AnswerService {
       );
     }
 
-    const siblingController = new AbortController();
     const activeDeadlineSignal = AbortSignal.timeout(
       Math.max(1, input.deadlineAt - Date.now()),
     );
     const sharedSignal = AbortSignal.any([
       input.requestSignal,
       activeDeadlineSignal,
-      siblingController.signal,
     ]);
     const tasks = input.plans.map(async (domainPlan): Promise<DetailedDomainResult> => {
       let phase: "session" | "agent" = "session";
@@ -915,12 +914,32 @@ export class AnswerService {
             ? {}
             : { rootReason: failure.rootReason }),
         });
-        if (!siblingController.signal.aborted) siblingController.abort();
         throw failure;
       }
     });
     const settled = await Promise.allSettled(tasks);
-    if (settled.some((result) => result.status === "rejected")) {
+    const results: DetailedDomainResult[] = [];
+    const failures: UnavailableDomainResult[] = [];
+    settled.forEach((outcome, index) => {
+      if (outcome.status === "fulfilled") {
+        results.push(outcome.value);
+        return;
+      }
+      const failure = outcome.reason instanceof DomainExecutionError
+        ? outcome.reason
+        : new DomainExecutionError("domain_dependency_unavailable");
+      failures.push({
+        domain: input.plans[index]!.domain,
+        reason: failure.code,
+        ...(failure.rootReason === undefined
+          ? {}
+          : { rootReason: failure.rootReason }),
+      });
+    });
+    const boundReleaseSnapshotDrift = failures.some((failure) =>
+      failure.reason === "session_snapshot_mismatch" &&
+      input.expectedRevisions?.[failure.domain] !== undefined);
+    if (results.length === 0 || boundReleaseSnapshotDrift) {
       recordDiagnostic(input.trace, { event: "stop", reason: "domain_execution_unavailable" });
       return finishExecution(
         input.trace,
@@ -936,8 +955,8 @@ export class AnswerService {
     try {
       merged = mergeDetailedDomainResults({
         plans: input.plans,
-        results: settled.map((result) =>
-          (result as PromiseFulfilledResult<DetailedDomainResult>).value),
+        results,
+        ...(failures.length === 0 ? {} : { failures }),
       });
     } catch (error) {
       recordDiagnostic(input.trace, {
@@ -1348,7 +1367,10 @@ class DomainDiagnosticTrace implements DiagnosticTrace {
   }
 
   record(event: DiagnosticEvent): void {
-    if (event.event === "stop") this.stopReason = event.reason;
+    if (event.event === "stop") {
+      this.stopReason = event.reason;
+      return;
+    }
     this.delegate.record(event);
   }
 
