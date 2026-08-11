@@ -1760,7 +1760,7 @@ describe("ModelTaskCompiler", () => {
     expect(completeJson).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to a bounded deterministic contract after repeated invalid model payloads", async () => {
+  it("falls back to a bounded deterministic contract after one invalid model payload", async () => {
     const question = "对比 Exchange 与 Coremail，请覆盖部署与迁移、国产化适配、安全、运维和服务、成本边界，并明确哪些结论需要结合客户现状确认。";
     const completeJson = vi.fn(async () => {
       throw new InvalidModelPayloadError("invalid_schema:task_spec");
@@ -1803,7 +1803,7 @@ describe("ModelTaskCompiler", () => {
       },
       taskSpec: result,
     }).ok).toBe(true);
-    expect(completeJson).toHaveBeenCalledTimes(3);
+    expect(completeJson).toHaveBeenCalledTimes(1);
   });
 
   it("keeps case input and knowledge method separate in a numeric forecast fallback", async () => {
@@ -2668,7 +2668,7 @@ describe("ModelTaskCompiler", () => {
     })).resolves.toEqual(taskSpec);
   });
 
-  it("repairs a missing current-case forecast without merging the method advice", async () => {
+  it("falls back after one attempt without merging a current-case forecast into method advice", async () => {
     const question = "目前客户信息不足。在这种情况下我们的赢率如何，要怎样做才能提升赢率？";
     const synthesisOnly = taskSpecSchema.parse({
       subject: "当前项目赢率",
@@ -2747,7 +2747,7 @@ describe("ModelTaskCompiler", () => {
       completeText: vi.fn(),
     } as unknown as ModelClient);
 
-    await expect(compiler.compile({
+    const result = await compiler.compile({
       resolvedQuestion: {
         rawQuestion: question,
         standaloneQuestion: question,
@@ -2762,8 +2762,19 @@ describe("ModelTaskCompiler", () => {
         schema: "知识结构",
         planningOverview: "机会判断与推进方法",
       },
-    })).resolves.toEqual(repaired);
-    expect(completeJson).toHaveBeenCalledTimes(2);
+    });
+    expect(result.deliverables).toHaveLength(2);
+    expect(result.deliverables.flatMap((item) => item.obligations)).toEqual([
+      expect.objectContaining({
+        evidencePolicy: "customer_input",
+        sourceText: "在这种情况下我们的赢率如何",
+      }),
+      expect.objectContaining({
+        evidencePolicy: "synthesis",
+        sourceText: "要怎样做才能提升赢率",
+      }),
+    ]);
+    expect(completeJson).toHaveBeenCalledTimes(1);
   });
 
   it("repairs a numeric opportunity forecast follow-up into a missing customer input", async () => {
@@ -3025,7 +3036,7 @@ describe("ModelTaskCompiler", () => {
     ]);
   });
 
-  it("repairs an over-expanded consolidation task without fixed summary dimensions", async () => {
+  it("falls back after one attempt when a consolidation task is over-expanded", async () => {
     const question = "把前面的内容整理成一页式摘要：讲优势、边界、风险和下一步。";
     const expanded = taskSpecSchema.parse({
       subject: "一页式摘要",
@@ -3079,7 +3090,7 @@ describe("ModelTaskCompiler", () => {
       completeText: vi.fn(),
     } as unknown as ModelClient);
 
-    await expect(compiler.compile({
+    const result = await compiler.compile({
       resolvedQuestion: {
         rawQuestion: question,
         standaloneQuestion: question,
@@ -3093,8 +3104,15 @@ describe("ModelTaskCompiler", () => {
         schema: "知识结构",
         planningOverview: "历史对话材料",
       },
-    })).resolves.toEqual(repaired);
-    expect(completeJson).toHaveBeenCalledTimes(2);
+    });
+    expect(result.deliverables).toHaveLength(4);
+    expect(result.deliverables.map((item) => item.sourceText)).toEqual([
+      "讲优势",
+      "边界",
+      "风险",
+      "下一步",
+    ]);
+    expect(completeJson).toHaveBeenCalledTimes(1);
   });
 
   it("guard rejects a model that silently maps a current-case forecast to advice", () => {

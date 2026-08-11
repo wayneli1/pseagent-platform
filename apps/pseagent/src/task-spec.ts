@@ -483,7 +483,7 @@ export class ModelTaskCompiler implements TaskCompiler {
       },
     ];
     let repairInstruction = "上一次输出不符合 TaskSpec Schema。只重新输出合法 TaskSpec JSON，不要解释。";
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= 1; attempt += 1) {
       try {
         const modelTaskSpec = await this.model.completeJson({
           messages: attempt === 1
@@ -567,7 +567,7 @@ export class ModelTaskCompiler implements TaskCompiler {
         return taskSpec;
       } catch (error) {
         if (!(error instanceof InvalidModelPayloadError)) throw error;
-        if (attempt === 3) {
+        if (attempt === 1) {
           return repairedDeterministicTaskSpecFallback(input);
         }
       }
@@ -620,7 +620,7 @@ function deterministicTaskSpecFallback(input: TaskCompilerInput): TaskSpec {
   const baseClauses = (signals.requestClauses.length === 0
     ? [question]
     : signals.requestClauses)
-    .map((clause) => clause.trim())
+    .map((clause) => clause.trim().replace(/^[：:，,；;。！？!?、]+/u, ""))
     .filter(Boolean)
     .filter((clause, index, values) =>
       values.findIndex((candidate) => sameSemanticText(candidate, clause)) === index)
