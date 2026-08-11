@@ -11,6 +11,7 @@ import { createPseAgentRuntime } from "./main.js";
 import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
 import { taskSpecSchema } from "./task-spec.js";
 import type { AnswerCardMatcher } from "./answer-card-matcher.js";
+import type { ReliableAnswerPipeline } from "./reliable-answer-pipeline.js";
 
 const configEnv = {
   PSE_MODEL_BASE_URL: "https://model.example.test/v1",
@@ -531,6 +532,46 @@ describe("main wiring", () => {
     expect(execution.result).not.toHaveProperty("domainsUsed");
     expect(execution.result.status).toBe("not_covered");
     expect(new Set(detailed.mock.calls.map(([input]) => input.signal)).size).toBe(1);
+    await runtime.close();
+  });
+
+  it("constructs the reliable pipeline only when its explicit control-plane flag is enabled", async () => {
+    const model = {} as ModelClient;
+    const models: ModelRoleClients = {
+      resolver: model,
+      planner: model,
+      synthesizer: model,
+      verifier: model,
+    };
+    const caller = {
+      connect: vi.fn(async () => undefined),
+      call: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } satisfies KnowledgeToolCaller;
+    const knowledge = { open: vi.fn() };
+    const pipeline = { answer: vi.fn() } as unknown as ReliableAnswerPipeline;
+    const createReliableAnswerPipeline = vi.fn(() => pipeline);
+    const server = { close: vi.fn(async () => undefined) } as unknown as McpServer;
+
+    const runtime = await createPseAgentRuntime({
+      ...configEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
+    }, {
+      createModelRoles: () => models,
+      createRouter: () => ({ route: vi.fn(async () => "normal" as const) }),
+      createKnowledgePlanner: () => ({ plan: vi.fn(async () => plan) }),
+      createKnowledgeCaller: () => caller,
+      createKnowledgeSessionFactory: () => knowledge,
+      createTaskAnalysisShadow: () => ({ analyze: vi.fn() } as unknown as TaskAnalysisShadow),
+      createReliableAnswerPipeline,
+      createServer: () => server,
+    });
+
+    expect(createReliableAnswerPipeline).toHaveBeenCalledOnce();
+    expect(createReliableAnswerPipeline).toHaveBeenCalledWith({ knowledge, models });
     await runtime.close();
   });
 

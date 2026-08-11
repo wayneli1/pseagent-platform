@@ -86,7 +86,7 @@ describe("ModelQuestionResolver", () => {
     await expect(new ModelQuestionResolver(model).resolve({question:"把刚才第二点展开说说",conversationContext:context})).resolves.toMatchObject({standaloneQuestion:"请详细说明迁移前如何获取并使用客户端专用密码。",contextUsed:true,inheritedSubjects:["客户端专用密码"]});
   });
 
-  it("repairs a model result that ignores an explicit numbered answer reference", async () => {
+  it("rejects an unresolved numbered answer reference without resampling", async () => {
     const context=JSON.stringify({version:3,recentTurns:[{question:"演示前确认什么？",answerOutline:"1. 参会角色\n2. 关键业务问题\n3. 判断标准"}]});
     const completeJson=vi.fn()
       .mockResolvedValueOnce({action:"resolve",standaloneQuestion:"你刚才列的第二点具体怎么确认？",contextUsed:false,inheritedSubjects:[],corrections:[]})
@@ -96,15 +96,11 @@ describe("ModelQuestionResolver", () => {
     await expect(new ModelQuestionResolver(model).resolve({
       question:"你刚才列的第二点具体怎么确认？",
       conversationContext:context,
-    })).resolves.toMatchObject({
-      standaloneQuestion:"演示前如何确认客户的关键业务问题？",
-      contextUsed:true,
-      inheritedSubjects:["关键业务问题"],
-    });
-    expect(completeJson).toHaveBeenCalledTimes(2);
+    })).rejects.toBeInstanceOf(InvalidResolvedQuestionError);
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 
-  it("does not accept a second unresolved numbered-reference repair", async () => {
+  it("does not request a second unresolved numbered-reference sample", async () => {
     const context=JSON.stringify({version:3,recentTurns:[{question:"演示前确认什么？",answerOutline:"1. 参会角色\n2. 关键业务问题\n3. 判断标准"}]});
     const unresolved={action:"resolve",standaloneQuestion:"你刚才列的第二点具体怎么确认？",contextUsed:false,inheritedSubjects:[],corrections:[]};
     const completeJson=vi.fn()
@@ -115,14 +111,11 @@ describe("ModelQuestionResolver", () => {
     await expect(new ModelQuestionResolver({completeJson,completeText:vi.fn()} as unknown as ModelClient).resolve({
       question:"你刚才列的第二点具体怎么确认？",
       conversationContext:context,
-    })).resolves.toMatchObject({
-      standaloneQuestion:"演示前如何确认客户的关键业务问题？",
-      contextUsed:true,
-    });
-    expect(completeJson).toHaveBeenCalledTimes(3);
+    })).rejects.toBeInstanceOf(InvalidResolvedQuestionError);
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 
-  it("repairs an unresolved leading personal pronoun when recent turns contain the role antecedent", async () => {
+  it("rejects an unresolved personal pronoun without resampling", async () => {
     const context=JSON.stringify({version:3,recentTurns:[{question:"真正决策者与普通影响者有什么区别？",answerOutline:"真正决策者能调动预算和资源；影响者只能影响评估过程，需要通过共同会议和决策历史持续验证。"}]});
     const completeJson=vi.fn()
       .mockResolvedValueOnce({action:"resolve",standaloneQuestion:"判断他是否真的能调动预算和资源，最少要核验哪几类实际行为？",contextUsed:false,inheritedSubjects:[],corrections:[]})
@@ -132,15 +125,11 @@ describe("ModelQuestionResolver", () => {
     await expect(new ModelQuestionResolver(model).resolve({
       question:"那判断他是否真的能调动预算和资源，最少要核验哪几类实际行为？",
       conversationContext:context,
-    })).resolves.toMatchObject({
-      standaloneQuestion:"判断真正决策者是否能调动预算和资源，最少要核验哪几类实际行为？",
-      contextUsed:true,
-      inheritedSubjects:["真正决策者"],
-    });
-    expect(completeJson).toHaveBeenCalledTimes(2);
+    })).rejects.toBeInstanceOf(InvalidResolvedQuestionError);
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 
-  it("repairs a whole-object state transition bound to one recent criterion", async () => {
+  it("rejects a whole-object state transition bound to one recent criterion", async () => {
     const context = JSON.stringify({
       version: 3,
       recentTurns: [
@@ -177,16 +166,11 @@ describe("ModelQuestionResolver", () => {
     await expect(resolver.resolve({
       question: "那它在什么情况下算已经具备资格，可以进入完整演示？",
       conversationContext: context,
-    })).resolves.toMatchObject({
-      standaloneQuestion: "演示请求在什么情况下具备资格，可以进入完整演示？",
-      contextUsed: true,
-      inheritedSubjects: ["演示请求"],
-    });
-    expect(completeJson).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(completeJson.mock.calls[1])).toContain("整体准入");
+    })).rejects.toBeInstanceOf(InvalidResolvedQuestionError);
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 
-  it("repairs a corrective follow-up that drops answer-changing parent constraints",async()=>{
+  it("rejects a corrective follow-up that drops answer-changing parent constraints",async()=>{
     const context=JSON.stringify({version:3,recentTurns:[{question:"有一个客户要购买邮件系统，他们有5000用户，需要多活高可用，建议如何设计架构？",answerOutline:"推荐两台前端、两台后端和一台仲裁服务器。"}]});
     const incomplete={action:"resolve",standaloneQuestion:"Coremail 邮件系统架构需要几台前端服务器和几台后端服务器？",contextUsed:true,inheritedSubjects:["邮件系统"],corrections:[]};
     const completeJson=vi.fn()
@@ -197,13 +181,8 @@ describe("ModelQuestionResolver", () => {
     await expect(new ModelQuestionResolver(model).resolve({
       question:"你并没有答复我应该如何设计架构，几台前端几台后端",
       conversationContext:context,
-    })).resolves.toMatchObject({
-      standaloneQuestion:expect.stringContaining("5000用户"),
-      contextUsed:true,
-      inheritedSubjects:expect.arrayContaining(["多活高可用"]),
-    });
-    expect(completeJson).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(completeJson.mock.calls[1])).toContain("丢失了最近问题中会改变答案的数量");
+    })).rejects.toBeInstanceOf(InvalidResolvedQuestionError);
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 
   it("rejects corrections that cannot be traced to the current question", async () => {
@@ -228,7 +207,7 @@ describe("ModelQuestionResolver", () => {
     })).rejects.toBeInstanceOf(InvalidResolvedQuestionError);
   });
 
-  it("makes bounded repairs for invalid model payloads", async () => {
+  it("does not resample invalid model payloads", async () => {
     const completeJson = vi.fn(async () => {
       throw new InvalidModelPayloadError();
     });
@@ -241,6 +220,6 @@ describe("ModelQuestionResolver", () => {
       question: "还有华为呢？",
       conversationContext: "用户：比较三家客户",
     })).rejects.toBeInstanceOf(InvalidModelPayloadError);
-    expect(completeJson).toHaveBeenCalledTimes(3);
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 });

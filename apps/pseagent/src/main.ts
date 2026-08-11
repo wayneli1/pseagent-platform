@@ -48,6 +48,15 @@ import {
   ModelPolicySemanticClassifier,
   type PolicySemanticClassifier,
 } from "./policy-preflight.js";
+import {
+  DeterministicReliableAnswerPipeline,
+  ModelTargetedClaimReviser,
+  type ReliableAnswerPipeline,
+} from "./reliable-answer-pipeline.js";
+import {
+  ModelClaimSupportVerifier,
+  ModelStructuredClaimSynthesizer,
+} from "./structured-claim.js";
 
 export interface PseRuntimeDependencies {
   readonly createModel?: (config: AppConfig) => ModelClient;
@@ -75,6 +84,10 @@ export interface PseRuntimeDependencies {
     model: ModelClient,
     config: Extract<AppConfig["answerCards"], { enabled: true }>,
   ) => AnswerCardMatcher;
+  readonly createReliableAnswerPipeline?: (input: {
+    readonly knowledge: KnowledgeSessionFactory;
+    readonly models: ModelRoleClients;
+  }) => ReliableAnswerPipeline;
 }
 
 export interface PseAgentRuntime {
@@ -133,6 +146,15 @@ export async function createPseAgentRuntime(
         )
       : undefined;
     const knowledge = (dependencies.createKnowledgeSessionFactory ?? defaultKnowledgeSessionFactory)(caller);
+    const reliablePipeline = config.reliabilityControlPlaneEnabled
+      ? dependencies.createReliableAnswerPipeline?.({ knowledge, models }) ??
+        new DeterministicReliableAnswerPipeline({
+          knowledge,
+          synthesizer: new ModelStructuredClaimSynthesizer(models.synthesizer),
+          verifier: new ModelClaimSupportVerifier(models.verifier),
+          targetedReviser: new ModelTargetedClaimReviser(models.synthesizer),
+        })
+      : undefined;
     const service = new AnswerService({
       model: models.synthesizer,
       verifierModel: models.verifier,
@@ -146,6 +168,8 @@ export async function createPseAgentRuntime(
       activeDeadlineMs: config.PSE_ACTIVE_DEADLINE_MS,
       taskSpecActiveEnabled: config.taskSpecActiveEnabled,
       multiDomainActiveEnabled: config.multiDomainActiveEnabled,
+      reliabilityControlPlaneEnabled: config.reliabilityControlPlaneEnabled,
+      ...(reliablePipeline === undefined ? {} : { reliablePipeline }),
       answerCardExactActiveEnabled: config.answerCards.exactActiveEnabled,
       answerCardFamilyActiveEnabled: config.answerCards.familyActiveEnabled,
       questionResolver,

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
+import type { ModelClient } from "./model-client.js";
 
 const questionCorrectionSchema = z.object({
   original: z.string().trim().min(1).max(128),
@@ -98,45 +98,13 @@ export class ModelQuestionResolver implements QuestionResolver {
         }),
       },
     ];
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        const action = await this.model.completeJson({
-          messages: attempt === 1
-            ? messages
-            : [
-                ...messages,
-                {
-                  role: "user" as const,
-                  content: lastError instanceof InvalidResolvedQuestionError &&
-                      lastError.code === "unresolved_leading_context_reference"
-                    ? "上一次把篇首代词原样保留且声称未使用上下文。请从 recentTurns 的最近问题和 answerOutline 寻找唯一 antecedent；能确定时用具体主体补全、设置 contextUsed=true 并填写 inheritedSubjects。只输出合法 resolve JSON。"
-                    : lastError instanceof InvalidResolvedQuestionError &&
-                        lastError.code === "predicate_subject_mismatch"
-                      ? "上一次把整体准入或阶段转换问题错误绑定到了某个单项条件。请根据当前谓词与主体的语义兼容性回溯 recentTurns，选择真正能具备资格、进入阶段或执行动作的完整对象；不要把单个判断项写成整体对象。只输出合法 resolve JSON。"
-                    : lastError instanceof InvalidResolvedQuestionError &&
-                        lastError.code === "dropped_parent_constraints"
-                      ? "上一次解析丢失了最近问题中会改变答案的数量、规模、部署形态、能力要求或限制条件。请把这些约束连同当前追问目标一起写入 standaloneQuestion，并在 inheritedSubjects 中列出继承项。只输出合法 resolve JSON。"
-                      : "上一次输出不符合问题解析契约。只重新输出合法 resolve JSON，不要解释。",
-                },
-              ],
-          schema: questionResolutionActionSchema,
-          schemaDescription: "pse_resolved_question",
-          ...(input.signal === undefined ? {} : { signal: input.signal }),
-        });
-        return validateResolvedQuestion(question, context, action, attempt);
-      } catch (error) {
-        lastError = error;
-        if (
-          !(error instanceof InvalidModelPayloadError) &&
-          !(error instanceof InvalidResolvedQuestionError)
-        ) {
-          throw error;
-        }
-        if (attempt === 3) throw error;
-      }
-    }
-    throw lastError;
+    const action = await this.model.completeJson({
+      messages,
+      schema: questionResolutionActionSchema,
+      schemaDescription: "pse_resolved_question",
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    return validateResolvedQuestion(question, context, action, 1);
   }
 }
 

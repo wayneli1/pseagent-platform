@@ -6,6 +6,22 @@ import {
 } from "./reliability-diagnostics.ts";
 
 describe("reliability diagnostics", () => {
+  it("summarizes the reliable model call budget without content", () => {
+    const summary = summarizeReliabilityDiagnostics([{
+      event: "model_call_budget",
+      maximumOpenEndedCalls: 3,
+      usedOpenEndedCalls: 2,
+      usedStructuredCalls: 2,
+    }]);
+
+    expect(summary.model.callBudget).toEqual({
+      maximumOpenEndedCalls: 3,
+      usedOpenEndedCalls: 2,
+      usedStructuredCalls: 2,
+    });
+    expect(JSON.stringify(summary.model.callBudget)).not.toContain("answer");
+  });
+
   it("summarizes content-free absolute stage budget outcomes", () => {
     const events: DiagnosticEvent[] = [{
       event: "stage_budget",

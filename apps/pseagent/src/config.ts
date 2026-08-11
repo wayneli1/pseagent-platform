@@ -47,6 +47,7 @@ export type AppConfig = BaseConfig & {
     | { readonly enabled: true; readonly timeoutMs: number };
   readonly taskSpecActiveEnabled: boolean;
   readonly multiDomainActiveEnabled: boolean;
+  readonly reliabilityControlPlaneEnabled: boolean;
   readonly answerCards:
     | {
         readonly enabled: false;
@@ -114,6 +115,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     taskSpecShadow.enabled,
     taskSpecActiveEnabled,
   );
+  const reliabilityControlPlaneEnabled = loadReliabilityControlPlaneEnabled(
+    env,
+    taskSpecActiveEnabled,
+    multiDomainActiveEnabled,
+  );
   const answerCards = loadAnswerCardConfig(
     env,
     taskSpecShadow.enabled,
@@ -128,6 +134,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       taskSpecShadow,
       taskSpecActiveEnabled,
       multiDomainActiveEnabled,
+      reliabilityControlPlaneEnabled,
       answerCards,
       modelRoles: modelRoles(parsed),
       modelCapabilities: {
@@ -161,6 +168,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     taskSpecShadow,
     taskSpecActiveEnabled,
     multiDomainActiveEnabled,
+    reliabilityControlPlaneEnabled,
     answerCards,
     modelRoles: modelRoles(parsed),
     modelCapabilities: {
@@ -259,6 +267,22 @@ function loadMultiDomainActiveEnabled(
   if (enabled && (!shadowEnabled || !taskSpecActiveEnabled)) {
     throw new Error(
       "PSE_MULTI_DOMAIN_ACTIVE_ENABLED requires PSE_TASK_SPEC_SHADOW_ENABLED=true and PSE_TASK_SPEC_ACTIVE_ENABLED=true.",
+    );
+  }
+  return enabled;
+}
+
+function loadReliabilityControlPlaneEnabled(
+  env: NodeJS.ProcessEnv,
+  taskSpecActiveEnabled: boolean,
+  multiDomainActiveEnabled: boolean,
+): boolean {
+  const enabled = z.enum(["true", "false"]).parse(
+    env.PSE_RELIABILITY_CONTROL_PLANE_ENABLED ?? "false",
+  ) === "true";
+  if (enabled && (!taskSpecActiveEnabled || !multiDomainActiveEnabled)) {
+    throw new Error(
+      "PSE_RELIABILITY_CONTROL_PLANE_ENABLED requires active TaskSpec and multi-domain execution.",
     );
   }
   return enabled;

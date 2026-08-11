@@ -153,14 +153,14 @@ describe("ScopeRouter", () => {
     expect(completeJson).not.toHaveBeenCalled();
   });
 
-  it("repairs an invalid route and never silently downgrades", async () => {
+  it("does not resample an invalid route payload", async () => {
     const completeJson = vi.fn()
       .mockRejectedValueOnce(new InvalidModelPayloadError())
       .mockResolvedValueOnce({ action: "route", scope: "professional" });
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
     await expect(new ScopeRouter(model).route("客户现场出现 HTTP 404，怎样排查？"))
-      .resolves.toBe("professional");
-    expect(completeJson).toHaveBeenCalledTimes(2);
+      .resolves.toBe("normal");
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 
   it("normalizes a scope-only provider response without accepting extra fields", async () => {
@@ -177,7 +177,7 @@ describe("ScopeRouter", () => {
     })).toThrow();
   });
 
-  it("keeps product context after all route repair attempts fail", async () => {
+  it("keeps product context after the single route attempt fails", async () => {
     const completeJson = vi.fn(async () => {
       throw new InvalidModelPayloadError();
     });
@@ -187,7 +187,7 @@ describe("ScopeRouter", () => {
       "客户现场出现 HTTP 404，怎样排查？",
       "前面正在讨论 Coremail XT6 的部署和迁移。",
     )).resolves.toBe("professional");
-    expect(completeJson).toHaveBeenCalledTimes(3);
+    expect(completeJson).toHaveBeenCalledOnce();
   });
 
   it.each([

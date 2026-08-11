@@ -176,7 +176,8 @@ export type DiagnosticEvent =
         | "compile"
         | "plan"
         | "synthesize"
-        | "verify";
+        | "verify"
+        | "targeted_claim_revision";
       readonly outcome: "completed" | "failed";
       readonly elapsedMs: number;
       readonly attemptCount?: number;
@@ -189,6 +190,12 @@ export type DiagnosticEvent =
         | "unavailable"
         | "aborted"
         | "unexpected";
+    }
+  | {
+      readonly event: "model_call_budget";
+      readonly maximumOpenEndedCalls: number;
+      readonly usedOpenEndedCalls: number;
+      readonly usedStructuredCalls: number;
     }
   | {
       readonly event: "search";
@@ -829,6 +836,7 @@ function allowlistDiagnosticEvent(
             "plan",
             "synthesize",
             "verify",
+            "targeted_claim_revision",
           ] as const,
         ),
         outcome: safeEnum(event.outcome, ["completed", "failed"] as const),
@@ -848,6 +856,13 @@ function allowlistDiagnosticEvent(
             "unexpected",
           ] as const,
         ),
+      };
+    case "model_call_budget":
+      return {
+        event: event.event,
+        maximumOpenEndedCalls: safeCount(event.maximumOpenEndedCalls),
+        usedOpenEndedCalls: safeCount(event.usedOpenEndedCalls),
+        usedStructuredCalls: safeCount(event.usedStructuredCalls),
       };
     case "search":
       return {

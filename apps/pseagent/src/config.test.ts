@@ -28,6 +28,7 @@ describe("loadConfig", () => {
     expect(config.taskSpecShadow).toEqual({ enabled: false });
     expect(config.taskSpecActiveEnabled).toBe(false);
     expect(config.multiDomainActiveEnabled).toBe(false);
+    expect(config.reliabilityControlPlaneEnabled).toBe(false);
     expect(config.answerCards).toEqual({
       enabled: false,
       required: false,
@@ -133,6 +134,23 @@ describe("loadConfig", () => {
       PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
     })).toThrow(
       "PSE_MULTI_DOMAIN_ACTIVE_ENABLED requires PSE_TASK_SPEC_SHADOW_ENABLED=true and PSE_TASK_SPEC_ACTIVE_ENABLED=true",
+    );
+  });
+
+  it("enables the reliable control plane only on the active multi-domain path", () => {
+    const config = loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
+    });
+    expect(config.reliabilityControlPlaneEnabled).toBe(true);
+    expect(() => loadConfig({
+      ...baseEnv,
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
+    })).toThrow(
+      "PSE_RELIABILITY_CONTROL_PLANE_ENABLED requires active TaskSpec and multi-domain execution",
     );
   });
 

@@ -46,6 +46,11 @@ export interface ReliabilityDiagnosticSummary {
     readonly attemptCount: number;
     readonly queueElapsedMs: number;
     readonly executionElapsedMs: number;
+    readonly callBudget?: {
+      readonly maximumOpenEndedCalls: number;
+      readonly usedOpenEndedCalls: number;
+      readonly usedStructuredCalls: number;
+    };
     readonly calls: readonly {
       readonly role: string;
       readonly operation: string;
@@ -194,6 +199,8 @@ export function summarizeReliabilityDiagnostics(
             : { errorClass: event.errorClass }),
         }]
       : []);
+  const modelCallBudget = [...events].reverse().find((event) =>
+    event.event === "model_call_budget");
   const searches = events.filter((event) => event.event === "search");
   const candidates = events.filter((event) => event.event === "candidates");
   const reads = events.filter((event) => event.event === "read");
@@ -289,6 +296,15 @@ export function summarizeReliabilityDiagnostics(
       queueElapsedMs: sum(modelCalls.map((call) => call.queueElapsedMs)),
       executionElapsedMs: sum(modelCalls.map((call) => call.executionElapsedMs)),
       calls: modelCalls,
+      ...(modelCallBudget?.event !== "model_call_budget"
+        ? {}
+        : {
+            callBudget: {
+              maximumOpenEndedCalls: modelCallBudget.maximumOpenEndedCalls,
+              usedOpenEndedCalls: modelCallBudget.usedOpenEndedCalls,
+              usedStructuredCalls: modelCallBudget.usedStructuredCalls,
+            },
+          }),
     },
     retrieval: {
       seedSearchCount: searches.filter((event) =>

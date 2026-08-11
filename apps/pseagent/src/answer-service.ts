@@ -104,6 +104,7 @@ import {
   compileGovernedAtomicObligationContract,
   materializeGuardedTaskSpec,
 } from "./atomic-obligation.js";
+import type { ReliableAnswerPipeline } from "./reliable-answer-pipeline.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 180_000;
 export const PSE_ACTIVE_DEADLINE_MS = 165_000;
@@ -220,6 +221,8 @@ export class AnswerService {
     readonly answerCardFamilyActiveEnabled?: boolean;
     readonly questionResolver?: QuestionResolver;
     readonly policyClassifier?: PolicySemanticClassifier;
+    readonly reliabilityControlPlaneEnabled?: boolean;
+    readonly reliablePipeline?: ReliableAnswerPipeline;
   }) {}
 
   async answer(
@@ -688,6 +691,36 @@ export class AnswerService {
                 reason: "activated",
                 requirementCount,
               });
+              if (this.dependencies.reliabilityControlPlaneEnabled === true) {
+                if (this.dependencies.reliablePipeline === undefined) {
+                  recordDiagnostic(trace, { event: "stop", reason: "domain_execution_unavailable" });
+                  return withQuestionResolution(finishExecution(
+                    trace,
+                    temporaryUnavailableResult(scope),
+                    startedAt,
+                    false,
+                    false,
+                  ));
+                }
+                const reliable = await this.dependencies.reliablePipeline.answer({
+                  question: taskAnalysis.resolvedQuestion.standaloneQuestion,
+                  scope,
+                  contract: taskAnalysis.obligationContract,
+                  plans: derived.plans,
+                  budget: stageBudget,
+                  trace,
+                  signal: requestSignal,
+                });
+                return withQuestionResolution(finishExecution(
+                  trace,
+                  reliable.result,
+                  startedAt,
+                  false,
+                  false,
+                  reliable.domainsUsed,
+                  { domainEvidenceLedgers: reliable.evidenceLedgers },
+                ));
+              }
               return withQuestionResolution(await this.answerAcrossDomains({
                 scope,
                 question: taskAnalysis.resolvedQuestion.standaloneQuestion,

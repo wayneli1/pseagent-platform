@@ -31,6 +31,8 @@ import {
   type AtomicObligationContract,
   type AtomicObligationKind,
 } from "./atomic-obligation.js";
+import type { ReliableAnswerPipeline } from "./reliable-answer-pipeline.js";
+import { StageBudgetAllocator } from "./stage-budget.js";
 
 const knowledgePlan = {
   subject: "Coremail",
@@ -2102,6 +2104,7 @@ describe("AnswerService", () => {
       readonly historicalProvider?: HistoricalAnswerProvider;
       readonly multiDomainActiveEnabled?: boolean;
       readonly diagnostics?: DiagnosticTraceFactory;
+      readonly reliablePipeline?: ReliableAnswerPipeline;
     } = {}) {
       const planningSession = domainSession("coremail-professional", "a");
       const professionalSession = domainSession("coremail-professional", "b");
@@ -2159,6 +2162,10 @@ describe("AnswerService", () => {
         taskAnalysisShadow: options.shadow ?? mixedShadow(),
         taskSpecActiveEnabled: true,
         multiDomainActiveEnabled: options.multiDomainActiveEnabled ?? true,
+        reliabilityControlPlaneEnabled: options.reliablePipeline !== undefined,
+        ...(options.reliablePipeline === undefined
+          ? {}
+          : { reliablePipeline: options.reliablePipeline }),
         ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
         ...(options.historicalProvider === undefined
           ? {}
@@ -2166,6 +2173,54 @@ describe("AnswerService", () => {
       });
       return { service, knowledge, runAgent, runAgentDetailed };
     }
+
+    it("selects the reliable pipeline and never enters the legacy detailed-agent loop", async () => {
+      const reliablePipeline = {
+        answer: vi.fn(async (input: Parameters<ReliableAnswerPipeline["answer"]>[0]) => ({
+          result: {
+            scope: input.scope,
+            status: "answered" as const,
+            policyDisposition: "allowed" as const,
+            knowledgeCoverage: "complete" as const,
+            caseAssessability: "not_applicable" as const,
+            answer: "可靠控制面回答",
+            references: [],
+          },
+          domainsUsed: input.plans.map((plan) => plan.domain),
+          evidenceLedgers: [],
+          outcomes: input.contract.obligations.map((obligation) => ({
+            obligationId: obligation.id,
+            state: "complete" as const,
+            claims: [],
+          })),
+          callBudget: {
+            maximumOpenEndedCalls: 3,
+            usedOpenEndedCalls: 1,
+            usedStructuredCalls: 1,
+          },
+        })),
+      } satisfies ReliableAnswerPipeline;
+      const { service, runAgent, runAgentDetailed } = createMixedService({ reliablePipeline });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+
+      expect(reliablePipeline.answer).toHaveBeenCalledOnce();
+      expect(reliablePipeline.answer).toHaveBeenCalledWith(expect.objectContaining({
+        question: mixedQuestion,
+        plans: expect.arrayContaining([
+          expect.objectContaining({ domain: "coremail-professional" }),
+          expect.objectContaining({ domain: "presales-general" }),
+        ]),
+        contract: expect.objectContaining({ obligations: expect.any(Array) }),
+        budget: expect.any(StageBudgetAllocator),
+      }));
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(runAgentDetailed).not.toHaveBeenCalled();
+      expect(execution).toMatchObject({
+        result: { status: "answered", answer: "可靠控制面回答" },
+        domainsUsed: ["coremail-professional", "presales-general"],
+      });
+    });
 
     it("runs mixed obligations in isolated sessions and formats one deterministic answer", async () => {
       const { service, knowledge, runAgent, runAgentDetailed } = createMixedService();
