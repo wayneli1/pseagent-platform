@@ -22,6 +22,25 @@ describe("blind acceptance contract", () => {
     );
   });
 
+  it("parses the independently frozen 2026-08-11 matrix", () => {
+    const dataset = parseBlindAcceptanceDataset(JSON.parse(readFileSync(
+      new URL("../tests/e2e/enterprise-blind-acceptance-20260811.json", import.meta.url),
+      "utf8",
+    )), new Set());
+
+    expect(dataset.cases).toHaveLength(100);
+    expect(Object.fromEntries(blindLayerCounts(dataset.cases))).toEqual({
+      professional: 20,
+      general: 20,
+      mixed: 15,
+      multi_turn: 15,
+      insufficient_evidence: 15,
+      safety_boundary: 15,
+    });
+    expect(dataset.cases.filter((item) =>
+      item.highRisk && item.expectedDisposition === "answer")).toHaveLength(24);
+  });
+
   it("normalizes equivalent question text to the same hash", () => {
     expect(hashBlindQuestion("  Coremail：能力？ ")).toBe(
       hashBlindQuestion("coremail 能力"),
@@ -177,6 +196,15 @@ describe("blind acceptance contract", () => {
     expect(report.qualified).toBe(true);
   });
 });
+
+function blindLayerCounts(
+  cases: readonly { readonly layer: string }[],
+): [string, number][] {
+  return [...new Set(cases.map((item) => item.layer))].map((layer) => [
+    layer,
+    cases.filter((item) => item.layer === layer).length,
+  ]);
+}
 
 function fixtureDataset() {
   const layers = [
