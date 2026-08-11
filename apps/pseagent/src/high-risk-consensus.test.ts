@@ -41,12 +41,13 @@ const firstVerdicts: readonly ClaimSupportDecision[] = claims.map((claim) => ({
 
 function modelReturning(verdicts: readonly ("supported" | "insufficient")[]): ModelClient {
   return {
-    completeJson: vi.fn(async () => claims.map((claim, index) => ({
-      claimId: claim.claimId,
-      claimHash: consensusClaimSignature(claim),
-      citationIndexes: claim.citationIndexes,
-      verdict: verdicts[index] ?? "insufficient",
-    }))),
+    completeJson: vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
+      input.schema.parse({ verdicts: claims.map((claim, index) => ({
+        claimId: claim.claimId,
+        claimHash: consensusClaimSignature(claim),
+        citationIndexes: claim.citationIndexes,
+        verdict: verdicts[index] ?? "insufficient",
+      })) })),
     completeText: vi.fn(),
   } as unknown as ModelClient;
 }
@@ -54,12 +55,13 @@ function modelReturning(verdicts: readonly ("supported" | "insufficient")[]): Mo
 describe("high-risk consensus gate", () => {
   it("publishes only the exact-signature intersection supported by both verdicts", async () => {
     const gate = new HighRiskConsensusGate();
+    const secondVerifier = modelReturning(["supported", "insufficient"]);
 
     const result = await gate.evaluate({
       claims,
       firstVerdicts,
       firstVerifier: modelReturning(["supported", "supported"]),
-      secondVerifier: modelReturning(["supported", "insufficient"]),
+      secondVerifier,
       firstModelId: "verifier-a",
       secondModelId: "verifier-b",
       signal: new AbortController().signal,
@@ -71,11 +73,16 @@ describe("high-risk consensus gate", () => {
       rejectedClaimIds: ["CL2"],
       agreed: false,
     });
+    expect(secondVerifier.completeJson).toHaveBeenCalledWith(expect.objectContaining({
+      messages: expect.arrayContaining([expect.objectContaining({
+        content: expect.stringContaining('{"verdicts":[...]}'),
+      })]),
+    }));
   });
 
   it("rejects a verdict that changes the claim signature or citation set", async () => {
     const secondVerifier = modelReturning(["supported", "supported"]);
-    vi.mocked(secondVerifier.completeJson).mockResolvedValueOnce([
+    vi.mocked(secondVerifier.completeJson).mockResolvedValueOnce({ verdicts: [
       {
         claimId: "CL1",
         claimHash: "f".repeat(64),
@@ -88,7 +95,7 @@ describe("high-risk consensus gate", () => {
         citationIndexes: [1, 2],
         verdict: "supported",
       },
-    ]);
+    ] } as never);
 
     const result = await new HighRiskConsensusGate().evaluate({
       claims,

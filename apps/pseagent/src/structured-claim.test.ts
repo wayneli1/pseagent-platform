@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import type { ModelClient } from "./model-client.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { OpenAiCompatibleModelClient, type ModelClient } from "./model-client.js";
 import {
+  hashClaimText,
+  ModelClaimSupportVerifier,
   ModelStructuredClaimSynthesizer,
   type ClaimDraft,
 } from "./structured-claim.js";
@@ -43,6 +45,8 @@ const retrieval = {
   evidenceLedger: {} as never,
 } satisfies DeterministicRetrievalResult;
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("ModelStructuredClaimSynthesizer", () => {
   it("drafts structured claims without rendering citation markers", async () => {
     const payload: ClaimDraft[] = [{
@@ -55,7 +59,7 @@ describe("ModelStructuredClaimSynthesizer", () => {
       coveredAspectIds: ["A1"],
     }];
     const completeJson = vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
-      input.schema.parse(payload));
+      input.schema.parse({ claims: payload }));
     const synthesizer = new ModelStructuredClaimSynthesizer({
       completeJson,
       completeText: vi.fn(),
@@ -67,11 +71,16 @@ describe("ModelStructuredClaimSynthesizer", () => {
       signal: new AbortController().signal,
     })).resolves.toEqual(payload);
     expect(completeJson).toHaveBeenCalledOnce();
+    expect(completeJson).toHaveBeenCalledWith(expect.objectContaining({
+      messages: expect.arrayContaining([expect.objectContaining({
+        content: expect.stringContaining('{"claims":[...]}'),
+      })]),
+    }));
   });
 
   it("rejects model text that embeds rendered Markdown citations", async () => {
     const completeJson = vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
-      input.schema.parse([{
+      input.schema.parse({ claims: [{
         claimId: "CL1",
         obligationId: "O1",
         domain: "coremail-professional",
@@ -79,7 +88,7 @@ describe("ModelStructuredClaimSynthesizer", () => {
         kind: "fact",
         citationIndexes: [1],
         coveredAspectIds: ["A1"],
-      }]));
+      }] }));
     const synthesizer = new ModelStructuredClaimSynthesizer({
       completeJson,
       completeText: vi.fn(),
@@ -90,5 +99,55 @@ describe("ModelStructuredClaimSynthesizer", () => {
       retrieval,
       signal: new AbortController().signal,
     })).rejects.toThrow();
+  });
+
+  it("uses a root object envelope through the real compatible client", async () => {
+    const payload: ClaimDraft[] = [{
+      claimId: "CL1", obligationId: "O1", domain: "coremail-professional",
+      text: "Coremail 支持迁移。", kind: "fact", citationIndexes: [1],
+      coveredAspectIds: ["A1"],
+    }];
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      choices: [{ message: { content: JSON.stringify({ claims: payload }) } }],
+    })));
+    const model = new OpenAiCompatibleModelClient({
+      baseUrl: "https://model.example/v1", apiKey: "secret", model: "fixed",
+      timeoutMs: 1_000, maxTokens: 8_192,
+    });
+
+    await expect(new ModelStructuredClaimSynthesizer(model).draft({
+      contract, retrieval, signal: new AbortController().signal,
+    })).resolves.toEqual(payload);
+  });
+});
+
+describe("ModelClaimSupportVerifier", () => {
+  it("parses decisions from a root object envelope", async () => {
+    const decisions = [{
+      claimId: "CL1", claimHash: hashClaimText("Coremail 支持迁移。"), citationIndexes: [1],
+      verdict: "supported" as const,
+    }];
+    const completeJson = vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
+      input.schema.parse({ decisions }));
+    const verifier = new ModelClaimSupportVerifier({
+      completeJson, completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    await expect(verifier.verify({
+      claims: [{
+        claimId: "CL1", obligationId: "O1", domain: "coremail-professional",
+        text: "Coremail 支持迁移。", kind: "fact", citationIndexes: [1],
+        coveredAspectIds: ["A1"], support: "direct", evidenceIdentities: [],
+      }],
+      evidence: retrieval.evidence,
+      signal: new AbortController().signal,
+    })).resolves.toEqual(decisions);
+
+    expect(completeJson).toHaveBeenCalledOnce();
+    expect(completeJson).toHaveBeenCalledWith(expect.objectContaining({
+      messages: expect.arrayContaining([expect.objectContaining({
+        content: expect.stringContaining('{"decisions":[...]}'),
+      })]),
+    }));
   });
 });

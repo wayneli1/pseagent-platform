@@ -47,6 +47,9 @@ const claimDraftSchema = z.object({
 }).strict();
 
 const claimDraftListSchema = z.array(claimDraftSchema).min(1).max(18);
+const claimDraftEnvelopeSchema = z.object({
+  claims: claimDraftListSchema,
+}).strict();
 
 const supportDecisionSchema = z.object({
   claimId: z.string().regex(/^CL[1-9]\d*$/u),
@@ -56,15 +59,18 @@ const supportDecisionSchema = z.object({
 }).strict();
 
 const supportDecisionListSchema = z.array(supportDecisionSchema).min(1).max(18);
+const supportDecisionEnvelopeSchema = z.object({
+  decisions: supportDecisionListSchema,
+}).strict();
 
 const CLAIM_DRAFT_PROMPT = `你根据已读取的正式证据，为每个原子义务生成最小、独立的结构化主张。
-只输出 JSON 数组。text 中禁止写 [1] 之类引用标记；引用只放 citationIndexes。
+只输出根对象 {"claims":[...]}。text 中禁止写 [1] 之类引用标记；引用只放 citationIndexes。
 不得跨义务或跨知识域借用证据，不得扩展证据没有支持的数字、版本、承诺或边界。
 资料不足时生成 kind=gap 的明确缺口主张，citationIndexes 为空。`;
 
 const CLAIM_VERIFY_PROMPT = `你是主张支持度裁判，只判断给定主张是否被指定证据支持。
 不得改写主张，不得增加引用。每条主张输出 supported、contradicted 或 insufficient。
-claimId、claimHash 和 citationIndexes 必须原样返回。只输出 JSON 数组。`;
+claimId、claimHash 和 citationIndexes 必须原样返回。只输出根对象 {"decisions":[...]}。`;
 
 export class ModelStructuredClaimSynthesizer {
   constructor(private readonly model: ModelClient) {}
@@ -76,7 +82,7 @@ export class ModelStructuredClaimSynthesizer {
   }): Promise<readonly ClaimDraft[]> {
     const obligations = input.contract.obligations.filter((obligation) =>
       obligation.domains.includes(input.retrieval.project));
-    const claims = await this.model.completeJson({
+    const envelope = await this.model.completeJson({
       messages: [
         { role: "system", content: CLAIM_DRAFT_PROMPT },
         {
@@ -87,10 +93,11 @@ export class ModelStructuredClaimSynthesizer {
           }),
         },
       ],
-      schema: claimDraftListSchema,
+      schema: claimDraftEnvelopeSchema,
       schemaDescription: "pse_structured_claim_drafts",
       signal: input.signal,
     });
+    const claims = envelope.claims;
     if (
       new Set(claims.map((claim) => claim.claimId)).size !== claims.length ||
       claims.some((claim, index) => claim.claimId !== `CL${index + 1}`)
@@ -118,7 +125,7 @@ export class ModelClaimSupportVerifier {
       claimHash: hashClaimText(claim.text),
       citationIndexes: [...claim.citationIndexes],
     }));
-    const decisions = await this.model.completeJson({
+    const envelope = await this.model.completeJson({
       messages: [
         { role: "system", content: CLAIM_VERIFY_PROMPT },
         {
@@ -132,10 +139,11 @@ export class ModelClaimSupportVerifier {
           }),
         },
       ],
-      schema: supportDecisionListSchema,
+      schema: supportDecisionEnvelopeSchema,
       schemaDescription: "pse_claim_support_decisions",
       signal: input.signal,
     });
+    const decisions = envelope.decisions;
     if (
       decisions.length !== expected.length ||
       decisions.some((decision, index) =>

@@ -33,6 +33,9 @@ const consensusVerdictSchema = z.object({
 }).strict();
 
 const consensusVerdictListSchema = z.array(consensusVerdictSchema).min(1).max(18);
+const consensusVerdictEnvelopeSchema = z.object({
+  verdicts: consensusVerdictListSchema,
+}).strict();
 
 export class HighRiskConsensusGate {
   async evaluate(input: {
@@ -161,7 +164,7 @@ async function requestConsensusVerdicts(input: {
       messages: [
         {
           role: "system",
-          content: "你是高风险主张的独立证据裁决器。只判断每条主张是否被指定正式证据直接支持，不得改写主张或改变引用。claimId、claimHash、citationIndexes 必须原样返回。只输出 JSON 数组。",
+          content: "你是高风险主张的独立证据裁决器。只判断每条主张是否被指定正式证据直接支持，不得改写主张或改变引用。claimId、claimHash、citationIndexes 必须原样返回。只输出根对象 {\"verdicts\":[...]}。",
         },
         {
           role: "user",
@@ -186,12 +189,12 @@ async function requestConsensusVerdicts(input: {
           }),
         },
       ],
-      schema: consensusVerdictListSchema,
+      schema: consensusVerdictEnvelopeSchema,
       schemaDescription: "pse_high_risk_consensus_verdicts",
       signal: input.signal,
     }),
   }), input.signal);
-  const verdicts = consensusVerdictListSchema.parse(raw);
+  const verdicts = raw.verdicts;
   if (
     verdicts.length !== input.claims.length ||
     new Set(verdicts.map((verdict) => verdict.claimId)).size !== verdicts.length ||

@@ -373,6 +373,9 @@ const targetedClaimListSchema = z.array(z.object({
   citationIndexes: z.array(z.number().int().positive()).max(6),
   coveredAspectIds: z.array(z.string().regex(/^A[1-9]\d*$/u)).max(8),
 }).strict()).min(1).max(18);
+const targetedClaimEnvelopeSchema = z.object({
+  revisions: targetedClaimListSchema,
+}).strict();
 
 export class ModelTargetedClaimReviser implements TargetedClaimReviser {
   constructor(private readonly model: ModelClient) {}
@@ -383,11 +386,11 @@ export class ModelTargetedClaimReviser implements TargetedClaimReviser {
     readonly contract: AtomicObligationContract;
     readonly signal: AbortSignal;
   }): Promise<readonly ClaimDraft[]> {
-    return await this.model.completeJson({
+    const envelope = await this.model.completeJson({
       messages: [
         {
           role: "system",
-          content: "仅修订给出的不合格主张。claimId、obligationId 和 domain 必须原样保留；只能使用给出的证据及其 citation，不得改写已通过主张，不得补充新主张。只输出 JSON 数组，text 中禁止写 [n] 引用。",
+          content: "仅修订给出的不合格主张。claimId、obligationId 和 domain 必须原样保留；只能使用给出的证据及其 citation，不得改写已通过主张，不得补充新主张。只输出根对象 {\"revisions\":[...]}，text 中禁止写 [n] 引用。",
         },
         {
           role: "user",
@@ -399,10 +402,11 @@ export class ModelTargetedClaimReviser implements TargetedClaimReviser {
           }),
         },
       ],
-      schema: targetedClaimListSchema,
+      schema: targetedClaimEnvelopeSchema,
       schemaDescription: "pse_targeted_claim_revision",
       signal: input.signal,
     });
+    return envelope.revisions;
   }
 }
 

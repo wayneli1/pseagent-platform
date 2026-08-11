@@ -12,11 +12,11 @@ import {
 import type { ModelClient } from "./model-client.js";
 import {
   DeterministicReliableAnswerPipeline,
+  ModelTargetedClaimReviser,
   type TargetedClaimReviser,
 } from "./reliable-answer-pipeline.js";
 import { StageBudgetAllocator } from "./stage-budget.js";
-import { hashClaimText } from "./structured-claim.js";
-import type { BoundClaim } from "./structured-claim.js";
+import { hashClaimText, type BoundClaim, type ClaimDraft } from "./structured-claim.js";
 
 const contract: AtomicObligationContract = {
   subject: "归档能力",
@@ -160,6 +160,40 @@ function pipelineFixture(input: {
   return { pipeline, knowledge, retrieval, synthesizer, verifier };
 }
 
+describe("ModelTargetedClaimReviser", () => {
+  it("parses revisions from a root object envelope", async () => {
+    const revisions: ClaimDraft[] = [{
+      claimId: "CL1",
+      obligationId: "O1",
+      domain: "coremail-professional",
+      text: "正式资料直接支持邮件归档。",
+      kind: "fact",
+      citationIndexes: [1],
+      coveredAspectIds: ["A1"],
+    }];
+    const completeJson = vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
+      input.schema.parse({ revisions }));
+    const reviser = new ModelTargetedClaimReviser({
+      completeJson,
+      completeText: vi.fn(),
+    } as unknown as ModelClient);
+
+    await expect(reviser.revise({
+      rejectedClaims: revisions,
+      evidence: retrievalResult.evidence,
+      contract,
+      signal: new AbortController().signal,
+    })).resolves.toEqual(revisions);
+
+    expect(completeJson).toHaveBeenCalledOnce();
+    expect(completeJson).toHaveBeenCalledWith(expect.objectContaining({
+      messages: expect.arrayContaining([expect.objectContaining({
+        content: expect.stringContaining('{"revisions":[...]}'),
+      })]),
+    }));
+  });
+});
+
 describe("deterministic reliable answer pipeline", () => {
   it("uses deterministic retrieval and one structured synthesis without a legacy agent loop", async () => {
     const { trace, events } = traceFixture();
@@ -242,12 +276,13 @@ describe("deterministic reliable answer pipeline", () => {
       evidenceIdentities: [reference.contentHash],
     };
     const secondVerifier = {
-      completeJson: vi.fn(async () => [{
-        claimId: "CL1",
-        claimHash: consensusClaimSignature(expectedClaim),
-        citationIndexes: [1],
-        verdict: "insufficient" as const,
-      }]),
+      completeJson: vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
+        input.schema.parse({ verdicts: [{
+          claimId: "CL1",
+          claimHash: consensusClaimSignature(expectedClaim),
+          citationIndexes: [1],
+          verdict: "insufficient" as const,
+        }] })),
       completeText: vi.fn(),
     } as unknown as ModelClient;
     const fixture = pipelineFixture({ secondVerifier });
