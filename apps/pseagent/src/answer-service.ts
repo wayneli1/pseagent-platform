@@ -91,7 +91,14 @@ import {
   type ResolvedQuestion,
 } from "./question-resolver.js";
 import { normalAnswerNeedsRepair, stripUnrequestedExamples } from "./normal-answer.js";
-import { RequestBudget } from "./request-budget.js";
+import {
+  PSE_DEFAULT_RETURN_RESERVE_MS,
+  RequestBudget,
+} from "./request-budget.js";
+import {
+  StageBudgetAllocator,
+  type ReliabilityStage,
+} from "./stage-budget.js";
 import {
   compileAtomicObligationContract,
   compileGovernedAtomicObligationContract,
@@ -100,7 +107,7 @@ import {
 
 export const PSE_REQUEST_TIMEOUT_MS = 180_000;
 export const PSE_ACTIVE_DEADLINE_MS = 165_000;
-export const PSE_RETURN_RESERVE_MS = 5_000;
+export const PSE_RETURN_RESERVE_MS = PSE_DEFAULT_RETURN_RESERVE_MS;
 
 export interface KnowledgeSessionFactory {
   open(scope: Exclude<Scope, "normal">, signal?: AbortSignal): Promise<KnowledgeSession>;
@@ -243,6 +250,7 @@ export class AnswerService {
         Math.max(0, requestTimeoutMs - activeDeadlineMs),
       ),
     });
+    const stageBudget = new StageBudgetAllocator({ startedAt });
     const deadlineAt = budget.activeDeadlineAt;
     const timeoutSignal = AbortSignal.timeout(
       requestTimeoutMs,
@@ -258,15 +266,25 @@ export class AnswerService {
     let questionResolution = identityResolvedQuestion(question);
     const withQuestionResolution = (execution:PseAnswerExecution):PseAnswerExecution => ({...execution,questionResolution});
     try {
+      const preflightStartedAt = Date.now();
+      const preflightSignal = stageBudget.signal("preflight_cache", requestSignal);
       const policyPreflight = await evaluatePolicyPreflight({
         question,
         ...(this.dependencies.policyClassifier === undefined
           ? {}
           : { classifier: this.dependencies.policyClassifier }),
-        signal: AbortSignal.any([
-          requestSignal,
-          AbortSignal.timeout(Math.min(2_000, Math.max(1, activeDeadlineMs))),
-        ]),
+        signal: preflightSignal,
+      });
+      recordStageBudgetOutcome({
+        trace,
+        budget: stageBudget,
+        stage: "preflight_cache",
+        startedAt: preflightStartedAt,
+        result: preflightSignal.aborted
+          ? "timeout"
+          : policyPreflight.kind === "uncertain"
+            ? "degraded"
+            : "completed",
       });
       if (policyPreflight.result !== undefined) {
         scope = policyPreflight.result.scope;
@@ -279,6 +297,8 @@ export class AnswerService {
           false,
         ));
       }
+      const obligationStartedAt = Date.now();
+      const obligationSignal = stageBudget.signal("obligation_compile", requestSignal);
       const exactRoute = (
         this.dependencies.answerCardExactActiveEnabled === true &&
         this.dependencies.taskSpecActiveEnabled === true
@@ -290,11 +310,11 @@ export class AnswerService {
             trace,
             role: "resolver",
             operation: "route",
-            signal: requestSignal,
+            signal: obligationSignal,
             call: () => this.dependencies.router.route(
               question,
               conversationContext,
-              requestSignal,
+              obligationSignal,
             ),
           })
         : scopeForDomain(exactRoute.domain);
@@ -335,11 +355,11 @@ export class AnswerService {
             trace,
             role: "resolver",
             operation: "resolve",
-            signal: requestSignal,
+            signal: obligationSignal,
             call: () => this.dependencies.questionResolver!.resolve({
               question,
               ...(conversationContext === undefined ? {} : { conversationContext }),
-              signal: requestSignal,
+              signal: obligationSignal,
             }),
             });
             if (
@@ -357,11 +377,11 @@ export class AnswerService {
               trace,
               role: "resolver",
               operation: "route",
-              signal: requestSignal,
+              signal: obligationSignal,
               call: () => this.dependencies.router.route(
                 resolved.standaloneQuestion,
                 undefined,
-                requestSignal,
+                obligationSignal,
               ),
               });
             }
@@ -375,6 +395,15 @@ export class AnswerService {
       }
       recordDiagnostic(trace, { event: "route", scope });
       if (scope === "normal") {
+        recordStageBudgetOutcome({
+          trace,
+          budget: stageBudget,
+          stage: "obligation_compile",
+          startedAt: obligationStartedAt,
+          result: obligationSignal.aborted ? "timeout" : "completed",
+        });
+        const draftStartedAt = Date.now();
+        const draftSignal = stageBudget.signal("claim_draft", requestSignal);
         const normalQuestion = questionResolution.contextUsed
           ? questionResolution.standaloneQuestion
           : question;
@@ -385,10 +414,10 @@ export class AnswerService {
           trace,
           role: "synthesizer",
           operation: "normal_answer",
-          signal: requestSignal,
+          signal: draftSignal,
           call: () => this.dependencies.model.completeText({
             messages: normalAnswerMessages(normalQuestion, normalConversationContext),
-            signal: requestSignal,
+            signal: draftSignal,
           }),
         });
         let answer = stripUnrequestedExamples(normalQuestion, draft);
@@ -401,19 +430,26 @@ export class AnswerService {
             trace,
             role: "synthesizer",
             operation: "normal_answer_repair",
-            signal: requestSignal,
+            signal: draftSignal,
             call: () => this.dependencies.model.completeText({
               messages: [
                 ...normalAnswerMessages(normalQuestion, normalConversationContext),
                 { role: "assistant", content: answer },
                 { role: "user", content: "上一次回答存在未闭合标点、连续冲突标点、空从句、截断清单或未完成句子。请从头完整重写答案，删除所有空句和残句，保留正确结论，补全关键机制与适用边界，不要解释修订过程。" },
               ],
-              signal: requestSignal,
+              signal: draftSignal,
             }),
           });
           answer = stripUnrequestedExamples(normalQuestion, repaired);
         }
         if (normalAnswerNeedsRepair(answer)) {
+          recordStageBudgetOutcome({
+            trace,
+            budget: stageBudget,
+            stage: "claim_draft",
+            startedAt: draftStartedAt,
+            result: draftSignal.aborted ? "timeout" : "degraded",
+          });
           recordDiagnostic(trace, { event: "stop", reason: "invalid_final" });
           return withQuestionResolution(finishExecution(
             trace,
@@ -430,6 +466,13 @@ export class AnswerService {
           answer,
           references: [],
         };
+        recordStageBudgetOutcome({
+          trace,
+          budget: stageBudget,
+          stage: "claim_draft",
+          startedAt: draftStartedAt,
+          result: draftSignal.aborted ? "timeout" : "completed",
+        });
         return withQuestionResolution(finishExecution(trace, result, startedAt, false, false));
       }
       if (scope !== "professional" && scope !== "general") {
@@ -442,7 +485,7 @@ export class AnswerService {
       const routedConversationContext = questionResolution.contextUsed
         ? undefined
         : conversationContext;
-      const session = await this.dependencies.knowledge.open(knowledgeScope, requestSignal);
+      const session = await this.dependencies.knowledge.open(knowledgeScope, obligationSignal);
       const taskSpecActive = this.dependencies.taskSpecActiveEnabled === true &&
         (this.dependencies.taskAnalysisShadow !== undefined || exactRoute !== undefined);
       const trustedFamilyMatch = exactRoute === undefined &&
@@ -467,7 +510,7 @@ export class AnswerService {
           trace,
           role: "planner",
           operation: "plan",
-          signal: requestSignal,
+          signal: obligationSignal,
           call: () => this.dependencies.planner.plan({
             scope: knowledgeScope,
             question: routedQuestion,
@@ -477,7 +520,7 @@ export class AnswerService {
             ...(routedConversationContext === undefined
               ? {}
               : { conversationContext: routedConversationContext }),
-            signal: requestSignal,
+            signal: obligationSignal,
           }),
         });
         recordPlanDiagnostics(trace, legacyPlan);
@@ -509,8 +552,11 @@ export class AnswerService {
               planningOverview: session.planningOverview,
             },
             trace,
-            signal: requestSignal,
-            timeoutMs: this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
+            signal: obligationSignal,
+            timeoutMs: Math.min(
+              this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
+              Math.max(1, stageBudget.remainingMs("obligation_compile")),
+            ),
           })
         : undefined;
       if(taskAnalysis!==undefined)questionResolution=taskAnalysis.resolvedQuestion;
@@ -528,7 +574,7 @@ export class AnswerService {
             ...(contextualCardIdHashes === undefined
               ? {}
               : { contextualCardIdHashes }),
-            requestSignal,
+            requestSignal: obligationSignal,
             trace,
           });
       let answerCardPolicies: readonly AnswerCardObligationPolicy[] | undefined;
@@ -603,6 +649,17 @@ export class AnswerService {
           }
         }
       }
+      recordStageBudgetOutcome({
+        trace,
+        budget: stageBudget,
+        stage: "obligation_compile",
+        startedAt: obligationStartedAt,
+        result: obligationSignal.aborted
+          ? "timeout"
+          : taskSpecActive && taskAnalysis === undefined
+            ? "degraded"
+            : "completed",
+      });
       let effectiveQuestion = routedQuestion;
       let effectivePlan = legacyPlan;
       let effectiveConversationContext = routedConversationContext;
@@ -1682,6 +1739,22 @@ function recordPlanDiagnostics(
     synthesisAllowedCount: plan.requirements.filter(
       (requirement) => requirement.evidenceMode === "synthesis_allowed",
     ).length,
+  });
+}
+
+function recordStageBudgetOutcome(input: {
+  readonly trace: DiagnosticTrace;
+  readonly budget: StageBudgetAllocator;
+  readonly stage: ReliabilityStage;
+  readonly startedAt: number;
+  readonly result: "completed" | "degraded" | "timeout" | "cancelled";
+}): void {
+  recordDiagnostic(input.trace, {
+    event: "stage_budget",
+    stage: input.stage,
+    result: input.result,
+    elapsedMs: Math.max(0, Date.now() - input.startedAt),
+    remainingMs: input.budget.remainingMs(input.stage),
   });
 }
 

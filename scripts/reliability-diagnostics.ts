@@ -13,6 +13,12 @@ import type {
 type KnowledgeDomain = "coremail-professional" | "presales-general";
 
 export interface ReliabilityDiagnosticSummary {
+  readonly stages: readonly {
+    readonly stage: string;
+    readonly result: "completed" | "degraded" | "timeout" | "cancelled";
+    readonly elapsedMs: number;
+    readonly remainingMs: number;
+  }[];
   readonly rootStopReason?: PseStopReason;
   readonly finalStopReason?: PseStopReason;
   readonly stopReasons: readonly PseStopReason[];
@@ -159,6 +165,14 @@ export function summarizeReliabilityDiagnostics(
             : { rootReason: event.rootReason }),
         }]
       : []);
+  const stages = events.flatMap((event) => event.event === "stage_budget"
+    ? [{
+        stage: event.stage,
+        result: event.result,
+        elapsedMs: event.elapsedMs,
+        remainingMs: event.remainingMs,
+      }]
+    : []);
   const taskSpec = [...events].reverse().find((event) =>
     event.event === "task_spec");
   const taskGuard = [...events].reverse().find((event) =>
@@ -243,6 +257,7 @@ export function summarizeReliabilityDiagnostics(
       : { rootStopReason: domainRoot ?? fallbackRoot }),
     ...(stops.at(-1) === undefined ? {} : { finalStopReason: stops.at(-1) }),
     stopReasons: stops,
+    stages,
     domains,
     task: {
       ...(taskSpec?.event !== "task_spec"

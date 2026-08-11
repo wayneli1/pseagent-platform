@@ -6,6 +6,27 @@ import {
 } from "./reliability-diagnostics.ts";
 
 describe("reliability diagnostics", () => {
+  it("summarizes content-free absolute stage budget outcomes", () => {
+    const events: DiagnosticEvent[] = [{
+      event: "stage_budget",
+      stage: "obligation_compile",
+      result: "timeout",
+      elapsedMs: 25_000,
+      remainingMs: 0,
+    }];
+
+    const summary = summarizeReliabilityDiagnostics(events);
+
+    expect(summary.stages).toEqual([{
+      stage: "obligation_compile",
+      result: "timeout",
+      elapsedMs: 25_000,
+      remainingMs: 0,
+    }]);
+    expect(JSON.stringify(summary.stages)).not.toContain("question");
+    expect(JSON.stringify(summary.stages)).not.toContain("evidence");
+  });
+
   it("retains the inner domain root cause without content", () => {
     const events: DiagnosticEvent[] = [
       {

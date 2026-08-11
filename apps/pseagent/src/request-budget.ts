@@ -2,9 +2,11 @@ export interface RequestBudgetInput {
   readonly startedAt: number;
   readonly requestTimeoutMs: number;
   readonly activeDeadlineMs: number;
-  readonly returnReserveMs: number;
+  readonly returnReserveMs?: number;
   readonly now?: () => number;
 }
+
+export const PSE_DEFAULT_RETURN_RESERVE_MS = 15_000;
 
 /**
  * One monotonic budget shared by every stage of an answer request.
@@ -19,15 +21,16 @@ export class RequestBudget {
   constructor(input: RequestBudgetInput) {
     assertPositiveDuration(input.requestTimeoutMs, "request_timeout_invalid");
     assertPositiveDuration(input.activeDeadlineMs, "active_deadline_invalid");
-    if (!Number.isFinite(input.returnReserveMs) || input.returnReserveMs < 0) {
+    const returnReserveMs = input.returnReserveMs ?? PSE_DEFAULT_RETURN_RESERVE_MS;
+    if (!Number.isFinite(returnReserveMs) || returnReserveMs < 0) {
       throw new Error("return_reserve_invalid");
     }
-    if (input.activeDeadlineMs + input.returnReserveMs > input.requestTimeoutMs) {
+    if (input.activeDeadlineMs + returnReserveMs > input.requestTimeoutMs) {
       throw new Error("active_deadline_exceeds_request_budget");
     }
     this.requestDeadlineAt = input.startedAt + input.requestTimeoutMs;
     this.activeDeadlineAt = input.startedAt + input.activeDeadlineMs;
-    this.returnReserveMs = input.returnReserveMs;
+    this.returnReserveMs = returnReserveMs;
     this.now = input.now ?? Date.now;
   }
 

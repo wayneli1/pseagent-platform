@@ -20,6 +20,7 @@ import type {
   CoverageGapReason,
 } from "./coverage-gap.js";
 import type { CoverageGateRiskReason } from "./deterministic-coverage-gate.js";
+import type { ReliabilityStage } from "./stage-budget.js";
 
 export type PseStopReason =
   | "seed_unavailable"
@@ -44,6 +45,13 @@ export type HistoricalGateReason =
 
 export type DiagnosticEvent =
   | { readonly event: "route"; readonly scope: Scope }
+  | {
+      readonly event: "stage_budget";
+      readonly stage: ReliabilityStage;
+      readonly result: "completed" | "degraded" | "timeout" | "cancelled";
+      readonly elapsedMs: number;
+      readonly remainingMs: number;
+    }
   | {
       readonly event: "question_resolution";
       readonly mode: "identity" | "contextual";
@@ -645,6 +653,25 @@ function allowlistDiagnosticEvent(
   if (!isRecord(value) || typeof value.event !== "string") return undefined;
   const event = value;
   switch (event.event) {
+    case "stage_budget":
+      return {
+        event: event.event,
+        stage: safeEnum(event.stage, [
+          "preflight_cache",
+          "obligation_compile",
+          "retrieval",
+          "claim_draft",
+          "verification_consensus",
+          "targeted_revision",
+          "finalization",
+        ] as const),
+        result: safeEnum(
+          event.result,
+          ["completed", "degraded", "timeout", "cancelled"] as const,
+        ),
+        elapsedMs: safeCount(event.elapsedMs),
+        remainingMs: safeCount(event.remainingMs),
+      };
     case "route":
       return {
         event: event.event,

@@ -45,4 +45,17 @@ describe("RequestBudget", () => {
       returnReserveMs: 5_000,
     })).toThrow("active_deadline_exceeds_request_budget");
   });
+
+  it("supports the enterprise default of a fifteen-second return reserve", () => {
+    const budget = new RequestBudget({
+      startedAt: 0,
+      requestTimeoutMs: 180_000,
+      activeDeadlineMs: 165_000,
+      returnReserveMs: 15_000,
+      now: () => 160_000,
+    });
+
+    expect(budget.remainingUsableMs()).toBe(5_000);
+    expect(budget.canStart(5_001)).toBe(false);
+  });
 });

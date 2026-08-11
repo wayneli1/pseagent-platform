@@ -274,6 +274,7 @@ describe("AnswerService", () => {
       plan: knowledgePlan,
     }));
     expect(events.map((event) => event.event)).toEqual([
+      "stage_budget",
       "model_call",
       "route",
       "model_call",
@@ -282,6 +283,7 @@ describe("AnswerService", () => {
       "task_spec",
       "task_spec_guard",
       "task_spec_shadow",
+      "stage_budget",
       "task_spec_activation",
       "finish",
     ]);
@@ -1761,10 +1763,12 @@ describe("AnswerService", () => {
     await service.answer("不应直接写入诊断的完整问题");
 
     expect(events.map((event) => event.event)).toEqual([
+      "stage_budget",
       "model_call",
       "route",
       "model_call",
       "plan",
+      "stage_budget",
       "finish",
     ]);
     expect(events.find((event) => event.event === "plan")).toMatchObject({
