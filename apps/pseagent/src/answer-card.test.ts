@@ -1179,6 +1179,10 @@ describe("answer card TaskSpec adapter", () => {
         standaloneQuestion: "销售临时要求我马上做完整演示，但没有任何客户背景信息，这种情况下应该怎么办？",
       },
     })).toMatchObject({ activated: true });
+    expect(compileIndependentFamilyAnswerCardTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+    })).toMatchObject({ activated: true });
 
     expect(adaptAnswerCardToTaskSpec({
       match,

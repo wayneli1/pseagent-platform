@@ -4300,6 +4300,76 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("keeps a governed partial answer inside its reviewed evidence boundary", async () => {
+    const paths = [
+      "wiki/concepts/first.md",
+      "wiki/concepts/second.md",
+      "wiki/concepts/third.md",
+      "wiki/concepts/fourth.md",
+    ];
+    const session = fakeSession({
+      hits: { "seed-r1": paths.map((path) => ({ path })) },
+    });
+    const model = scriptedAgentModel([
+      final("complete", "受治理首选证据只能确认部分结论[1]", [1]),
+    ]);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
+      const partial: FinalAction = {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "partial",
+          answer: "受治理首选证据只能确认部分结论[1]",
+          citations: [1],
+        }],
+        citations: [1],
+      };
+      input.onReport?.({
+        summaries: [{
+          id: "R1",
+          reason: "partial_support",
+          retainedDirectSegmentCount: 1,
+          retainedSynthesizedSegmentCount: 0,
+          removedSegmentCount: 0,
+          coveredAspectCount: 0,
+          missingAspectCount: 1,
+          coveredAspectIds: [],
+          missingAspectIds: ["A1"],
+          claimDecisions: [{
+            claimIndex: 0,
+            status: "retained_direct",
+            citations: [1],
+            coveredAspectIds: [],
+          }],
+        }],
+        coveredRequirementIds: ["R1"],
+        missingRequirementIds: ["R1"],
+      });
+      return partial;
+    });
+
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(model, session),
+      verifyCoverage,
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        preferredEvidencePaths: [paths[0]!],
+      }],
+    });
+
+    expect(result).toMatchObject({
+      outcome: "verified",
+      action: { requirements: [{ coverage: "partial" }] },
+    });
+    expect(model.calls).toBe(1);
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(session.readPage).toHaveBeenCalledOnce();
+  });
+
   it("does not exceed the read budget after verification removes the whole obligation", async () => {
     const paths = [
       "wiki/concepts/first.md",

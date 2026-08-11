@@ -900,7 +900,6 @@ async function runKnowledgeAgentCore(
               input,
               state,
               verificationReport,
-              auditedAction,
             )
           : [];
       if (verifiedEvidenceRecovery.length > 0) {
@@ -3752,7 +3751,6 @@ async function recoverVerifiedMissingAspectEvidence(
   input: KnowledgeAgentInput,
   state: AgentState,
   report: CoverageVerificationReport | undefined,
-  auditedAction: FinalAction,
 ): Promise<readonly {
   readonly requirementId: string;
   readonly missingAspectIds: readonly string[];
@@ -3761,12 +3759,6 @@ async function recoverVerifiedMissingAspectEvidence(
   const governedRequirementIds = new Set(
     (input.requirementBindings ?? []).map((binding) => binding.requirementId),
   );
-  const coverageByRequirement = new Map(
-    auditedAction.requirements.map((requirement) => [
-      requirement.id,
-      requirement.coverage,
-    ] as const),
-  );
   const recovered: Array<{
     requirementId: string;
     missingAspectIds: readonly string[];
@@ -3774,10 +3766,7 @@ async function recoverVerifiedMissingAspectEvidence(
   for (const summary of report.summaries) {
     if (
       summary.missingAspectIds.length === 0 ||
-      (
-        coverageByRequirement.get(summary.id) === "none" &&
-        governedRequirementIds.has(summary.id)
-      )
+      governedRequirementIds.has(summary.id)
     ) {
       continue;
     }

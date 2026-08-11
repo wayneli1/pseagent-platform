@@ -457,7 +457,8 @@ function canCompileIndependentFamily(
   ).requestClauses;
   return requestClauses.length > 0 && requestClauses.every((clause) =>
     match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)) ||
-    isGenericCardRequestClause(clause));
+    isGenericCardRequestClause(clause) ||
+    isTrustedCardSituationClause(clause));
 }
 
 export function applyAnswerCardPoliciesToPlan(input: {
@@ -808,6 +809,11 @@ function isGenericCardRequestClause(clause: string): boolean {
     "",
   );
   return GENERIC_CARD_REQUEST_CLAUSE_PATTERN.test(core);
+}
+
+function isTrustedCardSituationClause(clause: string): boolean {
+  return /^(?:但|可是|不过|而且)?(?:什么|任何|相关)?(?:客户)?(?:背景|信息|资料|事实|证据)(?:都|也)?(?:没有|缺少|不足|不全|未知|拿不到|获取不到)$/u
+    .test(normalizeText(clause));
 }
 
 function trustedCardClauseMatches(
