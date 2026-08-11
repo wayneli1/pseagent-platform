@@ -202,6 +202,31 @@ export class AnswerCardRegistry {
     return best.family;
   }
 
+  trustedSurfaceFamilyCandidate(
+    question: string,
+    currentDomain: KnowledgeDomain,
+  ): QuestionFamily | undefined {
+    const ranked = this.activeFamilies
+      .filter((family) => family.bindings.some((binding) =>
+        binding.domain === currentDomain))
+      .filter((family) => family.bindings
+        .filter((binding) => binding.required)
+        .every((binding) => this.familyCardApplicable(binding.cardId, question)))
+      .map((family) => ({
+        family,
+        score: familySurfaceSimilarity(question, family),
+      }))
+      .sort((left, right) =>
+        right.score - left.score || left.family.familyId.localeCompare(right.family.familyId));
+    const best = ranked[0];
+    if (best === undefined || best.score < 0.6) return undefined;
+    const runnerUp = ranked[1];
+    if (runnerUp !== undefined && best.score - runnerUp.score < 0.15) {
+      return undefined;
+    }
+    return best.family;
+  }
+
   card(cardId: string): AnswerCard | undefined {
     return this.cardById.get(cardId);
   }

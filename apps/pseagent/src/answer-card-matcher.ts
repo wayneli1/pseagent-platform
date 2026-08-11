@@ -90,6 +90,11 @@ export interface AnswerCardContextItemResolution {
 
 export interface AnswerCardMatcher {
   routeExact?(question: string): AnswerCardRouteHint | undefined;
+  routeTrustedFamily?(input: {
+    readonly question: string;
+    readonly currentDomain: KnowledgeDomain;
+    readonly currentRevision: string;
+  }): Exclude<AnswerCardMatch, { matchType: "none" }> | undefined;
   resolveContextualAnswerItem?(input: {
     readonly question: string;
     readonly currentDomain: KnowledgeDomain;
@@ -116,6 +121,37 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
       domain: card.domain,
       expectedRevision: this.registry.expectedRevision(card.domain),
     };
+  }
+
+  routeTrustedFamily(input: {
+    readonly question: string;
+    readonly currentDomain: KnowledgeDomain;
+    readonly currentRevision: string;
+  }): Exclude<AnswerCardMatch, { matchType: "none" }> | undefined {
+    if (!this.registry.snapshotCurrent(input.currentDomain, input.currentRevision)) {
+      return undefined;
+    }
+    const family = this.registry.trustedSurfaceFamilyCandidate(
+      input.question,
+      input.currentDomain,
+    );
+    if (family === undefined) return undefined;
+    const namedMethods = explicitNamedMethods(input.question);
+    const enumeratedLabels = explicitEnumeratedLabels(input.question);
+    if (
+      (namedMethods.length > 0 &&
+        !familySupportsNamedMethods(family, namedMethods, this.registry)) ||
+      (enumeratedLabels.length > 0 &&
+        !familySupportsEnumeratedLabels(family, enumeratedLabels, this.registry))
+    ) {
+      return undefined;
+    }
+    return this.hitFromFamily(
+      family,
+      family.bindings.filter((binding) => binding.required),
+      "family",
+      1,
+    );
   }
 
   resolveContextualAnswerItem(input: {
@@ -300,7 +336,7 @@ export class DefaultAnswerCardMatcher implements AnswerCardMatcher {
     selected: QuestionFamily["bindings"],
     matchType: "family" | "partial",
     candidateCount: number,
-  ): AnswerCardMatch {
+  ): Exclude<AnswerCardMatch, { matchType: "none" }> {
     const bindings = selected.map((binding) => {
       const card = this.registry.card(binding.cardId)!;
       const obligation = card.obligations.find((candidate) =>
@@ -360,6 +396,14 @@ export class ReloadingAnswerCardMatcher implements AnswerCardMatcher {
 
   routeExact(question:string):AnswerCardRouteHint|undefined {
     return this.matcher().routeExact(question);
+  }
+
+  routeTrustedFamily(input: {
+    readonly question: string;
+    readonly currentDomain: KnowledgeDomain;
+    readonly currentRevision: string;
+  }): Exclude<AnswerCardMatch, { matchType: "none" }> | undefined {
+    return this.matcher().routeTrustedFamily(input);
   }
 
   resolveContextualAnswerItem(input: {

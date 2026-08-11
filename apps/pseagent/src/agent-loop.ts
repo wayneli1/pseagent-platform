@@ -107,7 +107,10 @@ export const MAX_BATCH_READS_PER_REQUIREMENT = 2;
 export const MAX_GRAPH_ACTIONS_PER_REQUIREMENT = 1;
 export const MAX_AGENT_TURNS_PER_REQUIREMENT = 7;
 const MAX_CITATION_REPAIR_ATTEMPTS = 2;
-const MAX_SEMANTIC_REPAIR_TURNS_PER_DOMAIN = 2;
+// One model rewrite is the maximum latency/quality trade-off per domain. After
+// that, evidence-identical deterministic projection or safe omission closes
+// the answer instead of starting another stochastic repair cycle.
+const MAX_SEMANTIC_REPAIR_TURNS_PER_DOMAIN = 1;
 const MIN_VERIFIER_EXECUTION_MS = 5_000;
 const RRF_K = 60;
 const SEED_TOP_K = 10;
@@ -424,22 +427,6 @@ async function runKnowledgeAgentCore(
         input.requirementBindings,
         readEvidence(state),
       );
-      if (
-        missingDraftCardConcepts.length > 0 &&
-        state.answerCardConceptRepairAttempts < 2 &&
-        hasSemanticRepairBudget(state) &&
-        turn < maxTurns &&
-        !deadlineReached(input)
-      ) {
-        state.answerCardConceptRepairAttempts += 1;
-        reserveSemanticRepair(state);
-        state.forceFinal = true;
-        observe(state, {
-          type: "answer_card_concept_repair_required",
-          requirements: missingDraftCardConcepts,
-        });
-        continue;
-      }
       if (missingDraftCardConcepts.length > 0) {
         normalizedAction = applyGroundedAnswerCardRequiredConcepts(
           normalizedAction,
@@ -683,7 +670,11 @@ async function runKnowledgeAgentCore(
           type: "coverage_gate_requires_read",
           requirements: pendingReviews,
         });
-        const forcedRead = recoveryReadAction(state, pendingReviews);
+        const forcedRead = recoveryReadAction(
+          state,
+          pendingReviews,
+          MAX_BATCH_READS_PER_REQUIREMENT,
+        );
         if (forcedRead === undefined) {
           normalizedAction = closeEvidenceReviewAtRetrievalBoundary(
             normalizedAction,
@@ -762,7 +753,6 @@ async function runKnowledgeAgentCore(
         });
         if (
           state.citationRepairAttempts < MAX_CITATION_REPAIR_ATTEMPTS &&
-          hasSemanticRepairBudget(state) &&
           turn < maxTurns
         ) {
           state.citationRepairAttempts += 1;
@@ -910,6 +900,7 @@ async function runKnowledgeAgentCore(
               input,
               state,
               verificationReport,
+              auditedAction,
             )
           : [];
       if (verifiedEvidenceRecovery.length > 0) {
@@ -920,10 +911,17 @@ async function runKnowledgeAgentCore(
         });
         continue;
       }
+      const initialCoverageVerifierClaimRepairs = pendingCoverageVerifierClaimRepairs(
+        auditedAction,
+        verificationReport,
+      );
       const claimRepairReconciledAction = reconcileCoverageAfterClaimRepair(
         auditedAction,
         verificationReport,
-        state.coverageVerifierRepairAttempts,
+        state.coverageVerifierRepairAttempts > 0 ||
+            initialCoverageVerifierClaimRepairs.length > 0
+          ? 1
+          : 0,
       );
       if (claimRepairReconciledAction !== auditedAction) {
         auditedAction = claimRepairReconciledAction;
@@ -961,22 +959,6 @@ async function runKnowledgeAgentCore(
         input.requirementBindings,
         readEvidence(state),
       );
-      if (
-        missingAuditedCardConcepts.length > 0 &&
-        state.answerCardConceptRepairAttempts < 2 &&
-        hasSemanticRepairBudget(state) &&
-        turn < maxTurns &&
-        !deadlineReached(input)
-      ) {
-        state.answerCardConceptRepairAttempts += 1;
-        reserveSemanticRepair(state);
-        state.forceFinal = true;
-        observe(state, {
-          type: "answer_card_concept_repair_required",
-          requirements: missingAuditedCardConcepts,
-        });
-        continue;
-      }
       let projectedAfterVerification = false;
       if (missingAuditedCardConcepts.length > 0) {
         const projected = applyGroundedAnswerCardRequiredConcepts(
@@ -986,6 +968,10 @@ async function runKnowledgeAgentCore(
         );
         projectedAfterVerification = projected !== auditedAction;
         auditedAction = projected;
+        observe(state, {
+          type: "answer_card_grounded_fact_projection",
+          requirements: missingAuditedCardConcepts,
+        });
       }
       const comparisonSanitizedAction = sanitizeAuditedPartialComparisonClaims(
         auditedAction,
@@ -1534,6 +1520,7 @@ async function preloadBroadSynthesisEvidence(
 function recoveryReadAction(
   state: AgentState,
   requirementIds?: readonly string[],
+  maxPagesPerRequirement = 1,
 ): Extract<ToolAction, { tool: "kb.read_pages" }> | undefined {
   const selectedRequirementIds = requirementIds === undefined
     ? undefined
@@ -1553,16 +1540,26 @@ function recoveryReadAction(
     const preferredPath = preferredUnreadDirectComparisonPath(
       requirementState,
     );
-    const path = preferredPath ?? sortedCandidates(requirementState)
-      .find((item) =>
-        !requirementState.readPaths.has(item.path) &&
-        !hasUnresolvedReadFailure(requirementState, item.path))?.path;
-    return path === undefined
-      ? []
-      : [{
-          requirementId: requirementState.requirement.id,
-          path,
-        }];
+    const orderedPaths = [...new Set([
+      ...(preferredPath === undefined ? [] : [preferredPath]),
+      ...sortedCandidates(requirementState).map((item) => item.path),
+    ])];
+    const selected: Array<{ readonly requirementId: string; readonly path: string }> = [];
+    for (const path of orderedPaths) {
+      if (
+        selected.length >= maxPagesPerRequirement ||
+        requirementState.readPaths.has(path) ||
+        hasUnresolvedReadFailure(requirementState, path) ||
+        !canReadEvidencePath(requirementState, path, selected.length)
+      ) {
+        continue;
+      }
+      selected.push({
+        requirementId: requirementState.requirement.id,
+        path,
+      });
+    }
+    return selected;
   });
   if (pages.length === 0) return undefined;
   return {
@@ -3755,17 +3752,35 @@ async function recoverVerifiedMissingAspectEvidence(
   input: KnowledgeAgentInput,
   state: AgentState,
   report: CoverageVerificationReport | undefined,
+  auditedAction: FinalAction,
 ): Promise<readonly {
   readonly requirementId: string;
   readonly missingAspectIds: readonly string[];
 }[]> {
   if (report === undefined) return [];
+  const governedRequirementIds = new Set(
+    (input.requirementBindings ?? []).map((binding) => binding.requirementId),
+  );
+  const coverageByRequirement = new Map(
+    auditedAction.requirements.map((requirement) => [
+      requirement.id,
+      requirement.coverage,
+    ] as const),
+  );
   const recovered: Array<{
     requirementId: string;
     missingAspectIds: readonly string[];
   }> = [];
   for (const summary of report.summaries) {
-    if (summary.missingAspectIds.length === 0) continue;
+    if (
+      summary.missingAspectIds.length === 0 ||
+      (
+        coverageByRequirement.get(summary.id) === "none" &&
+        governedRequirementIds.has(summary.id)
+      )
+    ) {
+      continue;
+    }
     const requirementState = state.requirements.get(summary.id);
     if (
       requirementState === undefined ||

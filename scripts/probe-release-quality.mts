@@ -10,6 +10,7 @@ import {
   type ReleaseQualityObservation,
 } from "../services/knowledge-ops-worker/src/release-quality-gate.ts";
 import { ReliabilityDiagnosticCollector } from "./reliability-diagnostics.ts";
+import { runWithBoundedConcurrency } from "./bounded-concurrency.ts";
 
 const REQUIRED_MODEL = "deepseek_v4_flash";
 assertFixedModel(process.env);
@@ -25,9 +26,10 @@ const runtime = await createPseAgentRuntime(process.env, {
 const conversation = new ConversationStore(6, 12_000);
 const observations: ReleaseQualityObservation[] = [];
 const records: Record<string, unknown>[] = [];
+const suiteConcurrency = releaseSuiteConcurrency(process.env, suites.length);
 
 try {
-  await Promise.all(suites.map(async (suite) => {
+  await runWithBoundedConcurrency(suites, suiteConcurrency, async (suite) => {
     for (const testCase of [...suite.cases].sort((left, right) => left.turn - right.turn)) {
       process.stdout.write(`${JSON.stringify({ type: "case_started", suiteId: suite.suiteId, caseId: testCase.id, kind: testCase.kind, turn: testCase.turn })}\n`);
       const context = conversation.context(suite.suiteId, testCase.question);
@@ -80,7 +82,7 @@ try {
         process.stdout.write(`${JSON.stringify({ type: "failure", suiteId: suite.suiteId, caseId: testCase.id, failure, latencyMs })}\n`);
       }
     }
-  }));
+  });
 } finally {
   await runtime.close();
 }
@@ -92,6 +94,7 @@ const report = {
   multiDomainActive: process.env.PSE_MULTI_DOMAIN_ACTIVE_ENABLED === "true",
   answerCardExactActive: process.env.PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED === "true",
   answerCardFamilyActive: process.env.PSE_ANSWER_CARD_FAMILY_ACTIVE_ENABLED === "true",
+  suiteConcurrency,
   records: records.sort((left, right) => String(left.suiteId).localeCompare(String(right.suiteId))),
 };
 const reportDirectory = join(tmpdir(), "pseagent-release-quality");
@@ -113,6 +116,14 @@ function assertFixedModel(env: NodeJS.ProcessEnv): void {
   if (values.some((value) => value !== REQUIRED_MODEL)) {
     throw new Error(`release_quality_requires_${REQUIRED_MODEL}`);
   }
+}
+
+function releaseSuiteConcurrency(env: NodeJS.ProcessEnv, suiteCount: number): number {
+  const configured = Number(env.PSE_MODEL_MAX_CONCURRENCY ?? 3);
+  if (!Number.isInteger(configured) || configured < 1) {
+    throw new Error("release_quality_model_concurrency_invalid");
+  }
+  return Math.min(configured, suiteCount);
 }
 
 async function submitGateWhenConfigured(gate: unknown, env: NodeJS.ProcessEnv): Promise<void> {

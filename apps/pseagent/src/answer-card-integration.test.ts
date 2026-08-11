@@ -265,6 +265,85 @@ describe("answer card online orchestration", () => {
     }));
   });
 
+  it("compiles a trusted independent family before stochastic task analysis", async () => {
+    const familyQuestion = "请说明 Coremail 迁移能力";
+    const familyMatch: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      ...exactMatch(),
+      matchType: "family",
+      confidence: "high",
+      familyId: "COREMAIL-MIGRATION-FAMILY",
+    };
+    const analyze = vi.fn(async () => {
+      throw new Error("task_analysis_must_not_run");
+    });
+    const match = vi.fn(async () => familyMatch);
+    const runAgent = vi.fn(async () => ({
+      scope: "professional" as const,
+      status: "answered" as const,
+      answer: "governed family answer",
+      references: [],
+    }));
+    const runAgentDetailed = vi.fn(async (input) => ({
+      outcome: "verified" as const,
+      project: input.session.project,
+      revision: input.session.revision,
+      action: {
+        action: "final" as const,
+        requirements: [{
+          id: "R1",
+          coverage: "complete" as const,
+          answer: "Coremail 支持受治理的迁移能力 [1]。",
+          citations: [1],
+        }],
+        citations: [1],
+      },
+      references: [{
+        index: 1,
+        project: input.session.project,
+        title: "Coremail 迁移能力",
+        path: "wiki/queries/coremail-migration.md",
+        revision: input.session.revision,
+        contentHash: "1".repeat(64),
+      }],
+    }));
+    const service = new AnswerService({
+      model: {} as never,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner: { plan: vi.fn() },
+      knowledge: {
+        open: vi.fn(async () => ({
+          project: "coremail-professional",
+          revision: professionalRevision,
+          purpose: "purpose",
+          schema: "schema",
+          planningOverview: "overview",
+        }) as never),
+      },
+      runAgent,
+      runAgentDetailed,
+      taskAnalysisShadow: { analyze },
+      taskSpecActiveEnabled: true,
+      multiDomainActiveEnabled: true,
+      answerCardMatcher: {
+        routeTrustedFamily: vi.fn(() => familyMatch),
+        match,
+      },
+      answerCardFamilyActiveEnabled: true,
+    });
+
+    const result = await service.answerDetailed(familyQuestion);
+
+    expect(result.result).toMatchObject({ status: "answered" });
+    expect(result.answerCardActivation).toMatchObject({
+      activated: true,
+      obligationCount: 1,
+    });
+    expect(analyze).not.toHaveBeenCalled();
+    expect(match).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(runAgentDetailed).toHaveBeenCalledOnce();
+  });
+
   it("lets an active governed exact card correct a model routing mistake", async () => {
     const router = { route: vi.fn(async () => "general" as const) };
     const open = vi.fn(async (scope: "professional" | "general") => ({

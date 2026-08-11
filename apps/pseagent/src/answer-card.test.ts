@@ -14,6 +14,7 @@ import {
 import {
   adaptAnswerCardToTaskSpec,
   compileExactAnswerCardTaskSpec,
+  compileIndependentFamilyAnswerCardTaskSpec,
 } from "./answer-card-task-spec-adapter.js";
 import { applyAnswerCardPoliciesToPlan } from "./answer-card-task-spec-adapter.js";
 import { identityResolvedQuestion } from "./question-resolver.js";
@@ -558,6 +559,25 @@ describe("answer card registry and matching", () => {
       reason: "family_match_unavailable",
     });
   });
+
+  it("routes an unambiguous near-alias family without a model call", () => {
+    const model = { completeJson: vi.fn() } as unknown as ModelClient;
+    const matcher = new DefaultAnswerCardMatcher(
+      new AnswerCardRegistry(catalog()),
+      model,
+    );
+
+    expect(matcher.routeTrustedFamily({
+      question: "请设计 Coremail 迁移方案并沟通风险",
+      currentDomain: "coremail-professional",
+      currentRevision: professionalRevision,
+    })).toMatchObject({
+      matchType: "family",
+      confidence: "high",
+      familyId: "MIXED-MIGRATION-001",
+    });
+    expect(model.completeJson).not.toHaveBeenCalled();
+  });
 });
 
 describe("answer card TaskSpec adapter", () => {
@@ -1075,6 +1095,101 @@ describe("answer card TaskSpec adapter", () => {
         domains: ["coremail-professional"],
       }),
     ]);
+  });
+
+  it("uses the high-confidence demo family for a situation-framed generic request", () => {
+    const question = "销售临时叫我马上做完整演示，但什么客户背景都没有，怎么办？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "临时演示请求", role: "subject", sourceText: question }],
+      deliverables: [{
+        id: "D1",
+        label: "处理建议",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "说明当前应该怎么办",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const binding = (
+      id: string,
+      label: string,
+      concepts: readonly string[],
+      evidencePolicy: "direct" | "synthesis" = "direct",
+    ): Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] => ({
+      obligationId: id,
+      cardObligationId: id,
+      cardId: "GEN-DEMO-QUALIFICATION",
+      label,
+      domain: "presales-general",
+      domains: ["presales-general"],
+      required: true,
+      evidencePolicy,
+      requiredConcepts: concepts,
+      forbiddenClaims: [],
+      preferredEvidencePaths: ["wiki/concepts/演示资格判断.md"],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "c".repeat(64),
+      familyId: "demo_qualification_information_gap",
+      bindings: [
+        binding("O1", "检查角色、业务问题、紧迫性、预期价值、关键日期和下一步", [
+          "客户角色", "关键业务问题", "紧迫性", "价值", "下一步",
+        ]),
+        binding("O2", "信息不足时调整为探索会或预览，并明确需要补齐的信息", [
+          "探索会", "预览", "信息缺口", "资格结论",
+        ], "synthesis"),
+        binding("O3", "具备资格后采用结果优先结构并持续确认相关性", [
+          "先展示结果", "确认相关性", "按需深入",
+        ]),
+      ],
+      cardIdHashes: ["d".repeat(64)],
+      expectedRevisions: { "presales-general": generalRevision },
+      candidateCount: 1,
+    };
+
+    const adapted = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: {
+        ...identityResolvedQuestion(question),
+        standaloneQuestion: "销售临时要求我马上做完整演示，但没有任何客户背景信息，这种情况下应该怎么办？",
+      },
+      taskSpec,
+    });
+
+    expect(adapted).toMatchObject({ activated: true });
+    if (!adapted.activated) return;
+    expect(adapted.policies.map((policy) => policy.cardObligationId)).toEqual([
+      "O1", "O2", "O3",
+    ]);
+    expect(compileIndependentFamilyAnswerCardTaskSpec({
+      match,
+      resolvedQuestion: {
+        ...identityResolvedQuestion(question),
+        standaloneQuestion: "销售临时要求我马上做完整演示，但没有任何客户背景信息，这种情况下应该怎么办？",
+      },
+    })).toMatchObject({ activated: true });
+
+    expect(adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(
+        "这种情况下应该检查补丁下载地址和安装命令吗？",
+      ),
+      taskSpec,
+    })).toMatchObject({
+      activated: false,
+      reason: "guard_rejected",
+    });
   });
 
   it("uses the reviewed family contract when explicit clauses are covered despite a noisy model task", () => {

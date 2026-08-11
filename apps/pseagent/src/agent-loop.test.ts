@@ -1824,7 +1824,7 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
-  it("rewrites a comparison draft whose cited claims lose their subjects", async () => {
+  it("keeps one structural rewrite for a governed comparison after deterministic card projection", async () => {
     const plan: KnowledgePlan = {
       subject: "产品对比",
       requirements: [{
@@ -1874,7 +1874,17 @@ describe("runKnowledgeAgent", () => {
       },
     ]);
 
-    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        preferredEvidencePaths: [],
+      }],
+    });
 
     expect(result.status).toBe("answered");
     expect(payloadAt(model, 2).observations?.join("\n")).toContain(
@@ -2272,6 +2282,37 @@ describe("runKnowledgeAgent", () => {
     expect(result.answer).toContain("Coach");
   });
 
+  it("does not rewrite list structure after verification removes the whole obligation", async () => {
+    const path = "wiki/concepts/ordered-evidence.md";
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path, title: "Ordered evidence" }] },
+    });
+    const model = scriptedAgentModel([
+      read("R1", path),
+      final("complete", "1. First claim [1].\n2. Second claim [1].", [1]),
+    ]);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input, {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "The target is not covered by formal evidence.",
+          citations: [],
+        }],
+        citations: [],
+      }));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("not_covered");
+    expect(model.calls).toBe(2);
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+  });
+
   it("runs one evidence-grounded completeness review for an explicitly named method", async () => {
     const plan: KnowledgePlan = {
       subject: "Mom Test 访谈",
@@ -2375,17 +2416,13 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(result.status).toBe("answered");
-    expect(model.calls).toBe(4);
+    expect(model.calls).toBe(3);
     expect(verifyCoverage).toHaveBeenCalledOnce();
     expect(payloadAt(model, 2).observations?.join("\n")).toContain(
       "named_method_completeness_review_required",
     );
     expect(result.answer).toContain("Illustration");
-    expect(result.answer).toContain("正式资料列出的同组组成项");
     expect(result.answer).toContain("脱敏");
-    expect(payloadAt(model, 3).observations?.join("\n")).toContain(
-      "framework_boundary_repair_required",
-    );
   });
 
   it("projects formal framework boundaries when repeated rewrites still omit them", async () => {
@@ -2437,7 +2474,7 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(result.status).toBe("answered");
-    expect(model.calls).toBe(4);
+    expect(model.calls).toBe(3);
     expect(verifyCoverage).toHaveBeenCalledOnce();
     expect(result.answer).toContain("**正式边界**");
     expect(result.answer).toContain("对敏感数据需使用脱敏或示意环境 [1]");
@@ -2478,10 +2515,7 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(result.status).toBe("answered");
-    expect(result.answer).toContain("不能据此生成确定性优先级表");
-    expect(payloadAt(model, 3).observations?.join("\n")).toContain(
-      "framework_boundary_repair_required",
-    );
+    expect(result.answer).toMatch(/(?:不能|不得)据此生成确定性优先级表/u);
   });
 
   it("rewrites a collection that stops after its first numbered item", async () => {
@@ -4122,7 +4156,7 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
-  it("rewrites once when verification removes unsupported claims after all aspects are covered", async () => {
+  it("reconciles coverage without a rewrite when verification removes unsupported claims after all aspects are covered", async () => {
     const session = fakeSession({
       hits: { "seed-r1": [{ path: "wiki/concepts/supported.md" }] },
     });
@@ -4191,10 +4225,8 @@ describe("runKnowledgeAgent", () => {
       action: { requirements: [{ coverage: "complete" }] },
       coverageGaps: [],
     });
-    expect(verificationCalls).toBe(2);
-    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
-      "coverage_verifier_claim_repair_required",
-    );
+    expect(verificationCalls).toBe(1);
+    expect(model.calls).toBe(2);
   });
 
   it("reads one high-grade missing-aspect candidate after verification exhausts the normal budget", async () => {
@@ -4266,6 +4298,76 @@ describe("runKnowledgeAgent", () => {
     expect(payloadAt(model, 4).observations?.join("\n")).toContain(
       "coverage_verifier_evidence_recovery_read",
     );
+  });
+
+  it("does not exceed the read budget after verification removes the whole obligation", async () => {
+    const paths = [
+      "wiki/concepts/first.md",
+      "wiki/concepts/second.md",
+      "wiki/concepts/third.md",
+      "wiki/concepts/fourth.md",
+    ];
+    const session = fakeSession({
+      hits: { "seed-r1": paths.map((path) => ({ path })) },
+    });
+    const model = scriptedAgentModel([
+      read("R1", paths[0]!),
+      read("R1", paths[1]!),
+      read("R1", paths[2]!),
+      final("complete", "An unsupported target claim [1][2][3].", [1, 2, 3]),
+    ]);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) => {
+      const removed: FinalAction = {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "none",
+          answer: "The target is not covered by formal evidence.",
+          citations: [],
+        }],
+        citations: [],
+      };
+      input.onReport?.({
+        summaries: [{
+          id: "R1",
+          reason: "target_omitted",
+          retainedDirectSegmentCount: 0,
+          retainedSynthesizedSegmentCount: 0,
+          removedSegmentCount: 1,
+          coveredAspectCount: 0,
+          missingAspectCount: 1,
+          coveredAspectIds: [],
+          missingAspectIds: ["A1"],
+          claimDecisions: [{
+            claimIndex: 0,
+            status: "removed",
+            citations: [1, 2, 3],
+            coveredAspectIds: [],
+          }],
+        }],
+        coveredRequirementIds: [],
+        missingRequirementIds: ["R1"],
+      });
+      return removed;
+    });
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session),
+      verifyCoverage,
+      requirementBindings: [{
+        domain: "coremail-professional",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        preferredEvidencePaths: [],
+      }],
+    });
+
+    expect(result.status).toBe("not_covered");
+    expect(model.calls).toBe(4);
+    expect(verifyCoverage).toHaveBeenCalledOnce();
+    expect(session.readPage).toHaveBeenCalledTimes(3);
   });
 
   it("returns a verified partial answer with a retrieval gap when forced review cannot advance", async () => {
@@ -4396,6 +4498,32 @@ describe("runKnowledgeAgent", () => {
     ]);
   });
 
+  it("batches the remaining coverage-gate reads before asking for another final", async () => {
+    const paths = [
+      "wiki/concepts/first.md",
+      "wiki/concepts/second.md",
+      "wiki/concepts/third.md",
+    ];
+    const session = fakeSession({
+      hits: { "seed-r1": paths.map((path) => ({ path })) },
+    });
+    const model = scriptedAgentModel([
+      read("R1", paths[0]!),
+      final("none", "The formal evidence does not cover the target."),
+      final("none", "The formal evidence still does not cover the target."),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(result.status).toBe("not_covered");
+    expect(model.calls).toBe(3);
+    expect(session.readPage).toHaveBeenCalledTimes(3);
+    expect(session.readPage.mock.calls.slice(1).map(([path]) => path)).toEqual([
+      paths[1],
+      paths[2],
+    ]);
+  });
+
   it("tracks coverage-gate read counts independently across requirements", async () => {
     const plan: KnowledgePlan = {
       subject: "复合能力",
@@ -4488,8 +4616,8 @@ describe("runKnowledgeAgent", () => {
       verifyCoverage,
     });
 
-    expect(model.calls).toBe(5);
-    const gateObservations = (payloadAt(model, 4).observations ?? [])
+    expect(model.calls).toBe(4);
+    const gateObservations = (payloadAt(model, 3).observations ?? [])
       .map((observation) => JSON.parse(observation) as {
         type?: string;
         requirements?: string[];
@@ -4499,10 +4627,6 @@ describe("runKnowledgeAgent", () => {
       {
         type: "coverage_gate_requires_read",
         requirements: ["R1", "R2"],
-      },
-      {
-        type: "coverage_gate_requires_read",
-        requirements: ["R1"],
       },
     ]);
     expect(verifyCoverage).toHaveBeenCalledOnce();
@@ -4912,7 +5036,7 @@ describe("runKnowledgeAgent", () => {
     ]);
   });
 
-  it("repairs a missing answer-card concept as a natural model-authored fact", async () => {
+  it("projects a missing answer-card concept without a stochastic rewrite", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     session.compactPage.mockReturnValue("The governed page requires measurable success criteria.");
     const model = scriptedAgentModel([
@@ -4936,14 +5060,11 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
     expect(result.answer).toContain("success criteria");
     expect(result.answer).not.toContain("处理原则包括");
-    expect(model.calls).toBe(2);
-    expect(payloadAt(model, 1).observations).toEqual(expect.arrayContaining([
-      expect.stringContaining("answer_card_concept_repair_required"),
-    ]));
+    expect(model.calls).toBe(1);
     expect(model.lastSchemaName()).toBe("pse_final_action");
   });
 
-  it("asks for a natural rewrite when verification removes an answer-card concept", async () => {
+  it("restores governed evidence when verification removes an answer-card concept", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     session.compactPage.mockReturnValue("The governed page requires a migration transition period.");
     const model = scriptedAgentModel([
@@ -4981,11 +5102,11 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
     expect(result.answer).toContain("transition period");
     expect(result.answer).not.toContain("处理原则包括");
-    expect(model.calls).toBe(3);
-    expect(verificationCalls).toBe(2);
+    expect(model.calls).toBe(1);
+    expect(verificationCalls).toBe(1);
   });
 
-  it("restores a complete evidence fact after verifier concept repairs are exhausted", async () => {
+  it("restores a complete evidence fact without a verifier concept rewrite", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     session.compactPage.mockReturnValue(
       "Use the approved migration transition period before the final cutover.",
@@ -5021,7 +5142,7 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
     expect(result.answer).toContain("transition period before the final cutover");
     expect(result.answer).not.toContain("处理原则包括");
-    expect(model.calls).toBe(3);
+    expect(model.calls).toBe(1);
   });
 
   it("restores complete coverage when every grounded card fact survives verification", async () => {
@@ -5091,10 +5212,10 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(result.status).toBe("temporarily_unavailable");
-    expect(model.calls).toBe(3);
+    expect(model.calls).toBe(1);
   });
 
-  it("projects a complete governed fact after natural concept repairs are exhausted", async () => {
+  it("projects a complete governed fact without a stochastic concept rewrite", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     session.compactPage.mockReturnValue(
       "Agree on measurable success criteria before proposing a price.",
@@ -5123,7 +5244,7 @@ describe("runKnowledgeAgent", () => {
       "Agree on measurable success criteria before proposing a price",
     );
     expect(result.answer).not.toContain("处理原则包括");
-    expect(model.calls).toBe(3);
+    expect(model.calls).toBe(1);
   });
 
   it("repairs one invalid action with an explicit schema instruction", async () => {

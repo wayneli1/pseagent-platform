@@ -77,6 +77,7 @@ import {
   adaptAnswerCardToTaskSpec,
   applyAnswerCardPoliciesToPlan,
   compileExactAnswerCardTaskSpec,
+  compileIndependentFamilyAnswerCardTaskSpec,
   type AnswerCardObligationPolicy,
 } from "./answer-card-task-spec-adapter.js";
 import {
@@ -411,6 +412,25 @@ export class AnswerService {
         ? undefined
         : conversationContext;
       const session = await this.dependencies.knowledge.open(knowledgeScope, requestSignal);
+      const taskSpecActive = this.dependencies.taskSpecActiveEnabled === true &&
+        (this.dependencies.taskAnalysisShadow !== undefined || exactRoute !== undefined);
+      const trustedFamilyMatch = exactRoute === undefined &&
+          taskSpecActive &&
+          this.dependencies.multiDomainActiveEnabled === true &&
+          this.dependencies.answerCardFamilyActiveEnabled === true &&
+          !requiresContextualRouteResolution(question, conversationContext)
+        ? this.dependencies.answerCardMatcher?.routeTrustedFamily?.({
+            question: routedQuestion,
+            currentDomain: session.project,
+            currentRevision: session.revision,
+          })
+        : undefined;
+      const trustedFamilyCompilation = trustedFamilyMatch === undefined
+        ? undefined
+        : compileIndependentFamilyAnswerCardTaskSpec({
+            match: trustedFamilyMatch,
+            resolvedQuestion: identityResolvedQuestion(routedQuestion),
+          });
       const loadLegacyPlan = async (): Promise<KnowledgePlan> => {
         const legacyPlan = await observeModelCall({
           trace,
@@ -432,10 +452,15 @@ export class AnswerService {
         recordPlanDiagnostics(trace, legacyPlan);
         return legacyPlan;
       };
-      const taskSpecActive = this.dependencies.taskSpecActiveEnabled === true &&
-        (this.dependencies.taskAnalysisShadow !== undefined || exactRoute !== undefined);
       let legacyPlan = taskSpecActive ? undefined : await loadLegacyPlan();
-      let taskAnalysis = exactRoute === undefined
+      let taskAnalysis = trustedFamilyCompilation?.activated === true
+        ? {
+            resolvedQuestion: identityResolvedQuestion(routedQuestion),
+            taskSpec: trustedFamilyCompilation.taskSpec,
+            guard: trustedFamilyCompilation.guard,
+            elapsedMs: 0,
+          }
+        : exactRoute === undefined
         ? await observeTaskAnalysisShadow({
             ...(this.dependencies.taskAnalysisShadow === undefined
               ? {}
@@ -461,18 +486,20 @@ export class AnswerService {
       const contextualCardIdHashes = questionResolution.contextUsed
         ? latestConversationAnswerCardIdHashes(conversationContext)
         : undefined;
-      const answerCardMatch = await this.matchAnswerCard({
-        question: exactRoute === undefined
-          ? taskAnalysis?.resolvedQuestion.standaloneQuestion ?? routedQuestion
-          : question,
-        currentDomain: session.project,
-        currentRevision: session.revision,
-        ...(contextualCardIdHashes === undefined
-          ? {}
-          : { contextualCardIdHashes }),
-        requestSignal,
-        trace,
-      });
+      const answerCardMatch = trustedFamilyCompilation?.activated === true
+        ? (recordAnswerCardMatchDiagnostic(trace, trustedFamilyMatch!), trustedFamilyMatch)
+        : await this.matchAnswerCard({
+            question: exactRoute === undefined
+              ? taskAnalysis?.resolvedQuestion.standaloneQuestion ?? routedQuestion
+              : question,
+            currentDomain: session.project,
+            currentRevision: session.revision,
+            ...(contextualCardIdHashes === undefined
+              ? {}
+              : { contextualCardIdHashes }),
+            requestSignal,
+            trace,
+          });
       let answerCardPolicies: readonly AnswerCardObligationPolicy[] | undefined;
       let activeAnswerCardMatch: Exclude<AnswerCardMatch, { matchType: "none" }> | undefined;
       if (answerCardMatch !== undefined && answerCardMatch.matchType !== "none") {
@@ -754,16 +781,7 @@ export class AnswerService {
         candidateCount: 0,
       };
     }
-    recordDiagnostic(input.trace, {
-      event: "answer_card_match",
-      matchType: match.matchType,
-      confidence: match.confidence,
-      candidateCount: match.candidateCount,
-      obligationCount: match.matchType === "none" ? 0 : match.bindings.length,
-      cardIdHashes: match.matchType === "none" ? [] : match.cardIdHashes,
-      catalogHash: match.catalogHash,
-      ...(match.matchType === "none" ? { reason: match.reason } : {}),
-    });
+    recordAnswerCardMatchDiagnostic(input.trace, match);
     return match;
   }
 
@@ -1201,6 +1219,22 @@ function latestConversationAnswerCardIdHashes(
 
 function scopeForDomain(domain: KnowledgeDomain): Exclude<Scope, "normal"> {
   return domain === "coremail-professional" ? "professional" : "general";
+}
+
+function recordAnswerCardMatchDiagnostic(
+  trace: DiagnosticTrace,
+  match: AnswerCardMatch,
+): void {
+  recordDiagnostic(trace, {
+    event: "answer_card_match",
+    matchType: match.matchType,
+    confidence: match.confidence,
+    candidateCount: match.candidateCount,
+    obligationCount: match.matchType === "none" ? 0 : match.bindings.length,
+    cardIdHashes: match.matchType === "none" ? [] : match.cardIdHashes,
+    catalogHash: match.catalogHash,
+    ...(match.matchType === "none" ? { reason: match.reason } : {}),
+  });
 }
 
 function singleDomainBindings(input: {

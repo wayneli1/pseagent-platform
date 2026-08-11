@@ -59,6 +59,20 @@ export function compileExactAnswerCardTaskSpec(input: {
   return compileSingleCardAnswerCardTaskSpec(input);
 }
 
+export function compileIndependentFamilyAnswerCardTaskSpec(input: {
+  readonly match: Exclude<AnswerCardMatch, { matchType: "none" }>;
+  readonly resolvedQuestion: ResolvedQuestion;
+}): AnswerCardTaskSpecAdapterResult {
+  if (!canCompileIndependentFamily(input.match, input.resolvedQuestion)) {
+    return {
+      activated: false,
+      reason: "guard_rejected",
+      issueCodes: ["explicit_request_unmapped"],
+    };
+  }
+  return compileSingleCardAnswerCardTaskSpec(input);
+}
+
 function compileSingleCardAnswerCardTaskSpec(input: {
   readonly match: Exclude<AnswerCardMatch, { matchType: "none" }>;
   readonly resolvedQuestion: ResolvedQuestion;
@@ -412,6 +426,7 @@ function canCompileWholeFamily(
   resolvedQuestion: ResolvedQuestion,
   taskSpec: TaskSpec,
 ): boolean {
+  if (canCompileIndependentFamily(match, resolvedQuestion)) return true;
   if (!(match.matchType === "family" &&
     match.confidence === "high" &&
     !resolvedQuestion.contextUsed &&
@@ -419,21 +434,30 @@ function canCompileWholeFamily(
   const requestClauses = extractExplicitQuestionSignals(
     resolvedQuestion.standaloneQuestion,
   ).requestClauses;
-  if (requestClauses.some((clause) =>
-    !match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)) &&
-    !isGenericCardRequestClause(clause))) {
-    return false;
-  }
-  // Once every explicit request clause is covered by one reviewed card family,
-  // the governed contract is more stable than the model's stochastic task
-  // decomposition. Keep the old overlay check only for questions from which no
-  // explicit request clause can be recovered.
-  if (requestClauses.length > 0) return true;
+  // Keep the old overlay check only for questions from which no explicit
+  // request clause can be recovered.
+  if (requestClauses.length > 0) return false;
   return taskSpec.deliverables.every((deliverable) =>
     !deliverable.required || deliverable.obligations.every((obligation) =>
       !obligation.required || match.bindings.some((binding) =>
         bindingCanOverlay(binding, obligation) &&
         obligationSimilarity(binding, obligation) > 0)));
+}
+
+function canCompileIndependentFamily(
+  match: Exclude<AnswerCardMatch, { matchType: "none" }>,
+  resolvedQuestion: ResolvedQuestion,
+): boolean {
+  if (!(match.matchType === "family" &&
+    match.confidence === "high" &&
+    !resolvedQuestion.contextUsed &&
+    new Set(match.bindings.map((binding) => binding.cardId)).size === 1)) return false;
+  const requestClauses = extractExplicitQuestionSignals(
+    resolvedQuestion.standaloneQuestion,
+  ).requestClauses;
+  return requestClauses.length > 0 && requestClauses.every((clause) =>
+    match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)) ||
+    isGenericCardRequestClause(clause));
 }
 
 export function applyAnswerCardPoliciesToPlan(input: {
@@ -776,10 +800,14 @@ const TRUSTED_REQUEST_SCAFFOLD_PATTERN =
   /(?:哪些|什么|如何|怎么|怎样|接下来|还要|需要|后续|对齐|确认|判断|检查|核对|说明|给出|列出)/gu;
 
 const GENERIC_CARD_REQUEST_CLAUSE_PATTERN =
-  /^(?:我(?:们)?|你(?:们)?|该|应该|应当|可以|能否|是否|怎么|如何|怎样|接下来|后续|然后|再|要|需要|汇报|核验|确认|检查|处理|安排|推进|说明|给出|列出|什么|哪些)+$/u;
+  /^(?:我(?:们)?|你(?:们)?|该|应该|应当|可以|能否|是否|怎么|如何|怎样|办|接下来|后续|然后|再|要|需要|汇报|核验|确认|检查|处理|安排|推进|说明|给出|列出|什么|哪些)+$/u;
 
 function isGenericCardRequestClause(clause: string): boolean {
-  return GENERIC_CARD_REQUEST_CLAUSE_PATTERN.test(normalizeText(clause));
+  const core = normalizeText(clause).replace(
+    /^(?:(?:这种|上述|当前|该)(?:情况|情形|场景|问题)(?:之?下)?)/u,
+    "",
+  );
+  return GENERIC_CARD_REQUEST_CLAUSE_PATTERN.test(core);
 }
 
 function trustedCardClauseMatches(
