@@ -2371,6 +2371,106 @@ describe("ModelTaskCompiler", () => {
     ]));
   });
 
+  it.each([
+    ["general", "为 SM9 邮件加密设计 PoC 时，怎样同时核验终端互通事实并用反向设计冻结成功标准？"],
+    ["professional", "Exchange 与 Coremail 并行迁移项目如何把邮件流切换证据写入阶段出口和客户承诺？"],
+    ["professional", "归档邮件用 PST 或 EML 恢复的验收，怎样同时定义样本、通过标准、责任人和缺陷处置？"],
+    ["professional", "第三方系统调用 Coremail API 前，怎样把接口能力验证、技术胜利和业务决策边界放在同一计划中？"],
+    ["professional", "面向移动办公人员演示 Coremail H5 与客户端时，如何用结果优先结构并设置可观察反馈？"],
+    ["professional", "国产数据库适配评估怎样同时完成版本矩阵核验和问题、价值、组织三层 Fit 判断？"],
+    ["professional", "金融云多租户方案评审时，怎样把隔离能力证据转成客户的客观评价标准和决策记录？"],
+    ["professional", "高级日程试点怎样把版本授权事实、用户任务和采用收益组合成价值地图？"],
+    ["general", "HA 与跨中心容灾讨论出现前提缺失时，怎样登记技术风险触发条件并开展黄灯对话？"],
+    ["professional", "邮件安全网关样本测试如何同时记录过滤结果、客户事实和下一阶段证据门？"],
+    ["general", "文件中转站用于外发大文件时，怎样同时说明访问控制事实与合同边界表达？"],
+    ["general", "公网 IP 进入 RBL 后，如何把技术申诉步骤与客户异议预防、责任分工作为一份行动计划？"],
+    ["general", "Webadmin 管理员权限验收怎样结合四类购买角色，确保授权人、使用者和技术否决者都确认？"],
+    ["professional", "DNS 灾备切换演练如何把 TTL、回退证据与客户的小承诺推进机制结合？"],
+    ["professional", "PCMail 与 Outlook 兼容性验证后，怎样将技术结果结构化交接给实施团队并标明剩余假设？"],
+  ] as const)(
+    "restores both execution domains for an explicit technical-and-governance request: %s",
+    async (scopeHint, question) => {
+      const modelTaskSpec = taskSpecSchema.parse({
+        subject: question,
+        entities: [{
+          id: "E1",
+          label: "当前技术项目",
+          role: "subject",
+          sourceText: question,
+        }],
+        deliverables: [{
+          id: "D1",
+          label: question,
+          kind: "procedure",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O1",
+            label: question,
+            targetEntityIds: ["E1"],
+            evidencePolicy: "synthesis",
+            domains: [scopeHint === "professional"
+              ? "coremail-professional"
+              : "presales-general"],
+            required: true,
+            sourceText: question,
+          }],
+        }],
+      });
+      const compiler = new ModelTaskCompiler({
+        completeJson: vi.fn(async () => modelTaskSpec as never),
+        completeText: vi.fn(),
+      } as unknown as ModelClient);
+
+      const result = await compiler.compile(compilerInput(question, scopeHint));
+
+      expect(new Set(result.deliverables.flatMap((deliverable) =>
+        deliverable.obligations.flatMap((obligation) => obligation.domains))))
+        .toEqual(new Set(["coremail-professional", "presales-general"]));
+    },
+  );
+
+  it.each([
+    ["professional", "Coremail H5 支持哪些移动端能力？", "coremail-professional"],
+    ["general", "如何用 NVC 处理客户异议并记录下一步？", "presales-general"],
+    ["professional", "DNS 的 TTL 是什么？", "coremail-professional"],
+    ["general", "如何把客户事实写入客观评价标准和决策记录？", "presales-general"],
+  ] as const)(
+    "does not expand a single-domain request merely because it contains a domain keyword: %s",
+    async (scopeHint, question, initialDomain) => {
+      const modelTaskSpec = taskSpecSchema.parse({
+        subject: question,
+        entities: [{ id: "E1", label: question, role: "subject", sourceText: question }],
+        deliverables: [{
+          id: "D1",
+          label: question,
+          kind: "fact",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O1",
+            label: question,
+            targetEntityIds: ["E1"],
+            evidencePolicy: initialDomain === "coremail-professional" ? "direct" : "synthesis",
+            domains: [initialDomain],
+            required: true,
+            sourceText: question,
+          }],
+        }],
+      });
+      const compiler = new ModelTaskCompiler({
+        completeJson: vi.fn(async () => modelTaskSpec as never),
+        completeText: vi.fn(),
+      } as unknown as ModelClient);
+
+      const result = await compiler.compile(compilerInput(question, scopeHint));
+
+      expect(new Set(result.deliverables.flatMap((deliverable) =>
+        deliverable.obligations.flatMap((obligation) => obligation.domains))))
+        .toEqual(new Set([initialDomain]));
+    },
+  );
+
   it("keeps product facts professional while repairing POC governance to general", async () => {
     const question = "Coremail 支持哪些归档接口，以及 POC 验收流程和角色分工怎么组织？";
     const modelTaskSpec = taskSpecSchema.parse({

@@ -603,9 +603,13 @@ const PRODUCT_NEUTRAL_GOVERNANCE_DELIVERABLE_PATTERN =
 const GOVERNANCE_DELIVERABLE_METHOD_PATTERN =
   /(?:如何|怎样|怎么|应该|应当|哪些|什么|流程|原则|模板|清单|组织|分工|约定|沟通|控制|机制|路径|检查点|边界)/u;
 const STRONG_PRODUCT_NEUTRAL_GOVERNANCE_PATTERN =
-  /(?:成功(?:指标|标准|口径)|退出条件|责任(?:人|边界|分工)|职责分工|RACI|投诉基线|测量周期|合同(?:承诺|责任)|客户输入|升级(?:路径|机制|规则)|采购(?:评价|标准)|最终决策人|决策(?:标准|记录)|审批人|通过(?:口径|标准)|缺陷升级|风险沟通|业务情境|预算|内部支持者|TCO|总拥有成本|截止时间)/iu;
+  /(?:成功(?:指标|标准|口径)|反向设计|阶段出口|退出条件|责任(?:人|边界|分工)|职责分工|RACI|投诉基线|测量周期|合同(?:边界|承诺|责任)|客户(?:承诺|事实|输入)|升级(?:路径|机制|规则)|采购(?:评价|标准)|客观评价标准|最终决策人|决策(?:标准|边界|记录)|审批人|通过(?:口径|标准)|缺陷(?:升级|处置)|风险沟通|风险触发条件|黄灯对话|业务情境|技术胜利|结果优先|可观察反馈|问题、价值、组织|价值地图|用户任务|采用收益|证据门|异议预防|购买角色|授权人|使用者|技术否决者|小承诺|结构化交接|剩余假设|预算|内部支持者|TCO|总拥有成本|截止时间)/iu;
 const EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN =
   /(?:(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b).{0,48}(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾)|(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾).{0,48}(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b))|(?:(?:POC|验收|核验|验证).{0,32}(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配)|(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配).{0,32}(?:POC|验收|核验|验证))/iu;
+const TECHNICAL_SYSTEM_ANCHOR_PATTERN =
+  /(?:Coremail|Exchange|邮件|邮箱|终端|客户端|系统|接口|API|SDK|协议|版本|授权|数据库|多租户|容灾|HA|网关|归档|迁移|加密|日程|文件中转|访问控制|公网\s*IP|RBL|Webadmin|DNS|TTL|Outlook|PCMail|PST|EML|H5)/iu;
+const TECHNICAL_EVIDENCE_ACTION_PATTERN =
+  /(?:事实|证据|能力|技术结果|核验|验证|测试|演示|互通|恢复|适配|隔离|过滤|访问控制|申诉|权限|切换|回退|前提|版本矩阵|邮件流|技术风险)/iu;
 const EXPLICIT_CONFLICT_PATTERN = /(?:冲突|不一致|相互矛盾|口径差异|结论差异)/u;
 const EXPLICIT_AMBIGUITY_PATTERN = /(?:不明确|不清楚|模糊|歧义|不确定)/u;
 const EXPLICIT_FRESHNESS_PATTERN = /(?:过期|历史资料|旧案例|时效|现行|最新|昨天.*今天)/u;
@@ -712,17 +716,23 @@ function repairProfessionalDirectDomains(
   question: string,
   taskSpec: TaskSpec,
 ): TaskSpec {
+  const questionLevelRepaired = ensureQuestionLevelMixedDomainCoverage(
+    question,
+    taskSpec,
+  );
   if (scopeHint !== "professional") {
-    return taskSpec;
+    return questionLevelRepaired;
   }
   const structuredTechnicalRequirement =
     isStructuredTechnicalCapabilityRequirement(question);
-  const singleObligationMixedRequest = requiredObligationCount(taskSpec) === 1 &&
+  const singleObligationMixedRequest = requiredObligationCount(
+    questionLevelRepaired,
+  ) === 1 &&
     isProductNeutralGovernanceDeliverable(question) &&
-    EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(question);
+    isExplicitTechnicalEvidenceDeliverable(question);
   const repaired = taskSpecSchema.parse({
-    ...taskSpec,
-    deliverables: taskSpec.deliverables.map((deliverable) => ({
+    ...questionLevelRepaired,
+    deliverables: questionLevelRepaired.deliverables.map((deliverable) => ({
       ...deliverable,
       obligations: deliverable.obligations.map((obligation) => {
         const semanticText = `${obligation.label} ${obligation.sourceText}`;
@@ -764,7 +774,7 @@ function ensureQuestionLevelMixedDomainCoverage(
 ): TaskSpec {
   if (
     !isProductNeutralGovernanceDeliverable(question) ||
-    !EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(question)
+    !isExplicitTechnicalEvidenceDeliverable(question)
   ) {
     return taskSpec;
   }
@@ -782,7 +792,7 @@ function ensureQuestionLevelMixedDomainCoverage(
   const preferred = obligations.find((obligation) => {
     const semanticText = `${obligation.label} ${obligation.sourceText}`;
     return missingDomain === "coremail-professional"
-      ? EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(semanticText)
+      ? isExplicitTechnicalEvidenceDeliverable(semanticText)
       : isProductNeutralGovernanceDeliverable(semanticText);
   }) ?? obligations.find((obligation) =>
     missingDomain === "coremail-professional"
@@ -809,6 +819,14 @@ function ensureQuestionLevelMixedDomainCoverage(
             }),
     })),
   });
+}
+
+function isExplicitTechnicalEvidenceDeliverable(value: string): boolean {
+  return EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(value) ||
+    (
+      TECHNICAL_SYSTEM_ANCHOR_PATTERN.test(value) &&
+      TECHNICAL_EVIDENCE_ACTION_PATTERN.test(value)
+    );
 }
 
 function isProductNeutralGovernanceDeliverable(value: string): boolean {
