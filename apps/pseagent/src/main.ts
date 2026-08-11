@@ -44,6 +44,10 @@ import {
   ReloadingAnswerCardMatcher,
   type AnswerCardMatcher,
 } from "./answer-card-matcher.js";
+import {
+  ModelPolicySemanticClassifier,
+  type PolicySemanticClassifier,
+} from "./policy-preflight.js";
 
 export interface PseRuntimeDependencies {
   readonly createModel?: (config: AppConfig) => ModelClient;
@@ -64,6 +68,9 @@ export interface PseRuntimeDependencies {
     config: AppConfig,
   ) => TaskAnalysisShadow;
   readonly createQuestionResolver?: (model: ModelClient) => QuestionResolver;
+  readonly createPolicySemanticClassifier?: (
+    model: ModelClient,
+  ) => PolicySemanticClassifier;
   readonly createAnswerCardMatcher?: (
     model: ModelClient,
     config: Extract<AppConfig["answerCards"], { enabled: true }>,
@@ -110,6 +117,10 @@ export async function createPseAgentRuntime(
     const questionResolver = (
       dependencies.createQuestionResolver ?? ((model) => new ModelQuestionResolver(model))
     )(models.resolver);
+    const policyClassifier = (
+      dependencies.createPolicySemanticClassifier ??
+      ((model) => new ModelPolicySemanticClassifier(model))
+    )(models.verifier);
     const taskAnalysisShadow = config.taskSpecShadow.enabled
       ? dependencies.createTaskAnalysisShadow === undefined
         ? defaultCreateTaskAnalysisShadow(models, config, questionResolver)
@@ -138,6 +149,7 @@ export async function createPseAgentRuntime(
       answerCardExactActiveEnabled: config.answerCards.exactActiveEnabled,
       answerCardFamilyActiveEnabled: config.answerCards.familyActiveEnabled,
       questionResolver,
+      policyClassifier,
       ...(answerCardMatcher === undefined ? {} : { answerCardMatcher }),
       ...(taskAnalysisShadow === undefined || !config.taskSpecShadow.enabled
         ? {}

@@ -56,7 +56,10 @@ import {
   type UnavailableDomainResult,
 } from "./domain-answer-merge.js";
 import { formatKnowledgeFinal } from "./response.js";
-import { evaluateProhibitedRequest } from "./request-policy.js";
+import {
+  evaluatePolicyPreflight,
+  type PolicySemanticClassifier,
+} from "./policy-preflight.js";
 import {
   extractExplicitQuestionSignals,
   type KnowledgeDomain,
@@ -209,6 +212,7 @@ export class AnswerService {
     readonly answerCardExactActiveEnabled?: boolean;
     readonly answerCardFamilyActiveEnabled?: boolean;
     readonly questionResolver?: QuestionResolver;
+    readonly policyClassifier?: PolicySemanticClassifier;
   }) {}
 
   async answer(
@@ -254,13 +258,22 @@ export class AnswerService {
     let questionResolution = identityResolvedQuestion(question);
     const withQuestionResolution = (execution:PseAnswerExecution):PseAnswerExecution => ({...execution,questionResolution});
     try {
-      const prohibitedRequest = evaluateProhibitedRequest(question);
-      if (prohibitedRequest !== undefined) {
-        scope = prohibitedRequest.result.scope;
+      const policyPreflight = await evaluatePolicyPreflight({
+        question,
+        ...(this.dependencies.policyClassifier === undefined
+          ? {}
+          : { classifier: this.dependencies.policyClassifier }),
+        signal: AbortSignal.any([
+          requestSignal,
+          AbortSignal.timeout(Math.min(2_000, Math.max(1, activeDeadlineMs))),
+        ]),
+      });
+      if (policyPreflight.result !== undefined) {
+        scope = policyPreflight.result.scope;
         recordDiagnostic(trace, { event: "route", scope });
         return withQuestionResolution(finishExecution(
           trace,
-          prohibitedRequest.result,
+          policyPreflight.result,
           startedAt,
           false,
           false,

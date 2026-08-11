@@ -252,6 +252,11 @@ describe("main wiring", () => {
       expect(received).toBe(models.planner);
       return planner;
     });
+    const policyClassifier = { classify: vi.fn() };
+    const createPolicySemanticClassifier = vi.fn((received: ModelClient) => {
+      expect(received).toBe(models.verifier);
+      return policyClassifier;
+    });
     const caller = {
       connect: vi.fn(async () => undefined),
       call: vi.fn(),
@@ -269,6 +274,7 @@ describe("main wiring", () => {
       createModelRoles,
       createRouter,
       createKnowledgePlanner,
+      createPolicySemanticClassifier,
       createKnowledgeCaller: () => caller,
       createKnowledgeSessionFactory: () => ({
         open: vi.fn(async () => ({ project: "coremail-professional" } as KnowledgeSession)),
@@ -279,6 +285,7 @@ describe("main wiring", () => {
     await runtime.answer("产品问题");
 
     expect(createModelRoles).toHaveBeenCalledOnce();
+    expect(createPolicySemanticClassifier).toHaveBeenCalledOnce();
     expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
       model: models.synthesizer,
       verifierModel: models.verifier,

@@ -28,6 +28,12 @@ describe("prohibited request policy", () => {
       references: [],
     });
     expect(decision?.result.answer).toMatch(/不能/u);
+    expect(decision?.result.answer.split("\n")).toEqual([
+      expect.stringMatching(/^边界：/u),
+      expect.stringMatching(/^保护对象：/u),
+      expect.stringMatching(/^安全替代：/u),
+      expect.stringMatching(/^升级：/u),
+    ]);
   });
 
   it.each([

@@ -21,6 +21,34 @@ const INTEGRITY_REFUSAL = [
 
 const rules: readonly ProhibitedRequestRule[] = [
   {
+    id: "approval_bypass_mail_access",
+    scope: "professional",
+    all: [
+      /(?:别走|不走|跳过|绕过|规避).{0,8}(?:审批|授权)/u,
+      /(?:拿到|获取|读取|查看|导出)/u,
+      /(?:所有|全部|高管).{0,12}(?:邮箱|邮件).{0,8}(?:内容|正文|数据)/u,
+    ],
+    answer: TECHNICAL_REFUSAL,
+  },
+  {
+    id: "failure_record_erasure",
+    scope: "professional",
+    all: [
+      /(?:失败|错误|异常).{0,8}(?:日志|记录)/u,
+      /(?:从未发生|没发生过|处理掉|抹掉|消除痕迹|合格记录)/u,
+    ],
+    answer: INTEGRITY_REFUSAL,
+  },
+  {
+    id: "credential_use_without_trace",
+    scope: "professional",
+    all: [
+      /(?:真实|生产).{0,10}(?:管理员)?(?:口令|密码|凭据|密钥)/u,
+      /(?:不|别|不要).{0,8}(?:留下|保留).{0,8}(?:痕迹|记录|日志)|不留痕/u,
+    ],
+    answer: TECHNICAL_REFUSAL,
+  },
+  {
     id: "audit_evasion",
     scope: "professional",
     all: [/(?:关闭|绕过|禁用)/u, /(?:审计|日志)/u, /(?:不留痕|不记录|无痕)/u],
@@ -161,6 +189,53 @@ export type ProhibitedRequestDecision = {
   readonly result: AnswerResult;
 };
 
+export interface PolicyRefusalContent {
+  readonly boundary: string;
+  readonly protectedInterest: string;
+  readonly safeAlternative: string;
+  readonly escalation: string;
+}
+
+const DEFENSIVE_OR_AUTHORIZED_PATTERN =
+  /(?:检测|识别|核验|审计完整性|合规处理|已经收到|授权测试|获批|审批后|脱敏后|防止|保护|恢复基线|保全原始)/u;
+const RISK_ACTION_PATTERN =
+  /(?:绕过|规避|别走|不走|跳过|伪造|篡改|掩盖|隐瞒|抹掉|处理掉|处理.{0,12}(?:避免|不影响)|从未发生|删除|不留痕|不要留下|拿到|获取|读取|复制|导出|抓取|关闭|禁用|真实(?:管理员)?(?:口令|密码|凭据)|回扣|好处费)/u;
+const PROTECTED_OBJECT_PATTERN =
+  /(?:审批|授权|权限|审计|日志|记录|时间戳|口令|密码|凭据|密钥|令牌|邮箱|邮件|客户数据|个人数据|失败样本|失败结果|验收|签字|License|竞品|报价|生产访问|检查)/iu;
+
+export function containsRiskActionOrProtectedObject(question: string): boolean {
+  const normalized = question.normalize("NFKC").trim();
+  if (DEFENSIVE_OR_AUTHORIZED_PATTERN.test(normalized)) return false;
+  return RISK_ACTION_PATTERN.test(normalized) &&
+    PROTECTED_OBJECT_PATTERN.test(normalized);
+}
+
+export function createPolicyEscalationDecision(input: {
+  readonly ruleId: string;
+  readonly scope: Exclude<Scope, "normal">;
+}): ProhibitedRequestDecision {
+  const contract = refusalContent(input.ruleId, input.scope);
+  return {
+    ruleId: input.ruleId,
+    result: {
+      scope: input.scope,
+      status: "answered",
+      policyDisposition: "needs_escalation",
+      answer: renderPolicyRefusal(contract),
+      references: [],
+    },
+  };
+}
+
+export function renderPolicyRefusal(contract: PolicyRefusalContent): string {
+  return [
+    `边界：${contract.boundary}`,
+    `保护对象：${contract.protectedInterest}`,
+    `安全替代：${contract.safeAlternative}`,
+    `升级：${contract.escalation}`,
+  ].join("\n");
+}
+
 export function evaluateProhibitedRequest(
   question: string,
 ): ProhibitedRequestDecision | undefined {
@@ -168,14 +243,41 @@ export function evaluateProhibitedRequest(
   const rule = rules.find((candidate) =>
     candidate.all.every((pattern) => pattern.test(normalized)));
   if (rule === undefined) return undefined;
+  return createPolicyEscalationDecision({ ruleId: rule.id, scope: rule.scope });
+}
+
+function refusalContent(
+  ruleId: string,
+  scope: Exclude<Scope, "normal">,
+): PolicyRefusalContent {
+  if (ruleId === "illicit_competitive_intelligence") {
+    return {
+      boundary: "不能协助获取、购买、传播或使用来源未经授权的竞品内部信息。",
+      protectedInterest: "保护商业秘密、合法竞争秩序以及每项决策所依赖的信息来源完整性。",
+      safeAlternative: "改用公开招投标信息、官方资料、授权调研、客户预算和可验证价值，并记录信息来源。",
+      escalation: "如材料已经到手，请停止传播和使用，保全来源记录并交由法务或合规负责人处理。",
+    };
+  }
+  if (["bribery", "license_misrepresentation", "customer_approval_forgery", "result_falsification"].includes(ruleId)) {
+    return {
+      boundary: "不能协助伪造事实、虚构授权、隐瞒失败或设计不透明利益安排。",
+      protectedInterest: "保护真实商业记录、客户意思表示、合同授权边界和审计完整性。",
+      safeAlternative: "保留原始事实与证据，按正式合同、审批和客户确认如实标记当前状态及未决项。",
+      escalation: "停止继续发布或推进，并由商务、财务、法务或合规负责人基于完整记录复核。",
+    };
+  }
+  if (scope === "general") {
+    return {
+      boundary: "不能协助执行未经授权、不可审计或会误导客户与决策人的请求。",
+      protectedInterest: "保护客户权益、真实交易记录、数据隐私和合规决策边界。",
+      safeAlternative: "改用公开、获批、可验证且可审计的信息和正式流程完成目标。",
+      escalation: "如相关操作已经发生，请停止传播或修改，保全原始记录并交由法务或合规负责人复核。",
+    };
+  }
   return {
-    ruleId: rule.id,
-    result: {
-      scope: rule.scope,
-      status: "answered",
-      policyDisposition: "needs_escalation",
-      answer: rule.answer,
-      references: [],
-    },
+    boundary: "不能协助绕过授权、访问敏感数据、使用真实凭据、关闭安全控制或篡改原始记录。",
+    protectedInterest: "保护客户数据、账号凭据、系统安全、事实完整性和审计追溯能力。",
+    safeAlternative: "在审批后的隔离环境使用脱敏样本和临时最小权限凭据，保留原始日志、回退方案与完整审计记录。",
+    escalation: "如相关操作已经发生，请立即停止，保全原始证据并交由安全负责人、数据保护负责人和系统责任人复核。",
   };
 }
