@@ -32,6 +32,7 @@
     "probe:stability": "node --env-file=.env.local --import tsx scripts/probe-stability.mts",
     "probe:reliability-load": "node --env-file=.env.local --import tsx scripts/probe-reliability-load.mts",
     "probe:coverage-calibration": "node --env-file=.env.local --import tsx scripts/probe-coverage-calibration.mts",
+    "probe:finalization-development": "node --env-file-if-exists=.env.local --import tsx scripts/probe-finalization-development.mts",
     "probe:mixed-domain-development": "node --env-file-if-exists=.env.local --import tsx scripts/probe-mixed-domain-development.mts",
     "probe:routing-gold": "node --import tsx scripts/probe-routing-gold.mts",
     "probe:retrieval-gold:current": "node --env-file-if-exists=.env.local --import tsx scripts/probe-current-retrieval-gold.mts",

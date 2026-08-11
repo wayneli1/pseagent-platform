@@ -102,6 +102,18 @@ describe("evaluateDeterministicCoverageGate", () => {
     });
     expect(result.reasons).toContain("uncited_claim");
   });
+
+  it("uses verifier line segmentation when only a later bullet is cited", () => {
+    const result = evaluateDeterministicCoverageGate(input({
+      answer: "- First step has no citation.\n- Second step has citation [1].",
+    }));
+
+    expect(result).toMatchObject({
+      disposition: "semantic_required",
+      risk: "high",
+    });
+    expect(result.reasons).toContain("uncited_claim");
+  });
 });
 
 function input(overrides: {

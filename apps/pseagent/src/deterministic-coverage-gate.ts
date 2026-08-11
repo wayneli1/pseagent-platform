@@ -1,5 +1,8 @@
 import type { FinalAction, KnowledgePlan } from "./contracts.js";
-import type { CoverageEvidenceDocument } from "./coverage-verifier.js";
+import {
+  answerHasUncitedTargetSegment,
+  type CoverageEvidenceDocument,
+} from "./coverage-verifier.js";
 import type { RequirementEvidenceCondition } from "./evidence-ledger.js";
 import {
   normalizeTrailingCitationPlacement,
@@ -87,10 +90,12 @@ export function evaluateDeterministicCoverageGate(
     const citedSegments = splitAnswerLineSegments(
       normalizeTrailingCitationPlacement(requirement.answer),
     );
+    if (answerHasUncitedTargetSegment(requirement.answer)) {
+      reasons.add("uncited_claim");
+    }
     for (const segment of citedSegments) {
       if (isStructuralSegment(segment)) continue;
       const citations = segmentCitations(segment);
-      if (citations.length === 0) reasons.add("uncited_claim");
       if (citations.some((citation) => !ownedCitations.has(citation))) {
         reasons.add("citation_outside_evidence_envelope");
       }

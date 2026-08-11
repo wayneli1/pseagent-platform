@@ -56,6 +56,7 @@ import {
   type UnavailableDomainResult,
 } from "./domain-answer-merge.js";
 import { formatKnowledgeFinal } from "./response.js";
+import { evaluateProhibitedRequest } from "./request-policy.js";
 import {
   extractExplicitQuestionSignals,
   repairTaskSpecKnowledgeDomains,
@@ -250,6 +251,18 @@ export class AnswerService {
     let questionResolution = identityResolvedQuestion(question);
     const withQuestionResolution = (execution:PseAnswerExecution):PseAnswerExecution => ({...execution,questionResolution});
     try {
+      const prohibitedRequest = evaluateProhibitedRequest(question);
+      if (prohibitedRequest !== undefined) {
+        scope = prohibitedRequest.result.scope;
+        recordDiagnostic(trace, { event: "route", scope });
+        return withQuestionResolution(finishExecution(
+          trace,
+          prohibitedRequest.result,
+          startedAt,
+          false,
+          false,
+        ));
+      }
       const exactRoute = (
         this.dependencies.answerCardExactActiveEnabled === true &&
         this.dependencies.taskSpecActiveEnabled === true

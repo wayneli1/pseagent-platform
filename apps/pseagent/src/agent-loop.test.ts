@@ -361,6 +361,40 @@ describe("runKnowledgeAgent", () => {
     expect(model.calls).toBe(2);
   });
 
+  it("aligns an incomplete final payload to the frozen requirement ledger", async () => {
+    const plan: KnowledgePlan = {
+      subject: "双义务交付",
+      retrievalStrategy: "coverage_units",
+      requirements: [
+        { id: "R1", question: "对象一", ...plannedEvidence("seed-r1"), evidenceMode: "direct_only" },
+        { id: "R2", question: "对象二", ...plannedEvidence("seed-r2"), evidenceMode: "direct_only" },
+      ],
+    };
+    const session = fakeSession({
+      hits: {
+        "seed-r1": [{ path: "wiki/r1.md" }],
+        "seed-r2": [{ path: "wiki/r2.md" }],
+      },
+    });
+    const model = scriptedAgentModel([{
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "对象一已有正式证据 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    }]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("partially_answered");
+    expect(result.status).not.toBe("temporarily_unavailable");
+    expect(result.answer).toContain("对象一已有正式证据");
+    expect(result.answer).toContain("尚未确认的部分");
+  });
+
   it("keeps coverage-unit seed searches isolated from the global raw question", async () => {
     const plan: KnowledgePlan = {
       subject: "并列对象",
@@ -2571,6 +2605,48 @@ describe("runKnowledgeAgent", () => {
     );
     expect(result.answer).toContain("产品版本");
     expect(result.answer).toContain("实际组织配置");
+  });
+
+  it("returns a safe partial answer when a broken collection remains after repair", async () => {
+    const plan: KnowledgePlan = {
+      subject: "实施确认",
+      requirements: [{
+        id: "R1",
+        question: "实施前还要确认什么？",
+        evidenceMode: "direct_only",
+        ...plannedEvidence("实施确认事项"),
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        "实施确认事项": [{
+          path: "wiki/concepts/implementation-partial.md",
+          title: "实施确认",
+        }],
+      },
+    });
+    const broken: AgentAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "具体五步结构为：1. 确认用户所属组织 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/implementation-partial.md"),
+      broken,
+      broken,
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("partially_answered");
+    expect(result.status).not.toBe("temporarily_unavailable");
+    expect(result.answer).toContain("不代表完整清单");
+    expect(result.answer).not.toContain("五步");
   });
 
   it("rewrites a collection when verification removes a middle ordinal", async () => {

@@ -1763,6 +1763,20 @@ function splitTargetSegments(answer: string): TargetSegment[] {
   return segments;
 }
 
+/**
+ * Uses the exact same target segmentation as final coverage verification so
+ * the deterministic gate cannot accept a multi-line answer that the verifier
+ * will later reject as containing an uncited retained claim.
+ */
+export function answerHasUncitedTargetSegment(answer: string): boolean {
+  const targetAnswer = answer.startsWith(`${SYNTHESIS_DISCLOSURE}\n`)
+    ? answer.slice(SYNTHESIS_DISCLOSURE.length + 1)
+    : answer;
+  return splitTargetSegments(targetAnswer).some(
+    (segment) => segment.citations.length === 0,
+  );
+}
+
 function splitTargetLine(line: string): Array<{
   readonly text: string;
   readonly citations: readonly number[];

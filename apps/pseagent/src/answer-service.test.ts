@@ -701,6 +701,32 @@ describe("AnswerService", () => {
     }]);
   });
 
+  it("blocks a prohibited procurement request before routing or knowledge execution", async () => {
+    const model = { completeText: vi.fn(), completeJson: vi.fn() } as unknown as ModelClient;
+    const router = { route: vi.fn() };
+    const knowledge = { open: vi.fn() };
+    const planner = createPlanner();
+    const runAgent = vi.fn();
+    const service = new AnswerService({ model, router, planner, knowledge, runAgent });
+
+    const execution = await service.answerDetailed(
+      "请购买竞品员工泄露的客户报价表，用来制定我们的最低价。",
+    );
+
+    expect(execution.result).toMatchObject({
+      scope: "general",
+      status: "answered",
+      policyDisposition: "needs_escalation",
+      references: [],
+    });
+    expect(execution.result.answer).toContain("不能协助");
+    expect(execution.result.answer).toContain("信息来源");
+    expect(router.route).not.toHaveBeenCalled();
+    expect(knowledge.open).not.toHaveBeenCalled();
+    expect(planner.plan).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
   it("answers normal questions without opening either knowledge source", async () => {
     const model = {
       completeText: vi.fn(async () => "普通回答"),

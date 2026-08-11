@@ -3,6 +3,7 @@ import {
   collectionEnumerationIssue,
   firstOrderedItemValue,
   hasBrokenCollectionEnumeration,
+  normalizeBrokenCollectionForPartialAnswer,
   missingExplicitFrameworkItems,
   missingDirectQueryOperationalConditions,
   missingRequestedEvidenceBoundaries,
@@ -63,6 +64,17 @@ describe("collection enumeration integrity", () => {
       .toBe(false);
     expect(hasBrokenCollectionEnumeration("1）结论已经由正式资料确认。"))
       .toBe(false);
+  });
+
+  it("turns an incomplete ordered collection into an explicit partial list", () => {
+    const normalized = normalizeBrokenCollectionForPartialAnswer(
+      "具体五步结构为：1. 暂停推进 [1]。",
+    );
+
+    expect(normalized).toContain("不代表完整清单");
+    expect(normalized).toContain("- 暂停推进 [1]");
+    expect(normalized).not.toContain("五步");
+    expect(hasBrokenCollectionEnumeration(normalized)).toBe(false);
   });
 
   it("detects when verification removes the beginning of an ordered sequence", () => {

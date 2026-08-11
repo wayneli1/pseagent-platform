@@ -76,6 +76,24 @@ export function hasBrokenCollectionEnumeration(answer: string): boolean {
 }
 
 /**
+ * Preserves the supported statements of a structurally incomplete collection
+ * without presenting them as a complete ordered list. The caller must also
+ * downgrade the requirement to partial coverage.
+ */
+export function normalizeBrokenCollectionForPartialAnswer(answer: string): string {
+  if (collectionEnumerationIssue(answer) === undefined) return answer;
+  const withoutDeclaredCount = answer.replace(
+    /(?:具体)?[二三四五六七八九十2-9]\s*(?:步|项|点|条|类|种|个)(?:结构|流程|方法|清单|内容|规则|做法|操作|要点)?(?:为|如下)?\s*[：:]?/gu,
+    "已确认内容：",
+  );
+  const bulletized = withoutDeclaredCount.replace(
+    /(^|[\s:：；;！？!?。])(?:\d{1,3}\s*[.)、）]|[（(]\s*\d{1,3}\s*[）)]|[一二三四五六七八九十]是)\s*/gmu,
+    "$1- ",
+  ).trim();
+  return `以下仅列出当前已由正式资料确认的部分，不代表完整清单：\n${bulletized}`;
+}
+
+/**
  * Finds a missing sibling in a formally defined framework collection. The
  * guard only activates after the answer already uses at least two members, so
  * a narrow question about one component does not expand into the whole page.

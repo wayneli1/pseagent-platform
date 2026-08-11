@@ -84,6 +84,7 @@ import {
   missingExplicitFrameworkItems,
   missingRequestedEvidenceBoundaries,
   missingStrictFrameworkBoundaries,
+  normalizeBrokenCollectionForPartialAnswer,
   requestedEvidenceBoundaries,
   strictFrameworkBoundaries,
   usesExplicitFrameworkCollection,
@@ -408,9 +409,16 @@ async function runKnowledgeAgentCore(
     }
 
     if (action.action === "final") {
+      const alignedAction = alignFinalRequirementsToPlan(action, input.plan);
+      if (alignedAction !== action) {
+        observe(state, {
+          type: "final_requirement_ledger_aligned",
+          requirements: input.plan.requirements.map((requirement) => requirement.id),
+        });
+      }
       let normalizedAction = enforceMissingInputConditions(
         dropUnsupportedRelatedContext(
-          normalizeFinalCitationMetadata(action, input.plan),
+          normalizeFinalCitationMetadata(alignedAction, input.plan),
           state,
         ),
         input.plan,
@@ -539,11 +547,15 @@ async function runKnowledgeAgentCore(
           });
           continue;
         }
-        return rejectInvalidFinal(
-          input,
-          "broken_collection_enumeration",
-          state.structuredCoverageRepairAttempts,
+        normalizedAction = downgradeBrokenCollectionRequirements(
+          normalizedAction,
+          danglingCollectionRepairs,
+          input.plan,
         );
+        observe(state, {
+          type: "broken_collection_downgraded_to_partial",
+          requirements: danglingCollectionRepairs,
+        });
       }
       const frameworkComponentRepairs = pendingFrameworkComponentRepairs(
         normalizedAction,
@@ -801,7 +813,7 @@ async function runKnowledgeAgentCore(
       let verificationSummaries:
         readonly CoverageVerificationSummary[] | undefined;
       let verificationReport: CoverageVerificationReport | undefined;
-      const semanticVerificationRequired =
+      let semanticVerificationRequired =
         coverageGate.disposition === "semantic_required" ||
         input.verifyCoverage !== undefined;
       if (!semanticVerificationRequired) {
@@ -827,9 +839,16 @@ async function runKnowledgeAgentCore(
             }`,
             repairAttempt: 0,
           });
-          return fallbackUnavailable(input, "coverage_verifier_invalid");
+          semanticVerificationRequired = true;
+          observe(state, {
+            type: "deterministic_coverage_fell_back_to_semantic",
+            reason: error instanceof InvalidCoverageVerificationError
+              ? error.code
+              : "unexpected_error",
+          });
         }
-      } else {
+      }
+      if (semanticVerificationRequired) {
         if (!hasExecutionReserve(input, MIN_VERIFIER_EXECUTION_MS)) {
           recordDiagnostic(input.trace, {
             event: "stop",
@@ -1006,10 +1025,25 @@ async function runKnowledgeAgentCore(
         continue;
       }
       if (auditedComparisonSubjectRepairs.length > 0) {
-        return rejectCoverageVerifierInvalid(
-          input,
-          "comparison_subject_postcheck_failed",
+        const downgraded = downgradeIncompleteComparisonRequirements(
+          auditedAction,
+          auditedComparisonSubjectRepairs,
+          state,
         );
+        const remaining = pendingComparisonSubjectRepairs(downgraded, state);
+        auditedAction = remaining.length === 0
+          ? downgraded
+          : omitStructurallyInvalidRequirements(
+              downgraded,
+              remaining,
+              input.plan,
+            );
+        projectedAfterVerification = true;
+        observe(state, {
+          type: "comparison_subject_postcheck_downgraded",
+          requirements: auditedComparisonSubjectRepairs,
+          omittedRequirements: remaining,
+        });
       }
       const structuredCoverageRepairs = pendingStructuredCoverageRepairs(
         normalizedAction,
@@ -3485,6 +3519,88 @@ function normalizeFinalCitationMetadata(
   };
 }
 
+function alignFinalRequirementsToPlan(
+  action: FinalAction,
+  plan: KnowledgePlan,
+): FinalAction {
+  if (
+    action.requirements.length === plan.requirements.length &&
+    action.requirements.every((requirement, index) =>
+      requirement.id === plan.requirements[index]?.id)
+  ) {
+    return action;
+  }
+  const resultById = new Map<
+    string,
+    FinalAction["requirements"][number]
+  >();
+  for (const requirement of action.requirements) {
+    if (!resultById.has(requirement.id)) {
+      resultById.set(requirement.id, requirement);
+    }
+  }
+  const requirements = plan.requirements.map((planned) =>
+    resultById.get(planned.id) ?? {
+      id: planned.id,
+      coverage: "none" as const,
+      answer: notCoveredRequirementAnswer(planned.question),
+      citations: [],
+    });
+  return {
+    action: "final",
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap(requirementEvidenceCitations),
+    ),
+  };
+}
+
+function downgradeBrokenCollectionRequirements(
+  action: FinalAction,
+  requirementIds: readonly string[],
+  plan: KnowledgePlan,
+): FinalAction {
+  const targets = new Set(requirementIds);
+  const questionById = new Map(
+    plan.requirements.map((requirement) => [requirement.id, requirement.question] as const),
+  );
+  const requirements = action.requirements.map((requirement) => {
+    if (!targets.has(requirement.id) || requirement.coverage === "none") {
+      return requirement;
+    }
+    const answer = normalizeBrokenCollectionForPartialAnswer(requirement.answer);
+    const citations = stableUniqueNumbers(
+      [...answer.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+    ).filter((citation) => requirement.citations.includes(citation));
+    if (
+      citations.length === 0 ||
+      hasBrokenCollectionEnumeration(answer)
+    ) {
+      return {
+        id: requirement.id,
+        coverage: "none" as const,
+        answer: notCoveredRequirementAnswer(
+          questionById.get(requirement.id) ?? "当前问题",
+        ),
+        citations: [],
+      };
+    }
+    return {
+      ...requirement,
+      coverage: "partial" as const,
+      answer,
+      citations,
+    };
+  });
+  return {
+    ...action,
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap(requirementEvidenceCitations),
+    ),
+  };
+}
+
 function dropUnsupportedRelatedContext(
   action: FinalAction,
   state: AgentState,
@@ -4529,6 +4645,25 @@ function sanitizeAuditedPartialComparisonClaims(
       requirements.flatMap(requirementEvidenceCitations),
     ),
   };
+}
+
+function downgradeIncompleteComparisonRequirements(
+  action: FinalAction,
+  requirementIds: readonly string[],
+  state: AgentState,
+): FinalAction {
+  const targets = new Set(requirementIds);
+  const requirements = action.requirements.map((requirement) =>
+    targets.has(requirement.id) && requirement.coverage === "complete"
+      ? { ...requirement, coverage: "partial" as const }
+      : requirement);
+  return sanitizeAuditedPartialComparisonClaims({
+    ...action,
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap(requirementEvidenceCitations),
+    ),
+  }, state);
 }
 
 function sortedCandidates(requirementState: RequirementState): Candidate[] {
