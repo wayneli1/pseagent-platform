@@ -2427,6 +2427,40 @@ describe("AnswerService", () => {
       expect(detailed).toHaveBeenCalledOnce();
     });
 
+    it("retains the inner unavailable reason on the domain diagnostic", async () => {
+      const events: DiagnosticEvent[] = [];
+      const diagnostics: DiagnosticTraceFactory = {
+        start: () => ({
+          requestId: "domain-root-reason-test",
+          record: (event) => events.push(event),
+        }),
+      };
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => {
+        input.trace.record({ event: "stop", reason: "invalid_final" });
+        return {
+          outcome: "unavailable",
+          result: temporaryUnavailableResult("general"),
+        };
+      });
+      const { service } = createMixedService({
+        detailed,
+        diagnostics,
+        shadow: singleDomainShadow("presales-general"),
+      });
+
+      await expect(service.answerDetailed(mixedQuestion)).resolves.toMatchObject({
+        stopReason: "domain_execution_unavailable",
+      });
+      expect(events).toContainEqual(expect.objectContaining({
+        event: "domain_execution",
+        domain: "presales-general",
+        phase: "agent",
+        result: "unavailable",
+        reason: "agent_unavailable",
+        rootReason: "invalid_final",
+      }));
+    });
+
     it("fails closed when an execution session belongs to the wrong project snapshot", async () => {
       const { service, knowledge, runAgentDetailed } = createMixedService();
       knowledge.open.mockImplementation(async (scope) =>

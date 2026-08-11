@@ -1,21 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.ts";
-import type {
-  DiagnosticEvent,
-  DiagnosticTrace,
-  DiagnosticTraceFactory,
-} from "../apps/pseagent/src/diagnostics.ts";
 import {
-  collectReliabilityModelMetrics,
   parseReliabilityKnowledgeHealth,
+  selectReliabilityCases,
   summarizeReliabilityLoad,
   type ReliabilityLoadObservation,
 } from "./probe-reliability-load-contract.ts";
+import { ReliabilityDiagnosticCollector } from "./reliability-diagnostics.ts";
 
 interface ProbeCase {
   readonly id: string;
@@ -30,7 +25,11 @@ const profiles = parseProfiles(process.env.PSE_RELIABILITY_CONCURRENCY ?? "1,2,4
 const limit = positiveInteger(process.env.PSE_RELIABILITY_LIMIT, 10);
 const repeat = positiveInteger(process.env.PSE_RELIABILITY_REPEAT, 1);
 const timeoutMs = positiveInteger(process.env.PSE_RELIABILITY_TIMEOUT_MS, 180_000);
-const selected = cases.slice(0, limit);
+const selected = selectReliabilityCases(
+  cases,
+  process.env.PSE_RELIABILITY_IDS,
+  limit,
+);
 if (selected.length === 0) throw new Error("no_reliability_cases_selected");
 const work = Array.from({ length: repeat }, () => selected).flat();
 const knowledgeRevisions = await readKnowledgeRevisions();
@@ -55,30 +54,8 @@ const report = {
   }>,
 };
 
-class ReliabilityLoadDiagnosticCollector implements DiagnosticTraceFactory {
-  private readonly events = new Map<string, DiagnosticEvent[]>();
-
-  start(): DiagnosticTrace {
-    const requestId = randomUUID();
-    const requestEvents: DiagnosticEvent[] = [];
-    this.events.set(requestId, requestEvents);
-    return {
-      requestId,
-      record(event) {
-        requestEvents.push(event);
-      },
-    };
-  }
-
-  metrics(requestId: string) {
-    const metrics = collectReliabilityModelMetrics(this.events.get(requestId) ?? []);
-    this.events.delete(requestId);
-    return metrics;
-  }
-}
-
 for (const concurrency of profiles) {
-  const diagnosticCollector = new ReliabilityLoadDiagnosticCollector();
+  const diagnosticCollector = new ReliabilityDiagnosticCollector();
   const runtime = await createPseAgentRuntime(process.env, {
     createDiagnosticTraceFactory: () => diagnosticCollector,
   });
@@ -132,6 +109,7 @@ for (const concurrency of profiles) {
         undefined,
         AbortSignal.timeout(timeoutMs),
       );
+      const diagnostics = diagnosticCollector.take(execution.requestId);
       return {
         id: item.id,
         sequence,
@@ -139,7 +117,10 @@ for (const concurrency of profiles) {
         scope: execution.result.scope,
         status: execution.result.status,
         stopReason: execution.stopReason,
-        ...diagnosticCollector.metrics(execution.requestId),
+        queueElapsedMs: diagnostics.model.queueElapsedMs,
+        modelExecutionElapsedMs: diagnostics.model.executionElapsedMs,
+        modelAttemptCount: diagnostics.model.attemptCount,
+        diagnostics,
       };
     } catch (error) {
       return {

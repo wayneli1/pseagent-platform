@@ -406,6 +406,32 @@ describe("development diagnostic trace", () => {
     });
   });
 
+  it("persists an allowlisted inner domain root reason", () => {
+    const directory = mkdtempSync(join(tmpdir(), "pseagent-diagnostics-domain-root-"));
+    temporaryDirectories.push(directory);
+    const trace = new JsonlDiagnosticTraceFactory(directory).start();
+
+    trace.record({
+      event: "domain_execution",
+      domain: "coremail-professional",
+      phase: "agent",
+      result: "unavailable",
+      domainCount: 1,
+      domainsUsed: ["coremail-professional"],
+      reason: "agent_unavailable",
+      rootReason: "invalid_final",
+    });
+
+    const [file] = readdirSync(directory);
+    const record = JSON.parse(readFileSync(join(directory, file ?? ""), "utf8"));
+    expect(record).toMatchObject({
+      event: "domain_execution",
+      domain: "coremail-professional",
+      reason: "agent_unavailable",
+      rootReason: "invalid_final",
+    });
+  });
+
   it("never lets a diagnostic sink failure change the answer path", () => {
     const trace = {
       requestId: "test",

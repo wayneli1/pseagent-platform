@@ -1,0 +1,185 @@
+import { describe, expect, it } from "vitest";
+import type { DiagnosticEvent } from "../apps/pseagent/src/diagnostics.ts";
+import {
+  ReliabilityDiagnosticCollector,
+  summarizeReliabilityDiagnostics,
+} from "./reliability-diagnostics.ts";
+
+describe("reliability diagnostics", () => {
+  it("retains the inner domain root cause without content", () => {
+    const events: DiagnosticEvent[] = [
+      {
+        event: "model_call",
+        role: "synthesizer",
+        operation: "synthesize",
+        outcome: "failed",
+        elapsedMs: 123,
+        attemptCount: 4,
+        queueElapsedMs: 10,
+        executionElapsedMs: 100,
+        errorClass: "unavailable",
+      },
+      { event: "stop", reason: "model_unavailable" },
+      {
+        event: "domain_execution",
+        domain: "coremail-professional",
+        phase: "agent",
+        result: "unavailable",
+        domainCount: 1,
+        domainsUsed: ["coremail-professional"],
+        reason: "agent_unavailable",
+        rootReason: "model_unavailable",
+      },
+      { event: "stop", reason: "domain_execution_unavailable" },
+    ];
+
+    expect(summarizeReliabilityDiagnostics(events)).toMatchObject({
+      rootStopReason: "model_unavailable",
+      finalStopReason: "domain_execution_unavailable",
+      stopReasons: ["model_unavailable", "domain_execution_unavailable"],
+      model: {
+        callCount: 1,
+        failedCallCount: 1,
+        attemptCount: 4,
+        queueElapsedMs: 10,
+        executionElapsedMs: 100,
+      },
+      domains: [{
+        domain: "coremail-professional",
+        phase: "agent",
+        result: "unavailable",
+        reason: "agent_unavailable",
+        rootReason: "model_unavailable",
+      }],
+    });
+  });
+
+  it("aggregates content-free retrieval and coverage counters", () => {
+    const events: DiagnosticEvent[] = [
+      {
+        event: "search",
+        requirementId: "R1",
+        phase: "seed",
+        queryChars: 8,
+        aspectIds: ["A1"],
+      },
+      {
+        event: "candidates",
+        requirementId: "R1",
+        source: "seed_search_result",
+        candidateCount: 3,
+        aspects: [{ id: "A1", candidateCount: 3, readCandidateCount: 1 }],
+      },
+      {
+        event: "read",
+        requirementId: "R1",
+        citation: 1,
+        sectionHeadingCount: 2,
+        aspectIds: ["A1"],
+      },
+      {
+        event: "coverage",
+        stage: "verified",
+        requirements: [{
+          id: "R1",
+          evidenceMode: "direct_only",
+          coverage: "partial",
+          citations: [1],
+          candidateCount: 3,
+          readCandidateCount: 1,
+          unreadCandidateCount: 2,
+          remainingReads: 1,
+        }],
+        citations: [1],
+        stopReason: "final",
+      },
+      {
+        event: "coverage_gaps",
+        domainCount: 1,
+        gapCount: 1,
+        gaps: [{
+          domain: "coremail-professional",
+          gapClass: "retrieval",
+          reason: "candidate_not_read",
+          affectsConclusion: true,
+        }],
+      },
+      {
+        event: "coverage_gate",
+        disposition: "semantic_required",
+        risk: "high",
+        reasons: ["compatibility"],
+        missingInputCount: 0,
+        knowledgeMissingCount: 1,
+      },
+      {
+        event: "validation",
+        result: "rejected",
+        reason: "requirement_answer_citation_mismatch:R1",
+        repairAttempt: 2,
+      },
+      {
+        event: "model_payload",
+        result: "rejected",
+        reason: "invalid_schema:answer",
+        repairAttempt: 1,
+        finishReason: "stop",
+      },
+      {
+        event: "final_guard",
+        result: "rejected",
+        reason: "direct_answer_missing",
+        repairAttempt: 1,
+      },
+    ];
+
+    expect(summarizeReliabilityDiagnostics(events)).toMatchObject({
+      retrieval: {
+        seedSearchCount: 1,
+        candidateEventCount: 1,
+        candidateCount: 3,
+        readCount: 1,
+        unreadCandidateCount: 2,
+        remainingReads: 1,
+      },
+      coverage: {
+        verifiedRequirementCount: 1,
+        incompleteVerifiedRequirementCount: 1,
+        gapCount: 1,
+        gates: [{
+          disposition: "semantic_required",
+          risk: "high",
+          reasons: ["compatibility"],
+          knowledgeMissingCount: 1,
+        }],
+      },
+      validation: {
+        rejectedCount: 1,
+        payloadRejectedCount: 1,
+        finalGuardRejectedCount: 1,
+        rejected: [{
+          reason: "requirement_answer_citation_mismatch",
+          repairAttempt: 2,
+        }],
+        payloadRejected: [{
+          reason: "invalid_schema",
+          repairAttempt: 1,
+          finishReason: "stop",
+        }],
+        finalGuardRejected: [{
+          reason: "direct_answer_missing",
+          repairAttempt: 1,
+        }],
+      },
+    });
+  });
+
+  it("removes completed requests from the collector", () => {
+    const collector = new ReliabilityDiagnosticCollector();
+    const trace = collector.start();
+    trace.record({ event: "stop", reason: "invalid_final" });
+    expect(collector.pendingCount()).toBe(1);
+    expect(collector.take(trace.requestId).rootStopReason).toBe("invalid_final");
+    expect(collector.pendingCount()).toBe(0);
+  });
+});

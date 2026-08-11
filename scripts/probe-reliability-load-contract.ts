@@ -14,6 +14,27 @@ export interface ReliabilityModelMetrics {
   readonly modelAttemptCount: number;
 }
 
+export function selectReliabilityCases<T extends { readonly id: string }>(
+  cases: readonly T[],
+  idsValue: string | undefined,
+  limit: number,
+): T[] {
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new Error("invalid_reliability_limit");
+  }
+  if (idsValue === undefined || idsValue.trim() === "") {
+    return cases.slice(0, limit);
+  }
+  const ids = [...new Set(idsValue.split(",").map((item) => item.trim()).filter(Boolean))];
+  if (ids.length === 0) throw new Error("empty_reliability_ids");
+  const byId = new Map(cases.map((item) => [item.id, item] as const));
+  return ids.map((id) => {
+    const item = byId.get(id);
+    if (item === undefined) throw new Error(`unknown_reliability_id:${id}`);
+    return item;
+  });
+}
+
 export function parseReliabilityKnowledgeHealth(value: unknown): {
   readonly professional: string;
   readonly general: string;

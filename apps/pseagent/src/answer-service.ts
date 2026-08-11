@@ -804,6 +804,7 @@ export class AnswerService {
     ]);
     const tasks = input.plans.map(async (domainPlan): Promise<DetailedDomainResult> => {
       let phase: "session" | "agent" = "session";
+      const domainTrace = new DomainDiagnosticTrace(input.trace);
       recordDiagnostic(input.trace, {
         event: "domain_execution",
         domain: domainPlan.domain,
@@ -822,6 +823,7 @@ export class AnswerService {
             activeDeadlineSignal.aborted || Date.now() >= input.deadlineAt
               ? "active_deadline_elapsed"
               : "domain_signal_aborted",
+            domainTrace.stopReason,
           );
         }
         const expectedRevision = input.expectedRevisions?.[domainPlan.domain];
@@ -863,7 +865,7 @@ export class AnswerService {
             : { verifierModel: this.dependencies.verifierModel }),
           session,
           deadlineAt: input.deadlineAt,
-          trace: input.trace,
+          trace: domainTrace,
           signal: sharedSignal,
         };
         let detailed = await runner(runnerInput);
@@ -893,10 +895,14 @@ export class AnswerService {
             activeDeadlineSignal.aborted || Date.now() >= input.deadlineAt
               ? "active_deadline_elapsed"
               : "domain_signal_aborted",
+            domainTrace.stopReason,
           );
         }
         if (detailed.outcome === "unavailable") {
-          throw new DomainExecutionError("agent_unavailable");
+          throw new DomainExecutionError(
+            "agent_unavailable",
+            domainTrace.stopReason,
+          );
         }
         if (
           detailed.project !== session.project ||
@@ -925,6 +931,9 @@ export class AnswerService {
           domainCount: input.plans.length,
           domainsUsed,
           reason: failure.code,
+          ...(failure.rootReason === undefined
+            ? {}
+            : { rootReason: failure.rootReason }),
         });
         if (!siblingController.signal.aborted) siblingController.abort();
         throw failure;
@@ -1349,9 +1358,31 @@ type DomainExecutionFailureCode =
   | "domain_dependency_unavailable";
 
 class DomainExecutionError extends Error {
-  constructor(readonly code: DomainExecutionFailureCode) {
+  constructor(
+    readonly code: DomainExecutionFailureCode,
+    readonly rootReason?: PseStopReason,
+  ) {
     super(code);
     this.name = "DomainExecutionError";
+  }
+}
+
+class DomainDiagnosticTrace implements DiagnosticTrace {
+  stopReason?: PseStopReason;
+
+  constructor(private readonly delegate: DiagnosticTrace) {}
+
+  get requestId(): string {
+    return this.delegate.requestId;
+  }
+
+  record(event: DiagnosticEvent): void {
+    if (event.event === "stop") this.stopReason = event.reason;
+    this.delegate.record(event);
+  }
+
+  progress(event: DiagnosticProgressEvent): void {
+    this.delegate.progress?.(event);
   }
 }
 

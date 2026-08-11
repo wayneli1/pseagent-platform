@@ -43,6 +43,7 @@ import {
 import { formatKnowledgeFinal, unavailableResult } from "./response.js";
 import {
   recordDiagnostic,
+  type DiagnosticEvent,
   type DiagnosticTrace,
 } from "./diagnostics.js";
 import {
@@ -412,7 +413,11 @@ async function runKnowledgeAgentCore(
           readEvidence(state),
         );
         if (remainingDraftCardConcepts.length > 0) {
-          return fallbackUnavailable(input, "invalid_final");
+          return rejectInvalidFinal(
+            input,
+            "answer_card_concept_missing",
+            state.answerCardConceptRepairAttempts,
+          );
         }
         observe(state, {
           type: "answer_card_grounded_fact_projection",
@@ -456,7 +461,11 @@ async function runKnowledgeAgentCore(
         continue;
       }
       if (directAnswerRepairs.length > 0) {
-        return fallbackUnavailable(input, "invalid_final");
+        return rejectInvalidFinal(
+          input,
+          "direct_answer_missing",
+          state.directAnswerRepairAttempts,
+        );
       }
       const namedMethodCompletenessReviews =
         pendingNamedMethodCompletenessReviews(
@@ -496,7 +505,11 @@ async function runKnowledgeAgentCore(
           });
           continue;
         }
-        return fallbackUnavailable(input, "invalid_final");
+        return rejectInvalidFinal(
+          input,
+          "broken_collection_enumeration",
+          state.structuredCoverageRepairAttempts,
+        );
       }
       const frameworkComponentRepairs = pendingFrameworkComponentRepairs(
         normalizedAction,
@@ -517,7 +530,11 @@ async function runKnowledgeAgentCore(
           });
           continue;
         }
-        return fallbackUnavailable(input, "invalid_final");
+        return rejectInvalidFinal(
+          input,
+          "coordinated_framework_component_missing",
+          state.structuredCoverageRepairAttempts,
+        );
       }
       const frameworkBoundaryRepairs = pendingFrameworkBoundaryRepairs(
         normalizedAction,
@@ -543,7 +560,11 @@ async function runKnowledgeAgentCore(
           input.plan,
         );
         if (pendingFrameworkBoundaryRepairs(projected, state).length > 0) {
-          return fallbackUnavailable(input, "invalid_final");
+          return rejectInvalidFinal(
+            input,
+            "framework_boundary_missing",
+            state.frameworkBoundaryRepairAttempts,
+          );
         }
         normalizedAction = projected;
         observe(state, {
@@ -580,7 +601,11 @@ async function runKnowledgeAgentCore(
           pendingOperationalConditionRepairs(projected, input.plan, state)
             .length > 0
         ) {
-          return fallbackUnavailable(input, "invalid_final");
+          return rejectInvalidFinal(
+            input,
+            "operational_condition_missing",
+            state.structuredCoverageRepairAttempts,
+          );
         }
         normalizedAction = projected;
         observe(state, {
@@ -651,7 +676,11 @@ async function runKnowledgeAgentCore(
           observe(state, { type: "invalid_citations", reason: validation.reason });
           continue;
         }
-        return fallbackUnavailable(input, "invalid_final");
+        return rejectInvalidFinal(
+          input,
+          "citation_validation_failed",
+          state.citationRepairAttempts + 1,
+        );
       }
       recordCoverage(
         input,
@@ -1345,6 +1374,20 @@ function fallbackUnavailable(
   });
   recordDiagnostic(input.trace, { event: "stop", reason });
   return unavailableResult(input.scope);
+}
+
+function rejectInvalidFinal(
+  input: KnowledgeAgentInput,
+  reason: Extract<DiagnosticEvent, { event: "final_guard" }>["reason"],
+  repairAttempt: number,
+): AnswerResult {
+  recordDiagnostic(input.trace, {
+    event: "final_guard",
+    result: "rejected",
+    reason,
+    repairAttempt,
+  });
+  return fallbackUnavailable(input, "invalid_final");
 }
 
 function createAgentState(input: KnowledgeAgentInput): AgentState {

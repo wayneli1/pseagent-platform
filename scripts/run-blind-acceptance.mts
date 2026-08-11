@@ -21,6 +21,7 @@ import {
   type BlindAcceptanceObservation,
   type BlindProject,
 } from "./blind-acceptance-contract.ts";
+import { ReliabilityDiagnosticCollector } from "./reliability-diagnostics.ts";
 
 const REQUIRED_MODEL = "deepseek_v4_flash";
 const matrixPath = resolve(process.env.PSE_BLIND_MATRIX_PATH ??
@@ -103,7 +104,10 @@ const roundPath = join(batchRoot, `round-${round}.json`);
 if (existsSync(roundPath)) throw new Error("blind_acceptance_round_already_exists");
 const progressPath = join(batchRoot, `round-${round}.progress.jsonl`);
 
-const runtime = await createPseAgentRuntime(process.env);
+const diagnosticCollector = new ReliabilityDiagnosticCollector();
+const runtime = await createPseAgentRuntime(process.env, {
+  createDiagnosticTraceFactory: () => diagnosticCollector,
+});
 const observations: BlindAcceptanceObservation[] = [];
 const orderedCases = rotate(dataset.cases, (round - 1) * 37);
 let nextIndex = 0;
@@ -123,6 +127,7 @@ try {
             testCase.conversationContext,
             AbortSignal.timeout(timeoutMs),
           );
+          const diagnostics = diagnosticCollector.take(execution.requestId);
           observation = {
             caseId: testCase.id,
             round,
@@ -140,6 +145,7 @@ try {
             })),
             stopReason: execution.stopReason,
             latencyMs: Math.round(performance.now() - startedAt),
+            diagnostics,
           };
         } catch (error) {
           observation = {
@@ -162,6 +168,8 @@ try {
           stopReason: observation.stopReason,
           latencyMs: observation.latencyMs,
           failure: observation.failure,
+          rootStopReason: observation.diagnostics?.rootStopReason,
+          modelAttemptCount: observation.diagnostics?.model.attemptCount,
         })}\n`, "utf8");
         process.stdout.write(`${JSON.stringify({
           type: "blind_progress",
@@ -171,6 +179,7 @@ try {
           round,
           status: observation.status,
           stopReason: observation.stopReason,
+          rootStopReason: observation.diagnostics?.rootStopReason,
           latencyMs: observation.latencyMs,
         })}\n`);
       }

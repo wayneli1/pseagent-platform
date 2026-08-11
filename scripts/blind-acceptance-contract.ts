@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ReliabilityDiagnosticSummary } from "./reliability-diagnostics.ts";
 
 export const blindAcceptanceLayers = [
   "professional",
@@ -66,6 +67,7 @@ export interface BlindAcceptanceObservation {
   readonly stopReason: string;
   readonly latencyMs: number;
   readonly failure?: string;
+  readonly diagnostics?: ReliabilityDiagnosticSummary;
 }
 
 interface ScoredObservation {

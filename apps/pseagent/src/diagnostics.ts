@@ -135,6 +135,8 @@ export type DiagnosticEvent =
         | "session_snapshot_mismatch"
         | "agent_unavailable"
         | "domain_dependency_unavailable";
+      /** Inner agent stop reason retained for root-cause attribution. */
+      readonly rootReason?: PseStopReason;
     }
   | {
       readonly event: "domain_merge";
@@ -271,6 +273,20 @@ export type DiagnosticEvent =
       readonly reasons: readonly CoverageGateRiskReason[];
       readonly missingInputCount: number;
       readonly knowledgeMissingCount: number;
+    }
+  | {
+      /** Content-free attribution for a final answer rejected after repair. */
+      readonly event: "final_guard";
+      readonly result: "rejected";
+      readonly reason:
+        | "answer_card_concept_missing"
+        | "direct_answer_missing"
+        | "broken_collection_enumeration"
+        | "coordinated_framework_component_missing"
+        | "framework_boundary_missing"
+        | "operational_condition_missing"
+        | "citation_validation_failed";
+      readonly repairAttempt: number;
     }
   | {
       /** Content-free attribution counters; never includes queries, paths, or answer text. */
@@ -583,6 +599,29 @@ const FINISH_REASON_VALUES = [
   "function_call",
   "abort",
 ] as const;
+const COVERAGE_GATE_RISK_REASON_VALUES = [
+  "numeric_promise",
+  "version_capability",
+  "compatibility",
+  "legal_or_contract",
+  "conflicting_evidence",
+  "ambiguous_evidence",
+  "stale_or_unconfirmed_evidence",
+  "uncited_claim",
+  "evidence_aspect_unbound",
+  "related_context_review",
+  "citation_outside_evidence_envelope",
+  "requirement_envelope_mismatch",
+] as const;
+const FINAL_GUARD_REASON_VALUES = [
+  "answer_card_concept_missing",
+  "direct_answer_missing",
+  "broken_collection_enumeration",
+  "coordinated_framework_component_missing",
+  "framework_boundary_missing",
+  "operational_condition_missing",
+  "citation_validation_failed",
+] as const;
 const PSE_STOP_REASON_VALUES = [
   "seed_unavailable",
   "routing_or_planning_unavailable",
@@ -713,6 +752,11 @@ function allowlistDiagnosticEvent(
           "reason",
           event.reason,
           DOMAIN_EXECUTION_REASON_VALUES,
+        ),
+        ...safeOptionalEnumField(
+          "rootReason",
+          event.rootReason,
+          PSE_STOP_REASON_VALUES,
         ),
       };
     case "domain_merge":
@@ -933,6 +977,19 @@ function allowlistDiagnosticEvent(
         citations: safeArray(event.citations, safePositiveInteger, 20),
         stopReason: safeEnum(event.stopReason, ["final", "deadline"] as const),
       };
+    case "coverage_gate":
+      return {
+        event: event.event,
+        disposition: safeEnum(
+          event.disposition,
+          ["deterministic_accept", "semantic_required", "reject"] as const,
+        ),
+        risk: safeEnum(event.risk, ["low", "high"] as const),
+        reasons: safeArray(event.reasons, (item) =>
+          safeEnum(item, COVERAGE_GATE_RISK_REASON_VALUES)),
+        missingInputCount: safeCount(event.missingInputCount),
+        knowledgeMissingCount: safeCount(event.knowledgeMissingCount),
+      };
     case "coverage_gaps":
       return {
         event: event.event,
@@ -957,6 +1014,13 @@ function allowlistDiagnosticEvent(
           VALIDATION_REASON_VALUES,
           ["citation_not_read_for_requirement"] as const,
         ),
+        repairAttempt: safeCount(event.repairAttempt),
+      };
+    case "final_guard":
+      return {
+        event: event.event,
+        result: safeEnum(event.result, ["rejected"] as const),
+        reason: safeEnum(event.reason, FINAL_GUARD_REASON_VALUES),
         repairAttempt: safeCount(event.repairAttempt),
       };
     case "model_payload":

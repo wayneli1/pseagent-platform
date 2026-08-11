@@ -9,6 +9,7 @@ import {
   parseReleaseQualitySuites,
   type ReleaseQualityObservation,
 } from "../services/knowledge-ops-worker/src/release-quality-gate.ts";
+import { ReliabilityDiagnosticCollector } from "./reliability-diagnostics.ts";
 
 const REQUIRED_MODEL = "deepseek_v4_flash";
 assertFixedModel(process.env);
@@ -17,7 +18,10 @@ const source = JSON.parse(readFileSync(
   "utf8",
 ));
 const suites = parseReleaseQualitySuites(source);
-const runtime = await createPseAgentRuntime(process.env);
+const diagnosticCollector = new ReliabilityDiagnosticCollector();
+const runtime = await createPseAgentRuntime(process.env, {
+  createDiagnosticTraceFactory: () => diagnosticCollector,
+});
 const conversation = new ConversationStore(6, 12_000);
 const observations: ReleaseQualityObservation[] = [];
 const records: Record<string, unknown>[] = [];
@@ -30,6 +34,7 @@ try {
       const started = performance.now();
       try {
         const execution = await runtime.answerDetailed(testCase.question, context);
+        const diagnostics = diagnosticCollector.take(execution.requestId);
         const latencyMs = Math.round(performance.now() - started);
         const observation: ReleaseQualityObservation = {
           caseId: testCase.id,
@@ -45,7 +50,14 @@ try {
           stopReason: execution.stopReason,
         };
         observations.push(observation);
-        records.push({ suiteId: suite.suiteId, testCase, contextUsed: context !== undefined, observation, execution });
+        records.push({
+          suiteId: suite.suiteId,
+          testCase,
+          contextUsed: context !== undefined,
+          observation,
+          execution,
+          diagnostics,
+        });
         if (execution.result.status === "answered" || execution.result.status === "partially_answered") {
           conversation.append(suite.suiteId, { question: testCase.question, answer: execution.result.answer });
         }

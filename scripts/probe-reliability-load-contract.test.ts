@@ -2,10 +2,21 @@ import { describe, expect, it } from "vitest";
 import {
   collectReliabilityModelMetrics,
   parseReliabilityKnowledgeHealth,
+  selectReliabilityCases,
   summarizeReliabilityLoad,
 } from "./probe-reliability-load-contract.js";
 
 describe("reliability load report", () => {
+  it("selects explicit diagnostic case ids without changing their requested order", () => {
+    const cases = [{ id: "P01" }, { id: "P02" }, { id: "P10" }];
+    expect(selectReliabilityCases(cases, "P10,P02,P10", 1)).toEqual([
+      { id: "P10" },
+      { id: "P02" },
+    ]);
+    expect(() => selectReliabilityCases(cases, "P99", 1))
+      .toThrow("unknown_reliability_id:P99");
+  });
+
   it("records the revisions actually served by the knowledge engine", () => {
     expect(parseReliabilityKnowledgeHealth({
       status: "ready",
