@@ -2,7 +2,9 @@ import type {
   Coverage,
   FinalAction,
   KnowledgeCoverage,
+  Reference,
 } from "./contracts.js";
+import type { AtomicObligationContract } from "./atomic-obligation.js";
 import {
   SYNTHESIS_DISCLOSURE,
   type CoverageVerificationReport,
@@ -12,6 +14,10 @@ import {
   splitAnswerLineSegments,
 } from "./references.js";
 import type { KnowledgeDomain } from "./task-spec.js";
+import {
+  renderBoundClaims,
+  type ObligationOutcome,
+} from "./obligation-outcome.js";
 
 export type StructuredAnswerSupportKind = "direct" | "synthesized";
 
@@ -131,6 +137,18 @@ export function renderStructuredAnswer(answer: StructuredAnswer): string {
     : retained.map((statement) =>
         `- ${statement.replace(/\n/gu, "\n  ")}`).join("\n");
   return [...answer.preamble, body].join("\n");
+}
+
+/**
+ * The reliable path accepts only claims that have already been bound to read
+ * evidence. It cannot infer completion or citations from generated prose.
+ */
+export function renderStructuredObligationAnswer(input: {
+  readonly contract: AtomicObligationContract;
+  readonly outcomes: readonly ObligationOutcome[];
+  readonly references: readonly Reference[];
+}): string {
+  return renderBoundClaims(input);
 }
 
 function retainCoherentOrderedSegments(

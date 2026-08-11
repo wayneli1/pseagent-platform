@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { AtomicObligationContract } from "./atomic-obligation.js";
 import type { AnswerStatus, Coverage, FinalAction, Reference } from "./contracts.js";
 import type { CoverageGap } from "./coverage-gap.js";
 import type { EvidenceLedger } from "./evidence-ledger.js";
+import type { ObligationOutcome } from "./obligation-outcome.js";
 import {
   GENERAL_UNAVAILABLE_TEXT,
   KNOWLEDGE_UNAVAILABLE_TEXT,
@@ -56,6 +58,64 @@ const completeAction: FinalAction = {
 };
 
 describe("knowledge response", () => {
+  it("derives reliable metadata from obligation outcomes instead of generated prose", () => {
+    const contract: AtomicObligationContract = {
+      subject: "归档",
+      sourceQuestion: "说明归档能力",
+      obligations: [{
+        id: "O1",
+        sourceSpan: { start: 0, end: 6 },
+        sourceText: "说明归档能力",
+        kind: "fact",
+        targetEntityIds: ["归档"],
+        domains: ["coremail-professional"],
+        evidencePolicy: "direct",
+        evidenceTypes: ["formal_page"],
+        risk: "low",
+        completionCriteria: ["正式资料直接支持"],
+        required: true,
+      }],
+    };
+    const outcomes: readonly ObligationOutcome[] = [{
+      obligationId: "O1",
+      state: "complete",
+      claims: [{
+        claimId: "CL1",
+        obligationId: "O1",
+        domain: "coremail-professional",
+        text: "支持邮件归档。",
+        kind: "fact",
+        citationIndexes: [1],
+        coveredAspectIds: ["A1"],
+        support: "direct",
+        evidenceIdentities: [reference.contentHash],
+      }],
+    }];
+
+    const result = formatKnowledgeFinal("professional", {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "none",
+        answer: "这段模型文本不得控制最终状态。",
+        citations: [],
+      }],
+      citations: [],
+    }, [reference], {
+      obligationContract: contract,
+      obligationOutcomes: outcomes,
+    });
+
+    expect(result).toMatchObject({
+      status: "answered",
+      knowledgeCoverage: "complete",
+      caseAssessability: "not_applicable",
+      policyDisposition: "allowed",
+    });
+    expect(result.answer).toContain("- 支持邮件归档。[1]");
+    expect(result.answer).not.toContain("模型文本");
+  });
+
   it.each<[Coverage[], number, AnswerStatus]>([
     [["none"], 0, "not_covered"],
     [["none"], 2, "not_covered"],

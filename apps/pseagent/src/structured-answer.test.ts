@@ -1,11 +1,60 @@
 import { describe, expect, it } from "vitest";
-import type { FinalAction } from "./contracts.js";
+import type { AtomicObligationContract } from "./atomic-obligation.js";
+import type { FinalAction, Reference } from "./contracts.js";
+import type { ObligationOutcome } from "./obligation-outcome.js";
 import {
   buildStructuredAnswer,
+  renderStructuredObligationAnswer,
   renderStructuredAnswer,
 } from "./structured-answer.js";
 
 describe("structured answer", () => {
+  it("delegates the reliable path to the bound-claim renderer", () => {
+    const contract: AtomicObligationContract = {
+      subject: "归档",
+      sourceQuestion: "说明归档能力",
+      obligations: [{
+        id: "O1",
+        sourceSpan: { start: 0, end: 6 },
+        sourceText: "说明归档能力",
+        kind: "fact",
+        targetEntityIds: ["归档"],
+        domains: ["coremail-professional"],
+        evidencePolicy: "direct",
+        evidenceTypes: ["formal_page"],
+        risk: "low",
+        completionCriteria: ["正式资料直接支持"],
+        required: true,
+      }],
+    };
+    const references: readonly Reference[] = [{
+      index: 1,
+      project: "coremail-professional",
+      title: "归档说明",
+      path: "product/archive.md",
+      revision: "a".repeat(40),
+      contentHash: "b".repeat(64),
+    }];
+    const outcomes: readonly ObligationOutcome[] = [{
+      obligationId: "O1",
+      state: "complete",
+      claims: [{
+        claimId: "CL1",
+        obligationId: "O1",
+        domain: "coremail-professional",
+        text: "支持邮件归档。",
+        kind: "fact",
+        citationIndexes: [1],
+        coveredAspectIds: ["A1"],
+        support: "direct",
+        evidenceIdentities: ["b".repeat(64)],
+      }],
+    }];
+
+    expect(renderStructuredObligationAnswer({ contract, outcomes, references }))
+      .toContain("- 支持邮件归档。[1]");
+  });
+
   it("deduplicates repeated supported statements across obligations", () => {
     const action: FinalAction = {
       action: "final",

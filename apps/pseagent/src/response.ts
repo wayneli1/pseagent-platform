@@ -9,14 +9,20 @@ import type {
   Reference,
   Scope,
 } from "./contracts.js";
+import type { AtomicObligationContract } from "./atomic-obligation.js";
 import type { CoverageGap } from "./coverage-gap.js";
 import type { CoverageVerificationReport } from "./coverage-verifier.js";
 import type { EvidenceLedger } from "./evidence-ledger.js";
 import {
   buildStructuredAnswer,
+  renderStructuredObligationAnswer,
   renderStructuredAnswer,
   type StructuredAnswerBinding,
 } from "./structured-answer.js";
+import {
+  reduceObligationOutcomes,
+  type ObligationOutcome,
+} from "./obligation-outcome.js";
 import type { KnowledgeDomain } from "./task-spec.js";
 import { sanitizeFormalAnswer } from "./public-answer.js";
 
@@ -56,6 +62,9 @@ export interface KnowledgeResponseContext {
   readonly question?: string;
   readonly requirementBindings?: readonly StructuredAnswerBinding[];
   readonly verification?: CoverageVerificationReport;
+  readonly obligationContract?: AtomicObligationContract;
+  readonly obligationOutcomes?: readonly ObligationOutcome[];
+  readonly policyDisposition?: PolicyDisposition;
 }
 
 export function deriveStatus(
@@ -76,6 +85,35 @@ export function formatKnowledgeFinal(
   references: readonly Reference[],
   context: KnowledgeResponseContext = {},
 ): AnswerResult {
+  if (
+    (context.obligationContract === undefined) !==
+    (context.obligationOutcomes === undefined)
+  ) {
+    throw new Error("obligation_response_contract_incomplete");
+  }
+  if (
+    context.obligationContract !== undefined &&
+    context.obligationOutcomes !== undefined
+  ) {
+    const axes = reduceObligationOutcomes({
+      contract: context.obligationContract,
+      outcomes: context.obligationOutcomes,
+      ...(context.policyDisposition === undefined
+        ? {}
+        : { policyDisposition: context.policyDisposition }),
+    });
+    const answer = renderStructuredObligationAnswer({
+      contract: context.obligationContract,
+      outcomes: context.obligationOutcomes,
+      references,
+    });
+    return formatAnswerResult({
+      scope,
+      ...axes,
+      answer,
+      references,
+    });
+  }
   const { knowledgeCoverage, caseAssessability } = deriveAnswerAxes(
     action,
     context.evidenceLedgers,
@@ -278,6 +316,7 @@ export function formatAnswerResult(input: {
   readonly references: readonly Reference[];
   readonly knowledgeCoverage?: KnowledgeCoverage;
   readonly caseAssessability?: CaseAssessability;
+  readonly policyDisposition?: PolicyDisposition;
 }): AnswerResult {
   if (input.status === "not_covered") {
     if (
@@ -287,7 +326,7 @@ export function formatAnswerResult(input: {
       return {
         scope: input.scope,
         status: input.status,
-        policyDisposition: derivePolicyDisposition(input.status, NOT_COVERED_TEXT),
+        policyDisposition: input.policyDisposition ?? derivePolicyDisposition(input.status, NOT_COVERED_TEXT),
         answer: NOT_COVERED_TEXT,
         references: [],
       };
@@ -295,7 +334,7 @@ export function formatAnswerResult(input: {
     return {
       scope: input.scope,
       status: input.status,
-      policyDisposition: derivePolicyDisposition(input.status, input.answer),
+      policyDisposition: input.policyDisposition ?? derivePolicyDisposition(input.status, input.answer),
       ...(input.knowledgeCoverage === undefined
         ? {}
         : { knowledgeCoverage: input.knowledgeCoverage }),
@@ -310,7 +349,7 @@ export function formatAnswerResult(input: {
     return {
       scope: input.scope,
       status: input.status,
-      policyDisposition: derivePolicyDisposition(input.status, input.answer),
+      policyDisposition: input.policyDisposition ?? derivePolicyDisposition(input.status, input.answer),
       answer: input.scope === "normal" ? GENERAL_UNAVAILABLE_TEXT : KNOWLEDGE_UNAVAILABLE_TEXT,
       references: [],
     };
@@ -323,7 +362,7 @@ export function formatAnswerResult(input: {
   return {
     scope: input.scope,
     status: input.status,
-    policyDisposition: derivePolicyDisposition(input.status, answer),
+    policyDisposition: input.policyDisposition ?? derivePolicyDisposition(input.status, answer),
     ...(input.knowledgeCoverage === undefined
       ? {}
       : { knowledgeCoverage: input.knowledgeCoverage }),
