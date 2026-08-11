@@ -89,7 +89,14 @@ describe("reliability diagnostics", () => {
           readCandidateCount: 1,
           unreadCandidateCount: 2,
           remainingReads: 1,
+          seedSearchStatus: "success",
+          retainedDirectSegmentCount: 1,
+          retainedSynthesizedSegmentCount: 0,
+          removedSegmentCount: 2,
+          coveredAspectCount: 1,
+          missingAspectCount: 1,
         }],
+        reasons: [{ id: "R1", reason: "partial_support" }],
         citations: [1],
         stopReason: "final",
       },
@@ -115,7 +122,7 @@ describe("reliability diagnostics", () => {
       {
         event: "validation",
         result: "rejected",
-        reason: "requirement_answer_citation_mismatch:R1",
+        reason: "evidence_metadata_invalid:verification_aspect_partition_invalid",
         repairAttempt: 2,
       },
       {
@@ -145,6 +152,21 @@ describe("reliability diagnostics", () => {
       coverage: {
         verifiedRequirementCount: 1,
         incompleteVerifiedRequirementCount: 1,
+        requirements: [{
+          id: "R1",
+          coverage: "partial",
+          reason: "partial_support",
+          candidateCount: 3,
+          readCandidateCount: 1,
+          unreadCandidateCount: 2,
+          remainingReads: 1,
+          seedSearchStatus: "success",
+          retainedDirectSegmentCount: 1,
+          retainedSynthesizedSegmentCount: 0,
+          removedSegmentCount: 2,
+          coveredAspectCount: 1,
+          missingAspectCount: 1,
+        }],
         gapCount: 1,
         gates: [{
           disposition: "semantic_required",
@@ -158,7 +180,8 @@ describe("reliability diagnostics", () => {
         payloadRejectedCount: 1,
         finalGuardRejectedCount: 1,
         rejected: [{
-          reason: "requirement_answer_citation_mismatch",
+          reason: "evidence_metadata_invalid",
+          detail: "verification_aspect_partition_invalid",
           repairAttempt: 2,
         }],
         payloadRejected: [{

@@ -206,6 +206,7 @@ type RequirementState = {
   searchStopped: boolean;
   searchBudgetExhausted: boolean;
   evidenceReviewExhausted: boolean;
+  verificationRecoveryReads: number;
   toolUnavailableCount: number;
   accessDeniedCount: number;
 };
@@ -235,6 +236,7 @@ type AgentState = {
   frameworkBoundaryRepairAttempts: number;
   structuredCoverageRepairAttempts: number;
   answerCardConceptRepairAttempts: number;
+  coverageVerifierRepairAttempts: number;
   semanticRepairTurns: number;
   invalidPayloadTurnRetries: number;
   forceFinal: boolean;
@@ -856,6 +858,60 @@ async function runKnowledgeAgentCore(
           });
           return unavailableResult(input.scope);
         }
+      }
+      const verifiedEvidenceRecovery =
+        turn < maxTurns &&
+          !deadlineReached(input) &&
+          hasExecutionReserve(input, MIN_VERIFIER_EXECUTION_MS * 2)
+          ? await recoverVerifiedMissingAspectEvidence(
+              input,
+              state,
+              verificationReport,
+            )
+          : [];
+      if (verifiedEvidenceRecovery.length > 0) {
+        state.forceFinal = true;
+        observe(state, {
+          type: "coverage_verifier_evidence_recovery_read",
+          requirements: verifiedEvidenceRecovery,
+        });
+        continue;
+      }
+      const claimRepairReconciledAction = reconcileCoverageAfterClaimRepair(
+        auditedAction,
+        verificationReport,
+        state.coverageVerifierRepairAttempts,
+      );
+      if (claimRepairReconciledAction !== auditedAction) {
+        auditedAction = claimRepairReconciledAction;
+        verificationReport = coverageVerificationReport(
+          auditedAction,
+          verificationReport!.summaries,
+        );
+        verificationSummaries = verificationReport.summaries;
+        observe(state, {
+          type: "coverage_verifier_claim_repair_reconciled",
+          requirements: auditedAction.requirements.flatMap((requirement) =>
+            requirement.coverage === "complete" ? [requirement.id] : []),
+        });
+      }
+      const coverageVerifierClaimRepairs = pendingCoverageVerifierClaimRepairs(
+        auditedAction,
+        verificationReport,
+      );
+      if (
+        coverageVerifierClaimRepairs.length > 0 &&
+        state.coverageVerifierRepairAttempts === 0 &&
+        turn < maxTurns &&
+        !deadlineReached(input)
+      ) {
+        state.coverageVerifierRepairAttempts += 1;
+        state.forceFinal = true;
+        observe(state, {
+          type: "coverage_verifier_claim_repair_required",
+          requirements: coverageVerifierClaimRepairs,
+        });
+        continue;
       }
       const missingAuditedCardConcepts = missingAnswerCardRequiredConcepts(
         auditedAction,
@@ -1489,6 +1545,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
         searchStopped: false,
         searchBudgetExhausted: false,
         evidenceReviewExhausted: false,
+        verificationRecoveryReads: 0,
         toolUnavailableCount: 0,
         accessDeniedCount: 0,
       },
@@ -1508,6 +1565,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     frameworkBoundaryRepairAttempts: 0,
     structuredCoverageRepairAttempts: 0,
     answerCardConceptRepairAttempts: 0,
+    coverageVerifierRepairAttempts: 0,
     semanticRepairTurns: 0,
     invalidPayloadTurnRetries: 0,
     forceFinal: false,
@@ -2156,6 +2214,7 @@ async function executeRead(
   input: KnowledgeAgentInput,
   state: AgentState,
   requirementState: RequirementState,
+  options: { readonly allowReadLimitOverflow?: boolean } = {},
 ): Promise<{
   readonly page: KnowledgePage;
   readonly citation: number;
@@ -2171,7 +2230,10 @@ async function executeRead(
   }
   if (
     requirementState.readPaths.has(action.input.path) ||
-    !canReadEvidencePath(requirementState, action.input.path)
+    (
+      options.allowReadLimitOverflow !== true &&
+      !canReadEvidencePath(requirementState, action.input.path)
+    )
   ) {
     observe(state, {
       type: "requirement_read_budget_exhausted",
@@ -2189,7 +2251,10 @@ async function executeRead(
   }
   if (
     requirementState.readPaths.has(page.path) ||
-    !canReadEvidencePath(requirementState, page.path)
+    (
+      options.allowReadLimitOverflow !== true &&
+      !canReadEvidencePath(requirementState, page.path)
+    )
   ) {
     return;
   }
@@ -3528,6 +3593,125 @@ function pendingEvidenceReviews(
     }
   }
   return pending;
+}
+
+function pendingCoverageVerifierClaimRepairs(
+  action: FinalAction,
+  report: CoverageVerificationReport | undefined,
+): readonly {
+  readonly requirementId: string;
+  readonly removedSegmentCount: number;
+}[] {
+  if (report === undefined) return [];
+  const resultById = new Map(
+    action.requirements.map((requirement) => [requirement.id, requirement] as const),
+  );
+  return report.summaries.flatMap((summary) =>
+    resultById.get(summary.id)?.coverage === "partial" &&
+      summary.missingAspectCount === 0 &&
+      summary.removedSegmentCount > 0
+      ? [{
+          requirementId: summary.id,
+          removedSegmentCount: summary.removedSegmentCount,
+        }]
+      : []);
+}
+
+function reconcileCoverageAfterClaimRepair(
+  action: FinalAction,
+  report: CoverageVerificationReport | undefined,
+  repairAttempts: number,
+): FinalAction {
+  if (report === undefined || repairAttempts === 0) return action;
+  const summaryById = new Map(
+    report.summaries.map((summary) => [summary.id, summary] as const),
+  );
+  let changed = false;
+  const requirements = action.requirements.map((requirement) => {
+    const summary = summaryById.get(requirement.id);
+    const retainedSegmentCount = summary === undefined
+      ? 0
+      : summary.retainedDirectSegmentCount +
+        summary.retainedSynthesizedSegmentCount;
+    if (
+      requirement.coverage !== "partial" ||
+      summary === undefined ||
+      summary.missingAspectCount !== 0 ||
+      summary.coveredAspectCount === 0 ||
+      summary.removedSegmentCount === 0 ||
+      retainedSegmentCount <= summary.removedSegmentCount
+    ) {
+      return requirement;
+    }
+    changed = true;
+    return { ...requirement, coverage: "complete" as const };
+  });
+  return changed ? { ...action, requirements } : action;
+}
+
+async function recoverVerifiedMissingAspectEvidence(
+  input: KnowledgeAgentInput,
+  state: AgentState,
+  report: CoverageVerificationReport | undefined,
+): Promise<readonly {
+  readonly requirementId: string;
+  readonly missingAspectIds: readonly string[];
+}[]> {
+  if (report === undefined) return [];
+  const recovered: Array<{
+    requirementId: string;
+    missingAspectIds: readonly string[];
+  }> = [];
+  for (const summary of report.summaries) {
+    if (summary.missingAspectIds.length === 0) continue;
+    const requirementState = state.requirements.get(summary.id);
+    if (
+      requirementState === undefined ||
+      requirementState.verificationRecoveryReads > 0
+    ) {
+      continue;
+    }
+    const missingAspectIds = new Set(summary.missingAspectIds);
+    const candidate = rankedCandidates(requirementState).find(({ candidate, score }) =>
+      !requirementState.readPaths.has(candidate.path) &&
+      !hasUnresolvedReadFailure(requirementState, candidate.path) &&
+      !shouldDeferAdjacentComparisonRead(requirementState, candidate.path, false) &&
+      [...candidate.aspectIds].some((aspectId) => missingAspectIds.has(aspectId)) &&
+      score.aspectCoverage > 0 &&
+      score.sourceTier <= 2 &&
+      (score.obligationFit > 0 || score.titleCoverage > 0 || score.directness > 0));
+    if (candidate === undefined) continue;
+
+    requirementState.verificationRecoveryReads += 1;
+    try {
+      const result = await executeRead(
+        {
+          action: "tool",
+          tool: "kb.read_page",
+          input: {
+            requirementId: summary.id,
+            path: candidate.candidate.path,
+          },
+        },
+        input,
+        state,
+        requirementState,
+        { allowReadLimitOverflow: true },
+      );
+      if (result !== undefined) {
+        recovered.push({
+          requirementId: summary.id,
+          missingAspectIds: [...summary.missingAspectIds],
+        });
+      }
+    } catch {
+      observe(state, {
+        type: "coverage_verifier_evidence_recovery_unavailable",
+        requirementId: summary.id,
+      });
+    }
+  }
+  return recovered;
 }
 
 function directReadCount(

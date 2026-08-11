@@ -379,6 +379,27 @@ describe("analyzeCoverageGaps", () => {
     }))).toEqual([]);
   });
 
+  it("attributes a partial with no missing aspect to a removed unsupported claim", () => {
+    expect(gaps(missingUnit({
+      claims: [{
+        claimIndex: 0,
+        status: "removed",
+        citations: [],
+        coveredAspectIds: [],
+      }],
+      verification: {
+        coverage: "partial",
+        reason: "partial_support",
+        coveredAspectIds: ["A1"],
+        missingAspectIds: [],
+      },
+    }))).toMatchObject([{
+      gapClass: "knowledge",
+      reason: "unsupported_claim_removed",
+      missingAspect: "核验中删除的无证据主张",
+    }]);
+  });
+
   it("does not let a recovered read failure shadow the completed evidence review", () => {
     expect(gaps(missingUnit({
       queries: [{

@@ -152,6 +152,8 @@ coverage 只按用户明确问题和正式正文判断。核心问题已被正�
 如果 observations 中出现 named_method_completeness_review_required，表示用户明确点名了方法、模型、框架或算法，或当前回答已经采用正式定义中的多个协同框架组件，并且已经读到直接匹配的正式总览/方法页。下一次 final 是固定的证据完整性二次整理，不得继续调用工具；必须以直接匹配页为主，完整保留正文明确编号或并列列出的核心规则与协同组件，补齐与当前问题直接相关的主要操作步骤、关键风险和适用边界，再用相邻场景页补充话术或示例。不得用一句宽泛总结替代正文中的整组核心规则，也不得增加正文未支持的内容。
 如果 observations 中出现 framework_boundary_repair_required，表示回答已广泛采用正式定义中的多个协同组件，但遗漏了直接页面在“边界/风险/关键原则/注意事项”章节中用“必须、不能、不得、需”等明确表达的强约束。下一次 final 不得继续调用工具；必须逐条保留这些正式强边界及其实际含义，并把它们放到对应组件或统一边界段，不得用相邻页面的一般注意事项替代。
 如果 observations 中出现 answer_card_concept_repair_required，表示上一版遗漏了答案卡中由正式证据支持的原子事实。下一次 final 不得继续调用工具；必须回到对应 readEvidence 正文，把缺失概念组织进完整、自然、可直接使用的事实句或流程步骤中并逐段引用。禁止输出“处理原则包括某词”、关键词清单、同义反复或仅为命中校验而补词；无法形成有正文支持的自然答案时使用 none。
+如果 observations 中出现 coverage_verifier_claim_repair_required，表示上一版虽然已覆盖该 requirement 的全部规划证据方面，但混入了被核验器删除的无依据句段。下一次 final 不得继续调用工具；只用对应 readEvidence 中已读正文重新组织完整回答，删除所有没有正文直接支持的强化、数字、承诺和延伸判断。不得复述被删除句段；仅当保留内容仍完整回答该 requirement 时使用 complete，否则明确使用 partial 或 none。
+如果 observations 中出现 coverage_verifier_evidence_recovery_read，表示核验器发现了尚未覆盖的证据方面，系统已经额外读取一条与缺失方面直接匹配的高质量候选。下一次 final 不得继续调用工具；必须结合新增 readEvidence 重新回答对应 requirement，并只保留正文支持的结论。新增正文仍不足时保持 partial 或 none，不得为了变成 complete 而猜测。
 如果 observations 中出现 answer_card_answer_template，表示命中了已经审批并发布的答案卡。answerTemplate 是内容组织基线，不是独立证据；应按当前 requirements 拆分其中相关段落，并只保留 readEvidence 正文直接支持的事实后重新添加引用。不得把模板机械重复到每个 requirement，也不得把模板之外的模型常识写入答案。
 重写流程时，每个独立步骤必须各自带正文引用；若采用一个统一引用，则必须把全部阶段写在同一个不被句号、分号、换行或项目符号拆开的连续句段中。
 正式证据明确写明某版本、兼容性或结论“需确认/待确认”时，如果用户问的正是版本边界或确认状态，准确报告该未确认边界本身可以构成 complete；不得仅因产品结论尚未确认就机械降为 partial。只有用户问题的其他核心部分仍缺证据时才使用 partial。

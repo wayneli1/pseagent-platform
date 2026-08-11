@@ -116,6 +116,12 @@ function classifyGap(
     return { gapClass: "ambiguity", reason: "ambiguous_question" };
   }
   if (!unit.verification.missing) return undefined;
+  if (
+    unit.verification.missingAspectIds.length === 0 &&
+    unit.claims.some((claim) => claim.status === "removed")
+  ) {
+    return { gapClass: "knowledge", reason: "unsupported_claim_removed" };
+  }
 
   const relevantCandidates = unit.candidates.filter((candidate) =>
     appliesToAspect(candidate.aspectIds, aspectId));
@@ -211,12 +217,23 @@ function missingAspects(
   const labelById = new Map(
     unit.requirement.evidenceAspects.map((aspect) => [aspect.id, aspect.label] as const),
   );
-  return unit.verification.missingAspectIds.flatMap((aspectId) => {
+  const missing = unit.verification.missingAspectIds.flatMap((aspectId) => {
     const label = labelById.get(aspectId)?.trim();
     return label === undefined || label.length === 0
       ? []
       : [{ id: aspectId, label }];
   });
+  if (
+    missing.length === 0 &&
+    unit.verification.coverage === "partial" &&
+    unit.claims.some((claim) => claim.status === "removed")
+  ) {
+    return [{
+      id: "__unsupported_claim_removed__",
+      label: "核验中删除的无证据主张",
+    }];
+  }
+  return missing;
 }
 
 function appliesToAspect(

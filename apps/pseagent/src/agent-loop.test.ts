@@ -4038,6 +4038,152 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("answered");
   });
 
+  it("rewrites once when verification removes unsupported claims after all aspects are covered", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/concepts/supported.md" }] },
+    });
+    const model = scriptedAgentModel([
+      read("R1", "wiki/concepts/supported.md"),
+      final("complete", "已证实事实与额外承诺[1]", [1]),
+      final("complete", "仅保留正文支持的已证实事实[1]", [1]),
+    ]);
+    let verificationCalls = 0;
+
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(model, session),
+      verifyCoverage: async (input) => {
+        verificationCalls += 1;
+        const repaired: FinalAction = {
+          action: "final",
+          requirements: [{
+            id: "R1",
+            coverage: "partial",
+            answer: "已证实事实[1]",
+            citations: [1],
+          }],
+          citations: [1],
+        };
+        input.onReport?.({
+          summaries: [{
+            id: "R1",
+            reason: "partial_support",
+            retainedDirectSegmentCount: 2,
+            retainedSynthesizedSegmentCount: 0,
+            removedSegmentCount: 1,
+            coveredAspectCount: 1,
+            missingAspectCount: 0,
+            coveredAspectIds: ["A1"],
+            missingAspectIds: [],
+            claimDecisions: [
+              {
+                claimIndex: 0,
+                status: "retained_direct",
+                citations: [1],
+                coveredAspectIds: ["A1"],
+              },
+              {
+                claimIndex: 1,
+                status: "retained_direct",
+                citations: [1],
+                coveredAspectIds: [],
+              },
+              {
+                claimIndex: 2,
+                status: "removed",
+                citations: [1],
+                coveredAspectIds: [],
+              },
+            ],
+          }],
+          coveredRequirementIds: ["R1"],
+          missingRequirementIds: ["R1"],
+        });
+        return repaired;
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "verified",
+      action: { requirements: [{ coverage: "complete" }] },
+      coverageGaps: [],
+    });
+    expect(verificationCalls).toBe(2);
+    expect(payloadAt(model, 2).observations?.join("\n")).toContain(
+      "coverage_verifier_claim_repair_required",
+    );
+  });
+
+  it("reads one high-grade missing-aspect candidate after verification exhausts the normal budget", async () => {
+    const paths = [
+      "wiki/concepts/first.md",
+      "wiki/concepts/second.md",
+      "wiki/concepts/third.md",
+      "wiki/concepts/fourth.md",
+    ];
+    const session = fakeSession({
+      hits: { "seed-r1": paths.map((path) => ({ path })) },
+    });
+    const model = scriptedAgentModel([
+      read("R1", paths[0]!),
+      read("R1", paths[1]!),
+      read("R1", paths[2]!),
+      final("complete", "前三页尚未覆盖核验缺口[1][2][3]", [1, 2, 3]),
+      final("complete", "第四页补足核验缺口[4]", [4]),
+    ]);
+    let verificationCalls = 0;
+
+    const result = await runKnowledgeAgentDetailed({
+      ...agentInput(model, session),
+      verifyCoverage: async (input) => {
+        verificationCalls += 1;
+        if (verificationCalls > 1) return reportAndReturn(input);
+        const partial: FinalAction = {
+          action: "final",
+          requirements: [{
+            id: "R1",
+            coverage: "partial",
+            answer: "前三页尚未覆盖核验缺口[1][2][3]",
+            citations: [1, 2, 3],
+          }],
+          citations: [1, 2, 3],
+        };
+        input.onReport?.({
+          summaries: [{
+            id: "R1",
+            reason: "partial_support",
+            retainedDirectSegmentCount: 1,
+            retainedSynthesizedSegmentCount: 0,
+            removedSegmentCount: 0,
+            coveredAspectCount: 0,
+            missingAspectCount: 1,
+            coveredAspectIds: [],
+            missingAspectIds: ["A1"],
+            claimDecisions: [{
+              claimIndex: 0,
+              status: "retained_direct",
+              citations: [1, 2, 3],
+              coveredAspectIds: [],
+            }],
+          }],
+          coveredRequirementIds: ["R1"],
+          missingRequirementIds: ["R1"],
+        });
+        return partial;
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "verified",
+      action: { requirements: [{ coverage: "complete", citations: [4] }] },
+      coverageGaps: [],
+    });
+    expect(session.readPage).toHaveBeenCalledTimes(4);
+    expect(verificationCalls).toBe(2);
+    expect(payloadAt(model, 4).observations?.join("\n")).toContain(
+      "coverage_verifier_evidence_recovery_read",
+    );
+  });
+
   it("returns a verified partial answer with a retrieval gap when forced review cannot advance", async () => {
     const session = fakeSession({
       hits: {
@@ -5587,7 +5733,7 @@ describe("runKnowledgeAgent", () => {
     }
   });
 
-  it("keeps an unread aspect-matched global candidate as a retrieval gap after read budget exhaustion", async () => {
+  it("uses one aspect-matched global candidate to recover after normal read budget exhaustion", async () => {
     const session = fakeSession({
       hits: {
         "seed-r1": [
@@ -5611,21 +5757,21 @@ describe("runKnowledgeAgent", () => {
           ),
           read("R1", "wiki/three.md"),
           final("none", "当前正式资料未覆盖"),
+          final("complete", "全局相关页已补全证据[4]", [4]),
         ]),
         session,
       ),
       question: "测试证据",
     });
 
-    expect(result).toMatchObject({ outcome: "verified" });
+    expect(result).toMatchObject({ outcome: "verified", coverageGaps: [] });
     if (result.outcome === "verified") {
       expect(result.evidenceLedger?.units[0]?.candidates.find((candidate) =>
-        candidate.path === "wiki/global-relevant.md")?.reviewRequired).toBe(true);
-      expect(result.coverageGaps?.[0]).toMatchObject({
-        gapClass: "retrieval",
-        reason: "retrieval_budget_exhausted",
-      });
+        candidate.path === "wiki/global-relevant.md")?.reviewRequired).toBe(false);
+      expect(result.evidenceLedger?.units[0]?.reads.find((read) =>
+        read.path === "wiki/global-relevant.md")?.status).toBe("success");
     }
+    expect(session.readPage).toHaveBeenCalledTimes(4);
   });
 
   it("keeps an unread unclassified global candidate out of knowledge-gap attribution", async () => {

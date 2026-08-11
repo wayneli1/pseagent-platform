@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
+  Coverage,
+  CoverageVerificationReason,
+} from "../apps/pseagent/src/contracts.ts";
+import type {
   DiagnosticEvent,
   DiagnosticTrace,
   DiagnosticTraceFactory,
@@ -60,6 +64,21 @@ export interface ReliabilityDiagnosticSummary {
     readonly draftRequirementCount: number;
     readonly verifiedRequirementCount: number;
     readonly incompleteVerifiedRequirementCount: number;
+    readonly requirements: readonly {
+      readonly id: string;
+      readonly coverage: Coverage;
+      readonly reason?: CoverageVerificationReason;
+      readonly candidateCount: number;
+      readonly readCandidateCount: number;
+      readonly unreadCandidateCount: number;
+      readonly remainingReads: number;
+      readonly seedSearchStatus?: "success" | "empty" | "unavailable";
+      readonly retainedDirectSegmentCount: number;
+      readonly retainedSynthesizedSegmentCount: number;
+      readonly removedSegmentCount: number;
+      readonly coveredAspectCount: number;
+      readonly missingAspectCount: number;
+    }[];
     readonly gapCount: number;
     readonly gaps: readonly {
       readonly domain: KnowledgeDomain;
@@ -82,6 +101,7 @@ export interface ReliabilityDiagnosticSummary {
     readonly finalGuardRejectedCount: number;
     readonly rejected: readonly {
       readonly reason: string;
+      readonly detail?: string;
       readonly repairAttempt: number;
     }[];
     readonly payloadRejected: readonly {
@@ -167,10 +187,11 @@ export function summarizeReliabilityDiagnostics(
     event.event === "coverage" && event.stage === "verified");
   const draftCoverage = [...events].reverse().find((event) =>
     event.event === "coverage" && event.stage === "draft");
-  const gapEvents = events.filter((event) => event.event === "coverage_gaps");
-  const gaps = gapEvents.flatMap((event) => event.event === "coverage_gaps"
-    ? event.gaps.map((gap) => ({ ...gap }))
-    : []);
+  const latestGapEvent = [...events].reverse().find((event) =>
+    event.event === "coverage_gaps");
+  const gaps = latestGapEvent?.event === "coverage_gaps"
+    ? latestGapEvent.gaps.map((gap) => ({ ...gap }))
+    : [];
   const gates = events.flatMap((event) => event.event === "coverage_gate"
     ? [{
         disposition: event.disposition,
@@ -181,7 +202,13 @@ export function summarizeReliabilityDiagnostics(
       }]
     : []);
   const rejected = events.flatMap((event) => event.event === "validation"
-    ? [{ reason: safeDiagnosticCode(event.reason), repairAttempt: event.repairAttempt }]
+    ? [{
+        reason: safeDiagnosticCode(event.reason),
+        ...(safeDiagnosticDetail(event.reason) === undefined
+          ? {}
+          : { detail: safeDiagnosticDetail(event.reason) }),
+        repairAttempt: event.repairAttempt,
+      }]
     : []);
   const payloadRejected = events.flatMap((event) => event.event === "model_payload"
     ? [{
@@ -198,6 +225,11 @@ export function summarizeReliabilityDiagnostics(
   const verifiedRequirements = verifiedCoverage?.event === "coverage"
     ? verifiedCoverage.requirements
     : [];
+  const verifiedReasonById = new Map(
+    verifiedCoverage?.event === "coverage"
+      ? verifiedCoverage.reasons?.map(({ id, reason }) => [id, reason] as const)
+      : undefined,
+  );
   const draftRequirements = draftCoverage?.event === "coverage"
     ? draftCoverage.requirements
     : [];
@@ -262,6 +294,26 @@ export function summarizeReliabilityDiagnostics(
       verifiedRequirementCount: verifiedRequirements.length,
       incompleteVerifiedRequirementCount: verifiedRequirements.filter((item) =>
         item.coverage !== "complete").length,
+      requirements: verifiedRequirements.map((item) => ({
+        id: item.id,
+        coverage: item.coverage,
+        ...(verifiedReasonById.get(item.id) === undefined
+          ? {}
+          : { reason: verifiedReasonById.get(item.id)! }),
+        candidateCount: item.candidateCount ?? 0,
+        readCandidateCount: item.readCandidateCount ?? 0,
+        unreadCandidateCount: item.unreadCandidateCount ?? 0,
+        remainingReads: item.remainingReads ?? 0,
+        ...(item.seedSearchStatus === undefined
+          ? {}
+          : { seedSearchStatus: item.seedSearchStatus }),
+        retainedDirectSegmentCount: item.retainedDirectSegmentCount ?? 0,
+        retainedSynthesizedSegmentCount:
+          item.retainedSynthesizedSegmentCount ?? 0,
+        removedSegmentCount: item.removedSegmentCount ?? 0,
+        coveredAspectCount: item.coveredAspectCount ?? 0,
+        missingAspectCount: item.missingAspectCount ?? 0,
+      })),
       gapCount: gaps.length,
       gaps,
       gates,
@@ -285,4 +337,9 @@ function sum(values: readonly number[]): number {
 function safeDiagnosticCode(value: string): string {
   const code = value.split(":", 1)[0]?.trim() ?? "";
   return /^[a-z][a-z0-9_-]{0,95}$/u.test(code) ? code : "unknown";
+}
+
+function safeDiagnosticDetail(value: string): string | undefined {
+  const detail = value.split(":", 2)[1]?.trim() ?? "";
+  return /^[a-z][a-z0-9_-]{0,95}$/u.test(detail) ? detail : undefined;
 }

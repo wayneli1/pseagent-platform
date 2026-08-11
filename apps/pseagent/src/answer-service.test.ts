@@ -2167,6 +2167,40 @@ describe("AnswerService", () => {
       });
       expect(JSON.stringify(gapEvent)).not.toContain(mixedQuestion);
       expect(JSON.stringify(gapEvent)).not.toContain("wiki/");
+      const mergedCoverage = events.find((event) =>
+        event.event === "coverage" &&
+        event.stage === "verified" &&
+        event.requirements.length === 2);
+      expect(mergedCoverage).toMatchObject({
+        event: "coverage",
+        stage: "verified",
+        requirements: [
+          {
+            id: "R1",
+            coverage: "none",
+            candidateCount: 0,
+            readCandidateCount: 0,
+            unreadCandidateCount: 0,
+            remainingReads: 0,
+            seedSearchStatus: "empty",
+            missingAspectCount: 1,
+          },
+          {
+            id: "R2",
+            coverage: "none",
+            candidateCount: 0,
+            readCandidateCount: 0,
+            unreadCandidateCount: 0,
+            remainingReads: 0,
+            seedSearchStatus: "empty",
+            missingAspectCount: 1,
+          },
+        ],
+        reasons: [
+          { id: "R1", reason: "target_omitted" },
+          { id: "R2", reason: "target_omitted" },
+        ],
+      });
     });
 
     it("keeps the merged answer deterministic when domain completion order reverses", async () => {

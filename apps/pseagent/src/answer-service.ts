@@ -1398,17 +1398,73 @@ function recordMergedCoverage(
       plan.plan.requirements[index]!,
     ] as const)),
   );
+  const ledgerByDomain = new Map(
+    merged.domainEvidenceLedgers?.map((ledger) => [ledger.project, ledger] as const),
+  );
+  const verificationById = new Map(
+    merged.verification?.summaries.map((summary) => [summary.id, summary] as const),
+  );
   recordDiagnostic(trace, {
     event: "coverage",
     stage: "verified",
-    requirements: merged.bindings.map((binding, index) => ({
-      id: binding.globalRequirementId,
-      evidenceMode: localRequirementByBinding.get(
-        `${binding.domain}\u0000${binding.requirementId}`,
-      )!.evidenceMode,
-      coverage: merged.action.requirements[index]!.coverage,
-      citations: merged.action.requirements[index]!.citations,
-    })),
+    requirements: merged.bindings.map((binding, index) => {
+      const ledgerUnit = ledgerByDomain.get(binding.domain)?.units.find((unit) =>
+        unit.binding.requirementId === binding.requirementId &&
+        unit.binding.deliverableId === binding.deliverableId &&
+        unit.binding.obligationId === binding.obligationId);
+      const verification = verificationById.get(binding.globalRequirementId);
+      const readCandidateIds = new Set(
+        ledgerUnit?.reads.flatMap((read) =>
+          read.status === "success" ? [read.candidateId] : []) ?? [],
+      );
+      const candidateCount = ledgerUnit?.candidates.length ?? 0;
+      const readCandidateCount = ledgerUnit?.candidates.filter((candidate) =>
+        readCandidateIds.has(candidate.id)).length ?? 0;
+      const pendingReviewCount = ledgerUnit?.candidates.filter((candidate) =>
+        candidate.reviewRequired && !readCandidateIds.has(candidate.id)).length ?? 0;
+      const seedSearchStatus = ledgerUnit === undefined
+        ? undefined
+        : ledgerUnit.candidates.some((candidate) => candidate.sources.includes("seed"))
+          ? "success" as const
+          : ledgerUnit.queries.some((query) =>
+              query.phase === "seed" && query.status !== "unavailable")
+            ? "empty" as const
+            : "unavailable" as const;
+      return {
+        id: binding.globalRequirementId,
+        evidenceMode: localRequirementByBinding.get(
+          `${binding.domain}\u0000${binding.requirementId}`,
+        )!.evidenceMode,
+        coverage: merged.action.requirements[index]!.coverage,
+        citations: merged.action.requirements[index]!.citations,
+        candidateCount,
+        readCandidateCount,
+        unreadCandidateCount: Math.max(0, candidateCount - readCandidateCount),
+        remainingReads: ledgerUnit?.retrieval.readBudgetExhausted === true
+          ? 0
+          : pendingReviewCount,
+        ...(seedSearchStatus === undefined ? {} : { seedSearchStatus }),
+        ...(verification === undefined
+          ? {}
+          : {
+              retainedDirectSegmentCount:
+                verification.retainedDirectSegmentCount,
+              retainedSynthesizedSegmentCount:
+                verification.retainedSynthesizedSegmentCount,
+              removedSegmentCount: verification.removedSegmentCount,
+              coveredAspectCount: verification.coveredAspectCount,
+              missingAspectCount: verification.missingAspectCount,
+            }),
+      };
+    }),
+    ...(merged.verification === undefined
+      ? {}
+      : {
+          reasons: merged.verification.summaries.map(({ id, reason }) => ({
+            id,
+            reason,
+          })),
+        }),
     citations: merged.action.citations,
     stopReason: "final",
   });

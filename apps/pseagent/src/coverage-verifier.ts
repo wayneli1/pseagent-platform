@@ -427,9 +427,53 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
           : requirement),
     };
   }
-  input.onVerified?.(summaries.map(stripAspectIds));
-  input.onReport?.(coverageVerificationReport(materialized, summaries));
+  const coverageAlignedSummaries = alignSummariesToMaterializedCoverage(
+    materialized,
+    input.plan,
+    summaries,
+  );
+  input.onVerified?.(coverageAlignedSummaries.map(stripAspectIds));
+  input.onReport?.(coverageVerificationReport(
+    materialized,
+    coverageAlignedSummaries,
+  ));
   return materialized;
+}
+
+function alignSummariesToMaterializedCoverage(
+  action: FinalAction,
+  plan: KnowledgePlan,
+  summaries: readonly CoverageVerificationDetail[],
+): CoverageVerificationDetail[] {
+  return summaries.map((summary, index) => {
+    const result = action.requirements[index];
+    const planned = plan.requirements[index];
+    if (
+      result?.coverage !== "partial" ||
+      planned === undefined ||
+      summary.missingAspectCount !== 0 ||
+      summary.removedSegmentCount !== 0
+    ) {
+      return summary;
+    }
+    const missingAspectId = summary.coveredAspectIds.at(-1) ??
+      planned.evidenceAspects.at(-1)?.id;
+    if (missingAspectId === undefined) return summary;
+    const coveredAspectIds = summary.coveredAspectIds.filter((aspectId) =>
+      aspectId !== missingAspectId);
+    return {
+      ...summary,
+      coveredAspectCount: coveredAspectIds.length,
+      missingAspectCount: 1,
+      coveredAspectIds,
+      missingAspectIds: [missingAspectId],
+      claimDecisions: summary.claimDecisions.map((claim) => ({
+        ...claim,
+        coveredAspectIds: claim.coveredAspectIds.filter((aspectId) =>
+          aspectId !== missingAspectId),
+      })),
+    };
+  });
 }
 
 function normalizeEvidenceModeDecisions(
