@@ -2223,6 +2223,7 @@ describe("AnswerService", () => {
           return {
             outcome: "unavailable",
             result: temporaryUnavailableResult("professional"),
+            stopReason: "model_unavailable",
           };
         }
         return await new Promise((resolve) => {
@@ -2231,6 +2232,7 @@ describe("AnswerService", () => {
             resolve({
               outcome: "unavailable",
               result: temporaryUnavailableResult("general"),
+              stopReason: "model_unavailable",
             });
           }, { once: true });
         });
@@ -2356,11 +2358,10 @@ describe("AnswerService", () => {
       expect(historicalProvider.answer).not.toHaveBeenCalled();
     });
 
-    it("retries one isolated domain after a transient detailed-agent failure", async () => {
-      const detailed = vi.fn<DetailedAgentRunner>()
-        .mockImplementationOnce(async (input) => {
-          input.trace.record({ event: "stop", reason: "model_unavailable" });
-          return {
+    it("does not rerun a whole domain after a transient detailed-agent failure", async () => {
+      const detailed = vi.fn<DetailedAgentRunner>(async (input) => {
+        input.trace.record({ event: "stop", reason: "model_unavailable" });
+        return {
           outcome: "unavailable",
           result: {
             scope: "general",
@@ -2368,31 +2369,9 @@ describe("AnswerService", () => {
             answer: "temporarily unavailable",
             references: [],
           },
-          };
-        })
-        .mockImplementation(async (input) => ({
-          outcome: "verified",
-          project: input.session.project,
-          revision: input.session.revision,
-          action: {
-            action: "final",
-            requirements: [{
-              id: "R1",
-              coverage: "complete",
-              answer: "verified answer[1]",
-              citations: [1],
-            }],
-            citations: [1],
-          },
-          references: [{
-            index: 1,
-            project: input.session.project,
-            revision: input.session.revision,
-            title: "verified source",
-            path: "wiki/verified.md",
-            contentHash: "f".repeat(64),
-          }],
-        }));
+          stopReason: "model_unavailable",
+        };
+      });
       const { service } = createMixedService({
         detailed,
         shadow: singleDomainShadow("presales-general"),
@@ -2400,11 +2379,11 @@ describe("AnswerService", () => {
 
       const execution = await service.answerDetailed(mixedQuestion);
 
-      expect(detailed).toHaveBeenCalledTimes(2);
+      expect(detailed).toHaveBeenCalledOnce();
       expect(execution).toMatchObject({
-        retryable: false,
-        stopReason: "final",
-        result: { status: "answered" },
+        retryable: true,
+        stopReason: "domain_execution_unavailable",
+        result: { status: "temporarily_unavailable" },
       });
     });
 
@@ -2414,6 +2393,7 @@ describe("AnswerService", () => {
         return {
           outcome: "unavailable",
           result: temporaryUnavailableResult("general"),
+          stopReason: "invalid_final",
         };
       });
       const { service } = createMixedService({
@@ -2440,6 +2420,7 @@ describe("AnswerService", () => {
         return {
           outcome: "unavailable",
           result: temporaryUnavailableResult("general"),
+          stopReason: "invalid_final",
         };
       });
       const { service } = createMixedService({

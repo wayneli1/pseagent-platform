@@ -2103,6 +2103,41 @@ describe("runKnowledgeAgent", () => {
     );
   });
 
+  it("does not turn an operational overview into a step-completeness requirement", async () => {
+    const plan: KnowledgePlan = {
+      subject: "Coremail 部署方式",
+      requirements: [{
+        id: "R1",
+        question: "Coremail XT6 常见部署方式有哪些",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "部署方式",
+          terms: ["单机部署", "多机部署"],
+        }],
+        queries: [{ text: "Coremail XT6 常见部署方式", aspectIds: ["A1"] }],
+      }],
+    };
+    const path = "wiki/queries/deployment-overview.md";
+    const session = fakeSession({
+      hits: {
+        "Coremail XT6 常见部署方式": [{ path, title: "部署方式" }],
+      },
+      pageBodies: {
+        [path]: "常见方式包括单机部署和多机部署。多机安装后需要逐节点检查服务状态。",
+      },
+    });
+    const model = scriptedAgentModel([
+      read("R1", path),
+      final("complete", "常见方式包括单机部署和多机部署 [1]。", [1]),
+    ]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session, plan));
+
+    expect(result.status).toBe("answered");
+    expect(model.calls).toBe(2);
+  });
+
   it("does not duplicate an operational condition already covered by a sibling requirement", async () => {
     const plan: KnowledgePlan = {
       subject: "插件同步配置与版本边界",
@@ -2263,7 +2298,7 @@ describe("runKnowledgeAgent", () => {
     expect(result.answer).toContain("问题严重性");
   });
 
-  it("rewrites an answer that omits one formally coordinated framework component", async () => {
+  it("projects a grounded framework component after the semantic repair budget is spent", async () => {
     const path = "wiki/concepts/results-first.md";
     const plan: KnowledgePlan = {
       subject: "结果优先演示",
@@ -2304,7 +2339,7 @@ describe("runKnowledgeAgent", () => {
       ),
       final(
         "complete",
-        "用 Do the Last Thing First 先展示最终结果，以 Illustration 简洁画面连接情境，再以 Inverted Pyramid 按需深入；敏感数据使用脱敏或示意环境 [1]。",
+        "用 Do the Last Thing First 先展示最终结果，再以 Inverted Pyramid 按需深入；敏感数据使用脱敏或示意环境 [1]。",
         [1],
       ),
     ]);
@@ -2323,7 +2358,7 @@ describe("runKnowledgeAgent", () => {
       "named_method_completeness_review_required",
     );
     expect(result.answer).toContain("Illustration");
-    expect(result.answer).toContain("简洁画面");
+    expect(result.answer).toContain("正式资料列出的同组组成项");
     expect(result.answer).toContain("脱敏");
     expect(payloadAt(model, 3).observations?.join("\n")).toContain(
       "framework_boundary_repair_required",
@@ -2379,7 +2414,7 @@ describe("runKnowledgeAgent", () => {
     });
 
     expect(result.status).toBe("answered");
-    expect(model.calls).toBe(5);
+    expect(model.calls).toBe(4);
     expect(verifyCoverage).toHaveBeenCalledOnce();
     expect(result.answer).toContain("**正式边界**");
     expect(result.answer).toContain("对敏感数据需使用脱敏或示意环境 [1]");
@@ -4880,7 +4915,7 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("not_covered");
   });
 
-  it("returns unavailable after two explicit action repair attempts remain invalid", async () => {
+  it("returns unavailable after one explicit action repair attempt remains invalid", async () => {
     const session = fakeSession({ hits: { "seed-r1": [] } });
     const model = scriptedAgentModel([
       new InvalidModelPayloadError(),
@@ -4890,7 +4925,7 @@ describe("runKnowledgeAgent", () => {
 
     const result = await runKnowledgeAgent(agentInput(model, session));
 
-    expect(model.calls).toBe(3);
+    expect(model.calls).toBe(2);
     expect(result.status).toBe("temporarily_unavailable");
   });
 

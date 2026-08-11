@@ -42,9 +42,11 @@ import {
 } from "./references.js";
 import { formatKnowledgeFinal, unavailableResult } from "./response.js";
 import {
+  NOOP_DIAGNOSTIC_TRACE,
   recordDiagnostic,
   type DiagnosticEvent,
   type DiagnosticTrace,
+  type PseStopReason,
 } from "./diagnostics.js";
 import {
   finalizeEvidenceLedger,
@@ -104,6 +106,7 @@ export const MAX_BATCH_READS_PER_REQUIREMENT = 2;
 export const MAX_GRAPH_ACTIONS_PER_REQUIREMENT = 1;
 export const MAX_AGENT_TURNS_PER_REQUIREMENT = 7;
 const MAX_CITATION_REPAIR_ATTEMPTS = 2;
+const MAX_SEMANTIC_REPAIR_TURNS_PER_DOMAIN = 2;
 const MIN_VERIFIER_EXECUTION_MS = 5_000;
 const RRF_K = 60;
 const SEED_TOP_K = 10;
@@ -162,6 +165,7 @@ export type KnowledgeAgentDetailedResult =
   | {
       readonly outcome: "unavailable";
       readonly result: AnswerResult;
+      readonly stopReason: PseStopReason | "unknown_unavailable";
     };
 
 type Candidate = {
@@ -231,6 +235,7 @@ type AgentState = {
   frameworkBoundaryRepairAttempts: number;
   structuredCoverageRepairAttempts: number;
   answerCardConceptRepairAttempts: number;
+  semanticRepairTurns: number;
   invalidPayloadTurnRetries: number;
   forceFinal: boolean;
   successfulSeedSearches: number;
@@ -267,10 +272,39 @@ export async function runKnowledgeAgent(
 export async function runKnowledgeAgentDetailed(
   input: KnowledgeAgentInput,
 ): Promise<KnowledgeAgentDetailedResult> {
-  const result = await runKnowledgeAgentCore(input);
+  const outcomeTrace = new AgentOutcomeDiagnosticTrace(
+    input.trace ?? NOOP_DIAGNOSTIC_TRACE,
+  );
+  const result = await runKnowledgeAgentCore({
+    ...input,
+    trace: outcomeTrace,
+  });
   return "outcome" in result
     ? result
-    : { outcome: "unavailable", result };
+    : {
+        outcome: "unavailable",
+        result,
+        stopReason: outcomeTrace.stopReason ?? "unknown_unavailable",
+      };
+}
+
+class AgentOutcomeDiagnosticTrace implements DiagnosticTrace {
+  stopReason?: PseStopReason;
+
+  constructor(private readonly delegate: DiagnosticTrace) {}
+
+  get requestId(): string {
+    return this.delegate.requestId;
+  }
+
+  record(event: DiagnosticEvent): void {
+    if (event.event === "stop") this.stopReason = event.reason;
+    this.delegate.record(event);
+  }
+
+  progress(event: Parameters<NonNullable<DiagnosticTrace["progress"]>>[0]): void {
+    this.delegate.progress?.(event);
+  }
 }
 
 async function runKnowledgeAgentCore(
@@ -390,10 +424,12 @@ async function runKnowledgeAgentCore(
       if (
         missingDraftCardConcepts.length > 0 &&
         state.answerCardConceptRepairAttempts < 2 &&
+        hasSemanticRepairBudget(state) &&
         turn < maxTurns &&
         !deadlineReached(input)
       ) {
         state.answerCardConceptRepairAttempts += 1;
+        reserveSemanticRepair(state);
         state.forceFinal = true;
         observe(state, {
           type: "answer_card_concept_repair_required",
@@ -431,10 +467,12 @@ async function runKnowledgeAgentCore(
       if (
         comparisonSubjectRepairs.length > 0 &&
         state.comparisonSubjectRepairAttempts === 0 &&
+        hasSemanticRepairBudget(state) &&
         turn < maxTurns &&
         !deadlineReached(input)
       ) {
         state.comparisonSubjectRepairAttempts += 1;
+        reserveSemanticRepair(state);
         state.forceFinal = true;
         observe(state, {
           type: "comparison_subject_repair_required",
@@ -449,10 +487,12 @@ async function runKnowledgeAgentCore(
       if (
         directAnswerRepairs.length > 0 &&
         state.directAnswerRepairAttempts === 0 &&
+        hasSemanticRepairBudget(state) &&
         turn < maxTurns &&
         !deadlineReached(input)
       ) {
         state.directAnswerRepairAttempts += 1;
+        reserveSemanticRepair(state);
         state.forceFinal = true;
         observe(state, {
           type: "direct_answer_repair_required",
@@ -476,10 +516,12 @@ async function runKnowledgeAgentCore(
       if (
         namedMethodCompletenessReviews.length > 0 &&
         state.namedMethodCompletenessReviewAttempts === 0 &&
+        hasSemanticRepairBudget(state) &&
         turn < maxTurns &&
         !deadlineReached(input)
       ) {
         state.namedMethodCompletenessReviewAttempts += 1;
+        reserveSemanticRepair(state);
         state.forceFinal = true;
         observe(state, {
           type: "named_method_completeness_review_required",
@@ -493,10 +535,12 @@ async function runKnowledgeAgentCore(
       if (danglingCollectionRepairs.length > 0) {
         if (
           state.structuredCoverageRepairAttempts < 2 &&
+          hasSemanticRepairBudget(state) &&
           turn < maxTurns &&
           !deadlineReached(input)
         ) {
           state.structuredCoverageRepairAttempts += 1;
+          reserveSemanticRepair(state);
           state.forceFinal = true;
           observe(state, {
             type: "structured_coverage_repair_required",
@@ -517,11 +561,13 @@ async function runKnowledgeAgentCore(
       );
       if (frameworkComponentRepairs.length > 0) {
         if (
-          state.structuredCoverageRepairAttempts < 2 &&
+          state.structuredCoverageRepairAttempts === 0 &&
+          hasSemanticRepairBudget(state) &&
           turn < maxTurns &&
           !deadlineReached(input)
         ) {
           state.structuredCoverageRepairAttempts += 1;
+          reserveSemanticRepair(state);
           state.forceFinal = true;
           observe(state, {
             type: "structured_coverage_repair_required",
@@ -530,11 +576,22 @@ async function runKnowledgeAgentCore(
           });
           continue;
         }
-        return rejectInvalidFinal(
-          input,
-          "coordinated_framework_component_missing",
-          state.structuredCoverageRepairAttempts,
+        const projected = applyGroundedFrameworkComponents(
+          normalizedAction,
+          state,
         );
+        if (pendingFrameworkComponentRepairs(projected, state).length > 0) {
+          return rejectInvalidFinal(
+            input,
+            "coordinated_framework_component_missing",
+            state.structuredCoverageRepairAttempts,
+          );
+        }
+        normalizedAction = projected;
+        observe(state, {
+          type: "framework_component_grounded_projection",
+          requirements: frameworkComponentRepairs,
+        });
       }
       const frameworkBoundaryRepairs = pendingFrameworkBoundaryRepairs(
         normalizedAction,
@@ -543,10 +600,12 @@ async function runKnowledgeAgentCore(
       if (frameworkBoundaryRepairs.length > 0) {
         if (
           state.frameworkBoundaryRepairAttempts < 2 &&
+          hasSemanticRepairBudget(state) &&
           turn < maxTurns &&
           !deadlineReached(input)
         ) {
           state.frameworkBoundaryRepairAttempts += 1;
+          reserveSemanticRepair(state);
           state.forceFinal = true;
           observe(state, {
             type: "framework_boundary_repair_required",
@@ -580,10 +639,12 @@ async function runKnowledgeAgentCore(
       if (operationalConditionRepairs.length > 0) {
         if (
           state.structuredCoverageRepairAttempts < 2 &&
+          hasSemanticRepairBudget(state) &&
           turn < maxTurns &&
           !deadlineReached(input)
         ) {
           state.structuredCoverageRepairAttempts += 1;
+          reserveSemanticRepair(state);
           state.forceFinal = true;
           observe(state, {
             type: "structured_coverage_repair_required",
@@ -669,9 +730,11 @@ async function runKnowledgeAgentCore(
         });
         if (
           state.citationRepairAttempts < MAX_CITATION_REPAIR_ATTEMPTS &&
+          hasSemanticRepairBudget(state) &&
           turn < maxTurns
         ) {
           state.citationRepairAttempts += 1;
+          reserveSemanticRepair(state);
           state.forceFinal = true;
           observe(state, { type: "invalid_citations", reason: validation.reason });
           continue;
@@ -802,10 +865,12 @@ async function runKnowledgeAgentCore(
       if (
         missingAuditedCardConcepts.length > 0 &&
         state.answerCardConceptRepairAttempts < 2 &&
+        hasSemanticRepairBudget(state) &&
         turn < maxTurns &&
         !deadlineReached(input)
       ) {
         state.answerCardConceptRepairAttempts += 1;
+        reserveSemanticRepair(state);
         state.forceFinal = true;
         observe(state, {
           type: "answer_card_concept_repair_required",
@@ -830,10 +895,12 @@ async function runKnowledgeAgentCore(
       if (
         auditedComparisonSubjectRepairs.length > 0 &&
         state.comparisonSubjectRepairAttempts < 2 &&
+        hasSemanticRepairBudget(state) &&
         turn < maxTurns &&
         !deadlineReached(input)
       ) {
         state.comparisonSubjectRepairAttempts += 1;
+        reserveSemanticRepair(state);
         state.forceFinal = true;
         observe(state, {
           type: "comparison_subject_repair_required",
@@ -850,40 +917,41 @@ async function runKnowledgeAgentCore(
         input.plan,
         state,
       );
-      if (
-        structuredCoverageRepairs.length > 0 &&
-        state.structuredCoverageRepairAttempts < 2 &&
-        turn < maxTurns &&
-        !deadlineReached(input)
-      ) {
-        state.structuredCoverageRepairAttempts += 1;
-        state.forceFinal = true;
-        observe(state, {
-          type: "structured_coverage_repair_required",
-          requirements: structuredCoverageRepairs,
-        });
-        continue;
-      }
       if (structuredCoverageRepairs.length > 0) {
-        const projected = applyGroundedStrictFrameworkBoundaries(
-          auditedAction,
+        let projected = applyGroundedFrameworkComponents(auditedAction, state);
+        projected = applyGroundedStrictFrameworkBoundaries(
+          projected,
           state,
           input.plan,
         );
-        if (
-          pendingStructuredCoverageRepairs(
-            normalizedAction,
-            projected,
-            input.plan,
-            state,
-          ).length > 0
-        ) {
+        const remainingRepairs = pendingStructuredCoverageRepairs(
+          normalizedAction,
+          projected,
+          input.plan,
+          state,
+        );
+        if (remainingRepairs.length > 0) {
+          if (
+            state.structuredCoverageRepairAttempts < 2 &&
+            hasSemanticRepairBudget(state) &&
+            turn < maxTurns &&
+            !deadlineReached(input)
+          ) {
+            state.structuredCoverageRepairAttempts += 1;
+            reserveSemanticRepair(state);
+            state.forceFinal = true;
+            observe(state, {
+              type: "structured_coverage_repair_required",
+              requirements: remainingRepairs,
+            });
+            continue;
+          }
           return fallbackUnavailable(input, "coverage_verifier_invalid");
         }
         auditedAction = projected;
         projectedAfterVerification = true;
         observe(state, {
-          type: "framework_boundary_grounded_projection",
+          type: "structured_coverage_grounded_projection",
           requirements: structuredCoverageRepairs,
           stage: "verified",
         });
@@ -1440,6 +1508,7 @@ function createAgentState(input: KnowledgeAgentInput): AgentState {
     frameworkBoundaryRepairAttempts: 0,
     structuredCoverageRepairAttempts: 0,
     answerCardConceptRepairAttempts: 0,
+    semanticRepairTurns: 0,
     invalidPayloadTurnRetries: 0,
     forceFinal: false,
     successfulSeedSearches: 0,
@@ -1676,13 +1745,13 @@ async function requestAgentAction(
     });
   };
   let repairReason: string | undefined;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       return await request(repairReason);
     } catch (error) {
       if (!(error instanceof InvalidModelPayloadError)) throw error;
       recordRejectedModelPayload(input, error, attempt);
-      if (attempt === 3) throw error;
+      if (attempt === 2) throw error;
       repairReason = modelPayloadRepairReason(error);
     }
   }
@@ -3412,6 +3481,14 @@ function stableUniqueNumbers(values: readonly number[]): number[] {
   });
 }
 
+function hasSemanticRepairBudget(state: AgentState): boolean {
+  return state.semanticRepairTurns < MAX_SEMANTIC_REPAIR_TURNS_PER_DOMAIN;
+}
+
+function reserveSemanticRepair(state: AgentState): void {
+  state.semanticRepairTurns += 1;
+}
+
 function pendingEvidenceReviews(
   action: FinalAction,
   state: AgentState,
@@ -3674,6 +3751,8 @@ const STRUCTURED_COMPLETENESS_QUESTION_PATTERN =
   /(?:认证流程|处理流程|操作流程|关键步骤|完整步骤|关键配置|配置项|配置参数)/u;
 const OPERATIONAL_DETAIL_QUESTION_PATTERN =
   /(?:配置|设置|安装|同步|操作|切换|部署|启用|升级)/u;
+const OPERATIONAL_OVERVIEW_QUESTION_PATTERN =
+  /(?:有哪些|哪几种|哪些方式|方式有哪些|常见.{0,8}方式|部署形态|部署类型)/u;
 
 function pendingBrokenCollectionRepairs(action: FinalAction): string[] {
   return action.requirements.flatMap((requirement) =>
@@ -3697,6 +3776,45 @@ function pendingFrameworkComponentRepairs(
       ? [requirement.id]
       : [];
   });
+}
+
+function applyGroundedFrameworkComponents(
+  action: FinalAction,
+  state: AgentState,
+): FinalAction {
+  let changed = false;
+  const requirements = action.requirements.map((requirement) => {
+    if (requirement.coverage === "none") return requirement;
+    const documents = [...(
+      state.evidenceDocuments.get(requirement.id)?.entries() ?? []
+    )];
+    let answer = requirement.answer;
+    const addedCitations: number[] = [];
+    for (const [citation, document] of documents) {
+      const missing = missingExplicitFrameworkItems(answer, [document]);
+      if (missing.length === 0) continue;
+      answer = `${answer.trimEnd()}\n- 正式资料列出的同组组成项：${missing.join("、")} [${citation}]。`;
+      addedCitations.push(citation);
+      changed = true;
+    }
+    if (addedCitations.length === 0) return requirement;
+    return {
+      ...requirement,
+      answer,
+      citations: stableUniqueNumbers([
+        ...requirement.citations,
+        ...addedCitations,
+      ]),
+    };
+  });
+  if (!changed) return action;
+  return {
+    ...action,
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap(requirementEvidenceCitations),
+    ),
+  };
 }
 
 function pendingFrameworkBoundaryRepairs(
@@ -3735,6 +3853,7 @@ function pendingOperationalConditionRepairs(
       requirement.coverage === "none" ||
       planned === undefined ||
       planned.evidenceMode !== "direct_only" ||
+      OPERATIONAL_OVERVIEW_QUESTION_PATTERN.test(planned.question) ||
       !OPERATIONAL_DETAIL_QUESTION_PATTERN.test(planned.question)
     ) {
       return [];

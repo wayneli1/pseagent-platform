@@ -90,7 +90,6 @@ import { RequestBudget } from "./request-budget.js";
 export const PSE_REQUEST_TIMEOUT_MS = 180_000;
 export const PSE_ACTIVE_DEADLINE_MS = 165_000;
 export const PSE_RETURN_RESERVE_MS = 5_000;
-const DOMAIN_AGENT_RETRY_RESERVE_MS = 60_000;
 
 export interface KnowledgeSessionFactory {
   open(scope: Exclude<Scope, "normal">, signal?: AbortSignal): Promise<KnowledgeSession>;
@@ -868,28 +867,7 @@ export class AnswerService {
           trace: domainTrace,
           signal: sharedSignal,
         };
-        let detailed = await runner(runnerInput);
-        if (
-          detailed.outcome === "unavailable" &&
-          input.plans.length === 1 &&
-          isRetryableDomainStopReason(input.trace.stopReason) &&
-          !sharedSignal.aborted &&
-          Date.now() + DOMAIN_AGENT_RETRY_RESERVE_MS < input.deadlineAt
-        ) {
-          // A complete verified attempt is still required. Retry one isolated
-          // domain once for transient model/verifier failures; never retry
-          // snapshot mismatches or cross-domain sibling failures.
-          delete input.trace.stopReason;
-          recordDiagnostic(input.trace, {
-            event: "domain_execution",
-            domain: domainPlan.domain,
-            phase,
-            result: "started",
-            domainCount: input.plans.length,
-            domainsUsed,
-          });
-          detailed = await runner(runnerInput);
-        }
+        const detailed = await runner(runnerInput);
         if (sharedSignal.aborted || Date.now() >= input.deadlineAt) {
           throw new DomainExecutionError(
             activeDeadlineSignal.aborted || Date.now() >= input.deadlineAt
@@ -901,7 +879,9 @@ export class AnswerService {
         if (detailed.outcome === "unavailable") {
           throw new DomainExecutionError(
             "agent_unavailable",
-            domainTrace.stopReason,
+            detailed.stopReason === "unknown_unavailable"
+              ? domainTrace.stopReason
+              : detailed.stopReason,
           );
         }
         if (
@@ -1140,15 +1120,6 @@ export class AnswerService {
       );
     }
   }
-}
-
-function isRetryableDomainStopReason(
-  reason: PseStopReason | undefined,
-): boolean {
-  return reason === "model_unavailable" ||
-    reason === "seed_unavailable" ||
-    reason === "evidence_review_unavailable" ||
-    reason === "coverage_verifier_unavailable";
 }
 
 function explicitScopeForResolvedQuestion(question: string): Scope | undefined {
