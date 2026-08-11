@@ -170,6 +170,77 @@ fn search_reserves_a_candidate_for_one_hop_graph_context() {
 }
 
 #[test]
+fn graph_context_does_not_evict_direct_lexical_hits() {
+    let professional = root("professional-graph-quota");
+    let general = root("general-graph-quota");
+    fs::write(
+        professional.join("wiki/concepts/gateway.md"),
+        "---\ntype: concept\ntitle: 安全网关功能总览\ntags: []\nrelated: [关联实施甲, 关联实施乙, 关联实施丙]\nsources: []\n---\n# 安全网关功能总览\n安全网关功能。",
+    )
+    .unwrap();
+    for index in 1..=4 {
+        fs::write(
+            professional.join(format!("wiki/concepts/gateway-{index}.md")),
+            format!(
+                "---\ntype: concept\ntitle: 安全网关功能 {index}\ntags: []\nrelated: []\nsources: []\n---\n# 安全网关功能 {index}\n安全网关功能说明。"
+            ),
+        )
+        .unwrap();
+    }
+    for (name, title) in [("a", "关联实施甲"), ("b", "关联实施乙"), ("c", "关联实施丙")] {
+        fs::write(
+            professional.join(format!("wiki/concepts/related-{name}.md")),
+            format!(
+                "---\ntype: concept\ntitle: {title}\ntags: []\nrelated: []\nsources: []\n---\n# {title}\n样本准备和评分要求。"
+            ),
+        )
+        .unwrap();
+    }
+    let revision = "a".repeat(40);
+    let service = KnowledgeService::new([
+        (
+            ProjectKey::CoremailProfessional,
+            ProjectIndexes::new(
+                Catalog::load(
+                    ProjectKey::CoremailProfessional,
+                    &professional,
+                    revision.clone(),
+                )
+                .unwrap(),
+                load_planning_context(&professional).unwrap(),
+            ),
+        ),
+        (
+            ProjectKey::PresalesGeneral,
+            ProjectIndexes::new(
+                Catalog::load(ProjectKey::PresalesGeneral, &general, revision).unwrap(),
+                load_planning_context(&general).unwrap(),
+            ),
+        ),
+    ])
+    .unwrap();
+
+    let result = service
+        .search(ProjectKey::CoremailProfessional, "安全网关功能", 5)
+        .unwrap();
+    let direct = result
+        .hits
+        .iter()
+        .filter(|hit| hit.title.contains("安全网关功能"))
+        .count();
+    let graph = result
+        .hits
+        .iter()
+        .filter(|hit| hit.title.starts_with("关联实施"))
+        .count();
+
+    assert_eq!(direct, 5);
+    assert_eq!(graph, 0);
+    fs::remove_dir_all(professional).unwrap();
+    fs::remove_dir_all(general).unwrap();
+}
+
+#[test]
 fn governed_search_filters_are_enforced_at_the_service_boundary() {
     let professional = root("professional-governed-search");
     let general = root("general-governed-search");

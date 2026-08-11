@@ -167,6 +167,10 @@ impl LexicalIndex {
         filters: &SearchFilters,
     ) -> Vec<SearchHit> {
         let phrase = compact(query);
+        let normalized_query = tokenize::normalize(query);
+        let comparison_intent = ["对比", "比较", "区别", "差异", "区分"]
+            .iter()
+            .any(|marker| normalized_query.contains(marker));
         let query_tokens = tokenize::query_tokens(query);
         let total_query_weight = query_tokens
             .iter()
@@ -218,6 +222,12 @@ impl LexicalIndex {
                 if !phrase.is_empty() && page.compact_body.contains(&phrase) {
                     score += 20.0;
                 }
+                score += query_tokens
+                    .iter()
+                    .filter(|term| is_distinctive_latin_term(term))
+                    .filter(|term| page.normalized_title.contains(term.as_str()))
+                    .count() as f32
+                    * 30.0;
                 let matched_terms = query_tokens
                     .iter()
                     .filter(|token| page.tokens.contains(*token))
@@ -260,6 +270,15 @@ impl LexicalIndex {
                 score += 30.0 * coverage * coverage;
                 if coverage < 0.2 {
                     score *= 0.25;
+                }
+                let comparison_subject_in_title = query_tokens
+                    .iter()
+                    .filter(|term| is_comparison_subject_term(term))
+                    .any(|term| page.normalized_title.contains(term.as_str()));
+                if comparison_intent && page.page_type == "comparison" && coverage >= 0.1 &&
+                    comparison_subject_in_title
+                {
+                    score += 240.0 * coverage;
                 }
                 (score > 0.0).then(|| SearchHit {
                     path: page.path.clone(),
@@ -320,6 +339,19 @@ fn query_term_weight(term: &str) -> f32 {
         2 => 1.0,
         _ => 1.5,
     }
+}
+
+fn is_distinctive_latin_term(term: &str) -> bool {
+    term.chars().count() >= 3 &&
+        term.chars().all(|value| value.is_ascii_alphanumeric() || matches!(value, '-' | '_'))
+}
+
+fn is_comparison_subject_term(term: &str) -> bool {
+    term.chars().count() >= 2 && !matches!(
+        term,
+        "对比" | "比较" | "区别" | "差异" | "区分" | "不同" | "功能" | "版本" |
+            "边界" | "如何" | "什么" | "怎么" | "适用" | "能力"
+    )
 }
 
 fn inverse_document_frequency(document_count: usize, document_frequency: usize) -> f32 {

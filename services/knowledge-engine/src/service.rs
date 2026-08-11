@@ -254,11 +254,9 @@ fn blend_search_with_graph(
             entry.2 += 1;
         }
     }
-    let graph_quota = if top_k < 2 {
-        0
-    } else {
-        ((top_k as f32 * 0.25).ceil() as usize).clamp(1, top_k - 1)
-    };
+    // One-hop graph results fill otherwise empty slots. They must not evict a
+    // directly matching lexical result merely because a fixed quota exists.
+    let graph_quota = top_k.saturating_sub(lexical_hits.len().min(top_k));
     let mut ranked_graph = graph_candidates.into_iter().collect::<Vec<_>>();
     ranked_graph.sort_by(
         |(left_path, (_, left_score, left_seeds)), (right_path, (_, right_score, right_seeds))| {
@@ -270,7 +268,7 @@ fn blend_search_with_graph(
     );
     ranked_graph.truncate(graph_quota);
 
-    let lexical_quota = top_k.saturating_sub(ranked_graph.len());
+    let lexical_quota = top_k;
     let mut observations = lexical_hits
         .into_iter()
         .take(lexical_quota)

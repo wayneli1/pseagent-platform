@@ -32,10 +32,20 @@ fn fixture() -> PathBuf {
 }
 
 fn write_page(root: &Path, name: &str, title: &str, body: &str) {
+    write_typed_page(root, name, "concept", title, body);
+}
+
+fn write_typed_page(
+    root: &Path,
+    name: &str,
+    page_type: &str,
+    title: &str,
+    body: &str,
+) {
     fs::write(
         root.join("wiki/concepts").join(name),
         format!(
-            "---\ntype: concept\ntitle: {title}\ntags: []\nrelated: []\nsources: []\n---\n# {title}\n{body}"
+            "---\ntype: {page_type}\ntitle: {title}\ntags: []\nrelated: []\nsources: []\n---\n# {title}\n{body}"
         ),
     )
     .unwrap();
@@ -109,6 +119,69 @@ fn exact_gateway_poc_page_outranks_pages_sharing_generic_characters() {
                 .iter()
                 .position(|hit| hit.title == "XT6 产品新功能清单")
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn distinctive_latin_terms_in_the_title_outrank_body_only_mentions() {
+    let root = fixture();
+    write_page(
+        &root,
+        "air-outlook-comparison.md",
+        "Coremail Air 与 Outlook 功能对比",
+        "对比邮件、日历、通讯录和文件能力。",
+    );
+    for index in 1..=4 {
+        write_page(
+            &root,
+            &format!("air-overview-{index}.md"),
+            &format!("Coremail Air 客户端功能总览 {index}"),
+            "本文介绍 Air 客户端功能，正文附带 Outlook 调研背景。Air 客户端功能覆盖邮件和日历。",
+        );
+    }
+    let catalog = Catalog::load(ProjectKey::CoremailProfessional, &root, "a".repeat(40)).unwrap();
+    let hits = LexicalIndex::build(&catalog)
+        .search("Coremail Air 客户端和 Outlook 的功能差异", 10);
+
+    assert_eq!(hits[0].path, "wiki/concepts/air-outlook-comparison.md");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn explicit_comparison_intent_prefers_a_direct_comparison_page() {
+    let root = fixture();
+    write_typed_page(
+        &root,
+        "archive-versions.md",
+        "comparison",
+        "归档版本对比",
+        "对比独立版、高级版、基础版和归档 2020 的边界。",
+    );
+    write_page(
+        &root,
+        "archive-entity.md",
+        "邮件归档系统",
+        "邮件归档不同版本包含很多功能。邮件归档版本功能边界需要区分，本文反复说明邮件归档系统。",
+    );
+    write_typed_page(
+        &root,
+        "unrelated-comparison.md",
+        "comparison",
+        "客户端功能版本边界对比",
+        "不同客户端功能版本需要区分，但与归档主题无关。",
+    );
+    let catalog = Catalog::load(ProjectKey::CoremailProfessional, &root, "a".repeat(40)).unwrap();
+    assert_eq!(
+        catalog
+            .read("wiki/concepts/archive-versions.md")
+            .unwrap()
+            .page_type,
+        "comparison"
+    );
+    let hits = LexicalIndex::build(&catalog)
+        .search("邮件归档不同版本的功能边界如何区分", 10);
+
+    assert_eq!(hits[0].path, "wiki/concepts/archive-versions.md");
     fs::remove_dir_all(root).unwrap();
 }
 

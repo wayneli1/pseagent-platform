@@ -33,6 +33,7 @@
     "probe:reliability-load": "node --env-file=.env.local --import tsx scripts/probe-reliability-load.mts",
     "probe:coverage-calibration": "node --env-file=.env.local --import tsx scripts/probe-coverage-calibration.mts",
     "probe:routing-gold": "node --import tsx scripts/probe-routing-gold.mts",
+    "probe:retrieval-gold:current": "node --env-file-if-exists=.env.local --import tsx scripts/probe-current-retrieval-gold.mts",
     "audit:reliability-evidence-gaps": "node --env-file-if-exists=.env.local --import tsx scripts/audit-reliability-evidence-gaps.mts",
     "probe:blind-acceptance": "node --env-file-if-exists=.env.local --import tsx scripts/run-blind-acceptance.mts",
     "gate:enterprise-release": "node --import tsx scripts/evaluate-enterprise-release.mts",
