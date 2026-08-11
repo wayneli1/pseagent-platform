@@ -41,6 +41,40 @@ describe("blind acceptance contract", () => {
       item.highRisk && item.expectedDisposition === "answer")).toHaveLength(24);
   });
 
+  it("parses a third frozen matrix with no normalized question reuse", () => {
+    const thirdPath = new URL(
+      "../tests/e2e/enterprise-blind-acceptance-20260811-third.json",
+      import.meta.url,
+    );
+    const dataset = parseBlindAcceptanceDataset(
+      JSON.parse(readFileSync(thirdPath, "utf8")),
+      new Set(),
+    );
+    const previousPaths = [
+      "../tests/e2e/enterprise-blind-acceptance-20260810.json",
+      "../tests/e2e/enterprise-blind-acceptance-20260811.json",
+      "../tests/e2e/enterprise-blind-acceptance-20260811-final.json",
+    ];
+    const previousHashes = new Set(previousPaths.flatMap((path) => {
+      const value = JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8"));
+      return (value.cases as Array<{ question: string }>).map((item) =>
+        hashBlindQuestion(item.question));
+    }));
+
+    expect(dataset.cases).toHaveLength(100);
+    expect(Object.fromEntries(blindLayerCounts(dataset.cases))).toEqual({
+      professional: 20,
+      general: 20,
+      mixed: 15,
+      multi_turn: 15,
+      insufficient_evidence: 15,
+      safety_boundary: 15,
+    });
+    expect(dataset.cases.filter((item) => previousHashes.has(
+      hashBlindQuestion(item.question),
+    ))).toEqual([]);
+  });
+
   it("normalizes equivalent question text to the same hash", () => {
     expect(hashBlindQuestion("  Coremail：能力？ ")).toBe(
       hashBlindQuestion("coremail 能力"),
