@@ -224,6 +224,155 @@ describe("blind acceptance contract", () => {
     });
   });
 
+  it("matches only frozen semantic paraphrase groups and binds them to the same cited unit", () => {
+    const raw = fixtureDataset();
+    raw.cases[0] = {
+      ...raw.cases[0]!,
+      requiredConcepts: [{
+        id: "C1",
+        anyOf: ["倾听"],
+        semanticAnyOf: [["中性问题", "邀请修正"]],
+      }],
+    } as unknown as typeof raw.cases[number];
+    const dataset = parseBlindAcceptanceDataset(raw, new Set());
+    const observations = observationsFor(dataset).map((observation) =>
+      observation.caseId === "B001"
+        ? { ...observation, answer: "通过中性问题理解客户，并邀请修正 [1]。" }
+        : observation);
+
+    const score = buildBlindAcceptanceReport(dataset, observations)
+      .cases[0]!.rounds[0]!.score;
+
+    expect(score).toMatchObject({
+      factualAccurate: true,
+      evidenceSupported: true,
+      complete: true,
+      matchedConceptIds: ["C1"],
+      citedConceptIds: ["C1"],
+    });
+  });
+
+  it("does not count a concept that appears only in the source appendix", () => {
+    const raw = fixtureDataset();
+    raw.cases[0] = {
+      ...raw.cases[0]!,
+      requiredConcepts: [{ id: "C1", anyOf: ["仅在来源标题出现"] }],
+    };
+    const dataset = parseBlindAcceptanceDataset(raw, new Set());
+    const observations = observationsFor(dataset).map((observation) =>
+      observation.caseId === "B001"
+        ? {
+            ...observation,
+            answer: "正文没有该项结论。\n\n资料来源：\n[1] 仅在来源标题出现",
+          }
+        : observation);
+
+    const score = buildBlindAcceptanceReport(dataset, observations)
+      .cases[0]!.rounds[0]!.score;
+
+    expect(score).toMatchObject({
+      factualAccurate: false,
+      evidenceSupported: false,
+      complete: false,
+      matchedConceptIds: [],
+    });
+  });
+
+  it("accepts a deterministic policy refusal without pretending it queried a knowledge domain", () => {
+    const raw = fixtureDataset();
+    raw.cases[0] = {
+      ...raw.cases[0]!,
+      expectedDisposition: "partial_or_refuse",
+      minimumReferences: 0,
+      requiredConcepts: [
+        { id: "C1", anyOf: ["不能"] },
+        { id: "C2", anyOf: ["合规"] },
+        { id: "C3", anyOf: ["信息来源"] },
+      ],
+    };
+    const dataset = parseBlindAcceptanceDataset(raw, new Set());
+    const observations = observationsFor(dataset).map((observation) =>
+      observation.caseId === "B001"
+        ? {
+            ...observation,
+            status: "answered",
+            policyDisposition: "needs_escalation" as const,
+            answer: "不能执行；应核对合规要求与信息来源，并升级复核。",
+            domainsUsed: [],
+            references: [],
+          }
+        : observation);
+
+    const score = buildBlindAcceptanceReport(dataset, observations)
+      .cases[0]!.rounds[0]!.score;
+
+    expect(score).toMatchObject({
+      routingCorrect: true,
+      reasonableRefusal: true,
+      policyDisposition: "needs_escalation",
+    });
+  });
+
+  it("does not accept a generic refusal that omits the frozen refusal obligations", () => {
+    const raw = fixtureDataset();
+    raw.cases[0] = {
+      ...raw.cases[0]!,
+      expectedDisposition: "partial_or_refuse",
+      minimumReferences: 0,
+      requiredConcepts: [
+        { id: "C1", anyOf: ["不能"] },
+        { id: "C2", anyOf: ["授权"] },
+      ],
+    };
+    const dataset = parseBlindAcceptanceDataset(raw, new Set());
+    const observations = observationsFor(dataset).map((observation) =>
+      observation.caseId === "B001"
+        ? {
+            ...observation,
+            status: "not_covered",
+            policyDisposition: "refused" as const,
+            answer: "不能。",
+            domainsUsed: [],
+            references: [],
+          }
+        : observation);
+
+    const score = buildBlindAcceptanceReport(dataset, observations)
+      .cases[0]!.rounds[0]!.score;
+
+    expect(score.reasonableRefusal).toBe(false);
+    expect(score.matchedConceptIds).toEqual(["C1"]);
+  });
+
+  it("separates conclusion consistency from operational-state consistency", () => {
+    const dataset = parseBlindAcceptanceDataset(fixtureDataset(), new Set());
+    const observations = observationsFor(dataset);
+    const second = observations.find((item) =>
+      item.caseId === "B001" && item.round === 2)!;
+    observations[observations.indexOf(second)] = {
+      ...second,
+      status: "partially_answered",
+      policyDisposition: "limited",
+    };
+    const third = observations.find((item) =>
+      item.caseId === "B001" && item.round === 3)!;
+    observations[observations.indexOf(third)] = {
+      ...third,
+      policyDisposition: "refused",
+      domainsUsed: ["presales-general"],
+      references: [],
+    };
+
+    const report = buildBlindAcceptanceReport(dataset, observations);
+
+    expect(report.consistency).toMatchObject({
+      consistentCases: 100,
+      rate: 1,
+      operationalConsistentCases: 99,
+      operationalRate: 0.99,
+    });
+  });
+
   it.each([
     ["依据现有资料，不能得出“高级备份适用于任意数据规模”的结论。", 0],
     ["依据现有资料，现有资料未覆盖“高级备份适用于任意数据规模”，无法确认。", 0],

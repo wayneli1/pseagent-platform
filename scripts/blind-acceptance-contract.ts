@@ -19,6 +19,8 @@ export type BlindPolicyDisposition =
   | "needs_escalation"
   | "unknown";
 
+export const blindAcceptanceScorerVersion = 2;
+
 export const enterpriseLatencyThresholds = Object.freeze({
   p95Ms: 120_000,
   p99Ms: 180_000,
@@ -36,6 +38,11 @@ export interface BlindAcceptanceCase {
   readonly requiredConcepts: readonly {
     readonly id: string;
     readonly anyOf: readonly string[];
+    /**
+     * Frozen, auditable paraphrase groups. A group matches only when every
+     * term appears in the same semantic unit of the answer.
+     */
+    readonly semanticAnyOf?: readonly (readonly string[])[];
   }[];
   readonly forbiddenPatterns: readonly string[];
   readonly minimumReferences: number;
@@ -268,13 +275,22 @@ export function buildBlindAcceptanceReport(
   };
   const consistentCases = dataset.cases.filter((testCase) => {
     const caseScores = scored.filter((item) => item.testCase.id === testCase.id);
-    const signatures = new Set(caseScores.map((item) => consistencySignature(item)));
+    const signatures = new Set(caseScores.map((item) =>
+      conclusionConsistencySignature(item)));
+    return signatures.size === 1;
+  }).length;
+  const operationalConsistentCases = dataset.cases.filter((testCase) => {
+    const caseScores = scored.filter((item) => item.testCase.id === testCase.id);
+    const signatures = new Set(caseScores.map((item) =>
+      operationalConsistencySignature(item)));
     return signatures.size === 1;
   }).length;
   const consistency = {
     totalCases: dataset.cases.length,
     consistentCases,
     rate: rate(consistentCases, dataset.cases.length),
+    operationalConsistentCases,
+    operationalRate: rate(operationalConsistentCases, dataset.cases.length),
   };
   const thresholds = dataset.thresholds;
   const hardGates: BlindAcceptanceHardGate[] = [
@@ -305,6 +321,7 @@ export function buildBlindAcceptanceReport(
   ];
   const qualified = hardGates.every((gate) => gate.passed);
   return {
+    scorerVersion: blindAcceptanceScorerVersion,
     firstOutput,
     allOutputs,
     consistency,
@@ -362,10 +379,13 @@ function scoreObservation(
   testCase: BlindAcceptanceCase,
   observation: BlindAcceptanceObservation,
 ): ScoredObservation {
-  const answer = observation.answer.normalize("NFKC").toLocaleLowerCase("zh-CN");
+  const answerWithoutSources = stripSourceAppendix(observation.answer);
+  const answerBody = testCase.expectedDisposition === "answer"
+    ? stripGapAppendix(answerWithoutSources)
+    : answerWithoutSources;
+  const answer = normalizeForScoring(answerBody);
   const matchedConceptIds = testCase.requiredConcepts.filter((concept) =>
-    concept.anyOf.some((candidate) =>
-      answer.includes(candidate.normalize("NFKC").toLocaleLowerCase("zh-CN"))))
+    conceptMatchesAnswer(concept, answerBody))
     .map((concept) => concept.id);
   const forbiddenClaimCount = testCase.forbiddenPatterns.filter((pattern) =>
     contextualForbiddenClaimIsEndorsed(answer, pattern)).length;
@@ -375,18 +395,25 @@ function scoreObservation(
   const factualAccurate = available &&
     matchedConceptIds.length === testCase.requiredConcepts.length &&
     forbiddenClaimCount === 0;
+  const policyDisposition = observation.policyDisposition ??
+    inferPolicyDisposition(observation, answer);
   const observedDomains = observation.domainsUsed ??
     [...new Set(observation.references.map((reference) => reference.project))];
+  const policyHandledWithoutKnowledge =
+    testCase.expectedDisposition === "partial_or_refuse" &&
+    (policyDisposition === "refused" || policyDisposition === "needs_escalation") &&
+    observedDomains.length === 0 && observation.references.length === 0;
   const routingCorrect = available &&
     observation.scope === testCase.expectedScope &&
-    sameStringSet(testCase.expectedDomains, observedDomains);
+    (sameStringSet(testCase.expectedDomains, observedDomains) ||
+      policyHandledWithoutKnowledge);
   const citedIndexes = citationIndexes(answer);
   const validCitations = citedIndexes.every((index) =>
     observation.references.some((reference) => reference.index === index));
   const validReferenceIndexes = new Set(observation.references.map((reference) =>
     reference.index));
   const citedConceptIds = testCase.requiredConcepts.filter((concept) =>
-    conceptIsCited(concept.anyOf, answer, validReferenceIndexes)).map((concept) => concept.id);
+    conceptIsCited(concept, answerBody, validReferenceIndexes)).map((concept) => concept.id);
   const uncitedConceptIds = matchedConceptIds.filter((id) => !citedConceptIds.includes(id));
   const evidenceSupported = available &&
     observation.references.length >= testCase.minimumReferences &&
@@ -397,8 +424,6 @@ function scoreObservation(
     (testCase.minimumReferences === 0 || (
       citedIndexes.length > 0 && uncitedConceptIds.length === 0
     ));
-  const policyDisposition = observation.policyDisposition ??
-    inferPolicyDisposition(observation, answer);
   const complete = available &&
     matchedConceptIds.length === testCase.requiredConcepts.length &&
     observation.status === "answered";
@@ -408,11 +433,7 @@ function scoreObservation(
       policyDisposition !== "allowed" &&
       policyDisposition !== "unknown" &&
       answer.trim().length > 0 &&
-      (matchedConceptIds.length > 0 ||
-        observation.status === "not_covered" ||
-        observation.status === "partially_answered" ||
-        policyDisposition === "refused" ||
-        policyDisposition === "needs_escalation"));
+      matchedConceptIds.length === testCase.requiredConcepts.length);
   return {
     available,
     factualAccurate,
@@ -428,7 +449,28 @@ function scoreObservation(
   };
 }
 
-function consistencySignature(item: {
+function conclusionConsistencySignature(item: {
+  readonly testCase: BlindAcceptanceCase;
+  readonly observation: BlindAcceptanceObservation;
+  readonly score: ScoredObservation;
+}): string {
+  const conclusion = item.testCase.expectedDisposition === "answer"
+    ? {
+        factualAccurate: item.score.factualAccurate,
+        matchedConceptIds: item.score.matchedConceptIds,
+      }
+    : {
+        reasonableRefusal: item.score.reasonableRefusal,
+        matchedConceptIds: item.score.matchedConceptIds,
+      };
+  return JSON.stringify({
+    available: item.score.available,
+    forbiddenClaimCount: item.score.forbiddenClaimCount,
+    conclusion,
+  });
+}
+
+function operationalConsistencySignature(item: {
   readonly observation: BlindAcceptanceObservation;
   readonly score: ScoredObservation;
 }): string {
@@ -437,13 +479,9 @@ function consistencySignature(item: {
     status: item.observation.status,
     policyDisposition: item.score.policyDisposition,
     available: item.score.available,
-    factualAccurate: item.score.factualAccurate,
     evidenceSupported: item.score.evidenceSupported,
     routingCorrect: item.score.routingCorrect,
     complete: item.score.complete,
-    reasonableRefusal: item.score.reasonableRefusal,
-    forbiddenClaimCount: item.score.forbiddenClaimCount,
-    matchedConceptIds: item.score.matchedConceptIds,
     citedConceptIds: item.score.citedConceptIds,
   });
 }
@@ -559,18 +597,81 @@ function citationIndexes(answer: string): number[] {
   return [...answer.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1]));
 }
 
+type BlindRequiredConcept = BlindAcceptanceCase["requiredConcepts"][number];
+
 function conceptIsCited(
-  candidates: readonly string[],
-  answer: string,
+  concept: BlindRequiredConcept,
+  answerBody: string,
   validReferenceIndexes: ReadonlySet<number>,
 ): boolean {
-  return answer.split(/(?:\r?\n\s*){2,}/gu).some((paragraph) => {
-    const normalized = paragraph.normalize("NFKC").toLocaleLowerCase("zh-CN");
-    const containsConcept = candidates.some((candidate) =>
-      normalized.includes(candidate.normalize("NFKC").toLocaleLowerCase("zh-CN")));
-    return containsConcept && citationIndexes(paragraph).some((index) =>
+  return semanticUnits(answerBody).some((unit) => {
+    const containsConcept = conceptMatchesNormalizedUnit(
+      concept,
+      normalizeForScoring(unit),
+    );
+    return containsConcept && citationIndexes(unit).some((index) =>
       validReferenceIndexes.has(index));
   });
+}
+
+function conceptMatchesAnswer(
+  concept: BlindRequiredConcept,
+  answerBody: string,
+): boolean {
+  const normalizedAnswer = normalizeForScoring(answerBody);
+  if (normalizedCandidates(concept.anyOf).some((candidate) =>
+    normalizedAnswer.includes(candidate))) return true;
+  return semanticUnits(answerBody).some((unit) =>
+    conceptMatchesSemanticGroup(concept, normalizeForScoring(unit)));
+}
+
+function conceptMatchesNormalizedUnit(
+  concept: BlindRequiredConcept,
+  normalizedUnit: string,
+): boolean {
+  return normalizedCandidates(concept.anyOf).some((candidate) =>
+    normalizedUnit.includes(candidate)) ||
+    conceptMatchesSemanticGroup(concept, normalizedUnit);
+}
+
+function conceptMatchesSemanticGroup(
+  concept: BlindRequiredConcept,
+  normalizedValue: string,
+): boolean {
+  return (concept.semanticAnyOf ?? []).some((group) =>
+    normalizedCandidates(group).every((term) => normalizedValue.includes(term)));
+}
+
+function normalizedCandidates(values: readonly string[]): string[] {
+  return values.map(normalizeForScoring);
+}
+
+function semanticUnits(answerBody: string): string[] {
+  const lines = answerBody.split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.some((line) => /^(?:[-*+]\s+|\d+[.、)]\s*)/u.test(line))) {
+    return lines;
+  }
+  return answerBody.split(/(?:\r?\n\s*){2,}/gu)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+}
+
+function stripSourceAppendix(answer: string): string {
+  const marker = /(?:\r?\n){1,2}\s*(?:正式知识库)?资料来源[：:]\s*(?:\r?\n|$)/u
+    .exec(answer);
+  return marker?.index === undefined ? answer : answer.slice(0, marker.index);
+}
+
+function stripGapAppendix(answer: string): string {
+  const marker = /(?:\r?\n){1,2}\s*尚未确认的部分[：:]\s*(?:\r?\n|$)/u
+    .exec(answer);
+  return marker?.index === undefined ? answer : answer.slice(0, marker.index);
+}
+
+function normalizeForScoring(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("zh-CN");
 }
 
 function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
@@ -654,10 +755,22 @@ function parseCase(value: unknown, index: number): BlindAcceptanceCase {
   const requiredConcepts = value.requiredConcepts.map((concept) => {
     if (!isRecord(concept) || typeof concept.id !== "string" ||
       !Array.isArray(concept.anyOf) || concept.anyOf.length === 0 ||
-      !concept.anyOf.every((item) => typeof item === "string" && item.trim())) {
+      !concept.anyOf.every((item) => typeof item === "string" && item.trim()) ||
+      (concept.semanticAnyOf !== undefined && (
+        !Array.isArray(concept.semanticAnyOf) ||
+        !concept.semanticAnyOf.every((group) =>
+          Array.isArray(group) && group.length >= 2 &&
+          group.every((item) => typeof item === "string" && item.trim()))
+      ))) {
       throw new Error("invalid_blind_acceptance_concept");
     }
-    return { id: concept.id, anyOf: concept.anyOf as string[] };
+    return {
+      id: concept.id,
+      anyOf: concept.anyOf as string[],
+      ...(concept.semanticAnyOf === undefined
+        ? {}
+        : { semanticAnyOf: concept.semanticAnyOf as string[][] }),
+    };
   });
   return {
     id: value.id as string,
