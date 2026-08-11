@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   EvidenceLedgerValidationError,
@@ -85,6 +86,39 @@ function unit(
 }
 
 describe("finalizeEvidenceLedger", () => {
+  it("preserves a structured claim identity bound to the unit obligation and domain", () => {
+    const text = "Coremail 支持目标迁移。";
+    const claimHash = createHash("sha256")
+      .update(text.normalize("NFKC"), "utf8")
+      .digest("hex");
+
+    const ledger = finalizeEvidenceLedger({
+      project: "coremail-professional",
+      revision,
+      units: [unit({
+        claims: [{
+          claimIndex: 0,
+          claimId: "CL1",
+          obligationId: "O1",
+          domain: "coremail-professional",
+          text,
+          claimHash,
+          status: "retained_direct",
+          citations: [1],
+          coveredAspectIds: ["A1"],
+        }],
+      })],
+    });
+
+    expect(ledger.units[0]?.claims[0]).toMatchObject({
+      claimId: "CL1",
+      obligationId: "O1",
+      domain: "coremail-professional",
+      text,
+      claimHash,
+    });
+  });
+
   it("preserves immutable candidate ranking evidence without answer content", () => {
     const ledger = finalizeEvidenceLedger({
       project: "coremail-professional",

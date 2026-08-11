@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   coverageSchema,
   coverageVerificationReasonSchema,
@@ -77,6 +78,11 @@ export interface EvidenceGraphDraft {
 
 export interface EvidenceClaimRecord {
   readonly claimIndex: number;
+  readonly claimId?: `CL${number}`;
+  readonly obligationId?: `O${number}`;
+  readonly domain?: ProjectKey;
+  readonly text?: string;
+  readonly claimHash?: string;
   readonly status: EvidenceClaimStatus;
   readonly citations: readonly number[];
   readonly coveredAspectIds: readonly string[];
@@ -421,8 +427,40 @@ export function finalizeEvidenceLedger(input: {
         throw new EvidenceLedgerValidationError("claim_citation_not_read");
       }
       validateAspectIds(claim.coveredAspectIds, knownAspectIds, "claim_aspect_invalid");
+      const structuredValues = [
+        claim.claimId,
+        claim.obligationId,
+        claim.domain,
+        claim.text,
+        claim.claimHash,
+      ];
+      const structuredCount = structuredValues.filter((value) => value !== undefined).length;
+      if (structuredCount !== 0 && structuredCount !== structuredValues.length) {
+        throw new EvidenceLedgerValidationError("structured_claim_identity_incomplete");
+      }
+      if (
+        structuredCount > 0 &&
+        (
+          !/^CL[1-9]\d*$/u.test(claim.claimId ?? "") ||
+          claim.obligationId !== draft.binding.obligationId ||
+          claim.domain !== draft.binding.domain ||
+          !(claim.text?.trim()) ||
+          claim.text.length > 2_000 ||
+          !/^[a-f0-9]{64}$/u.test(claim.claimHash ?? "") ||
+          structuredClaimHash(claim.text) !== claim.claimHash
+        )
+      ) {
+        throw new EvidenceLedgerValidationError("structured_claim_identity_invalid");
+      }
       return {
         claimIndex: claim.claimIndex,
+        ...(claim.claimId === undefined ? {} : { claimId: claim.claimId }),
+        ...(claim.obligationId === undefined
+          ? {}
+          : { obligationId: claim.obligationId }),
+        ...(claim.domain === undefined ? {} : { domain: claim.domain }),
+        ...(claim.text === undefined ? {} : { text: claim.text }),
+        ...(claim.claimHash === undefined ? {} : { claimHash: claim.claimHash }),
         status: claim.status,
         citations: stableUnique(claim.citations),
         coveredAspectIds: stableUnique(claim.coveredAspectIds),
@@ -430,6 +468,11 @@ export function finalizeEvidenceLedger(input: {
     });
     if (new Set(claims.map((claim) => claim.claimIndex)).size !== claims.length) {
       throw new EvidenceLedgerValidationError("duplicate_claim_index");
+    }
+    const structuredClaimIds = claims.flatMap((claim) =>
+      claim.claimId === undefined ? [] : [claim.claimId]);
+    if (new Set(structuredClaimIds).size !== structuredClaimIds.length) {
+      throw new EvidenceLedgerValidationError("duplicate_structured_claim_id");
     }
 
     if (
@@ -482,6 +525,13 @@ export function finalizeEvidenceLedger(input: {
     revision: input.revision,
     units,
   });
+}
+
+function structuredClaimHash(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  return createHash("sha256")
+    .update(text.normalize("NFKC"), "utf8")
+    .digest("hex");
 }
 
 function validCandidateRanking(value: EvidenceCandidateRanking): boolean {
