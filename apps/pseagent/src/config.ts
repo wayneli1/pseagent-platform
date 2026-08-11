@@ -10,6 +10,7 @@ const baseEnvSchema = z.object({
   PSE_PLANNER_MODEL_NAME: z.string().trim().min(1).optional(),
   PSE_SYNTHESIZER_MODEL_NAME: z.string().trim().min(1).optional(),
   PSE_VERIFIER_MODEL_NAME: z.string().trim().min(1).optional(),
+  PSE_CONSENSUS_VERIFIER_MODEL_NAME: z.string().trim().min(1).optional(),
   PSE_MODEL_JSON_RESPONSE_FORMAT: z.enum(["true", "false"]).default("true"),
   PSE_MODEL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(180_000).default(60_000),
   PSE_MODEL_MAX_TOKENS: z.coerce.number().int().min(1_024).max(32_768).default(8_192),
@@ -68,6 +69,7 @@ export type AppConfig = BaseConfig & {
     readonly planner: string;
     readonly synthesizer: string;
     readonly verifier: string;
+    readonly consensusVerifier: string;
   };
   readonly modelCapabilities: {
     readonly jsonResponseFormat: boolean;
@@ -83,6 +85,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     PSE_PLANNER_MODEL_NAME: env.PSE_PLANNER_MODEL_NAME,
     PSE_SYNTHESIZER_MODEL_NAME: env.PSE_SYNTHESIZER_MODEL_NAME,
     PSE_VERIFIER_MODEL_NAME: env.PSE_VERIFIER_MODEL_NAME,
+    PSE_CONSENSUS_VERIFIER_MODEL_NAME: env.PSE_CONSENSUS_VERIFIER_MODEL_NAME,
     PSE_MODEL_JSON_RESPONSE_FORMAT: env.PSE_MODEL_JSON_RESPONSE_FORMAT,
     PSE_MODEL_TIMEOUT_MS: env.PSE_MODEL_TIMEOUT_MS,
     PSE_MODEL_MAX_TOKENS: env.PSE_MODEL_MAX_TOKENS,
@@ -253,6 +256,9 @@ function modelRoles(config: BaseConfig): AppConfig["modelRoles"] {
     planner: config.PSE_PLANNER_MODEL_NAME ?? config.PSE_MODEL_NAME,
     synthesizer: config.PSE_SYNTHESIZER_MODEL_NAME ?? config.PSE_MODEL_NAME,
     verifier: config.PSE_VERIFIER_MODEL_NAME ?? config.PSE_MODEL_NAME,
+    consensusVerifier: config.PSE_CONSENSUS_VERIFIER_MODEL_NAME ??
+      config.PSE_VERIFIER_MODEL_NAME ??
+      config.PSE_MODEL_NAME,
   };
 }
 

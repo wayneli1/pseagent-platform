@@ -15,6 +15,7 @@ export const MODEL_ROLES = [
   "planner",
   "synthesizer",
   "verifier",
+  "consensus_verifier",
 ] as const;
 export type ModelRole = typeof MODEL_ROLES[number];
 export interface ModelRoleClients {
@@ -22,6 +23,7 @@ export interface ModelRoleClients {
   readonly planner: ModelClient;
   readonly synthesizer: ModelClient;
   readonly verifier: ModelClient;
+  readonly consensusVerifier?: ModelClient;
 }
 export interface ModelCallMetrics {
   readonly attemptCount: number;

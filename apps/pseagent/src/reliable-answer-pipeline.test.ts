@@ -6,11 +6,17 @@ import type { DomainKnowledgePlan } from "./domain-plan.js";
 import type { EvidenceLedger } from "./evidence-ledger.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
 import {
+  HighRiskConsensusGate,
+  consensusClaimSignature,
+} from "./high-risk-consensus.js";
+import type { ModelClient } from "./model-client.js";
+import {
   DeterministicReliableAnswerPipeline,
   type TargetedClaimReviser,
 } from "./reliable-answer-pipeline.js";
 import { StageBudgetAllocator } from "./stage-budget.js";
 import { hashClaimText } from "./structured-claim.js";
+import type { BoundClaim } from "./structured-claim.js";
 
 const contract: AtomicObligationContract = {
   subject: "归档能力",
@@ -106,6 +112,7 @@ function traceFixture(): { readonly trace: DiagnosticTrace; readonly events: Dia
 function pipelineFixture(input: {
   readonly verifierVerdicts?: readonly ("supported" | "insufficient")[];
   readonly reviser?: TargetedClaimReviser;
+  readonly secondVerifier?: ModelClient;
 } = {}) {
   const knowledge = {
     open: vi.fn(async () => ({ project: "coremail-professional" }) as KnowledgeSession),
@@ -138,6 +145,17 @@ function pipelineFixture(input: {
     synthesizer,
     verifier,
     ...(input.reviser === undefined ? {} : { targetedReviser: input.reviser }),
+    ...(input.secondVerifier === undefined
+      ? {}
+      : {
+          highRiskConsensus: {
+            gate: new HighRiskConsensusGate(),
+            firstVerifier: input.secondVerifier,
+            secondVerifier: input.secondVerifier,
+            firstModelId: "verifier-a",
+            secondModelId: "verifier-b",
+          },
+        }),
   });
   return { pipeline, knowledge, retrieval, synthesizer, verifier };
 }
@@ -208,5 +226,57 @@ describe("deterministic reliable answer pipeline", () => {
       usedOpenEndedCalls: 2,
       usedStructuredCalls: 2,
     });
+  });
+
+  it("publishes a fixed limitation when a high-risk claim lacks two-verdict agreement", async () => {
+    const { trace } = traceFixture();
+    const expectedClaim: BoundClaim = {
+      claimId: "CL1",
+      obligationId: "O1",
+      domain: "coremail-professional",
+      text: "支持邮件归档。",
+      kind: "fact",
+      citationIndexes: [1],
+      coveredAspectIds: ["A1"],
+      support: "direct",
+      evidenceIdentities: [reference.contentHash],
+    };
+    const secondVerifier = {
+      completeJson: vi.fn(async () => [{
+        claimId: "CL1",
+        claimHash: consensusClaimSignature(expectedClaim),
+        citationIndexes: [1],
+        verdict: "insufficient" as const,
+      }]),
+      completeText: vi.fn(),
+    } as unknown as ModelClient;
+    const fixture = pipelineFixture({ secondVerifier });
+    const highRiskContract: AtomicObligationContract = {
+      ...contract,
+      obligations: contract.obligations.map((obligation) => ({
+        ...obligation,
+        risk: "high" as const,
+      })),
+    };
+
+    const execution = await fixture.pipeline.answer({
+      question: highRiskContract.sourceQuestion,
+      scope: "professional",
+      contract: highRiskContract,
+      plans: [plan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(secondVerifier.completeJson).toHaveBeenCalledOnce();
+    expect(execution.result).toMatchObject({
+      status: "partially_answered",
+      knowledgeCoverage: "none",
+      policyDisposition: "limited",
+    });
+    expect(execution.result.answer).toContain("高风险主张未通过双重一致性裁决");
+    expect(execution.result.answer).not.toContain("支持邮件归档。[1]");
+    expect(execution.callBudget.usedStructuredCalls).toBe(2);
   });
 });

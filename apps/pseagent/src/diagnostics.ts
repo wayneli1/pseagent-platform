@@ -177,7 +177,8 @@ export type DiagnosticEvent =
         | "plan"
         | "synthesize"
         | "verify"
-        | "targeted_claim_revision";
+        | "targeted_claim_revision"
+        | "consensus_verify";
       readonly outcome: "completed" | "failed";
       readonly elapsedMs: number;
       readonly attemptCount?: number;
@@ -196,6 +197,14 @@ export type DiagnosticEvent =
       readonly maximumOpenEndedCalls: number;
       readonly usedOpenEndedCalls: number;
       readonly usedStructuredCalls: number;
+    }
+  | {
+      readonly event: "high_risk_consensus";
+      readonly mode: "independent_models" | "repeated_same_model";
+      readonly claimCount: number;
+      readonly retainedCount: number;
+      readonly rejectedCount: number;
+      readonly agreed: boolean;
     }
   | {
       readonly event: "search";
@@ -823,7 +832,7 @@ function allowlistDiagnosticEvent(
         event: event.event,
         role: safeEnum(
           event.role,
-          ["resolver", "planner", "synthesizer", "verifier"] as const,
+          ["resolver", "planner", "synthesizer", "verifier", "consensus_verifier"] as const,
         ),
         operation: safeEnum(
           event.operation,
@@ -837,6 +846,7 @@ function allowlistDiagnosticEvent(
             "synthesize",
             "verify",
             "targeted_claim_revision",
+            "consensus_verify",
           ] as const,
         ),
         outcome: safeEnum(event.outcome, ["completed", "failed"] as const),
@@ -863,6 +873,18 @@ function allowlistDiagnosticEvent(
         maximumOpenEndedCalls: safeCount(event.maximumOpenEndedCalls),
         usedOpenEndedCalls: safeCount(event.usedOpenEndedCalls),
         usedStructuredCalls: safeCount(event.usedStructuredCalls),
+      };
+    case "high_risk_consensus":
+      return {
+        event: event.event,
+        mode: safeEnum(
+          event.mode,
+          ["independent_models", "repeated_same_model"] as const,
+        ),
+        claimCount: safeCount(event.claimCount),
+        retainedCount: safeCount(event.retainedCount),
+        rejectedCount: safeCount(event.rejectedCount),
+        agreed: safeBoolean(event.agreed),
       };
     case "search":
       return {

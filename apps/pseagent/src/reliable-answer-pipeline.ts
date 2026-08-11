@@ -11,6 +11,10 @@ import { recordDiagnostic, type DiagnosticTrace } from "./diagnostics.js";
 import type { DomainKnowledgePlan } from "./domain-plan.js";
 import type { EvidenceLedger } from "./evidence-ledger.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
+import {
+  HighRiskConsensusGate,
+  type HighRiskConsensusResult,
+} from "./high-risk-consensus.js";
 import type { ModelClient } from "./model-client.js";
 import { observeModelCall } from "./model-observability.js";
 import {
@@ -96,6 +100,13 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
     readonly synthesizer: StructuredClaimSynthesizer;
     readonly verifier: ClaimSupportVerifier;
     readonly targetedReviser?: TargetedClaimReviser;
+    readonly highRiskConsensus?: {
+      readonly gate: HighRiskConsensusGate;
+      readonly firstVerifier: ModelClient;
+      readonly secondVerifier: ModelClient;
+      readonly firstModelId: string;
+      readonly secondModelId: string;
+    };
     readonly maximumOpenEndedCalls?: number;
   }) {
     this.maximumOpenEndedCalls = dependencies.maximumOpenEndedCalls ?? PSE_MAX_OPEN_ENDED_CALLS;
@@ -175,6 +186,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
     });
     const firstVerificationStartedAt = Date.now();
     const verificationSignal = input.budget.signal("verification_consensus", input.signal);
+    let finalConsensusSignal = verificationSignal;
     let verificationUnavailable = false;
     let firstDecisions: readonly ClaimSupportDecision[] = [];
     if (firstBinding.retained.length > 0) {
@@ -209,6 +221,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
         : "completed");
 
     let revisedAccepted: readonly BoundClaim[] = [];
+    let revisedDecisions: readonly ClaimSupportDecision[] = [];
     const rejectedDrafts = globalDrafts.filter((claim) => rejectedIds.has(claim.claimId));
     if (
       rejectedDrafts.length > 0 &&
@@ -218,6 +231,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
     ) {
       const revisionStartedAt = Date.now();
       const revisionSignal = input.budget.signal("targeted_revision", input.signal);
+      finalConsensusSignal = revisionSignal;
       try {
         calls.useOpenEnded("targeted_claim_revision");
         const allowedObligations = new Set(rejectedDrafts.map((claim) => claim.obligationId));
@@ -242,7 +256,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
         });
         if (revisedBinding.retained.length > 0) {
           calls.useStructured();
-          const decisions = await observeModelCall({
+          revisedDecisions = await observeModelCall({
             trace: input.trace,
             role: "verifier",
             operation: "verify",
@@ -253,7 +267,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
               signal: revisionSignal,
             }),
           });
-          revisedAccepted = supportedClaims(revisedBinding.retained, decisions);
+          revisedAccepted = supportedClaims(revisedBinding.retained, revisedDecisions);
         }
         recordStage(input, "targeted_revision", revisionStartedAt, "completed");
       } catch {
@@ -262,10 +276,54 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
       }
     }
 
-    const finalClaims = stableClaims([
-      ...initiallyAccepted.filter((claim) => !rejectedIds.has(claim.claimId)),
+    const consensusCandidates = stableClaims([
+      ...initiallyAccepted,
       ...revisedAccepted,
     ]);
+    const highRiskObligationIds = new Set(input.contract.obligations
+      .filter((obligation) => obligation.risk === "high")
+      .map((obligation) => obligation.id));
+    const highRiskClaims = consensusCandidates.filter((claim) =>
+      highRiskObligationIds.has(claim.obligationId));
+    let consensusResult: HighRiskConsensusResult | undefined;
+    if (highRiskClaims.length > 0) {
+      if (this.dependencies.highRiskConsensus === undefined) {
+        consensusResult = Object.freeze({
+          mode: "repeated_same_model",
+          retainedClaimIds: Object.freeze([]),
+          rejectedClaimIds: Object.freeze(highRiskClaims.map((claim) => claim.claimId)),
+          agreed: false,
+        });
+      } else {
+        calls.useStructured();
+        consensusResult = await this.dependencies.highRiskConsensus.gate.evaluate({
+          claims: highRiskClaims,
+          firstVerdicts: [...firstDecisions, ...revisedDecisions],
+          evidence: globalized.evidence,
+          firstVerifier: this.dependencies.highRiskConsensus.firstVerifier,
+          secondVerifier: this.dependencies.highRiskConsensus.secondVerifier,
+          firstModelId: this.dependencies.highRiskConsensus.firstModelId,
+          secondModelId: this.dependencies.highRiskConsensus.secondModelId,
+          signal: finalConsensusSignal,
+          trace: input.trace,
+        });
+      }
+      recordDiagnostic(input.trace, {
+        event: "high_risk_consensus",
+        mode: consensusResult.mode,
+        claimCount: highRiskClaims.length,
+        retainedCount: consensusResult.retainedClaimIds.length,
+        rejectedCount: consensusResult.rejectedClaimIds.length,
+        agreed: consensusResult.agreed,
+      });
+    }
+    const consensusRetainedIds = new Set(consensusResult?.retainedClaimIds ?? []);
+    const consensusRejectedIds = new Set(consensusResult?.rejectedClaimIds ?? []);
+    const finalClaims = stableClaims(consensusCandidates.filter((claim) =>
+      !highRiskObligationIds.has(claim.obligationId) || consensusRetainedIds.has(claim.claimId)));
+    const consensusRejectedObligationIds = new Set(consensusCandidates
+      .filter((claim) => consensusRejectedIds.has(claim.claimId))
+      .map((claim) => claim.obligationId));
     const failedDomains = new Set(input.plans
       .filter((_plan, index) => retrievalSettled[index]?.status !== "fulfilled")
       .map((plan) => plan.domain));
@@ -279,6 +337,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
       claims: finalClaims,
       failedDomains: new Set([...failedDomains, ...draftFailedDomains]),
       verificationUnavailable,
+      consensusRejectedObligationIds,
     });
     const finalizationStartedAt = Date.now();
     const result = formatKnowledgeFinal(
@@ -461,6 +520,7 @@ function reduceToOutcomes(input: {
   readonly claims: readonly BoundClaim[];
   readonly failedDomains: ReadonlySet<KnowledgeDomain>;
   readonly verificationUnavailable: boolean;
+  readonly consensusRejectedObligationIds: ReadonlySet<string>;
 }): readonly ObligationOutcome[] {
   return Object.freeze(input.contract.obligations.map((obligation) => {
     const claims = input.claims.filter((claim) => claim.obligationId === obligation.id);
@@ -480,6 +540,14 @@ function reduceToOutcomes(input: {
           claims.some((claim) =>
             claim.domain === unit.binding.domain &&
             claim.coveredAspectIds.includes(aspect.id))));
+    if (input.consensusRejectedObligationIds.has(obligation.id)) {
+      return Object.freeze({
+        obligationId: obligation.id,
+        state: "policy_blocked" as const,
+        claims: Object.freeze(claims),
+        gapReason: "高风险主张未通过双重一致性裁决，不能作为正式结论发布。",
+      });
+    }
     if (missingInput) {
       return Object.freeze({
         obligationId: obligation.id,

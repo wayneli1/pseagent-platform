@@ -45,6 +45,7 @@ describe("loadConfig", () => {
       planner: "model",
       synthesizer: "model",
       verifier: "model",
+      consensusVerifier: "model",
     });
     expect(shared.modelCapabilities).toEqual({ jsonResponseFormat: true });
 
@@ -54,6 +55,7 @@ describe("loadConfig", () => {
       PSE_PLANNER_MODEL_NAME: "planner-model",
       PSE_SYNTHESIZER_MODEL_NAME: "synth-model",
       PSE_VERIFIER_MODEL_NAME: "verifier-model",
+      PSE_CONSENSUS_VERIFIER_MODEL_NAME: "consensus-model",
       PSE_MODEL_JSON_RESPONSE_FORMAT: "false",
     });
     expect(split.modelRoles).toEqual({
@@ -61,6 +63,7 @@ describe("loadConfig", () => {
       planner: "planner-model",
       synthesizer: "synth-model",
       verifier: "verifier-model",
+      consensusVerifier: "consensus-model",
     });
     expect(split.modelCapabilities).toEqual({ jsonResponseFormat: false });
     expect(() => loadConfig({

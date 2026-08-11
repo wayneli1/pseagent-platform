@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { AgentRunner, DetailedAgentRunner } from "./answer-service.js";
+import type {
+  AgentRunner,
+  DetailedAgentRunner,
+  KnowledgeSessionFactory,
+} from "./answer-service.js";
 import type { AnswerResult } from "./contracts.js";
 import type { HistoricalAnswerProvider } from "./coremail-mcp-client.js";
 import type { KnowledgeSession } from "./knowledge-session.js";
@@ -536,13 +540,6 @@ describe("main wiring", () => {
   });
 
   it("constructs the reliable pipeline only when its explicit control-plane flag is enabled", async () => {
-    const model = {} as ModelClient;
-    const models: ModelRoleClients = {
-      resolver: model,
-      planner: model,
-      synthesizer: model,
-      verifier: model,
-    };
     const caller = {
       connect: vi.fn(async () => undefined),
       call: vi.fn(),
@@ -550,7 +547,14 @@ describe("main wiring", () => {
     } satisfies KnowledgeToolCaller;
     const knowledge = { open: vi.fn() };
     const pipeline = { answer: vi.fn() } as unknown as ReliableAnswerPipeline;
-    const createReliableAnswerPipeline = vi.fn(() => pipeline);
+    let wiredModels: ModelRoleClients | undefined;
+    const createReliableAnswerPipeline = vi.fn((input: {
+      readonly knowledge: KnowledgeSessionFactory;
+      readonly models: ModelRoleClients;
+    }) => {
+      wiredModels = input.models;
+      return pipeline;
+    });
     const server = { close: vi.fn(async () => undefined) } as unknown as McpServer;
 
     const runtime = await createPseAgentRuntime({
@@ -560,7 +564,6 @@ describe("main wiring", () => {
       PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
       PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
     }, {
-      createModelRoles: () => models,
       createRouter: () => ({ route: vi.fn(async () => "normal" as const) }),
       createKnowledgePlanner: () => ({ plan: vi.fn(async () => plan) }),
       createKnowledgeCaller: () => caller,
@@ -571,7 +574,11 @@ describe("main wiring", () => {
     });
 
     expect(createReliableAnswerPipeline).toHaveBeenCalledOnce();
-    expect(createReliableAnswerPipeline).toHaveBeenCalledWith({ knowledge, models });
+    expect(createReliableAnswerPipeline).toHaveBeenCalledWith({
+      knowledge,
+      models: expect.any(Object),
+    });
+    expect(wiredModels?.verifier).not.toBe(wiredModels?.consensusVerifier);
     await runtime.close();
   });
 

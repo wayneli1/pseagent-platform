@@ -57,6 +57,7 @@ import {
   ModelClaimSupportVerifier,
   ModelStructuredClaimSynthesizer,
 } from "./structured-claim.js";
+import { HighRiskConsensusGate } from "./high-risk-consensus.js";
 
 export interface PseRuntimeDependencies {
   readonly createModel?: (config: AppConfig) => ModelClient;
@@ -153,6 +154,13 @@ export async function createPseAgentRuntime(
           synthesizer: new ModelStructuredClaimSynthesizer(models.synthesizer),
           verifier: new ModelClaimSupportVerifier(models.verifier),
           targetedReviser: new ModelTargetedClaimReviser(models.synthesizer),
+          highRiskConsensus: {
+            gate: new HighRiskConsensusGate(),
+            firstVerifier: models.verifier,
+            secondVerifier: models.consensusVerifier ?? models.verifier,
+            firstModelId: config.modelRoles.verifier,
+            secondModelId: config.modelRoles.consensusVerifier,
+          },
         })
       : undefined;
     const service = new AnswerService({
@@ -291,6 +299,7 @@ function createModelRoles(
       planner: shared,
       synthesizer: shared,
       verifier: shared,
+      consensusVerifier: shared,
     };
   }
   const scheduler = new ModelRequestScheduler({
@@ -304,6 +313,7 @@ function createModelRoles(
     planner: create(config.modelRoles.planner),
     synthesizer: create(config.modelRoles.synthesizer),
     verifier: create(config.modelRoles.verifier),
+    consensusVerifier: create(config.modelRoles.consensusVerifier),
   };
 }
 

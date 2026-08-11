@@ -22,6 +22,26 @@ describe("reliability diagnostics", () => {
     expect(JSON.stringify(summary.model.callBudget)).not.toContain("answer");
   });
 
+  it("summarizes high-risk consensus without exposing claims", () => {
+    const summary = summarizeReliabilityDiagnostics([{
+      event: "high_risk_consensus",
+      mode: "independent_models",
+      claimCount: 2,
+      retainedCount: 1,
+      rejectedCount: 1,
+      agreed: false,
+    }]);
+
+    expect(summary.consensus).toEqual({
+      mode: "independent_models",
+      claimCount: 2,
+      retainedCount: 1,
+      rejectedCount: 1,
+      agreed: false,
+    });
+    expect(JSON.stringify(summary.consensus)).not.toContain("claimId");
+  });
+
   it("summarizes content-free absolute stage budget outcomes", () => {
     const events: DiagnosticEvent[] = [{
       event: "stage_budget",

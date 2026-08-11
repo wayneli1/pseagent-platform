@@ -19,6 +19,13 @@ export interface ReliabilityDiagnosticSummary {
     readonly elapsedMs: number;
     readonly remainingMs: number;
   }[];
+  readonly consensus?: {
+    readonly mode: "independent_models" | "repeated_same_model";
+    readonly claimCount: number;
+    readonly retainedCount: number;
+    readonly rejectedCount: number;
+    readonly agreed: boolean;
+  };
   readonly rootStopReason?: PseStopReason;
   readonly finalStopReason?: PseStopReason;
   readonly stopReasons: readonly PseStopReason[];
@@ -178,6 +185,8 @@ export function summarizeReliabilityDiagnostics(
         remainingMs: event.remainingMs,
       }]
     : []);
+  const consensus = [...events].reverse().find((event) =>
+    event.event === "high_risk_consensus");
   const taskSpec = [...events].reverse().find((event) =>
     event.event === "task_spec");
   const taskGuard = [...events].reverse().find((event) =>
@@ -265,6 +274,17 @@ export function summarizeReliabilityDiagnostics(
     ...(stops.at(-1) === undefined ? {} : { finalStopReason: stops.at(-1) }),
     stopReasons: stops,
     stages,
+    ...(consensus?.event !== "high_risk_consensus"
+      ? {}
+      : {
+          consensus: {
+            mode: consensus.mode,
+            claimCount: consensus.claimCount,
+            retainedCount: consensus.retainedCount,
+            rejectedCount: consensus.rejectedCount,
+            agreed: consensus.agreed,
+          },
+        }),
     domains,
     task: {
       ...(taskSpec?.event !== "task_spec"
