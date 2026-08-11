@@ -88,7 +88,17 @@ describe("DefaultTaskAnalysisShadow", () => {
         schema: "schema",
         planningOverview: "overview",
       },
-    })).resolves.toMatchObject({ resolvedQuestion, taskSpec, guard: guardResult });
+    })).resolves.toMatchObject({
+      resolvedQuestion,
+      obligationContract: {
+        sourceQuestion: resolvedQuestion.standaloneQuestion,
+        obligations: [expect.objectContaining({
+          id: "O1",
+          domains: ["coremail-professional"],
+        })],
+      },
+      guard: guardResult,
+    });
     expect(calls).toEqual(["resolver", "compiler", "guard"]);
     expect(plan).toEqual(legacyBefore);
   });

@@ -11,6 +11,11 @@ import type {
 } from "./task-spec.js";
 import type { DiagnosticTrace } from "./diagnostics.js";
 import { observeModelCall } from "./model-observability.js";
+import {
+  compileAtomicObligationContract,
+  materializeGuardedTaskSpec,
+  type AtomicObligationContract,
+} from "./atomic-obligation.js";
 
 export type { QuestionResolver } from "./question-resolver.js";
 export type { TaskCompiler, TaskSpecGuard } from "./task-spec.js";
@@ -34,12 +39,22 @@ export interface TaskAnalysisShadowInput {
 export interface TaskAnalysisShadowResult {
   readonly resolvedQuestion: ResolvedQuestion;
   readonly taskSpec: TaskSpec;
+  readonly obligationContract: AtomicObligationContract;
   readonly guard: TaskSpecGuardResult;
   readonly elapsedMs: number;
 }
 
+export type LegacyTaskAnalysisShadowResult = Omit<
+  TaskAnalysisShadowResult,
+  "obligationContract"
+> & {
+  readonly obligationContract?: never;
+};
+
 export interface TaskAnalysisShadow {
-  analyze(input: TaskAnalysisShadowInput): Promise<TaskAnalysisShadowResult>;
+  analyze(input: TaskAnalysisShadowInput): Promise<
+    TaskAnalysisShadowResult | LegacyTaskAnalysisShadowResult
+  >;
 }
 
 export class DefaultTaskAnalysisShadow implements TaskAnalysisShadow {
@@ -64,7 +79,7 @@ export class DefaultTaskAnalysisShadow implements TaskAnalysisShadow {
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       }),
     });
-    const taskSpec = await observeModelCall({
+    const compiledTaskSpec = await observeModelCall({
       trace: input.trace,
       role: "planner",
       operation: "compile",
@@ -77,10 +92,19 @@ export class DefaultTaskAnalysisShadow implements TaskAnalysisShadow {
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       }),
     });
+    const obligationContract = compileAtomicObligationContract({
+      resolvedQuestion,
+      taskSpec: compiledTaskSpec,
+    });
+    const taskSpec = materializeGuardedTaskSpec({
+      original: compiledTaskSpec,
+      contract: obligationContract,
+    });
     const guard = this.guard.validate({ resolvedQuestion, taskSpec });
     return {
       resolvedQuestion,
       taskSpec,
+      obligationContract,
       guard,
       elapsedMs: Math.max(0, Date.now() - startedAt),
     };

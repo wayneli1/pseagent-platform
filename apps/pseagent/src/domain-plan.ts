@@ -14,6 +14,11 @@ import {
   applyAnswerCardPoliciesToPlan,
   type AnswerCardObligationPolicy,
 } from "./answer-card-task-spec-adapter.js";
+import {
+  compileAtomicObligationContract,
+  materializeGuardedTaskSpec,
+  type AtomicObligationContract,
+} from "./atomic-obligation.js";
 
 export const KNOWLEDGE_DOMAIN_ORDER = [
   "coremail-professional",
@@ -66,6 +71,7 @@ export type DomainPlanResult =
 export interface DomainPlanInput {
   readonly resolvedQuestion: ResolvedQuestion;
   readonly taskSpec: TaskSpec;
+  readonly obligationContract: AtomicObligationContract;
   readonly guardResult: TaskSpecGuardResult;
   readonly cardPolicies?: readonly AnswerCardObligationPolicy[];
 }
@@ -85,7 +91,16 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
     };
   }
 
-  const required = requiredObligations(input.taskSpec);
+  const obligationContract = input.obligationContract ??
+    compileAtomicObligationContract({
+      resolvedQuestion: input.resolvedQuestion,
+      taskSpec: input.taskSpec,
+    });
+  const taskSpec = materializeGuardedTaskSpec({
+    original: input.taskSpec,
+    contract: obligationContract,
+  });
+  const required = requiredObligations(taskSpec);
   const mergedClaimCount = required.reduce(
     (count, { obligation }) => count + obligation.domains.length,
     0,
@@ -109,7 +124,7 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
     (input.cardPolicies ?? []).map((policy) => [policy.obligationId, policy] as const),
   );
   const plans: DomainKnowledgePlan[] = [];
-  for (const domain of KNOWLEDGE_DOMAIN_ORDER) {
+  for (const domain of requiredKnowledgeDomains(obligationContract)) {
     const applicable = required.filter(({ obligation }) =>
       obligation.domains.includes(domain));
     if (applicable.length === 0) continue;
@@ -118,7 +133,7 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
     const adapted = adaptTaskSpecToKnowledgePlan({
       scope,
       resolvedQuestion: input.resolvedQuestion,
-      taskSpec: taskSpecForDomain(input.taskSpec, domain),
+      taskSpec: taskSpecForDomain(taskSpec, domain),
       guardResult: input.guardResult,
     });
     if (!adapted.activated) {
@@ -170,6 +185,15 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
     };
   }
   return { activated: true, plans };
+}
+
+export function requiredKnowledgeDomains(
+  contract: AtomicObligationContract,
+): readonly KnowledgeDomain[] {
+  const required = new Set(contract.obligations
+    .filter((obligation) => obligation.required)
+    .flatMap((obligation) => obligation.domains));
+  return KNOWLEDGE_DOMAIN_ORDER.filter((domain) => required.has(domain));
 }
 
 function bindingPolicy(

@@ -106,6 +106,44 @@ export function compileAtomicObligationContract(input: {
   return contract;
 }
 
+export function compileGovernedAtomicObligationContract(input: {
+  readonly resolvedQuestion: ResolvedQuestion;
+  readonly taskSpec: TaskSpec;
+}): AtomicObligationContract {
+  const compiled = compileAtomicObligationContract(input);
+  const governed = flattenTaskSpec(input.taskSpec)
+    .filter(({ deliverable, obligation }) => deliverable.required && obligation.required);
+  if (governed.length !== compiled.obligations.length) return compiled;
+  const contract: AtomicObligationContract = Object.freeze({
+    ...compiled,
+    obligations: Object.freeze(compiled.obligations.map((obligation, index) => {
+      const taskItem = governed[index]!;
+      const evidencePolicy = taskItem.obligation.evidencePolicy;
+      return Object.freeze({
+        ...obligation,
+        kind: taskItem.deliverable.kind,
+        targetEntityIds: Object.freeze([...taskItem.obligation.targetEntityIds]),
+        domains: Object.freeze([...taskItem.obligation.domains]),
+        evidencePolicy,
+        evidenceTypes: Object.freeze(evidenceTypes(
+          obligation.sourceText,
+          evidencePolicy,
+          obligation.risk,
+        )),
+        completionCriteria: Object.freeze(completionCriteria(
+          evidencePolicy,
+          obligation.risk,
+        )),
+      });
+    })),
+  });
+  const validation = validateAtomicObligationContract(contract);
+  if (!validation.ok) {
+    throw new Error(`invalid_governed_obligation_contract:${validation.issueCodes.join(",")}`);
+  }
+  return contract;
+}
+
 export function validateAtomicObligationContract(
   contract: AtomicObligationContract,
 ): { readonly ok: boolean; readonly issueCodes: readonly string[] } {
@@ -237,26 +275,53 @@ function classifySeedWithModelTaskSpecOrDeterministicFallback(
   taskItems: readonly TaskSpecObligation[],
 ): AtomicObligation {
   const matched = bestTaskSpecMatch(seed.text, taskItems);
-  const kind = deterministicKind(seed.text, matched?.deliverable.kind);
-  const evidencePolicy = deterministicEvidencePolicy(seed.text, kind, matched);
-  const domains = deterministicDomains(seed.text, question, kind, evidencePolicy, matched);
-  const risk = deterministicRisk(seed.text);
+  const source = refinedSourceSeed(seed, question, matched);
+  const kind = deterministicKind(source.text, matched?.deliverable.kind);
+  const evidencePolicy = deterministicEvidencePolicy(source.text, kind, matched);
+  const domains = deterministicDomains(source.text, question, kind, evidencePolicy, matched);
+  const risk = deterministicRisk(source.text);
   const targetEntityIds = matched?.obligation.targetEntityIds ?? taskSpec.entities
-    .filter((entity) => normalize(seed.text).includes(normalize(entity.sourceText)))
+    .filter((entity) => normalize(source.text).includes(normalize(entity.sourceText)))
     .map((entity) => entity.id);
   return Object.freeze({
     id: `O${index + 1}`,
-    sourceSpan: Object.freeze({ start: seed.start, end: seed.end }),
-    sourceText: seed.text,
+    sourceSpan: Object.freeze({ start: source.start, end: source.end }),
+    sourceText: source.text,
     kind,
     targetEntityIds: Object.freeze([...targetEntityIds]),
     domains: Object.freeze(domains),
     evidencePolicy,
-    evidenceTypes: Object.freeze(evidenceTypes(seed.text, evidencePolicy, risk)),
+    evidenceTypes: Object.freeze(evidenceTypes(source.text, evidencePolicy, risk)),
     risk,
     completionCriteria: Object.freeze(completionCriteria(evidencePolicy, risk)),
     required: true,
   });
+}
+
+function refinedSourceSeed(
+  seed: ObligationSeed,
+  question: string,
+  matched: TaskSpecObligation | undefined,
+): ObligationSeed {
+  if (matched === undefined) return seed;
+  const candidates = [
+    matched.obligation.sourceText,
+    matched.deliverable.sourceText,
+  ].filter((candidate, index, values) =>
+    candidate.trim() !== "" && values.indexOf(candidate) === index)
+    .sort((left, right) => right.length - left.length);
+  for (const candidate of candidates) {
+    const relativeStart = seed.text.indexOf(candidate);
+    if (relativeStart < 0) continue;
+    const start = seed.start + relativeStart;
+    return {
+      start,
+      end: start + candidate.length,
+      text: question.slice(start, start + candidate.length),
+      ...(seed.atom === undefined ? {} : { atom: seed.atom }),
+    };
+  }
+  return seed;
 }
 
 function flattenTaskSpec(taskSpec: TaskSpec): TaskSpecObligation[] {

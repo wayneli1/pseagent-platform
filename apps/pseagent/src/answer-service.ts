@@ -59,8 +59,6 @@ import { formatKnowledgeFinal } from "./response.js";
 import { evaluateProhibitedRequest } from "./request-policy.js";
 import {
   extractExplicitQuestionSignals,
-  repairTaskSpecKnowledgeDomains,
-  requiresMixedKnowledgeDomains,
   type KnowledgeDomain,
   type TaskSpecIssueCode,
 } from "./task-spec.js";
@@ -91,6 +89,11 @@ import {
 } from "./question-resolver.js";
 import { normalAnswerNeedsRepair, stripUnrequestedExamples } from "./normal-answer.js";
 import { RequestBudget } from "./request-budget.js";
+import {
+  compileAtomicObligationContract,
+  compileGovernedAtomicObligationContract,
+  materializeGuardedTaskSpec,
+} from "./atomic-obligation.js";
 
 export const PSE_REQUEST_TIMEOUT_MS = 180_000;
 export const PSE_ACTIVE_DEADLINE_MS = 165_000;
@@ -469,12 +472,12 @@ export class AnswerService {
       };
       let legacyPlan = taskSpecActive ? undefined : await loadLegacyPlan();
       let taskAnalysis = trustedFamilyCompilation?.activated === true
-        ? {
+        ? completeTaskAnalysisResult({
             resolvedQuestion: identityResolvedQuestion(routedQuestion),
             taskSpec: trustedFamilyCompilation.taskSpec,
             guard: trustedFamilyCompilation.guard,
             elapsedMs: 0,
-          }
+          })
         : exactRoute === undefined
         ? await observeTaskAnalysisShadow({
             ...(this.dependencies.taskAnalysisShadow === undefined
@@ -566,10 +569,19 @@ export class AnswerService {
               : { issueCodes: adapted.issueCodes }),
           });
           if (adapted.activated) {
-            taskAnalysis = {
-              resolvedQuestion: taskAnalysis?.resolvedQuestion ??
-                identityResolvedQuestion(question),
+            const resolvedQuestion = taskAnalysis?.resolvedQuestion ??
+              identityResolvedQuestion(question);
+            const obligationContract = compileGovernedAtomicObligationContract({
+              resolvedQuestion,
               taskSpec: adapted.taskSpec,
+            });
+            taskAnalysis = {
+              resolvedQuestion,
+              taskSpec: materializeGuardedTaskSpec({
+                original: adapted.taskSpec,
+                contract: obligationContract,
+              }),
+              obligationContract,
               guard: adapted.guard,
               elapsedMs: taskAnalysis?.elapsedMs ?? 0,
             };
@@ -577,20 +589,6 @@ export class AnswerService {
             activeAnswerCardMatch = answerCardMatch;
           }
         }
-      }
-      if (
-        taskAnalysis !== undefined &&
-        this.dependencies.multiDomainActiveEnabled === true &&
-        requiresMixedKnowledgeDomains(taskAnalysis.resolvedQuestion.standaloneQuestion)
-      ) {
-        taskAnalysis = {
-          ...taskAnalysis,
-          taskSpec: repairTaskSpecKnowledgeDomains({
-            scopeHint: scope,
-            question: taskAnalysis.resolvedQuestion.standaloneQuestion,
-            taskSpec: taskAnalysis.taskSpec,
-          }),
-        };
       }
       let effectiveQuestion = routedQuestion;
       let effectivePlan = legacyPlan;
@@ -603,6 +601,7 @@ export class AnswerService {
             const derived = deriveDomainKnowledgePlans({
               resolvedQuestion: taskAnalysis.resolvedQuestion,
               taskSpec: taskAnalysis.taskSpec,
+              obligationContract: taskAnalysis.obligationContract,
               guardResult: taskAnalysis.guard,
               ...(answerCardPolicies === undefined
                 ? {}
@@ -1574,22 +1573,25 @@ async function observeTaskAnalysisShadow(input: {
       signal,
       trace: input.trace,
     });
-    const obligations = result.taskSpec.deliverables.flatMap(
+    const completed = result.obligationContract === undefined
+      ? completeTaskAnalysisResult(result)
+      : result;
+    const obligations = completed.taskSpec.deliverables.flatMap(
       (deliverable) => deliverable.obligations,
     );
     const domains = new Set(obligations.flatMap((obligation) => obligation.domains));
     recordDiagnostic(input.trace, {
       event: "question_resolution",
-      mode: result.resolvedQuestion.contextUsed ? "contextual" : "identity",
-      contextUsed: result.resolvedQuestion.contextUsed,
-      entityCount: result.taskSpec.entities.length,
-      correctionCount: result.resolvedQuestion.corrections.length,
+      mode: completed.resolvedQuestion.contextUsed ? "contextual" : "identity",
+      contextUsed: completed.resolvedQuestion.contextUsed,
+      entityCount: completed.taskSpec.entities.length,
+      correctionCount: completed.resolvedQuestion.corrections.length,
     });
     recordDiagnostic(input.trace, {
       event: "task_spec",
       domainCount: domains.size,
-      entityCount: result.taskSpec.entities.length,
-      deliverableCount: result.taskSpec.deliverables.length,
+      entityCount: completed.taskSpec.entities.length,
+      deliverableCount: completed.taskSpec.deliverables.length,
       coverageUnitCount: obligations.length,
       directUnitCount: obligations.filter((item) => item.evidencePolicy === "direct").length,
       synthesisUnitCount: obligations.filter((item) => item.evidencePolicy === "synthesis").length,
@@ -1599,19 +1601,19 @@ async function observeTaskAnalysisShadow(input: {
     });
     recordDiagnostic(input.trace, {
       event: "task_spec_guard",
-      ok: result.guard.ok,
-      issueCodes: stableUniqueIssueCodes(result.guard.issues.map((issue) => issue.code)),
-      explicitEntityCount: result.guard.explicitEntityCount,
-      mappedExplicitEntityCount: result.guard.mappedExplicitEntityCount,
-      explicitRequestCount: result.guard.explicitRequestCount,
-      mappedExplicitRequestCount: result.guard.mappedExplicitRequestCount,
+      ok: completed.guard.ok,
+      issueCodes: stableUniqueIssueCodes(completed.guard.issues.map((issue) => issue.code)),
+      explicitEntityCount: completed.guard.explicitEntityCount,
+      mappedExplicitEntityCount: completed.guard.mappedExplicitEntityCount,
+      explicitRequestCount: completed.guard.explicitRequestCount,
+      mappedExplicitRequestCount: completed.guard.mappedExplicitRequestCount,
     });
     recordDiagnostic(input.trace, {
       event: "task_spec_shadow",
       result: "completed",
-      elapsedMs: result.elapsedMs,
+      elapsedMs: completed.elapsedMs,
     });
-    return result;
+    return completed;
   } catch (error) {
     recordDiagnostic(input.trace, {
       event: "task_spec_shadow",
@@ -1624,6 +1626,26 @@ async function observeTaskAnalysisShadow(input: {
     });
     return undefined;
   }
+}
+
+function completeTaskAnalysisResult(input: {
+  readonly resolvedQuestion: ResolvedQuestion;
+  readonly taskSpec: TaskAnalysisShadowResult["taskSpec"];
+  readonly guard: TaskAnalysisShadowResult["guard"];
+  readonly elapsedMs: number;
+}): TaskAnalysisShadowResult {
+  const obligationContract = compileAtomicObligationContract({
+    resolvedQuestion: input.resolvedQuestion,
+    taskSpec: input.taskSpec,
+  });
+  return {
+    ...input,
+    taskSpec: materializeGuardedTaskSpec({
+      original: input.taskSpec,
+      contract: obligationContract,
+    }),
+    obligationContract,
+  };
 }
 
 function recordPlanDiagnostics(

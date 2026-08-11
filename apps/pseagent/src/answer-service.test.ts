@@ -22,9 +22,15 @@ import {
 } from "./model-client.js";
 import { ScopeRouter } from "./router.js";
 import type { TaskAnalysisShadow } from "./task-analysis-shadow.js";
-import { taskSpecSchema } from "./task-spec.js";
+import { taskSpecSchema, type TaskSpec } from "./task-spec.js";
+import type { ResolvedQuestion } from "./question-resolver.js";
 import { finalizeEvidenceLedger } from "./evidence-ledger.js";
 import { analyzeCoverageGaps } from "./coverage-gap.js";
+import {
+  compileAtomicObligationContract,
+  type AtomicObligationContract,
+  type AtomicObligationKind,
+} from "./atomic-obligation.js";
 
 const knowledgePlan = {
   subject: "Coremail",
@@ -64,6 +70,43 @@ function createKnowledgeSessionFixture(): KnowledgeSession {
       truncated: false,
     },
   } as unknown as KnowledgeSession;
+}
+
+function atomicContractFromTaskSpec(
+  resolvedQuestion: ResolvedQuestion,
+  taskSpec: TaskSpec,
+): AtomicObligationContract {
+  const sourceQuestion = resolvedQuestion.standaloneQuestion;
+  const items = taskSpec.deliverables.flatMap((deliverable) =>
+    deliverable.required
+      ? deliverable.obligations
+        .filter((obligation) => obligation.required)
+        .map((obligation) => ({ deliverable, obligation }))
+      : []);
+  return {
+    subject: taskSpec.subject,
+    sourceQuestion,
+    obligations: items.map(({ deliverable, obligation }) => {
+      const start = Math.max(0, sourceQuestion.indexOf(obligation.sourceText));
+      return {
+        id: obligation.id as `O${number}`,
+        sourceSpan: { start, end: start + obligation.sourceText.length },
+        sourceText: obligation.sourceText,
+        kind: deliverable.kind as AtomicObligationKind,
+        targetEntityIds: obligation.targetEntityIds,
+        domains: obligation.domains,
+        evidencePolicy: obligation.evidencePolicy,
+        evidenceTypes: obligation.evidencePolicy === "direct"
+          ? ["formal_page" as const]
+          : obligation.evidencePolicy === "customer_input"
+            ? ["customer_fact" as const]
+            : ["method" as const],
+        risk: "low",
+        completionCriteria: ["claim_supported"],
+        required: true,
+      };
+    }),
+  };
 }
 
 const historicalAnswer: HistoricalAnswer = {
@@ -1852,7 +1895,8 @@ describe("AnswerService", () => {
       evidencePolicy: "synthesis" | "customer_input" = "synthesis",
     ): TaskAnalysisShadow {
       return {
-        analyze: vi.fn(async () => ({
+        analyze: vi.fn(async () => {
+          const result = {
           resolvedQuestion: {
             rawQuestion: mixedQuestion,
             standaloneQuestion: mixedQuestion,
@@ -1909,8 +1953,16 @@ describe("AnswerService", () => {
             explicitRequestCount: 2,
             mappedExplicitRequestCount: 2,
           },
-          elapsedMs: 5,
-        })),
+            elapsedMs: 5,
+          };
+          return {
+            ...result,
+            obligationContract: atomicContractFromTaskSpec(
+              result.resolvedQuestion,
+              result.taskSpec,
+            ),
+          };
+        }),
       };
     }
 
@@ -1922,12 +1974,25 @@ describe("AnswerService", () => {
         analyze: vi.fn(async (input) => {
           const result = await source.analyze(input);
           const deliverableIndex = domain === "coremail-professional" ? 0 : 1;
+          const selected = result.taskSpec.deliverables[deliverableIndex]!;
+          const taskSpec = {
+            ...result.taskSpec,
+            deliverables: [{
+              ...selected,
+              id: "D1",
+              obligations: selected.obligations.map((obligation) => ({
+                ...obligation,
+                id: "O1",
+              })),
+            }],
+          };
           return {
             ...result,
-            taskSpec: {
-              ...result.taskSpec,
-              deliverables: [result.taskSpec.deliverables[deliverableIndex]!],
-            },
+            taskSpec,
+            obligationContract: atomicContractFromTaskSpec(
+              result.resolvedQuestion,
+              taskSpec,
+            ),
             guard: {
               ...result.guard,
               explicitRequestCount: 1,
@@ -1938,20 +2003,52 @@ describe("AnswerService", () => {
       };
     }
 
+    function stalePrimaryScopeShadow(): TaskAnalysisShadow {
+      const source = mixedShadow();
+      return {
+        analyze: vi.fn(async (input) => {
+          const result = await source.analyze(input);
+          const obligationContract = compileAtomicObligationContract({
+            resolvedQuestion: result.resolvedQuestion,
+            taskSpec: result.taskSpec,
+          });
+          return {
+            ...result,
+            taskSpec: {
+              ...result.taskSpec,
+              deliverables: result.taskSpec.deliverables.map((deliverable) => ({
+                ...deliverable,
+                obligations: deliverable.obligations.map((obligation) => ({
+                  ...obligation,
+                  domains: ["coremail-professional" as const],
+                })),
+              })),
+            },
+            obligationContract,
+          };
+        }),
+      };
+    }
+
     function optionalGeneralShadow(): TaskAnalysisShadow {
       const source = mixedShadow();
       return {
         analyze: vi.fn(async (input) => {
           const result = await source.analyze(input);
+          const taskSpec = {
+            ...result.taskSpec,
+            deliverables: result.taskSpec.deliverables.map((deliverable) =>
+              deliverable.id === "D2"
+                ? { ...deliverable, required: false }
+                : deliverable),
+          };
           return {
             ...result,
-            taskSpec: {
-              ...result.taskSpec,
-              deliverables: result.taskSpec.deliverables.map((deliverable) =>
-                deliverable.id === "D2"
-                  ? { ...deliverable, required: false }
-                  : deliverable),
-            },
+            taskSpec,
+            obligationContract: atomicContractFromTaskSpec(
+              result.resolvedQuestion,
+              taskSpec,
+            ),
           };
         }),
       };
@@ -2056,7 +2153,7 @@ describe("AnswerService", () => {
         "presales-general",
       ]);
       expect(inputs.map((input) => input.plan.requirements.map((item) => item.question)))
-        .toEqual([["Coremail当前版本是什么"], ["客户信息不足时如何推进项目"]]);
+        .toEqual([["Coremail当前版本"], ["客户信息不足时如何推进项目"]]);
       expect(new Set(inputs.map((input) => input.deadlineAt)).size).toBe(1);
       expect(new Set(inputs.map((input) => input.signal)).size).toBe(1);
       expect(inputs.map((input) => input.requirementBindings)).toMatchObject([
@@ -2080,6 +2177,17 @@ describe("AnswerService", () => {
       expect(execution.result.answer.match(/资料来源：/gu)).toHaveLength(1);
       expect(answerResultSchema.parse(execution.result)).toEqual(execution.result);
       expect(execution.result).not.toHaveProperty("domainsUsed");
+    });
+
+    it("does not let the primary scope remove a secondary obligation domain", async () => {
+      const { service } = createMixedService({ shadow: stalePrimaryScopeShadow() });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+
+      expect(execution.domainsUsed).toEqual([
+        "coremail-professional",
+        "presales-general",
+      ]);
     });
 
     it("repairs a model-collapsed technical governance request before active execution", async () => {

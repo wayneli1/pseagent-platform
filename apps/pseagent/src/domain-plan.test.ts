@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ResolvedQuestion } from "./question-resolver.js";
 import type { TaskSpec, TaskSpecGuardResult } from "./task-spec.js";
 import { deriveDomainKnowledgePlans } from "./domain-plan.js";
+import { compileAtomicObligationContract } from "./atomic-obligation.js";
+import type { AtomicObligationContract, AtomicObligationKind } from "./atomic-obligation.js";
 
 const question = "客户需要确认Coremail当前版本、获得售前推进建议，并形成联合验证方案";
 
@@ -86,13 +88,84 @@ function mixedTaskSpec(): TaskSpec {
   };
 }
 
+function contractFromTaskSpec(taskSpec: TaskSpec): AtomicObligationContract {
+  const obligations = taskSpec.deliverables.flatMap((deliverable) =>
+    deliverable.required
+      ? deliverable.obligations
+        .filter((obligation) => obligation.required)
+        .map((obligation) => ({ deliverable, obligation }))
+      : []);
+  return {
+    subject: taskSpec.subject,
+    sourceQuestion: question,
+    obligations: obligations.map(({ deliverable, obligation }, index) => {
+      const sourceStart = Math.max(0, question.indexOf(obligation.sourceText));
+      return {
+        id: `O${index + 1}`,
+        sourceSpan: {
+          start: sourceStart,
+          end: sourceStart + obligation.sourceText.length,
+        },
+        sourceText: obligation.sourceText,
+        kind: deliverable.kind as AtomicObligationKind,
+        targetEntityIds: obligation.targetEntityIds,
+        domains: obligation.domains,
+        evidencePolicy: obligation.evidencePolicy,
+        evidenceTypes: obligation.evidencePolicy === "direct"
+          ? ["formal_page" as const]
+          : obligation.evidencePolicy === "customer_input"
+            ? ["customer_fact" as const]
+            : ["method" as const],
+        risk: "low" as const,
+        completionCriteria: ["claim_supported"],
+        required: true as const,
+      };
+    }),
+  };
+}
+
+function deriveFor(
+  taskSpec: TaskSpec,
+  guardResult: TaskSpecGuardResult = passingGuard,
+) {
+  return deriveDomainKnowledgePlans({
+    resolvedQuestion,
+    taskSpec,
+    obligationContract: contractFromTaskSpec(taskSpec),
+    guardResult,
+  });
+}
+
 describe("deriveDomainKnowledgePlans", () => {
-  it("derives independent domain plans with stable obligation bindings", () => {
+  it("uses the required atomic-obligation domain union even when TaskSpec domains are stale", () => {
+    const taskSpec = mixedTaskSpec();
+    for (const deliverable of taskSpec.deliverables) {
+      for (const obligation of deliverable.obligations) {
+        obligation.domains = ["coremail-professional"];
+      }
+    }
+    const obligationContract = compileAtomicObligationContract({
+      resolvedQuestion,
+      taskSpec,
+    });
+
     const result = deriveDomainKnowledgePlans({
       resolvedQuestion,
-      taskSpec: mixedTaskSpec(),
+      taskSpec,
+      obligationContract,
       guardResult: passingGuard,
     });
+
+    expect(result).toMatchObject({ activated: true });
+    if (!result.activated) return;
+    expect(result.plans.map((item) => item.domain)).toEqual([
+      "coremail-professional",
+      "presales-general",
+    ]);
+  });
+
+  it("derives independent domain plans with stable obligation bindings", () => {
+    const result = deriveFor(mixedTaskSpec());
 
     expect(result).toMatchObject({
       activated: true,
@@ -102,7 +175,7 @@ describe("deriveDomainKnowledgePlans", () => {
           scope: "professional",
           bindings: [
             { requirementId: "R1", deliverableId: "D1", obligationId: "O1", order: 0 },
-            { requirementId: "R2", deliverableId: "D2", obligationId: "O3", order: 2 },
+            { requirementId: "R2", deliverableId: "D3", obligationId: "O3", order: 2 },
           ],
           plan: { requirements: [{ id: "R1" }, { id: "R2" }] },
         },
@@ -111,7 +184,7 @@ describe("deriveDomainKnowledgePlans", () => {
           scope: "general",
           bindings: [
             { requirementId: "R1", deliverableId: "D2", obligationId: "O2", order: 1 },
-            { requirementId: "R2", deliverableId: "D2", obligationId: "O3", order: 2 },
+            { requirementId: "R2", deliverableId: "D3", obligationId: "O3", order: 2 },
           ],
           plan: { requirements: [{ id: "R1" }, { id: "R2" }] },
         },
@@ -120,11 +193,7 @@ describe("deriveDomainKnowledgePlans", () => {
   });
 
   it("duplicates a dual-domain obligation without sharing a requirement id namespace", () => {
-    const result = deriveDomainKnowledgePlans({
-      resolvedQuestion,
-      taskSpec: mixedTaskSpec(),
-      guardResult: passingGuard,
-    });
+    const result = deriveFor(mixedTaskSpec());
     expect(result.activated).toBe(true);
     if (!result.activated) return;
 
@@ -173,11 +242,7 @@ describe("deriveDomainKnowledgePlans", () => {
       },
     ];
 
-    const result = deriveDomainKnowledgePlans({
-      resolvedQuestion,
-      taskSpec,
-      guardResult: passingGuard,
-    });
+    const result = deriveFor(taskSpec);
 
     expect(result).toMatchObject({
       activated: true,
@@ -191,11 +256,7 @@ describe("deriveDomainKnowledgePlans", () => {
   it("does not open a domain for an optional deliverable", () => {
     const taskSpec = mixedTaskSpec();
     taskSpec.deliverables[1]!.required = false;
-    const result = deriveDomainKnowledgePlans({
-      resolvedQuestion,
-      taskSpec,
-      guardResult: passingGuard,
-    });
+    const result = deriveFor(taskSpec);
 
     expect(result).toMatchObject({
       activated: true,
@@ -207,11 +268,7 @@ describe("deriveDomainKnowledgePlans", () => {
   it("passes customer-input conditions into the affected domain plan", () => {
     const taskSpec = mixedTaskSpec();
     taskSpec.deliverables[1]!.obligations[0]!.evidencePolicy = "customer_input";
-    const result = deriveDomainKnowledgePlans({
-      resolvedQuestion,
-      taskSpec,
-      guardResult: passingGuard,
-    });
+    const result = deriveFor(taskSpec);
 
     expect(result).toMatchObject({
       activated: true,
@@ -229,11 +286,7 @@ describe("deriveDomainKnowledgePlans", () => {
   });
 
   it("does not activate a TaskSpec rejected by the guard", () => {
-    expect(deriveDomainKnowledgePlans({
-      resolvedQuestion,
-      taskSpec: mixedTaskSpec(),
-      guardResult: { ...passingGuard, ok: false },
-    })).toEqual({
+    expect(deriveFor(mixedTaskSpec(), { ...passingGuard, ok: false })).toEqual({
       activated: false,
       reason: "guard_rejected",
       applicableObligationCount: 0,
@@ -255,11 +308,7 @@ describe("deriveDomainKnowledgePlans", () => {
       })),
     }];
 
-    expect(deriveDomainKnowledgePlans({
-      resolvedQuestion,
-      taskSpec,
-      guardResult: passingGuard,
-    })).toEqual({
+    expect(deriveFor(taskSpec)).toEqual({
       activated: false,
       reason: "requirement_limit_exceeded",
       applicableObligationCount: 7,
@@ -283,11 +332,7 @@ describe("deriveDomainKnowledgePlans", () => {
       })),
     }];
 
-    expect(deriveDomainKnowledgePlans({
-      resolvedQuestion,
-      taskSpec,
-      guardResult: passingGuard,
-    })).toEqual({
+    expect(deriveFor(taskSpec)).toEqual({
       activated: false,
       reason: "requirement_limit_exceeded",
       applicableObligationCount: 7,
