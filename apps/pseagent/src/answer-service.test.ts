@@ -739,6 +739,7 @@ describe("AnswerService", () => {
     expect(noProviderExecution.result).toEqual({
       scope: "normal",
       status: "answered",
+      policyDisposition: "allowed",
       answer: "普通回答",
       references: [],
     });
@@ -998,6 +999,7 @@ describe("AnswerService", () => {
     await expect(service.answer("为什么这个方法会失效？")).resolves.toEqual({
       scope: "normal",
       status: "answered",
+      policyDisposition: "allowed",
       answer: "先说明成立前提。错误条件会推翻既有结论。",
       references: [],
     });
@@ -1070,6 +1072,7 @@ describe("AnswerService", () => {
     )).resolves.toEqual({
       scope: "normal",
       status: "answered",
+      policyDisposition: "allowed",
       answer: "PSEAgent 负责路由、知识检索和引用；Lunkr 只负责消息收发。",
       references: [],
     });
@@ -1756,6 +1759,7 @@ describe("AnswerService", () => {
     await expect(service.answer("普通问题")).resolves.toEqual({
       scope: "normal",
       status: "temporarily_unavailable",
+      policyDisposition: "needs_escalation",
       answer: "问答服务暂时不可用，请稍后重试。",
       references: [],
     });

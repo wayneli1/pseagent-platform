@@ -2,6 +2,12 @@ import { z } from "zod";
 
 export const scopeSchema = z.enum(["professional", "general", "normal"]);
 export const answerStatusSchema = z.enum(["answered", "partially_answered", "not_covered", "temporarily_unavailable"]);
+export const policyDispositionSchema = z.enum([
+  "allowed",
+  "limited",
+  "refused",
+  "needs_escalation",
+]);
 export const coverageSchema = z.enum(["complete", "partial", "none"]);
 export const knowledgeCoverageSchema = coverageSchema;
 export const caseAssessabilitySchema = z.enum([
@@ -328,6 +334,12 @@ export const historicalNoticeSchema = z.object({
 export const answerResultSchema = z.object({
   scope: scopeSchema,
   status: answerStatusSchema,
+  /**
+   * Policy handling is independent from factual coverage. It remains optional on
+   * input so recorded legacy results can still be parsed; every current runtime
+   * result populates it.
+   */
+  policyDisposition: policyDispositionSchema.optional(),
   answer: z.string(),
   references: z.array(referenceSchema),
   knowledgeCoverage: knowledgeCoverageSchema.optional(),
@@ -375,6 +387,7 @@ export type FinalAction = {
 export type CoverageVerificationAction = z.infer<typeof coverageVerificationActionSchema>;
 export type CoverageVerificationReason = z.infer<typeof coverageVerificationReasonSchema>;
 export type AnswerResult = z.infer<typeof answerResultSchema>;
+export type PolicyDisposition = z.infer<typeof policyDispositionSchema>;
 export type Reference = z.infer<typeof referenceSchema>;
 export type HistoricalReference = z.infer<typeof historicalReferenceSchema>;
 export type HistoricalAnswer = z.infer<typeof historicalAnswerSchema>;

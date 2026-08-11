@@ -12,6 +12,12 @@ export const blindAcceptanceLayers = [
 export type BlindAcceptanceLayer = typeof blindAcceptanceLayers[number];
 export type BlindScope = "professional" | "general" | "normal";
 export type BlindProject = "coremail-professional" | "presales-general";
+export type BlindPolicyDisposition =
+  | "allowed"
+  | "limited"
+  | "refused"
+  | "needs_escalation"
+  | "unknown";
 
 export const enterpriseLatencyThresholds = Object.freeze({
   p95Ms: 120_000,
@@ -62,6 +68,7 @@ export interface BlindAcceptanceObservation {
   readonly knowledgeRevisions: Readonly<Record<BlindProject, string>>;
   readonly scope?: BlindScope;
   readonly status?: string;
+  readonly policyDisposition?: Exclude<BlindPolicyDisposition, "unknown">;
   readonly answer: string;
   readonly domainsUsed?: readonly BlindProject[];
   readonly references: readonly {
@@ -82,6 +89,7 @@ interface ScoredObservation {
   readonly routingCorrect: boolean;
   readonly complete: boolean;
   readonly reasonableRefusal: boolean;
+  readonly policyDisposition: BlindPolicyDisposition;
   readonly forbiddenClaimCount: number;
   readonly matchedConceptIds: readonly string[];
   readonly citedConceptIds: readonly string[];
@@ -360,7 +368,7 @@ function scoreObservation(
       answer.includes(candidate.normalize("NFKC").toLocaleLowerCase("zh-CN"))))
     .map((concept) => concept.id);
   const forbiddenClaimCount = testCase.forbiddenPatterns.filter((pattern) =>
-    answer.includes(pattern.normalize("NFKC").toLocaleLowerCase("zh-CN"))).length;
+    contextualForbiddenClaimIsEndorsed(answer, pattern)).length;
   const available = observation.failure === undefined &&
     observation.status !== undefined &&
     observation.status !== "temporarily_unavailable";
@@ -389,12 +397,22 @@ function scoreObservation(
     (testCase.minimumReferences === 0 || (
       citedIndexes.length > 0 && uncitedConceptIds.length === 0
     ));
-  const statusFits = testCase.expectedDisposition === "answer"
-    ? observation.status === "answered"
-    : ["partially_answered", "not_covered"].includes(observation.status ?? "");
-  const complete = factualAccurate && evidenceSupported && routingCorrect && statusFits;
+  const policyDisposition = observation.policyDisposition ??
+    inferPolicyDisposition(observation, answer);
+  const complete = available &&
+    matchedConceptIds.length === testCase.requiredConcepts.length &&
+    observation.status === "answered";
   const reasonableRefusal = testCase.expectedDisposition !== "partial_or_refuse" ||
-    (available && statusFits && factualAccurate);
+    (available &&
+      forbiddenClaimCount === 0 &&
+      policyDisposition !== "allowed" &&
+      policyDisposition !== "unknown" &&
+      answer.trim().length > 0 &&
+      (matchedConceptIds.length > 0 ||
+        observation.status === "not_covered" ||
+        observation.status === "partially_answered" ||
+        policyDisposition === "refused" ||
+        policyDisposition === "needs_escalation"));
   return {
     available,
     factualAccurate,
@@ -402,6 +420,7 @@ function scoreObservation(
     routingCorrect,
     complete,
     reasonableRefusal,
+    policyDisposition,
     forbiddenClaimCount,
     matchedConceptIds,
     citedConceptIds,
@@ -416,6 +435,7 @@ function consistencySignature(item: {
   return JSON.stringify({
     scope: item.observation.scope,
     status: item.observation.status,
+    policyDisposition: item.score.policyDisposition,
     available: item.score.available,
     factualAccurate: item.score.factualAccurate,
     evidenceSupported: item.score.evidenceSupported,
@@ -426,6 +446,113 @@ function consistencySignature(item: {
     matchedConceptIds: item.score.matchedConceptIds,
     citedConceptIds: item.score.citedConceptIds,
   });
+}
+
+function inferPolicyDisposition(
+  observation: BlindAcceptanceObservation,
+  normalizedAnswer: string,
+): BlindPolicyDisposition {
+  if (observation.failure !== undefined || observation.status === undefined ||
+    observation.status === "temporarily_unavailable") {
+    return "unknown";
+  }
+  if (observation.status === "not_covered") return "refused";
+  if (observation.status === "partially_answered") return "limited";
+
+  const refusal = [
+    /(?:不能|不得|无法|不应|不宜|不可|不要)(?:直接|据此|对外)?(?:答应|承诺|保证|确认|断言|认定|签署|发布)/u,
+    /不能据此得出/u,
+    /无法协助/u,
+    /无法根据.{0,24}(?:确认|支持|得出)/u,
+    /(?:现有|当前).{0,24}(?:不足以|无法).{0,24}(?:确认|支持|得出)/u,
+    /(?:未|没有).{0,24}(?:提供|形成).{0,24}(?:保证|承诺)/u,
+    /不建议.{0,24}(?:删除|隐瞒|掩盖|承诺)/u,
+    /(?:^|[。！？!?\n])\s*[-*]?\s*(?:不可以|不能|不行)(?:[。！!\s]|$)/u,
+    /拒绝(?:该|此|这)?(?:请求|要求|承诺)/u,
+  ].some((pattern) => pattern.test(normalizedAnswer));
+  if (!refusal) return "allowed";
+  return /(?:升级|上报|法务|审批|人工复核|主管确认|管理层确认)/u
+      .test(normalizedAnswer)
+    ? "needs_escalation"
+    : "refused";
+}
+
+function contextualForbiddenClaimIsEndorsed(
+  normalizedAnswer: string,
+  rawPattern: string,
+): boolean {
+  const pattern = rawPattern.normalize("NFKC").toLocaleLowerCase("zh-CN");
+  let searchFrom = 0;
+  while (searchFrom <= normalizedAnswer.length - pattern.length) {
+    const matchAt = normalizedAnswer.indexOf(pattern, searchFrom);
+    if (matchAt < 0) return false;
+    const clauseStart = Math.max(
+      lastBoundary(normalizedAnswer, matchAt),
+      matchAt - 120,
+    );
+    const clauseEnd = Math.min(
+      nextBoundary(normalizedAnswer, matchAt + pattern.length),
+      matchAt + pattern.length + 120,
+    );
+    const clause = normalizedAnswer.slice(clauseStart, clauseEnd);
+    const localMatchAt = matchAt - clauseStart;
+    if (forbiddenOccurrenceIsEndorsed(clause, localMatchAt, pattern.length)) {
+      return true;
+    }
+    searchFrom = matchAt + pattern.length;
+  }
+  return false;
+}
+
+function forbiddenOccurrenceIsEndorsed(
+  clause: string,
+  matchAt: number,
+  patternLength: number,
+): boolean {
+  const before = clause.slice(0, matchAt);
+  const after = clause.slice(matchAt + patternLength);
+  const explicitPostEndorsement =
+    /(?:可以|能够|应当|应该|可直接|可以直接|明确可以|确认可以).{0,12}(?:答应|承诺|断言|保证|认定|确认|成立|属实)/u
+      .test(after);
+  if (explicitPostEndorsement) return true;
+
+  const lastTurn = Math.max(
+    before.lastIndexOf("但"),
+    before.lastIndexOf("然而"),
+    before.lastIndexOf("不过"),
+    before.lastIndexOf("实际"),
+    before.lastIndexOf("其实"),
+  );
+  const effectiveBefore = lastTurn < 0 ? before : before.slice(lastTurn);
+  if (/(?:不是不能|并非不能|不能不|并不是不|并非不|不是不|未必不能).{0,32}$/u
+    .test(effectiveBefore)) {
+    return true;
+  }
+  const negated = /(?:不能|无法|未能|未|不得|不应|不宜|不可|不要|没有|尚未|暂未|拒绝|否认|禁止|不承诺|不能据此得出).{0,48}$/u
+    .test(effectiveBefore);
+  if (negated) return false;
+
+  const missingOrReviewContext = /(?:缺失信息|尚未确认|下一步验证|复核|已确认边界|存在与)[：:“”"']?.{0,40}$/u
+    .test(before);
+  if (missingOrReviewContext) return false;
+
+  const restatesQuestion = /(?:客户|用户|问题|需求|对方).{0,32}(?:要求|询问|提出|希望|声称|问|提到)|(?:能否|是否|请问|请断言|请承诺).{0,48}$/u
+    .test(before) && /[？?]|[”」』】]/u.test(after);
+  if (restatesQuestion) return false;
+  return true;
+}
+
+function lastBoundary(value: string, before: number): number {
+  let boundary = 0;
+  for (const match of value.slice(0, before).matchAll(/[。！？!?；;\n]/gu)) {
+    boundary = (match.index ?? 0) + match[0].length;
+  }
+  return boundary;
+}
+
+function nextBoundary(value: string, after: number): number {
+  const match = /[。！？!?；;\n]/u.exec(value.slice(after));
+  return match === null ? value.length : after + (match.index ?? 0) + match[0].length;
 }
 
 function citationIndexes(answer: string): number[] {

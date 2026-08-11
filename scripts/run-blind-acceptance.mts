@@ -134,6 +134,9 @@ try {
             ...runtimeIdentity,
             scope: execution.result.scope,
             status: execution.result.status,
+            ...(execution.result.policyDisposition === undefined
+              ? {}
+              : { policyDisposition: execution.result.policyDisposition }),
             answer: execution.result.answer,
             ...(execution.domainsUsed === undefined
               ? {}

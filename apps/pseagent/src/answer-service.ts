@@ -391,7 +391,13 @@ export class AnswerService {
             false,
           ));
         }
-        const result: AnswerResult = { scope, status: "answered", answer, references: [] };
+        const result: AnswerResult = {
+          scope,
+          status: "answered",
+          policyDisposition: "allowed",
+          answer,
+          references: [],
+        };
         return withQuestionResolution(finishExecution(trace, result, startedAt, false, false));
       }
       if (scope !== "professional" && scope !== "general") {
@@ -1763,6 +1769,9 @@ function recordFinished(
     event: "finish",
     scope: result.scope,
     status: result.status,
+    ...(result.policyDisposition === undefined
+      ? {}
+      : { policyDisposition: result.policyDisposition }),
     citationCount: result.references.length,
     elapsedMs: Math.max(0, Date.now() - startedAt),
     historicalAttempted,
@@ -1904,6 +1913,7 @@ export function temporaryUnavailableResult(scope?: Scope): AnswerResult {
   return {
     scope: scope ?? "normal",
     status: "temporarily_unavailable",
+    policyDisposition: "needs_escalation",
     answer: knowledge ? "知识问答服务暂时不可用，请稍后重试。" : "问答服务暂时不可用，请稍后重试。",
     references: [],
   };

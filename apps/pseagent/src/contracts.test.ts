@@ -371,6 +371,7 @@ describe("PSEAgent contracts", () => {
     expect(answerResultSchema.parse({
       scope: "general",
       status: "answered",
+      policyDisposition: "refused",
       answer: "方法知识完整，但当前个案仍需补充输入。",
       references: [],
       knowledgeCoverage: "complete",
@@ -378,7 +379,15 @@ describe("PSEAgent contracts", () => {
     })).toMatchObject({
       knowledgeCoverage: "complete",
       caseAssessability: "insufficient",
+      policyDisposition: "refused",
     });
+    expect(() => answerResultSchema.parse({
+      scope: "general",
+      status: "answered",
+      policyDisposition: "accepted",
+      answer: "无效政策处置值。",
+      references: [],
+    })).toThrow();
   });
 
   it("keeps historical answers separate and requires verifiable Jira/Wiki sources", () => {

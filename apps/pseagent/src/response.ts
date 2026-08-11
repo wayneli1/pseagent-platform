@@ -5,6 +5,7 @@ import type {
   Coverage,
   FinalAction,
   KnowledgeCoverage,
+  PolicyDisposition,
   Reference,
   Scope,
 } from "./contracts.js";
@@ -22,6 +23,32 @@ import { sanitizeFormalAnswer } from "./public-answer.js";
 export const NOT_COVERED_TEXT = "当前知识库暂未覆盖该问题，暂时无法给出可靠答案。";
 export const KNOWLEDGE_UNAVAILABLE_TEXT = "知识问答服务暂时不可用，请稍后重试。";
 export const GENERAL_UNAVAILABLE_TEXT = "问答服务暂时不可用，请稍后重试。";
+
+export function derivePolicyDisposition(
+  status: AnswerStatus,
+  answer: string,
+): PolicyDisposition {
+  if (status === "temporarily_unavailable") return "needs_escalation";
+  if (status === "not_covered") return "refused";
+  if (status === "partially_answered") return "limited";
+
+  const normalized = answer.normalize("NFKC").toLocaleLowerCase("zh-CN");
+  const refusesRequestedCommitment = [
+    /(?:不能|不得|无法|不应|不宜|不可|不要)(?:直接|据此|对外)?(?:答应|承诺|保证|确认|断言|认定|签署|发布)/u,
+    /不能据此得出/u,
+    /无法协助/u,
+    /无法根据.{0,24}(?:确认|支持|得出)/u,
+    /(?:现有|当前).{0,24}(?:不足以|无法).{0,24}(?:确认|支持|得出)/u,
+    /(?:未|没有).{0,24}(?:提供|形成).{0,24}(?:保证|承诺)/u,
+    /不建议.{0,24}(?:删除|隐瞒|掩盖|承诺)/u,
+    /(?:^|[。！？!?\n])\s*[-*]?\s*(?:不可以|不能|不行)(?:[。！!\s]|$)/u,
+    /拒绝(?:该|此|这)?(?:请求|要求|承诺)/u,
+  ].some((pattern) => pattern.test(normalized));
+  if (!refusesRequestedCommitment) return "allowed";
+  return /(?:升级|上报|法务|审批|人工复核|主管确认|管理层确认)/u.test(normalized)
+    ? "needs_escalation"
+    : "refused";
+}
 
 export interface KnowledgeResponseContext {
   readonly evidenceLedgers?: readonly EvidenceLedger[];
@@ -102,6 +129,7 @@ export function formatKnowledgeFinal(
     return {
       scope,
       status,
+      policyDisposition: derivePolicyDisposition(status, answer),
       knowledgeCoverage,
       caseAssessability,
       answer,
@@ -259,6 +287,7 @@ export function formatAnswerResult(input: {
       return {
         scope: input.scope,
         status: input.status,
+        policyDisposition: derivePolicyDisposition(input.status, NOT_COVERED_TEXT),
         answer: NOT_COVERED_TEXT,
         references: [],
       };
@@ -266,6 +295,7 @@ export function formatAnswerResult(input: {
     return {
       scope: input.scope,
       status: input.status,
+      policyDisposition: derivePolicyDisposition(input.status, input.answer),
       ...(input.knowledgeCoverage === undefined
         ? {}
         : { knowledgeCoverage: input.knowledgeCoverage }),
@@ -280,6 +310,7 @@ export function formatAnswerResult(input: {
     return {
       scope: input.scope,
       status: input.status,
+      policyDisposition: derivePolicyDisposition(input.status, input.answer),
       answer: input.scope === "normal" ? GENERAL_UNAVAILABLE_TEXT : KNOWLEDGE_UNAVAILABLE_TEXT,
       references: [],
     };
@@ -292,6 +323,7 @@ export function formatAnswerResult(input: {
   return {
     scope: input.scope,
     status: input.status,
+    policyDisposition: derivePolicyDisposition(input.status, answer),
     ...(input.knowledgeCoverage === undefined
       ? {}
       : { knowledgeCoverage: input.knowledgeCoverage }),

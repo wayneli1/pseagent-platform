@@ -174,8 +174,9 @@ describe("blind acceptance contract", () => {
       observation.caseId === "B001"
         ? {
             ...observation,
-            status: "not_covered",
-            answer: dataset.cases[0]!.requiredConcepts[0]!.anyOf[0]!,
+            status: "answered",
+            policyDisposition: "refused" as const,
+            answer: `${dataset.cases[0]!.requiredConcepts[0]!.anyOf[0]}，不能直接承诺该请求。`,
             domainsUsed: dataset.cases[0]!.expectedDomains,
             references: [],
           }
@@ -194,6 +195,58 @@ describe("blind acceptance contract", () => {
       completenessRate: 1,
     });
     expect(report.qualified).toBe(true);
+    expect(report.cases[0]!.rounds[0]!.score).toMatchObject({
+      policyDisposition: "refused",
+      reasonableRefusal: true,
+    });
+  });
+
+  it("treats completeness as obligation delivery instead of routing or citation quality", () => {
+    const dataset = parseBlindAcceptanceDataset(fixtureDataset(), new Set());
+    const observations = observationsFor(dataset);
+    for (const round of [1, 2, 3] as const) {
+      const observation = observations.find((item) =>
+        item.caseId === "B001" && item.round === round)!;
+      observations[observations.indexOf(observation)] = {
+        ...observation,
+        domainsUsed: ["presales-general"],
+        references: [],
+      };
+    }
+
+    const score = buildBlindAcceptanceReport(dataset, observations)
+      .cases[0]!.rounds[0]!.score;
+
+    expect(score).toMatchObject({
+      complete: true,
+      evidenceSupported: false,
+      routingCorrect: false,
+    });
+  });
+
+  it.each([
+    ["依据现有资料，不能得出“高级备份适用于任意数据规模”的结论。", 0],
+    ["依据现有资料，现有资料未覆盖“高级备份适用于任意数据规模”，无法确认。", 0],
+    ["依据现有资料，客户要求“高级备份适用于任意数据规模”，不能答应。", 0],
+    ["尚未确认的部分：缺失信息：高级备份适用于任意数据规模；下一步验证：复核正式资料。", 0],
+    ["依据正式资料，高级备份适用于任意数据规模。", 1],
+    ["依据资料，虽然不能保证小规模项目，但高级备份适用于任意数据规模。", 1],
+    ["依据资料，这不是不能承诺高级备份适用于任意数据规模。", 1],
+    ["依据资料，客户要求“高级备份适用于任意数据规模”，可以答应。", 1],
+  ])("scores forbidden claims in context: %s", (answer, expectedCount) => {
+    const raw = fixtureDataset();
+    raw.cases[0] = {
+      ...raw.cases[0]!,
+      forbiddenPatterns: ["高级备份适用于任意数据规模"],
+    };
+    const dataset = parseBlindAcceptanceDataset(raw, new Set());
+    const observations = observationsFor(dataset).map((observation) =>
+      observation.caseId === "B001" ? { ...observation, answer } : observation);
+
+    const score = buildBlindAcceptanceReport(dataset, observations)
+      .cases[0]!.rounds[0]!.score;
+
+    expect(score.forbiddenClaimCount).toBe(expectedCount);
   });
 });
 

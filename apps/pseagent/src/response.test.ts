@@ -6,6 +6,7 @@ import {
   GENERAL_UNAVAILABLE_TEXT,
   KNOWLEDGE_UNAVAILABLE_TEXT,
   NOT_COVERED_TEXT,
+  derivePolicyDisposition,
   deriveStatus,
   formatAnswerResult,
   formatKnowledgeFinal,
@@ -133,6 +134,7 @@ describe("knowledge response", () => {
     expect(result).toEqual({
       scope: "professional",
       status: "not_covered",
+      policyDisposition: "refused",
       answer: NOT_COVERED_TEXT,
       references: [],
     });
@@ -158,9 +160,25 @@ describe("knowledge response", () => {
     expect(result).toEqual({
       scope: "professional",
       status: "not_covered",
+      policyDisposition: "refused",
       answer: "正式知识库相关信息：\n\n资料明确列出 SMTP 协议能力 [1]。",
       references: [reference],
     });
+  });
+
+  it("reports policy handling independently from answer completeness", () => {
+    expect(derivePolicyDisposition("answered", "依据现有资料，不能直接承诺零停机。"))
+      .toBe("refused");
+    expect(derivePolicyDisposition(
+      "answered",
+      "依据现有资料，不能直接承诺零停机，应提交法务审批。",
+    )).toBe("needs_escalation");
+    expect(derivePolicyDisposition("partially_answered", "已回答可核实部分。"))
+      .toBe("limited");
+    expect(derivePolicyDisposition("answered", "- 不可以。\n- 应如实披露测试结果。"))
+      .toBe("refused");
+    expect(derivePolicyDisposition("answered", "不能仅因为命中一次就停止复核。"))
+      .toBe("allowed");
   });
 
   it("formats only public source metadata", () => {

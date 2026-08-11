@@ -8,6 +8,7 @@ import type {
   CoverageVerificationReason,
   HistoricalRejectionReason,
   KnowledgeCoverage,
+  PolicyDisposition,
   Scope,
 } from "./contracts.js";
 import type { TaskSpecIssueCode } from "./task-spec.js";
@@ -336,6 +337,7 @@ export type DiagnosticEvent =
       readonly event: "finish";
       readonly scope: Scope;
       readonly status: AnswerStatus;
+      readonly policyDisposition?: PolicyDisposition;
       readonly citationCount: number;
       readonly elapsedMs: number;
       readonly historicalAttempted: boolean;
