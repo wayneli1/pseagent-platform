@@ -1,0 +1,144 @@
+import { describe, expect, it, vi } from "vitest";
+import type { DomainKnowledgePlan } from "./domain-plan.js";
+import type { DiagnosticTrace } from "./diagnostics.js";
+import type { KnowledgePage, KnowledgeSession } from "./knowledge-session.js";
+import { DeterministicRetrievalCoordinator } from "./deterministic-retrieval.js";
+
+const revision = "a".repeat(40);
+const trace: DiagnosticTrace = { requestId: "deterministic-retrieval", record() {} };
+
+function domainPlan(requirementCount = 2): DomainKnowledgePlan {
+  return {
+    domain: "coremail-professional",
+    scope: "professional",
+    plan: {
+      subject: "Coremail 迁移",
+      retrievalStrategy: "coverage_units",
+      requirements: Array.from({ length: requirementCount }, (_, index) => ({
+        id: `R${index + 1}`,
+        question: index === 0 ? "Coremail 迁移能力" : "Coremail 迁移边界",
+        evidenceMode: "direct_only" as const,
+        evidenceAspects: [{
+          id: "A1",
+          label: index === 0 ? "迁移能力" : "迁移边界",
+          terms: index === 0 ? ["迁移", "能力"] : ["迁移", "边界"],
+        }],
+        queries: [
+          { text: `Coremail 迁移 ${index + 1} 主查询`, aspectIds: ["A1"] },
+          { text: `Coremail 迁移 ${index + 1} 补充查询`, aspectIds: ["A1"] },
+        ],
+      })),
+    },
+    bindings: Array.from({ length: requirementCount }, (_, index) => ({
+      domain: "coremail-professional",
+      requirementId: `R${index + 1}`,
+      deliverableId: `D${index + 1}`,
+      obligationId: `O${index + 1}`,
+      order: index,
+    })),
+  };
+}
+
+function page(path: string, title: string, type = "query"): KnowledgePage {
+  return {
+    project: "coremail-professional",
+    path,
+    title,
+    type,
+    tags: [],
+    related: [],
+    sources: [],
+    body: `# ${title}\n正式证据正文。`,
+    contentHash: path.includes("quote") ? "b".repeat(64) : "c".repeat(64),
+  };
+}
+
+function sessionFixture(options: { readonly priceFirst?: boolean } = {}) {
+  const search = vi.fn(async (query: string) => {
+    const requirement = query.includes(" 2 ") ? "2" : "1";
+    const hits = options.priceFirst
+      ? [
+          {
+            path: "wiki/quotes/migration-quote.md",
+            title: "迁移能力报价",
+            score: 0.99,
+            matchedTerms: ["迁移", "能力"],
+            snippet: "报价",
+            pageType: "quote",
+          },
+          {
+            path: "wiki/queries/migration-capability.md",
+            title: "Coremail 迁移能力",
+            score: 0.7,
+            matchedTerms: ["迁移", "能力"],
+            snippet: "正式能力",
+            pageType: "query",
+            reviewStatus: "approved",
+          },
+        ]
+      : [{
+          path: `wiki/queries/migration-${requirement}.md`,
+          title: `Coremail 迁移资料 ${requirement}`,
+          score: 0.8,
+          matchedTerms: ["迁移"],
+          snippet: "正式资料",
+          pageType: "query",
+          reviewStatus: "approved",
+        }];
+    return { project: "coremail-professional" as const, revision, hits };
+  });
+  const readPage = vi.fn(async (path: string) => path.includes("quote")
+    ? page(path, "迁移能力报价", "quote")
+    : page(path, "Coremail 迁移能力"));
+  const compactPage = vi.fn((value: KnowledgePage) => value.body);
+  return {
+    session: {
+      project: "coremail-professional",
+      revision,
+      search,
+      readPage,
+      compactPage,
+    } as unknown as KnowledgeSession,
+    search,
+    readPage,
+  };
+}
+
+describe("DeterministicRetrievalCoordinator", () => {
+  it("searches and reads every required obligation without a model action loop", async () => {
+    const { session, search } = sessionFixture();
+    const model = { completeJson: vi.fn() };
+
+    const result = await new DeterministicRetrievalCoordinator().retrieve({
+      plan: domainPlan(2),
+      session,
+      deadlineAt: Date.now() + 10_000,
+      signal: new AbortController().signal,
+      trace,
+    });
+
+    expect(search).toHaveBeenCalledTimes(4);
+    expect(result.evidence.map((item) => item.requirementId)).toEqual([
+      "R1",
+      "R2",
+    ]);
+    expect(result.evidenceLedger.units).toHaveLength(2);
+    expect(model.completeJson).not.toHaveBeenCalled();
+  });
+
+  it("keeps a direct formal page ahead of a price quote with lexical overlap", async () => {
+    const { session, readPage } = sessionFixture({ priceFirst: true });
+
+    const result = await new DeterministicRetrievalCoordinator().retrieve({
+      plan: domainPlan(1),
+      session,
+      deadlineAt: Date.now() + 10_000,
+      signal: new AbortController().signal,
+      trace,
+    });
+
+    expect(result.evidence[0]?.path).toMatch(/^wiki\/(?:queries|concepts)\//u);
+    expect(result.evidence[0]?.path).not.toMatch(/报价|quote/iu);
+    expect(readPage).toHaveBeenCalledTimes(1);
+  });
+});

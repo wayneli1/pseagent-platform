@@ -51,7 +51,7 @@ export function rankRetrievalCandidates<T extends RetrievalRankingCandidate>(inp
     const byFreshness = right.score.freshness - left.score.freshness;
     const byRrf = right.score.rrf - left.score.rrf;
     return input.evidenceMode === "direct_only"
-      ? byObligationFit || byAspect || byTitle || byDirectness || bySourceTier || byFreshness ||
+      ? bySourceTier || byObligationFit || byAspect || byTitle || byDirectness || byFreshness ||
         byRrf || left.candidate.path.localeCompare(right.candidate.path)
       : byObligationFit || byAspect || byDirectness || byTitle || bySourceTier || byFreshness ||
         byRrf || left.candidate.path.localeCompare(right.candidate.path);
