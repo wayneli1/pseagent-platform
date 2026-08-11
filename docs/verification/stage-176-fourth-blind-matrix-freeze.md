@@ -15,8 +15,9 @@ SHA-256 封存。本阶段没有调用 `answerDetailed`，没有观察模型回�
 - 题集 SHA-256：`0229592b40cdf6d488fca4977d1956b23efb2106f6190431bb224fdad965d725`
 - seal：`tests/e2e/enterprise-blind-acceptance-20260812-fourth.sha256`
 - 生成器：`scripts/build-blind-matrix-20260812.mts`
-- 历史排除题面数：663
-- 历史排除集合 SHA-256：`1f2fe86a5c0577bb8c199efc39470042781c5b4d0053b6a7f5f0b8689cc7fc4c`
+- 生成 seal 时强制提供生产 `PSE_ANSWER_CARD_CATALOG_PATH`，缺失时生成器拒绝执行
+- 历史排除题面数：751（包含生产答案卡 catalog）
+- 历史排除集合 SHA-256：`d7b5cdb90010f25d5e41ae0d47181ba4dacb12bfa2c937785b4f9cbdb0f31e81`
 - 冻结时间：`2026-08-12T01:30:00.000Z`
 
 ## 样本结构
@@ -36,7 +37,7 @@ SHA-256 封存。本阶段没有调用 `answerDetailed`，没有观察模型回�
 ## 独立性与可审计性
 
 1. 100 个归一化题面哈希全部唯一。
-2. 与 663 条历史测试、回归题和答案卡相关题面的精确哈希碰撞为 0。
+2. 与 751 条历史测试、回归题和生产答案卡相关题面的精确哈希碰撞为 0。
 3. 每题冻结 `entities/actions/constraints/deliverables` 四元元数据；100 个规范化语义
    指纹全部唯一，单纯改写题面不会绕过去重。
 4. 六层分布固定为 `20/20/15/15/15/15`。
@@ -51,7 +52,7 @@ npm exec -- vitest run scripts/build-blind-matrix-20260812.test.ts
 ```
 
 ```json
-{"type":"blind_validation","matrix":"enterprise-blind-acceptance-20260812-fourth.json","matrixSha256":"0229592b40cdf6d488fca4977d1956b23efb2106f6190431bb224fdad965d725","excludedQuestionCount":663,"excludedQuestionsSha256":"1f2fe86a5c0577bb8c199efc39470042781c5b4d0053b6a7f5f0b8689cc7fc4c","caseCount":100,"layers":{"professional":20,"general":20,"mixed":15,"multi_turn":15,"insufficient_evidence":15,"safety_boundary":15}}
+{"type":"blind_validation","matrix":"enterprise-blind-acceptance-20260812-fourth.json","matrixSha256":"0229592b40cdf6d488fca4977d1956b23efb2106f6190431bb224fdad965d725","excludedQuestionCount":751,"excludedQuestionsSha256":"d7b5cdb90010f25d5e41ae0d47181ba4dacb12bfa2c937785b4f9cbdb0f31e81","caseCount":100,"layers":{"professional":20,"general":20,"mixed":15,"multi_turn":15,"insufficient_evidence":15,"safety_boundary":15}}
 ```
 
 ## 冷运行约束

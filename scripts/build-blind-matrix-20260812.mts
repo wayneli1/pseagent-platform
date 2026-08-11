@@ -288,6 +288,10 @@ function sha256(value: Buffer): string {
 }
 
 function freezeFourthMatrix(): void {
+  const catalogPath = process.env.PSE_ANSWER_CARD_CATALOG_PATH?.trim();
+  if (!catalogPath || !existsSync(catalogPath)) {
+    throw new Error("fourth_matrix_requires_answer_card_catalog");
+  }
   const matrixPath = resolve("tests/e2e/enterprise-blind-acceptance-20260812-fourth.json");
   const sealPath = resolve("tests/e2e/enterprise-blind-acceptance-20260812-fourth.sha256");
   const matrix = buildFourthMatrix();
