@@ -22,7 +22,7 @@ describe("loadConfig", () => {
     expect(config.PSE_MODEL_MAX_TOKENS).toBe(8_192);
     expect(config.PSE_MODEL_MAX_CONCURRENCY).toBe(3);
     expect(config.PSE_MODEL_MAX_QUEUE).toBe(32);
-    expect(config.PSE_MODEL_QUEUE_TIMEOUT_MS).toBe(15_000);
+    expect(config.PSE_MODEL_QUEUE_TIMEOUT_MS).toBe(60_000);
     expect(config.PSE_REQUEST_TIMEOUT_MS).toBe(180_000);
     expect(config.PSE_ACTIVE_DEADLINE_MS).toBe(165_000);
     expect(config.taskSpecShadow).toEqual({ enabled: false });

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { FinalAction } from "./contracts.js";
 import type { ModelClient } from "./model-client.js";
 import {
   AnswerCardRegistry,
@@ -1981,6 +1982,43 @@ describe("answer card TaskSpec adapter", () => {
       }],
       citations: [1],
     }, [binding])).toBe(false);
+  });
+
+  it("does not treat an explicit refusal to promise as the forbidden promise", () => {
+    const binding = {
+      domain: "coremail-professional" as const,
+      requirementId: "R1" as const,
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      forbiddenClaims: [
+        "高级备份适用于任意数据规模",
+        "可以直接对外承诺恢复时间",
+      ],
+    };
+    const action = (answer: string): FinalAction => ({
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer,
+        citations: [1],
+      }],
+      citations: [1],
+    });
+
+    expect(violatesAnswerCardForbiddenClaims(action(
+      "不能直接承诺高级备份适用于任意数据规模，也不可以直接对外承诺恢复时间 [1]。",
+    ), [binding])).toBe(false);
+    expect(violatesAnswerCardForbiddenClaims(action(
+      "不得在合同里承诺高级备份适用于任意数据规模 [1]。",
+    ), [binding])).toBe(false);
+    expect(violatesAnswerCardForbiddenClaims(action(
+      "虽然不能保证小规模项目，但高级备份适用于任意数据规模 [1]。",
+    ), [binding])).toBe(true);
+    expect(violatesAnswerCardForbiddenClaims(action(
+      "这不是不能承诺高级备份适用于任意数据规模 [1]。",
+    ), [binding])).toBe(true);
   });
 });
 

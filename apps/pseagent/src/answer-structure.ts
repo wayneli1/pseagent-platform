@@ -164,8 +164,10 @@ function operationalConditionCovered(
 ): boolean {
   const normalizedAction = normalizeFrameworkText(condition.action);
   if (condition.object !== undefined) {
+    const normalizedObject = escapeRegExp(condition.object);
+    const action = escapeRegExp(normalizedAction);
     return new RegExp(
-      `${escapeRegExp(normalizedAction)}.{0,20}${escapeRegExp(condition.object)}`,
+      `(?:${action}.{0,20}${normalizedObject}|${normalizedObject}.{0,20}${action})`,
       "u",
     ).test(normalizedAnswer);
   }

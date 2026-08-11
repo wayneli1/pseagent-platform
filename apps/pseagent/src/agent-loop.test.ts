@@ -338,6 +338,29 @@ function payloadAt(model: ReturnType<typeof scriptedAgentModel>, index: number) 
 }
 
 describe("runKnowledgeAgent", () => {
+  it("omits a citation-only delegated obligation instead of failing the whole answer", async () => {
+    const session = fakeSession({
+      hits: { "seed-r1": [{ path: "wiki/coremail-ai.md" }] },
+    });
+    const delegatedFinal: AgentAction = {
+        action: "final",
+        requirements: [{
+          id: "R1",
+          coverage: "complete",
+          answer: "具体说明如 [1] 所列。",
+          citations: [1],
+        }],
+        citations: [1],
+      };
+    const model = scriptedAgentModel([delegatedFinal, delegatedFinal]);
+
+    const result = await runKnowledgeAgent(agentInput(model, session));
+
+    expect(result.status).toBe("not_covered");
+    expect(result.status).not.toBe("temporarily_unavailable");
+    expect(model.calls).toBe(2);
+  });
+
   it("keeps coverage-unit seed searches isolated from the global raw question", async () => {
     const plan: KnowledgePlan = {
       subject: "并列对象",
@@ -2681,6 +2704,67 @@ describe("runKnowledgeAgent", () => {
     expect(result.status).toBe("partially_answered");
     expect(verifyCoverage).toHaveBeenCalledOnce();
     expect(model.calls).toBe(2);
+  });
+
+  it("keeps a verifier-supported partial comparison when one subject anchor is intentionally omitted", async () => {
+    const question = "Alpha 与 Beta 有哪些差异";
+    const plan: KnowledgePlan = {
+      subject: "产品对比",
+      requirements: [{
+        id: "R1",
+        question,
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "Alpha 与 Beta 的差异",
+          terms: ["Alpha", "Beta", "差异"],
+        }],
+        queries: [{ text: "Alpha Beta 对比", aspectIds: ["A1"] }],
+      }],
+    };
+    const session = fakeSession({
+      hits: {
+        Alpha: [{ path: "wiki/entities/alpha.md", title: "Alpha" }],
+        Beta: [{ path: "wiki/entities/beta.md", title: "Beta" }],
+        "Alpha Beta 对比": [{
+          path: "wiki/comparison/alpha-vs-beta.md",
+          title: "Alpha vs Beta 对比",
+        }],
+      },
+      pageTitles: {
+        "wiki/entities/alpha.md": "Alpha",
+        "wiki/entities/beta.md": "Beta",
+        "wiki/comparison/alpha-vs-beta.md": "Alpha vs Beta 对比",
+      },
+    });
+    const partialAnswer =
+      "- 不支持本地模式 [2]。\nAlpha 的正式资料仍待确认；Beta 使用服务模式 [2]。";
+    const model = scriptedAgentModel([
+      final("complete", partialAnswer, [2]),
+      final("complete", partialAnswer, [2]),
+      final("complete", partialAnswer, [2]),
+    ]);
+    const verifyCoverage = vi.fn(async (input: CoverageVerifierInput) =>
+      reportAndReturn(input, {
+        ...input.draft,
+        requirements: input.draft.requirements.map((requirement) => ({
+          ...requirement,
+          coverage: "partial" as const,
+        })),
+      }));
+
+    const result = await runKnowledgeAgent({
+      ...agentInput(model, session, plan),
+      question,
+      verifyCoverage,
+    });
+
+    expect(result.status).toBe("partially_answered");
+    expect(result.answer).toContain("Alpha");
+    expect(result.answer).toContain("Beta");
+    expect(result.answer).not.toContain("不支持本地模式");
+    expect(verifyCoverage).toHaveBeenCalledTimes(2);
+    expect(model.calls).toBe(3);
   });
 
   it("preloads broad synthesis pages by uncovered aspect before asking for a final", async () => {

@@ -423,6 +423,22 @@ describe("ReferenceRegistry", () => {
       evidence([["R1", [1]]]),
     )).toEqual({ ok: false, reason: "requirement_answer_delegates_to_citation" });
   });
+
+  it("accepts a substantive conclusion that also introduces its citation", () => {
+    const registry = new ReferenceRegistry("coremail-professional", revision);
+    registry.register(readEvidence());
+
+    expect(registry.validateFinal(
+      final([{
+        id: "R1",
+        coverage: "complete",
+        answer: "根据 [1] 所示内容，建议先复述客户诉求、确认事实，再明确后续动作。",
+        citations: [1],
+      }], "根据 [1] 所示内容，建议先复述客户诉求、确认事实，再明确后续动作。", [1]),
+      requirements.slice(0, 1),
+      evidence([["R1", [1]]]),
+    )).toEqual({ ok: true });
+  });
 });
 
 describe("splitAnswerLineSegments", () => {

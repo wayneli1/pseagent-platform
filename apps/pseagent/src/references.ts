@@ -230,6 +230,28 @@ function sameNumberSet(left: readonly number[], right: readonly number[]): boole
   return left.length === right.length && left.every((value) => right.includes(value));
 }
 
-function delegatesConclusionToCitation(answer: string): boolean {
-  return /(?:见|如|参考|详见).{0,12}\[\d+\].{0,12}(?:所列|所示|资料|内容|说明)/u.test(answer);
+export function delegatesConclusionToCitation(answer: string): boolean {
+  const contentSegments = answer
+    .split(/\r?\n/u)
+    .flatMap(splitAnswerLineSegments)
+    .map((segment) => segment.trim())
+    .filter((segment) =>
+      segment.length > 0 &&
+      !/^(?:#{1,6}\s+\S[^\n]*|\*\*[^*\n]+\*\*[:：]?|[^：:\n。！？；!?]{1,32}[：:])$/u.test(segment));
+  return contentSegments.length > 0 &&
+    contentSegments.every(isCitationDelegationOnlySegment);
+}
+
+function isCitationDelegationOnlySegment(segment: string): boolean {
+  if (!/(?:见|如|参考|详见).{0,12}\[\d+\].{0,12}(?:所列|所示|资料|内容|说明)/u.test(segment)) {
+    return false;
+  }
+  const remainder = segment
+    .replace(/\[\d+\]/gu, "")
+    .replace(
+      /(?:具体|详细|相关|完整|上述|对应|请|可|以|的|配置|步骤|结论|信息|依据|操作|做法|见|如|参考|详见|所列|所示|资料|内容|说明|为准|执行)/gu,
+      "",
+    )
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
+  return remainder.length <= 2;
 }

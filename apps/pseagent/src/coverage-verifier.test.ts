@@ -8,6 +8,7 @@ import {
 } from "./contracts.js";
 import {
   coverageVerificationReport,
+  deterministicCoverageVerificationReport,
   inferCoverageVerificationReport,
   InvalidCoverageVerificationError,
   notCoveredRequirementAnswer,
@@ -302,6 +303,76 @@ describe("verifyKnowledgeCoverage", () => {
     expect(result.requirements[0]?.coverage).toBe("partial");
     expect(result.requirements[0]?.answer).toContain("CMAI");
     expect(result.requirements[0]?.answer).toContain("AIHUB");
+    expect(result.requirements[0]?.answer).toContain("仅部分覆盖");
+  });
+
+  it("degrades an all-segment retain decision when a comparison choice is still omitted", async () => {
+    const plan: KnowledgePlan = {
+      subject: "desktop client comparison",
+      requirements: [{
+        id: "R1",
+        question: "PCMail 与 Outlook 各自适合什么场景？",
+        evidenceMode: "direct_only",
+        evidenceAspects: [{
+          id: "A1",
+          label: "scenario comparison",
+          terms: ["PCMail", "Outlook", "scenario"],
+        }],
+        queries: [{ text: "PCMail Outlook scenarios", aspectIds: ["A1"] }],
+      }],
+    };
+    const draft: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: "Outlook 适合已核验的标准协议场景 [1]。",
+        citations: [1],
+      }],
+      citations: [1],
+    };
+    const completeJson = vi.fn(async (
+      input: Parameters<ModelClient["completeJson"]>[0],
+    ) => {
+      if (input.schemaDescription === "pse_whole_requirement_verification") {
+        return input.schema.parse({
+          action: "verify",
+          requirements: [{ id: "R1", decision: "retain_cited" }],
+        });
+      }
+      return input.schema.parse({
+        action: "verify",
+        requirements: [{
+          id: "R1",
+          targetDecision: "retain",
+          retainedTargetSegmentIndexes: [0],
+          synthesizedTargetSegmentIndexes: [],
+          retainedRelatedContextIndexes: [],
+          coveredAspectIds: ["A1"],
+          reason: "direct_support",
+        }],
+      });
+    });
+
+    const result = await verifyKnowledgeCoverage({
+      question: plan.subject,
+      plan,
+      draft,
+      evidence: [{
+        requirementId: "R1",
+        citation: 1,
+        title: "Outlook scenario",
+        path: "wiki/comparisons/desktop-client.md",
+        content: "Outlook 适用于标准协议接入场景。",
+        aspectIds: ["A1"],
+      }],
+      model: { completeJson } as unknown as ModelClient,
+    });
+
+    expect(completeJson).toHaveBeenCalledTimes(1);
+    expect(result.requirements[0]?.coverage).toBe("partial");
+    expect(result.requirements[0]?.answer).toContain("Outlook");
+    expect(result.requirements[0]?.answer).toContain("PCMail");
     expect(result.requirements[0]?.answer).toContain("仅部分覆盖");
   });
 
@@ -1505,6 +1576,49 @@ describe("verifyKnowledgeCoverage", () => {
         missingAspectCount: 0,
       }),
     ]);
+  });
+
+  it("binds a plain colon heading to its following cited factual segment", () => {
+    const plan: KnowledgePlan = {
+      subject: "文件中转条件",
+      requirements: [{
+        id: "R1",
+        question: "文件中转的容量和有效期是什么",
+        evidenceMode: "direct_only",
+        evidenceAspects: [
+          { id: "A1", label: "容量", terms: ["容量"] },
+          { id: "A2", label: "有效期", terms: ["有效期"] },
+        ],
+        queries: [{ text: "文件中转条件", aspectIds: ["A1", "A2"] }],
+      }],
+    };
+    const action: FinalAction = {
+      action: "final",
+      requirements: [{
+        id: "R1",
+        coverage: "complete",
+        answer: [
+          "容量：",
+          "单个文件上限以当前版本配置为准 [1]。",
+          "有效期：",
+          "到期策略需按项目配置核验 [1]。",
+        ].join("\n"),
+        citations: [1],
+      }],
+      citations: [1],
+    };
+
+    const report = deterministicCoverageVerificationReport(action, plan, [{
+      requirementId: "R1",
+      citation: 1,
+      title: "文件中转",
+      path: "wiki/concepts/transfer.md",
+      content: "正文说明容量和有效期条件。",
+      aspectIds: ["A1", "A2"],
+    }]);
+
+    expect(report.summaries[0]?.claimDecisions).toHaveLength(2);
+    expect(report.summaries[0]?.retainedDirectSegmentCount).toBe(2);
   });
 
   it("accepts semantically equivalent covered aspects without requiring literal labels or navigation tags", async () => {

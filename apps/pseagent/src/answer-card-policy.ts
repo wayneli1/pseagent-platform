@@ -162,10 +162,10 @@ export function violatesAnswerCardForbiddenClaims(
   action: FinalAction,
   bindings: readonly DomainRequirementBinding[] = [],
 ): boolean {
-  const answer = normalizePolicyText(action.requirements.flatMap((requirement) => [
+  const answer = action.requirements.flatMap((requirement) => [
       requirement.answer,
       ...(requirement.relatedContext ?? []).map((item) => item.statement),
-    ]).join(" "));
+    ]).join(" ");
   return bindings.some((binding) =>
     (binding.forbiddenClaims ?? []).some((claim) => {
       const normalizedClaim = normalizePolicyText(claim);
@@ -175,13 +175,28 @@ export function violatesAnswerCardForbiddenClaims(
 }
 
 function containsUnnegatedClaim(answer: string, claim: string): boolean {
-  let index = answer.indexOf(claim);
-  while (index >= 0) {
-    const prefix = answer.slice(Math.max(0, index - 6), index);
-    if (!/(?:不|未|无|无法|不能|并非|不代表|尚未)$/u.test(prefix)) return true;
-    index = answer.indexOf(claim, index + claim.length);
+  const clauses = answer
+    .split(/[。！？!?；;\n]|(?:但|但是|然而|不过)/u)
+    .map(normalizePolicyText)
+    .filter(Boolean);
+  for (const clause of clauses) {
+    let index = clause.indexOf(claim);
+    while (index >= 0) {
+      const prefix = clause.slice(Math.max(0, index - 32), index);
+      if (!hasClaimNegationPrefix(prefix)) return true;
+      index = clause.indexOf(claim, index + claim.length);
+    }
   }
   return false;
+}
+
+function hasClaimNegationPrefix(prefix: string): boolean {
+  const match = prefix.match(
+    /(?:不|未|无|无法|不能|不可|不应|不得|不宜|并非|不代表|尚未|没有)(?:(?:充分|正式|直接|对外|无依据|在合同中|在合同里|任何)*)?(?:(?:证据|资料)(?:能够)?)?(?:承诺|保证|宣称|确认|认定|视为|答应|写死|写入合同|声称|说明|证明|表明|意味着|代表|支持|适用)?$|(?:禁止|拒绝|避免|切勿|勿)(?:直接|对外)?(?:承诺|保证|宣称|确认|认定|视为|答应|写死|写入合同|声称)?$/u,
+  );
+  if (match === null || match.index === undefined) return false;
+  const before = prefix.slice(0, match.index);
+  return !/(?:不是|并非|未必)$/u.test(before);
 }
 
 export function answerCardPolicyObservations(

@@ -268,15 +268,27 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
         break;
       }
       if (
-        invalidReason.startsWith("explicit_scenario_choice_omitted:") &&
-        validateVerification(
+        invalidReason.startsWith("explicit_scenario_choice_omitted:")
+      ) {
+        const comparisonFallbackReason = validateVerification(
           input,
           normalizedCandidate,
           targetSegments,
           { allowPartialComparisonGap: true },
-        ) === undefined
-      ) {
-        conservativePartialFallback = normalizedCandidate;
+        );
+        if (comparisonFallbackReason === undefined) {
+          conservativePartialFallback = normalizedCandidate;
+          if (retainsEveryTargetSegment(normalizedCandidate, targetSegments)) {
+            verified = normalizedCandidate;
+            usedConservativePartialFallback = true;
+            break;
+          }
+        } else {
+          input.onInvalid?.({
+            attempt: attempt + 1,
+            reason: `comparison_fallback_invalid:${comparisonFallbackReason}`,
+          });
+        }
       }
       lastInvalidReason = invalidReason;
       if (isRecoverableDecisionShapeReason(invalidReason)) {
@@ -341,15 +353,22 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
           break;
         }
         if (
-          invalidReason.startsWith("explicit_scenario_choice_omitted:") &&
-          validateVerification(
+          invalidReason.startsWith("explicit_scenario_choice_omitted:")
+        ) {
+          const comparisonFallbackReason = validateVerification(
             input,
             fallback,
             targetSegments,
             { allowPartialComparisonGap: true },
-          ) === undefined
-        ) {
-          conservativePartialFallback = fallback;
+          );
+          if (comparisonFallbackReason === undefined) {
+            conservativePartialFallback = fallback;
+          } else {
+            input.onInvalid?.({
+              attempt: 3 + fallbackAttempt,
+              reason: `comparison_fallback_invalid:${comparisonFallbackReason}`,
+            });
+          }
         }
         lastInvalidReason = invalidReason;
         input.onInvalid?.({
@@ -438,6 +457,26 @@ ${COVERAGE_VERIFICATION_REPAIR_INSTRUCTION}`,
     coverageAlignedSummaries,
   ));
   return materialized;
+}
+
+function retainsEveryTargetSegment(
+  candidate: CoverageVerificationAction,
+  targetSegments: readonly {
+    readonly id: string;
+    readonly segments: readonly TargetSegment[];
+  }[],
+): boolean {
+  const segmentCountById = new Map(
+    targetSegments.map((requirement) => [
+      requirement.id,
+      requirement.segments.length,
+    ] as const),
+  );
+  return candidate.requirements.every((requirement) => {
+    const segmentCount = segmentCountById.get(requirement.id);
+    return segmentCount !== undefined &&
+      requirement.retainedTargetSegmentIndexes.length === segmentCount;
+  });
 }
 
 function alignSummariesToMaterializedCoverage(
@@ -1233,10 +1272,7 @@ function validateVerification(
         retainedAnswer,
       );
       if (missingChoiceLabels.length > 0) {
-        if (!(
-          options.allowPartialComparisonGap === true &&
-          decision.targetDecision === "retain_partial"
-        )) {
+        if (options.allowPartialComparisonGap !== true) {
           return `explicit_scenario_choice_omitted:${decision.id}:${missingChoiceLabels.join(",")}`;
         }
       }
@@ -1274,10 +1310,25 @@ function materializeVerification(
       decision.synthesizedTargetSegmentIndexes.length > 0;
     if (decision.targetDecision === "retain") {
       const retained = cloneRequirement(draftRequirement);
+      const answer = hasSynthesis
+        ? addSynthesisDisclosure(retained.answer)
+        : retained.answer;
+      const plannedQuestion = plan.requirements[index]?.question ?? "";
+      const comparisonGap = options.appendPartialComparisonGap === true &&
+        missingExplicitComparisonLabels(plannedQuestion, answer).length > 0;
+      if (comparisonGap) {
+        return {
+          ...retained,
+          coverage: "partial" as const,
+          answer: [answer, partiallyCoveredRequirementAnswer(plannedQuestion)]
+            .filter(Boolean)
+            .join("\n"),
+        };
+      }
       return hasSynthesis
         ? {
             ...retained,
-            answer: addSynthesisDisclosure(retained.answer),
+            answer,
           }
         : retained;
     }
@@ -1752,8 +1803,9 @@ function followingLineCitationScope(
 }
 
 function isPureStructuralHeading(text: string): boolean {
-  return /^(?:#{1,6}\s+\S[^\n]*|\*\*[^*\n]+\*\*[:：]?)$/u.test(text) &&
-    !/\[\d+\]/u.test(text);
+  if (/\[\d+\]/u.test(text)) return false;
+  return /^(?:#{1,6}\s+\S[^\n]*|\*\*[^*\n]+\*\*[:：]?)$/u.test(text) ||
+    /^[^：:\n。！？；!?]{1,32}[：:]$/u.test(text);
 }
 
 function sameNumbers(left: readonly number[], right: readonly number[]): boolean {

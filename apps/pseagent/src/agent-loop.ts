@@ -36,6 +36,7 @@ import {
 } from "./model-client.js";
 import { knowledgeAgentMessages } from "./prompts.js";
 import {
+  delegatesConclusionToCitation,
   normalizeTrailingCitationPlacement,
   ReferenceRegistry,
   splitAnswerLineSegments,
@@ -718,11 +719,40 @@ async function runKnowledgeAgentCore(
           }
         }
       }
-      const validation = state.references.validateFinal(
+      let validation = state.references.validateFinal(
         normalizedAction,
         input.plan.requirements,
         evidenceByRequirement(state),
       );
+      if (
+        !validation.ok &&
+        validation.reason === "requirement_answer_delegates_to_citation"
+      ) {
+        const projected = omitCitationDelegatingRequirements(
+          normalizedAction,
+          input.plan,
+        );
+        const projectedValidation = state.references.validateFinal(
+          projected,
+          input.plan.requirements,
+          evidenceByRequirement(state),
+        );
+        if (projectedValidation.ok) {
+          const omittedRequirementIds = projected.requirements.flatMap(
+            (requirement, index) =>
+              requirement.coverage === "none" &&
+                  normalizedAction.requirements[index]?.coverage !== "none"
+                ? [requirement.id]
+                : [],
+          );
+          normalizedAction = projected;
+          validation = projectedValidation;
+          observe(state, {
+            type: "citation_delegating_requirements_omitted",
+            requirements: omittedRequirementIds,
+          });
+        }
+      }
       if (!validation.ok) {
         recordDiagnostic(input.trace, {
           event: "validation",
@@ -772,7 +802,10 @@ async function runKnowledgeAgentCore(
           coverageGate.knowledgeMissingRequirementIds.length,
       });
       if (coverageGate.disposition === "reject") {
-        return fallbackUnavailable(input, "coverage_verifier_invalid");
+        return rejectCoverageVerifierInvalid(
+          input,
+          "deterministic_coverage_gate_rejected",
+        );
       }
       let auditedAction: FinalAction = normalizedAction;
       let verificationSummaries:
@@ -793,7 +826,17 @@ async function runKnowledgeAgentCore(
             coverageDocuments,
           );
           verificationSummaries = verificationReport.summaries;
-        } catch {
+        } catch (error) {
+          recordDiagnostic(input.trace, {
+            event: "validation",
+            result: "rejected",
+            reason: `deterministic_coverage_verification_failed:${
+              error instanceof InvalidCoverageVerificationError
+                ? error.code
+                : "unexpected_error"
+            }`,
+            repairAttempt: 0,
+          });
           return fallbackUnavailable(input, "coverage_verifier_invalid");
         }
       } else {
@@ -944,6 +987,19 @@ async function runKnowledgeAgentCore(
         projectedAfterVerification = projected !== auditedAction;
         auditedAction = projected;
       }
+      const comparisonSanitizedAction = sanitizeAuditedPartialComparisonClaims(
+        auditedAction,
+        state,
+      );
+      if (comparisonSanitizedAction !== auditedAction) {
+        auditedAction = comparisonSanitizedAction;
+        projectedAfterVerification = true;
+        observe(state, {
+          type: "ambiguous_comparison_claims_removed",
+          requirements: auditedAction.requirements.flatMap((requirement) =>
+            requirement.coverage === "partial" ? [requirement.id] : []),
+        });
+      }
       const auditedComparisonSubjectRepairs = pendingComparisonSubjectRepairs(
         auditedAction,
         state,
@@ -965,7 +1021,10 @@ async function runKnowledgeAgentCore(
         continue;
       }
       if (auditedComparisonSubjectRepairs.length > 0) {
-        return fallbackUnavailable(input, "coverage_verifier_invalid");
+        return rejectCoverageVerifierInvalid(
+          input,
+          "comparison_subject_postcheck_failed",
+        );
       }
       const structuredCoverageRepairs = pendingStructuredCoverageRepairs(
         normalizedAction,
@@ -1002,10 +1061,20 @@ async function runKnowledgeAgentCore(
             });
             continue;
           }
-          return fallbackUnavailable(input, "coverage_verifier_invalid");
+          auditedAction = omitStructurallyInvalidRequirements(
+            projected,
+            remainingRepairs,
+            input.plan,
+          );
+          projectedAfterVerification = true;
+          observe(state, {
+            type: "structured_coverage_requirements_omitted",
+            requirements: remainingRepairs,
+          });
+        } else {
+          auditedAction = projected;
+          projectedAfterVerification = true;
         }
-        auditedAction = projected;
-        projectedAfterVerification = true;
         observe(state, {
           type: "structured_coverage_grounded_projection",
           requirements: structuredCoverageRepairs,
@@ -1065,8 +1134,15 @@ async function runKnowledgeAgentCore(
               input.plan,
             );
             verificationSummaries = verificationReport.summaries;
-          } catch {
-            return fallbackUnavailable(input, "coverage_verifier_invalid");
+          } catch (error) {
+            return rejectCoverageVerifierInvalid(
+              input,
+              `verification_report_inference_failed:${
+                error instanceof InvalidCoverageVerificationError
+                  ? error.code
+                  : "unexpected_error"
+              }`,
+            );
           }
         } else if (verificationReport !== undefined) {
           try {
@@ -1074,8 +1150,15 @@ async function runKnowledgeAgentCore(
               auditedAction,
               verificationReport.summaries,
             );
-          } catch {
-            return fallbackUnavailable(input, "coverage_verifier_invalid");
+          } catch (error) {
+            return rejectCoverageVerifierInvalid(
+              input,
+              `verification_report_reconciliation_failed:${
+                error instanceof InvalidCoverageVerificationError
+                  ? error.code
+                  : "unexpected_error"
+              }`,
+            );
           }
         }
         observe(state, {
@@ -1095,10 +1178,16 @@ async function runKnowledgeAgentCore(
           reason: "answer_card_forbidden_claim",
           repairAttempt: 1,
         });
-        return fallbackUnavailable(input, "coverage_verifier_invalid");
+        return rejectCoverageVerifierInvalid(
+          input,
+          "answer_card_forbidden_claim_after_verification",
+        );
       }
       if (verificationReport === undefined) {
-        return fallbackUnavailable(input, "coverage_verifier_invalid");
+        return rejectCoverageVerifierInvalid(
+          input,
+          "verification_report_missing",
+        );
       }
       let evidenceLedger: EvidenceLedger;
       let coverageGaps: readonly CoverageGap[];
@@ -1512,6 +1601,19 @@ function rejectInvalidFinal(
     repairAttempt,
   });
   return fallbackUnavailable(input, "invalid_final");
+}
+
+function rejectCoverageVerifierInvalid(
+  input: KnowledgeAgentInput,
+  reason: string,
+): AnswerResult {
+  recordDiagnostic(input.trace, {
+    event: "validation",
+    result: "rejected",
+    reason,
+    repairAttempt: 0,
+  });
+  return fallbackUnavailable(input, "coverage_verifier_invalid");
 }
 
 function createAgentState(input: KnowledgeAgentInput): AgentState {
@@ -3894,7 +3996,11 @@ function pendingComparisonSubjectRepairs(
     ) {
       return [];
     }
-    return hasAmbiguousComparisonClaim(result.answer) ||
+    const ambiguousClaim = hasAmbiguousComparisonClaim(result.answer);
+    if (result.coverage === "partial") {
+      return ambiguousClaim ? [result.id] : [];
+    }
+    return ambiguousClaim ||
         missesComparisonSubjectAnchorCitation(result, requirementState, state) ||
         missingExplicitComparisonLabels(
           requirementState.requirement.question,
@@ -4239,9 +4345,9 @@ function pendingStructuredCoverageRepairs(
     )];
     return (requirement.coverage !== "none" &&
         hasBrokenCollectionEnumeration(requirement.answer)) ||
-      (requirement.coverage !== "none" &&
+      (requirement.coverage === "complete" &&
         missingExplicitFrameworkItems(requirement.answer, documents).length > 0) ||
-      (requirement.coverage !== "none" &&
+      (requirement.coverage === "complete" &&
         missingStrictFrameworkBoundaries(requirement.answer, documents).length > 0) ||
       (requirement.coverage !== "none" &&
         requestedBoundaryOwners.has(requirement.id)) ||
@@ -4259,6 +4365,49 @@ function pendingStructuredCoverageRepairs(
       ? [requirement.id]
       : [];
   });
+}
+
+function omitStructurallyInvalidRequirements(
+  action: FinalAction,
+  requirementIds: readonly string[],
+  plan: KnowledgePlan,
+): FinalAction {
+  const invalidIds = new Set(requirementIds);
+  const plannedById = new Map(
+    plan.requirements.map((requirement) => [requirement.id, requirement] as const),
+  );
+  const requirements = action.requirements.map((requirement) => {
+    if (!invalidIds.has(requirement.id)) return requirement;
+    const plannedQuestion = plannedById.get(requirement.id)?.question ?? "";
+    return {
+      id: requirement.id,
+      coverage: "none" as const,
+      answer: notCoveredRequirementAnswer(plannedQuestion),
+      citations: [],
+    };
+  });
+  return {
+    ...action,
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap(requirementEvidenceCitations),
+    ),
+  };
+}
+
+function omitCitationDelegatingRequirements(
+  action: FinalAction,
+  plan: KnowledgePlan,
+): FinalAction {
+  const invalidIds = new Set(
+    action.requirements.flatMap((requirement) =>
+      requirement.coverage !== "none" &&
+          delegatesConclusionToCitation(requirement.answer)
+        ? [requirement.id]
+        : []),
+  );
+  if (invalidIds.size === 0) return action;
+  return omitStructurallyInvalidRequirements(action, [...invalidIds], plan);
 }
 
 const EXPLICIT_EVIDENCE_BOUNDARY_QUESTION_PATTERN =
@@ -4306,6 +4455,76 @@ function hasAmbiguousComparisonClaim(answer: string): boolean {
     }
   }
   return false;
+}
+
+function sanitizeAuditedPartialComparisonClaims(
+  action: FinalAction,
+  state: AgentState,
+): FinalAction {
+  let changed = false;
+  const requirements = action.requirements.map((requirement) => {
+    const requirementState = state.requirements.get(requirement.id);
+    if (
+      requirement.coverage !== "partial" ||
+      requirementState === undefined ||
+      !isDirectComparisonRequirement(requirementState.requirement)
+    ) {
+      return requirement;
+    }
+    let requirementChanged = false;
+    let hasExplicitHeadingContext = false;
+    const retainedLines = normalizeTrailingCitationPlacement(requirement.answer)
+      .split(/\r?\n/u)
+      .filter((rawLine) => {
+        const line = rawLine.trim();
+        if (!line) {
+          hasExplicitHeadingContext = false;
+          return true;
+        }
+        const withoutMarker = line
+          .replace(/^(?:#{1,6}\s+|[-*•]\s+|\d+[.)、]\s*)/u, "")
+          .replace(/^\*\*|\*\*$/gu, "")
+          .trim();
+        if (
+          !/\[\d+\]/u.test(line) &&
+          /[：:]$/u.test(withoutMarker) &&
+          withoutMarker.replace(/[：:]$/u, "").trim().length > 0
+        ) {
+          hasExplicitHeadingContext = true;
+          return true;
+        }
+        const ambiguous = !hasExplicitHeadingContext &&
+          splitAnswerLineSegments(line).some((piece) =>
+            AMBIGUOUS_COMPARISON_CLAIM_PATTERN.test(piece.trim()));
+        if (ambiguous) {
+          changed = true;
+          requirementChanged = true;
+        }
+        return !ambiguous;
+      });
+    if (!requirementChanged) return requirement;
+    const answer = retainedLines.join("\n").trim();
+    const citations = stableUniqueNumbers(
+      [...answer.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1])),
+    ).filter((citation) => requirement.citations.includes(citation));
+    if (answer.length === 0 || citations.length === 0) {
+      return {
+        id: requirement.id,
+        coverage: "none" as const,
+        answer: notCoveredRequirementAnswer(requirementState.requirement.question),
+        citations: [],
+      };
+    }
+    return { ...requirement, answer, citations };
+  });
+  if (!changed) return action;
+  return {
+    ...action,
+    requirements,
+    citations: stableUniqueNumbers(
+      requirements.flatMap(requirementEvidenceCitations),
+    ),
+  };
 }
 
 function sortedCandidates(requirementState: RequirementState): Candidate[] {

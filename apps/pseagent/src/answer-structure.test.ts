@@ -171,6 +171,18 @@ describe("collection enumeration integrity", () => {
     )).toEqual([]);
   });
 
+  it("accepts an exact grounded condition when the technical object precedes the action", () => {
+    const evidence = [{
+      path: "wiki/queries/client-setting.md",
+      content: "策略切换后需要在 Outlook 中重启插件。",
+    }];
+
+    expect(missingDirectQueryOperationalConditions(
+      "策略切换后需要在 Outlook 中重启插件 [1]。",
+      evidence,
+    )).toEqual([]);
+  });
+
   it("ignores answer-card frontmatter and list lead-ins when detecting operational conditions", () => {
     const evidence = [{
       path: "wiki/queries/tencent-migration.md",
