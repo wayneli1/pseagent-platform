@@ -1610,6 +1610,84 @@ describe("answer card TaskSpec adapter", () => {
     expect(result).toMatchObject({activated:true,policies:[{cardId:"GEN-DEMO-QUALIFICATION"},{cardId:"GEN-DEMO-QUALIFICATION"},{cardId:"GEN-DEMO-QUALIFICATION"}]});
   });
 
+  it("does not let one high-confidence product card collapse a mixed-domain request", () => {
+    const question = "AIR 客户端 AI 离线能力演示前，怎样同时核对版本边界并把未知项写成透明专业建议？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "AIR 客户端", role: "product", sourceText: "AIR 客户端" }],
+      deliverables: [
+        {
+          id: "D1",
+          label: "核对 AI 离线能力和版本边界",
+          kind: "fact",
+          required: true,
+          sourceText: "核对版本边界",
+          obligations: [{
+            id: "O1",
+            label: "核对 AIR 客户端 AI 离线能力和版本边界",
+            targetEntityIds: ["E1"],
+            evidencePolicy: "direct",
+            domains: ["coremail-professional"],
+            required: true,
+            sourceText: "AIR 客户端 AI 离线能力演示前核对版本边界",
+          }],
+        },
+        {
+          id: "D2",
+          label: "透明表达未知项",
+          kind: "recommendation",
+          required: true,
+          sourceText: "把未知项写成透明专业建议",
+          obligations: [{
+            id: "O2",
+            label: "把未知项写成透明专业建议",
+            targetEntityIds: ["E1"],
+            evidencePolicy: "synthesis",
+            domains: ["presales-general"],
+            required: true,
+            sourceText: "把未知项写成透明专业建议",
+          }],
+        },
+      ],
+    });
+    const binding: Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] = {
+      obligationId: "O1",
+      cardObligationId: "O1",
+      cardId: "PRO-AIR-AI-OFFLINE",
+      label: "核对 AIR 客户端 AI 离线能力和版本边界",
+      domain: "coremail-professional",
+      domains: ["coremail-professional"],
+      required: true,
+      evidencePolicy: "direct",
+      requiredConcepts: ["AIR", "AI", "离线", "版本"],
+      forbiddenClaims: [],
+      preferredEvidencePaths: ["wiki/queries/AIR客户端AI功能离线与版本支持边界.md"],
+    };
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "a".repeat(64),
+      familyId: "air_ai_offline_boundary",
+      bindings: [binding],
+      cardIdHashes: ["b".repeat(64)],
+      expectedRevisions: { "coremail-professional": professionalRevision },
+      candidateCount: 1,
+    };
+
+    expect(compileIndependentFamilyAnswerCardTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+    })).toMatchObject({ activated: false });
+
+    const adapted = adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    });
+
+    expect(adapted).toMatchObject({ activated: false, reason: "guard_rejected" });
+  });
+
   it("keeps a contextual sub-question focused on the matching card obligation", () => {
     const question = "演示前如何确认客户关键业务问题？";
     const taskSpec = taskSpecSchema.parse({

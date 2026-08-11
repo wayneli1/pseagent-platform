@@ -2056,6 +2056,67 @@ describe("AnswerService", () => {
       expect(execution.result).not.toHaveProperty("domainsUsed");
     });
 
+    it("repairs a model-collapsed technical governance request before active execution", async () => {
+      const question = "AIR 客户端 AI 离线能力演示前，怎样同时核对版本边界并把未知项写成透明专业建议？";
+      const shadow: TaskAnalysisShadow = {
+        analyze: vi.fn(async () => ({
+          resolvedQuestion: {
+            rawQuestion: question,
+            standaloneQuestion: question,
+            contextUsed: false,
+            inheritedSubjects: [],
+            corrections: [],
+          },
+          taskSpec: taskSpecSchema.parse({
+            subject: question,
+            entities: [{ id: "E1", label: "AIR 客户端", role: "product", sourceText: "AIR 客户端" }],
+            deliverables: [{
+              id: "D1",
+              label: "核对 AIR 客户端 AI 离线能力和版本边界",
+              kind: "fact",
+              required: true,
+              sourceText: "核对 AIR 客户端 AI 离线能力和版本边界",
+              obligations: [{
+                id: "O1",
+                label: "核对 AIR 客户端 AI 离线能力和版本边界",
+                targetEntityIds: ["E1"],
+                evidencePolicy: "direct",
+                domains: ["coremail-professional"],
+                required: true,
+                sourceText: "核对 AIR 客户端 AI 离线能力和版本边界",
+              }],
+            }],
+          }),
+          guard: {
+            ok: true,
+            issues: [],
+            explicitEntityCount: 1,
+            mappedExplicitEntityCount: 1,
+            explicitRequestCount: 1,
+            mappedExplicitRequestCount: 1,
+          },
+          elapsedMs: 5,
+        })),
+      };
+      const { service, knowledge, runAgentDetailed } = createMixedService({ shadow });
+
+      const execution = await service.answerDetailed(question);
+
+      expect(knowledge.open.mock.calls.map(([scope]) => scope)).toEqual([
+        "professional",
+        "professional",
+        "general",
+      ]);
+      expect(runAgentDetailed.mock.calls.map(([input]) => input.session.project)).toEqual([
+        "coremail-professional",
+        "presales-general",
+      ]);
+      expect(execution.domainsUsed).toEqual([
+        "coremail-professional",
+        "presales-general",
+      ]);
+    });
+
     it("keeps merged evidence metadata internal while preserving global gap order", async () => {
       const events: DiagnosticEvent[] = [];
       const diagnostics: DiagnosticTraceFactory = {

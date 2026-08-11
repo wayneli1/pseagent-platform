@@ -58,6 +58,8 @@ import {
 import { formatKnowledgeFinal } from "./response.js";
 import {
   extractExplicitQuestionSignals,
+  repairTaskSpecKnowledgeDomains,
+  requiresMixedKnowledgeDomains,
   type KnowledgeDomain,
   type TaskSpecIssueCode,
 } from "./task-spec.js";
@@ -562,6 +564,20 @@ export class AnswerService {
             activeAnswerCardMatch = answerCardMatch;
           }
         }
+      }
+      if (
+        taskAnalysis !== undefined &&
+        this.dependencies.multiDomainActiveEnabled === true &&
+        requiresMixedKnowledgeDomains(taskAnalysis.resolvedQuestion.standaloneQuestion)
+      ) {
+        taskAnalysis = {
+          ...taskAnalysis,
+          taskSpec: repairTaskSpecKnowledgeDomains({
+            scopeHint: scope,
+            question: taskAnalysis.resolvedQuestion.standaloneQuestion,
+            taskSpec: taskAnalysis.taskSpec,
+          }),
+        };
       }
       let effectiveQuestion = routedQuestion;
       let effectivePlan = legacyPlan;

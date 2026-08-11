@@ -9,6 +9,7 @@ import { knowledgePlanSchema, type KnowledgePlan } from "./contracts.js";
 import {
   DeterministicTaskSpecGuard,
   extractExplicitQuestionSignals,
+  requiresMixedKnowledgeDomains,
   taskSpecSchema,
   type TaskSpec,
   type TaskSpecGuardResult,
@@ -426,6 +427,7 @@ function canCompileWholeFamily(
   resolvedQuestion: ResolvedQuestion,
   taskSpec: TaskSpec,
 ): boolean {
+  if (requiresMixedKnowledgeDomains(resolvedQuestion.standaloneQuestion)) return false;
   if (canCompileIndependentFamily(match, resolvedQuestion)) return true;
   if (!(match.matchType === "family" &&
     match.confidence === "high" &&
@@ -448,6 +450,7 @@ function canCompileIndependentFamily(
   match: Exclude<AnswerCardMatch, { matchType: "none" }>,
   resolvedQuestion: ResolvedQuestion,
 ): boolean {
+  if (requiresMixedKnowledgeDomains(resolvedQuestion.standaloneQuestion)) return false;
   if (!(match.matchType === "family" &&
     match.confidence === "high" &&
     !resolvedQuestion.contextUsed &&

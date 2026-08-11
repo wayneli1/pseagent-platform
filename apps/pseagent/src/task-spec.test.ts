@@ -2431,6 +2431,63 @@ describe("ModelTaskCompiler", () => {
   );
 
   it.each([
+    ["professional", "自研客户端协议验证如何同时形成 SMTP/IMAP 测试矩阵和可退出的阶段证据门？"],
+    ["professional", "Coremail OAuth2 单点登录 PoC 应怎样把身份平台前提转成客观成功标准和客户确认动作？"],
+    ["general", "生产 SSL 证书变更计划怎样同时写清技术回退点、角色责任和每一步的小承诺？"],
+    ["professional", "把 MD、UD 与日志数据库的排查结论交给实施团队时，如何区分事实、假设、风险和未决项？"],
+    ["professional", "重复发信争议中，怎样用客户端与 deliveragent 日志共同界定问题，并避免先归责用户？"],
+    ["professional", "解释邮件召回限制时，如何把产品条件转成透明的边界表达和可选补救方案？"],
+    ["general", "账号盗用事件的队列处置复盘，如何用四栏方式分开事实、判断、假设和后续验证？"],
+    ["professional", "Office 365 迁移权限尚未齐备时，如何把技术前置转为有条件的项目让步，而不是承诺原日期？"],
+    ["general", "信创 PoC 从标准版升级进阶版时，怎样依据基础测试结果做反向设计并冻结新增成功标准？"],
+    ["professional", "DMZ 投递故障联合排查时，怎样把网络、端口与路由证据映射到技术、用户和经济角色？"],
+    ["professional", "临时调高 Coremail 模块日志级别的变更，怎样用交通灯状态管理风险、恢复和客户确认？"],
+    ["general", "全文索引重建验收应怎样把 searchsvr 技术结果与双方认可的客观标准放在同一记录中？"],
+    ["professional", "多活切换出现 MS0257 时，售前怎样披露技术缺口并发起不掩盖风险的黄灯对话？"],
+    ["general", "向高层解释 DA 与 MTA 的投递差异时，怎样采用结果优先、分层下钻的演示结构？"],
+    ["professional", "AIR 客户端 AI 离线能力演示前，怎样同时核对版本边界并把未知项写成透明专业建议？"],
+  ] as const)(
+    "restores both domains for a new technical-and-governance composition: %s",
+    async (scopeHint, question) => {
+      const initialDomain = scopeHint === "professional"
+        ? "coremail-professional" as const
+        : "presales-general" as const;
+      const modelTaskSpec = taskSpecSchema.parse({
+        subject: question,
+        entities: [{ id: "E1", label: question, role: "subject", sourceText: question }],
+        deliverables: [{
+          id: "D1",
+          label: question,
+          kind: "procedure",
+          required: true,
+          sourceText: question,
+          obligations: [{
+            id: "O1",
+            label: question,
+            targetEntityIds: ["E1"],
+            evidencePolicy: initialDomain === "coremail-professional"
+              ? "direct"
+              : "synthesis",
+            domains: [initialDomain],
+            required: true,
+            sourceText: question,
+          }],
+        }],
+      });
+      const compiler = new ModelTaskCompiler({
+        completeJson: vi.fn(async () => modelTaskSpec as never),
+        completeText: vi.fn(),
+      } as unknown as ModelClient);
+
+      const result = await compiler.compile(compilerInput(question, scopeHint));
+
+      expect(new Set(result.deliverables.flatMap((deliverable) =>
+        deliverable.obligations.flatMap((obligation) => obligation.domains))))
+        .toEqual(new Set(["coremail-professional", "presales-general"]));
+    },
+  );
+
+  it.each([
     ["professional", "Coremail H5 支持哪些移动端能力？", "coremail-professional"],
     ["general", "如何用 NVC 处理客户异议并记录下一步？", "presales-general"],
     ["professional", "DNS 的 TTL 是什么？", "coremail-professional"],
