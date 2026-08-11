@@ -30,7 +30,15 @@ describe("release quality gate", () => {
     expect(report).toMatchObject({
       model: "deepseek_v4_flash",
       passed: true,
-      summary: { total: 20, completed: 20, passedCases: 20, safetyFailures: 0 },
+      summary: {
+        total: 20,
+        completed: 20,
+        passedCases: 20,
+        safetyFailures: 0,
+        latencyPassed: true,
+        p95LatencyThresholdMs: 120_000,
+        p99LatencyThresholdMs: 180_000,
+      },
     });
     expect(report.suites).toHaveLength(4);
     expect(report.kinds).toHaveLength(5);
@@ -96,6 +104,20 @@ describe("release quality gate", () => {
       passed: true,
       detail: "general:supported <> general:supported",
     }));
+  });
+
+  it("fails closed when aggregate P95 or P99 latency breaches the enterprise SLO", () => {
+    const observations = perfectObservations(suites);
+    observations[0] = { ...observations[0]!, latencyMs: 180_001 };
+
+    const report = evaluateReleaseQualityGate(source, observations);
+
+    expect(report.summary).toMatchObject({
+      p95LatencyMs: expect.any(Number),
+      p99LatencyMs: 180_001,
+      latencyPassed: false,
+    });
+    expect(report.passed).toBe(false);
   });
 });
 

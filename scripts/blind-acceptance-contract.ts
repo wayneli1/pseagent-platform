@@ -13,6 +13,11 @@ export type BlindAcceptanceLayer = typeof blindAcceptanceLayers[number];
 export type BlindScope = "professional" | "general" | "normal";
 export type BlindProject = "coremail-professional" | "presales-general";
 
+export const enterpriseLatencyThresholds = Object.freeze({
+  p95Ms: 120_000,
+  p99Ms: 180_000,
+});
+
 export interface BlindAcceptanceCase {
   readonly id: string;
   readonly layer: BlindAcceptanceLayer;
@@ -79,6 +84,16 @@ interface ScoredObservation {
   readonly reasonableRefusal: boolean;
   readonly forbiddenClaimCount: number;
   readonly matchedConceptIds: readonly string[];
+  readonly citedConceptIds: readonly string[];
+  readonly uncitedConceptIds: readonly string[];
+}
+
+export interface BlindAcceptanceHardGate {
+  readonly id: string;
+  readonly observed: number;
+  readonly comparison: "minimum" | "maximum" | "zero";
+  readonly threshold: number;
+  readonly passed: boolean;
 }
 
 export function normalizeBlindQuestion(value: string): string {
@@ -186,27 +201,39 @@ export function buildBlindAcceptanceReport(
     return { observation, testCase, score: scoreObservation(testCase, observation) };
   });
   const first = scored.filter((item) => item.observation.round === 1);
+  const answerableFirst = first.filter((item) =>
+    item.testCase.expectedDisposition === "answer");
+  const evidenceRequiredFirst = first.filter((item) =>
+    item.testCase.minimumReferences > 0);
   const refusalFirst = first.filter((item) =>
     item.testCase.expectedDisposition === "partial_or_refuse");
-  const highRiskFirst = first.filter((item) => item.testCase.highRisk);
+  const highRiskFirst = answerableFirst.filter((item) => item.testCase.highRisk);
   const firstOutput = {
     total: first.length,
     available: countTrue(first, "available"),
     availabilityRate: rate(countTrue(first, "available"), first.length),
-    factualAccurate: countTrue(first, "factualAccurate"),
-    factualAccuracyRate: rate(countTrue(first, "factualAccurate"), first.length),
+    answerableTotal: answerableFirst.length,
+    factualAccurate: countTrue(answerableFirst, "factualAccurate"),
+    factualAccuracyRate: rate(
+      countTrue(answerableFirst, "factualAccurate"),
+      answerableFirst.length,
+    ),
     highRiskTotal: highRiskFirst.length,
     highRiskFactualAccurate: countTrue(highRiskFirst, "factualAccurate"),
     highRiskFactualAccuracyRate: rate(
       countTrue(highRiskFirst, "factualAccurate"),
       highRiskFirst.length,
     ),
-    evidenceSupported: countTrue(first, "evidenceSupported"),
-    evidenceSupportRate: rate(countTrue(first, "evidenceSupported"), first.length),
+    evidenceRequiredTotal: evidenceRequiredFirst.length,
+    evidenceSupported: countTrue(evidenceRequiredFirst, "evidenceSupported"),
+    evidenceSupportRate: rate(
+      countTrue(evidenceRequiredFirst, "evidenceSupported"),
+      evidenceRequiredFirst.length,
+    ),
     routingCorrect: countTrue(first, "routingCorrect"),
     routingAccuracyRate: rate(countTrue(first, "routingCorrect"), first.length),
-    complete: countTrue(first, "complete"),
-    completenessRate: rate(countTrue(first, "complete"), first.length),
+    complete: countTrue(answerableFirst, "complete"),
+    completenessRate: rate(countTrue(answerableFirst, "complete"), answerableFirst.length),
     refusalTotal: refusalFirst.length,
     reasonableRefusals: countTrue(refusalFirst, "reasonableRefusal"),
     reasonableRefusalRate: rate(
@@ -215,6 +242,21 @@ export function buildBlindAcceptanceReport(
     ),
     forbiddenClaimCount: first.reduce((sum, item) =>
       sum + item.score.forbiddenClaimCount, 0),
+  };
+  const allOutputLatencies = scored.map((item) => item.observation.latencyMs)
+    .sort((left, right) => left - right);
+  const allOutputs = {
+    total: scored.length,
+    available: countTrue(scored, "available"),
+    availabilityRate: rate(countTrue(scored, "available"), scored.length),
+    forbiddenClaimCount: scored.reduce((sum, item) =>
+      sum + item.score.forbiddenClaimCount, 0),
+    latencyMs: {
+      p50: percentile(allOutputLatencies, 0.50),
+      p95: percentile(allOutputLatencies, 0.95),
+      p99: percentile(allOutputLatencies, 0.99),
+      maximum: allOutputLatencies.at(-1) ?? 0,
+    },
   };
   const consistentCases = dataset.cases.filter((testCase) => {
     const caseScores = scored.filter((item) => item.testCase.id === testCase.id);
@@ -227,39 +269,67 @@ export function buildBlindAcceptanceReport(
     rate: rate(consistentCases, dataset.cases.length),
   };
   const thresholds = dataset.thresholds;
-  const qualified =
-    firstOutput.availabilityRate >= thresholds.availability &&
-    firstOutput.factualAccuracyRate >= thresholds.factualAccuracy &&
-    firstOutput.highRiskFactualAccuracyRate >= thresholds.highRiskFactualAccuracy &&
-    firstOutput.evidenceSupportRate >= thresholds.evidenceSupport &&
-    firstOutput.routingAccuracyRate >= thresholds.routingAccuracy &&
-    firstOutput.completenessRate >= thresholds.completeness &&
-    firstOutput.reasonableRefusalRate >= thresholds.reasonableRefusal &&
-    consistency.rate >= thresholds.consistency &&
-    firstOutput.forbiddenClaimCount === 0;
+  const hardGates: BlindAcceptanceHardGate[] = [
+    minimumGate("all_outputs.chain_success", allOutputs.availabilityRate,
+      thresholds.availability),
+    minimumGate("first_output.chain_success", firstOutput.availabilityRate,
+      thresholds.availability),
+    minimumGate("first_output.factual_accuracy", firstOutput.factualAccuracyRate,
+      thresholds.factualAccuracy),
+    minimumGate("first_output.high_risk_factual_accuracy",
+      firstOutput.highRiskFactualAccuracyRate, thresholds.highRiskFactualAccuracy),
+    minimumGate("first_output.evidence_support", firstOutput.evidenceSupportRate,
+      thresholds.evidenceSupport),
+    minimumGate("first_output.routing_accuracy", firstOutput.routingAccuracyRate,
+      thresholds.routingAccuracy),
+    minimumGate("first_output.completeness", firstOutput.completenessRate,
+      thresholds.completeness),
+    minimumGate("first_output.reasonable_refusal", firstOutput.reasonableRefusalRate,
+      thresholds.reasonableRefusal),
+    minimumGate("three_output.conclusion_consistency", consistency.rate,
+      thresholds.consistency),
+    maximumGate("all_outputs.p95_latency_ms", allOutputs.latencyMs.p95,
+      enterpriseLatencyThresholds.p95Ms),
+    maximumGate("all_outputs.p99_latency_ms", allOutputs.latencyMs.p99,
+      enterpriseLatencyThresholds.p99Ms),
+    zeroGate("first_output.unsupported_critical_claims", firstOutput.forbiddenClaimCount),
+    zeroGate("all_outputs.unsupported_critical_claims", allOutputs.forbiddenClaimCount),
+  ];
+  const qualified = hardGates.every((gate) => gate.passed);
   return {
     firstOutput,
+    allOutputs,
     consistency,
     qualified,
+    hardGates,
     thresholds,
     perLayer: Object.fromEntries(blindAcceptanceLayers.map((layer) => {
       const layerFirst = first.filter((item) => item.testCase.layer === layer);
+      const layerAnswerable = layerFirst.filter((item) =>
+        item.testCase.expectedDisposition === "answer");
+      const layerEvidenceRequired = layerFirst.filter((item) =>
+        item.testCase.minimumReferences > 0);
       return [layer, {
         total: layerFirst.length,
+        answerableTotal: layerAnswerable.length,
+        evidenceRequiredTotal: layerEvidenceRequired.length,
         availabilityRate: rate(countTrue(layerFirst, "available"), layerFirst.length),
         factualAccuracyRate: rate(
-          countTrue(layerFirst, "factualAccurate"),
-          layerFirst.length,
+          countTrue(layerAnswerable, "factualAccurate"),
+          layerAnswerable.length,
         ),
         evidenceSupportRate: rate(
-          countTrue(layerFirst, "evidenceSupported"),
-          layerFirst.length,
+          countTrue(layerEvidenceRequired, "evidenceSupported"),
+          layerEvidenceRequired.length,
         ),
         routingAccuracyRate: rate(
           countTrue(layerFirst, "routingCorrect"),
           layerFirst.length,
         ),
-        completenessRate: rate(countTrue(layerFirst, "complete"), layerFirst.length),
+        completenessRate: rate(
+          countTrue(layerAnswerable, "complete"),
+          layerAnswerable.length,
+        ),
       }];
     })),
     cases: dataset.cases.map((testCase) => ({
@@ -277,6 +347,8 @@ export function buildBlindAcceptanceReport(
     })),
   };
 }
+
+export type BlindAcceptanceReport = ReturnType<typeof buildBlindAcceptanceReport>;
 
 function scoreObservation(
   testCase: BlindAcceptanceCase,
@@ -299,16 +371,24 @@ function scoreObservation(
     [...new Set(observation.references.map((reference) => reference.project))];
   const routingCorrect = available &&
     observation.scope === testCase.expectedScope &&
-    testCase.expectedDomains.every((domain) => observedDomains.includes(domain));
-  const validCitations = citationIndexes(answer).every((index) =>
+    sameStringSet(testCase.expectedDomains, observedDomains);
+  const citedIndexes = citationIndexes(answer);
+  const validCitations = citedIndexes.every((index) =>
     observation.references.some((reference) => reference.index === index));
+  const validReferenceIndexes = new Set(observation.references.map((reference) =>
+    reference.index));
+  const citedConceptIds = testCase.requiredConcepts.filter((concept) =>
+    conceptIsCited(concept.anyOf, answer, validReferenceIndexes)).map((concept) => concept.id);
+  const uncitedConceptIds = matchedConceptIds.filter((id) => !citedConceptIds.includes(id));
   const evidenceSupported = available &&
     observation.references.length >= testCase.minimumReferences &&
     observation.references.every((reference) =>
       testCase.allowedProjects.includes(reference.project) &&
       reference.revision === observation.knowledgeRevisions[reference.project]) &&
     validCitations &&
-    (testCase.minimumReferences === 0 || citationIndexes(answer).length > 0);
+    (testCase.minimumReferences === 0 || (
+      citedIndexes.length > 0 && uncitedConceptIds.length === 0
+    ));
   const statusFits = testCase.expectedDisposition === "answer"
     ? observation.status === "answered"
     : ["partially_answered", "not_covered"].includes(observation.status ?? "");
@@ -324,6 +404,8 @@ function scoreObservation(
     reasonableRefusal,
     forbiddenClaimCount,
     matchedConceptIds,
+    citedConceptIds,
+    uncitedConceptIds,
   };
 }
 
@@ -342,11 +424,50 @@ function consistencySignature(item: {
     reasonableRefusal: item.score.reasonableRefusal,
     forbiddenClaimCount: item.score.forbiddenClaimCount,
     matchedConceptIds: item.score.matchedConceptIds,
+    citedConceptIds: item.score.citedConceptIds,
   });
 }
 
 function citationIndexes(answer: string): number[] {
   return [...answer.matchAll(/\[(\d+)\]/gu)].map((match) => Number(match[1]));
+}
+
+function conceptIsCited(
+  candidates: readonly string[],
+  answer: string,
+  validReferenceIndexes: ReadonlySet<number>,
+): boolean {
+  return answer.split(/(?:\r?\n\s*){2,}/gu).some((paragraph) => {
+    const normalized = paragraph.normalize("NFKC").toLocaleLowerCase("zh-CN");
+    const containsConcept = candidates.some((candidate) =>
+      normalized.includes(candidate.normalize("NFKC").toLocaleLowerCase("zh-CN")));
+    return containsConcept && citationIndexes(paragraph).some((index) =>
+      validReferenceIndexes.has(index));
+  });
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length &&
+    new Set(left).size === new Set(right).size &&
+    left.every((value) => right.includes(value));
+}
+
+function percentile(values: readonly number[], quantile: number): number {
+  return values.length === 0
+    ? 0
+    : values[Math.max(0, Math.ceil(values.length * quantile) - 1)]!;
+}
+
+function minimumGate(id: string, observed: number, threshold: number): BlindAcceptanceHardGate {
+  return { id, observed, comparison: "minimum", threshold, passed: observed >= threshold };
+}
+
+function maximumGate(id: string, observed: number, threshold: number): BlindAcceptanceHardGate {
+  return { id, observed, comparison: "maximum", threshold, passed: observed <= threshold };
+}
+
+function zeroGate(id: string, observed: number): BlindAcceptanceHardGate {
+  return { id, observed, comparison: "zero", threshold: 0, passed: observed === 0 };
 }
 
 function countTrue(

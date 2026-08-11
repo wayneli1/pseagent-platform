@@ -80,9 +80,101 @@ describe("blind acceptance contract", () => {
     expect(report.firstOutput.total).toBe(100);
     expect(report.firstOutput.available).toBe(99);
     expect(report.firstOutput.availabilityRate).toBe(0.99);
+    expect(report.allOutputs.availabilityRate).toBe(299 / 300);
     expect(report.consistency.consistentCases).toBe(99);
     expect(report.consistency.rate).toBe(0.99);
     expect(report.qualified).toBe(false);
+  });
+
+  it("requires every matched concept to be bound to a valid citation paragraph", () => {
+    const dataset = parseBlindAcceptanceDataset(fixtureDataset(), new Set());
+    const observations = observationsFor(dataset);
+    for (const caseId of ["B001", "B002", "B003"]) {
+      const first = observations.find((item) =>
+        item.caseId === caseId && item.round === 1)!;
+      const testCase = dataset.cases.find((item) => item.id === caseId)!;
+      observations[observations.indexOf(first)] = {
+        ...first,
+        answer: `${testCase.requiredConcepts[0]!.anyOf[0]}\n\n[1]`,
+      };
+    }
+
+    const report = buildBlindAcceptanceReport(dataset, observations);
+    const score = report.cases[0]!.rounds[0]!.score;
+
+    expect(score.factualAccurate).toBe(true);
+    expect(score.evidenceSupported).toBe(false);
+    expect(score.uncitedConceptIds).toEqual(["C1"]);
+    expect(report.qualified).toBe(false);
+  });
+
+  it("rejects an unexpected extra domain instead of treating a superset as correct", () => {
+    const dataset = parseBlindAcceptanceDataset(fixtureDataset(), new Set());
+    const observations = observationsFor(dataset);
+    for (const caseId of ["B001", "B002", "B003"]) {
+      const first = observations.find((item) =>
+        item.caseId === caseId && item.round === 1)!;
+      observations[observations.indexOf(first)] = {
+        ...first,
+        domainsUsed: ["coremail-professional", "presales-general"],
+      };
+    }
+
+    const report = buildBlindAcceptanceReport(dataset, observations);
+
+    expect(report.cases[0]!.rounds[0]!.score.routingCorrect).toBe(false);
+    expect(report.qualified).toBe(false);
+  });
+
+  it("fails the batch when all-output P95 or P99 latency exceeds the enterprise limit", () => {
+    const dataset = parseBlindAcceptanceDataset(fixtureDataset(), new Set());
+    const observations = observationsFor(dataset);
+    for (let index = 0; index < 16; index += 1) {
+      observations[index] = { ...observations[index]!, latencyMs: 180_001 };
+    }
+
+    const report = buildBlindAcceptanceReport(dataset, observations);
+
+    expect(report.allOutputs.latencyMs).toMatchObject({ p95: 180_001, p99: 180_001 });
+    expect(report.hardGates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "all_outputs.p95_latency_ms", passed: false }),
+      expect.objectContaining({ id: "all_outputs.p99_latency_ms", passed: false }),
+    ]));
+    expect(report.qualified).toBe(false);
+  });
+
+  it("keeps answerable accuracy, evidence support, and refusal quality on separate denominators", () => {
+    const raw = fixtureDataset();
+    raw.cases[0] = {
+      ...raw.cases[0]!,
+      expectedDisposition: "partial_or_refuse",
+      minimumReferences: 0,
+    };
+    const dataset = parseBlindAcceptanceDataset(raw, new Set());
+    const observations = observationsFor(dataset).map((observation) =>
+      observation.caseId === "B001"
+        ? {
+            ...observation,
+            status: "not_covered",
+            answer: dataset.cases[0]!.requiredConcepts[0]!.anyOf[0]!,
+            domainsUsed: dataset.cases[0]!.expectedDomains,
+            references: [],
+          }
+        : observation);
+
+    const report = buildBlindAcceptanceReport(dataset, observations);
+
+    expect(report.firstOutput).toMatchObject({
+      total: 100,
+      answerableTotal: 99,
+      factualAccuracyRate: 1,
+      evidenceRequiredTotal: 99,
+      evidenceSupportRate: 1,
+      refusalTotal: 1,
+      reasonableRefusalRate: 1,
+      completenessRate: 1,
+    });
+    expect(report.qualified).toBe(true);
   });
 });
 

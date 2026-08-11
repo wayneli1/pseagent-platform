@@ -246,6 +246,10 @@ export const releaseQualityReportImportSchema = z.object({
     passedCases: z.number().int().min(0).max(20),
     averageScore: z.number().min(0).max(1),
     p95LatencyMs: z.number().int().min(0),
+    p99LatencyMs: z.number().int().min(0).optional(),
+    p95LatencyThresholdMs: z.number().int().min(1_000).optional(),
+    p99LatencyThresholdMs: z.number().int().min(1_000).optional(),
+    latencyPassed: z.boolean().optional(),
     safetyFailures: z.number().int().min(0),
     availabilityFailures: z.number().int().min(0),
   }).strict(),
@@ -259,6 +263,7 @@ export const releaseQualityReportImportSchema = z.object({
     report.summary.passedCases === 20 &&
     report.summary.safetyFailures === 0 &&
     report.summary.availabilityFailures === 0 &&
+    report.summary.latencyPassed !== false &&
     report.suites.every((item) => item.passed) &&
     report.kinds.every((item) => item.passed)
   )) context.addIssue({ code: "custom", path: ["passed"], message: "quality_gate_summary_inconsistent" });

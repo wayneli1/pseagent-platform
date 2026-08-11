@@ -212,8 +212,10 @@ const allObservations = [1, 2, 3].flatMap((candidateRound) => {
     : [];
 });
 let finalReportPath: string | undefined;
+let finalQualified: boolean | undefined;
 if (allObservations.length === 300) {
   const scoring = buildBlindAcceptanceReport(dataset, allObservations);
+  finalQualified = scoring.qualified;
   finalReportPath = join(batchRoot, "final-report.json");
   writeFileSync(finalReportPath, `${JSON.stringify({
     schemaVersion: 1,
@@ -237,6 +239,7 @@ process.stdout.write(`${JSON.stringify({
     ? {}
     : { finalReportSha256: sha256(readFileSync(finalReportPath)) }),
 })}\n`);
+if (finalQualified === false) process.exitCode = 1;
 
 function loadExcludedQuestionHashes(blindMatrixPath: string): Set<string> {
   const questions = new Set<string>();

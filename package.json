@@ -35,6 +35,7 @@
     "probe:routing-gold": "node --import tsx scripts/probe-routing-gold.mts",
     "audit:reliability-evidence-gaps": "node --env-file-if-exists=.env.local --import tsx scripts/audit-reliability-evidence-gaps.mts",
     "probe:blind-acceptance": "node --env-file-if-exists=.env.local --import tsx scripts/run-blind-acceptance.mts",
+    "gate:enterprise-release": "node --import tsx scripts/evaluate-enterprise-release.mts",
     "test:regression": "npm exec -w @pseagent/app -- vitest run src/regression.test.ts",
     "lunkr:login": "node --import tsx scripts/lunkr-login.mts",
     "lunkr:forget-password": "node --import tsx scripts/lunkr-forget-password.mts",

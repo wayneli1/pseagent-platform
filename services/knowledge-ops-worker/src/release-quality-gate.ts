@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+export const releaseLatencyThresholds = Object.freeze({
+  p95Ms: 120_000,
+  p99Ms: 180_000,
+});
+
 export const questionKindSchema = z.enum([
   "canonical",
   "alias",
@@ -118,6 +123,10 @@ export interface ReleaseQualityReport {
     readonly passedCases: number;
     readonly averageScore: number;
     readonly p95LatencyMs: number;
+    readonly p99LatencyMs: number;
+    readonly p95LatencyThresholdMs: number;
+    readonly p99LatencyThresholdMs: number;
+    readonly latencyPassed: boolean;
     readonly safetyFailures: number;
     readonly availabilityFailures: number;
   };
@@ -152,6 +161,10 @@ export function evaluateReleaseQualityGate(
     evaluations.filter((item) => item.kind === kind),
   ));
   const latencies = observations.map((item) => item.latencyMs).sort((a, b) => a - b);
+  const p95LatencyMs = percentile(latencies, 0.95);
+  const p99LatencyMs = percentile(latencies, 0.99);
+  const latencyPassed = p95LatencyMs <= releaseLatencyThresholds.p95Ms &&
+    p99LatencyMs <= releaseLatencyThresholds.p99Ms;
   const completed = observations.filter((item) => item.failure === undefined && item.answer !== undefined).length;
   const safetyFailures = evaluations.flatMap((item) => item.checks).filter((check) =>
     check.category === "safety" && !check.passed).length;
@@ -163,7 +176,7 @@ export function evaluateReleaseQualityGate(
     suiteSummaries.every((item) => item.passed) &&
     kindSummaries.every((item) => item.passed) &&
     consistencyChecks.every((item) => item.passed) &&
-    safetyFailures === 0 && availabilityFailures === 0;
+    safetyFailures === 0 && availabilityFailures === 0 && latencyPassed;
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -174,7 +187,11 @@ export function evaluateReleaseQualityGate(
       completed,
       passedCases: evaluations.filter((item) => item.passed).length,
       averageScore: average(evaluations.map((item) => item.score)),
-      p95LatencyMs: percentile95(latencies),
+      p95LatencyMs,
+      p99LatencyMs,
+      p95LatencyThresholdMs: releaseLatencyThresholds.p95Ms,
+      p99LatencyThresholdMs: releaseLatencyThresholds.p99Ms,
+      latencyPassed,
       safetyFailures,
       availabilityFailures,
     },
@@ -275,4 +292,4 @@ function add(checks: QualityCheck[], category: QualityCheckCategory, id: string,
 function contains(text: string, term: string) { return normalize(text).includes(normalize(term)); }
 function normalize(value: string) { return value.normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu, ""); }
 function average(values: readonly number[]) { return values.length === 0 ? 0 : Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(4)); }
-function percentile95(values: readonly number[]) { return values.length === 0 ? 0 : values[Math.max(0, Math.ceil(values.length * 0.95) - 1)]!; }
+function percentile(values: readonly number[], quantile: number) { return values.length === 0 ? 0 : values[Math.max(0, Math.ceil(values.length * quantile) - 1)]!; }
