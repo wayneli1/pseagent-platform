@@ -1,12 +1,52 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  blindAcceptanceScorerVersion,
   buildBlindAcceptanceReport,
+  claimUnitHasValidCitation,
+  forbiddenClaimIsEndorsed,
   hashBlindQuestion,
   parseBlindAcceptanceDataset,
+  recognizesReasonableRefusal,
   validateBlindAcceptanceRun,
   type BlindAcceptanceObservation,
+  type BlindPolicyDisposition,
 } from "./blind-acceptance-contract.js";
+
+interface ScorerCalibration {
+  readonly forbidden: readonly {
+    readonly id: string;
+    readonly answer: string;
+    readonly pattern: string;
+    readonly expected: boolean;
+  }[];
+  readonly citation: readonly {
+    readonly id: string;
+    readonly input: {
+      readonly answer: string;
+      readonly concept: {
+        readonly id: string;
+        readonly anyOf: readonly string[];
+        readonly semanticAnyOf?: readonly (readonly string[])[];
+      };
+      readonly validReferenceIndexes: readonly number[];
+    };
+    readonly expected: boolean;
+  }[];
+  readonly refusal: readonly {
+    readonly id: string;
+    readonly input: {
+      readonly answer: string;
+      readonly policyDisposition: BlindPolicyDisposition;
+    };
+    readonly expected: boolean;
+  }[];
+}
+
+const scorerCalibration = JSON.parse(readFileSync(new URL(
+  "../tests/regression/blind-scorer-v3-calibration.json",
+  import.meta.url,
+), "utf8")) as ScorerCalibration;
 
 describe("blind acceptance contract", () => {
   it("parses the frozen one-hundred-case matrix", () => {
@@ -210,7 +250,7 @@ describe("blind acceptance contract", () => {
             ...observation,
             status: "answered",
             policyDisposition: "refused" as const,
-            answer: `${dataset.cases[0]!.requiredConcepts[0]!.anyOf[0]}，不能直接承诺该请求。`,
+            answer: `${dataset.cases[0]!.requiredConcepts[0]!.anyOf[0]}，不能直接承诺该请求，因为现有正式资料未覆盖；建议补齐证据后再评估。`,
             domainsUsed: dataset.cases[0]!.expectedDomains,
             references: [],
           }
@@ -431,6 +471,37 @@ describe("blind acceptance contract", () => {
 
     expect(score.forbiddenClaimCount).toBe(expectedCount);
   });
+});
+
+describe("blind acceptance scorer v3 frozen calibration", () => {
+  it("reports scorer version 3", () => {
+    expect(blindAcceptanceScorerVersion).toBe(3);
+  });
+
+  it.each(scorerCalibration.forbidden)(
+    "$id classifies forbidden-claim endorsement",
+    ({ answer, pattern, expected }) => {
+      expect(forbiddenClaimIsEndorsed(answer, pattern)).toBe(expected);
+    },
+  );
+
+  it.each(scorerCalibration.citation)(
+    "$id requires a citation in the same claim unit",
+    ({ input, expected }) => {
+      expect(claimUnitHasValidCitation({
+        answer: input.answer,
+        concept: input.concept,
+        validReferenceIndexes: new Set(input.validReferenceIndexes),
+      })).toBe(expected);
+    },
+  );
+
+  it.each(scorerCalibration.refusal)(
+    "$id recognizes only a reasoned safe refusal",
+    ({ input, expected }) => {
+      expect(recognizesReasonableRefusal(input)).toBe(expected);
+    },
+  );
 });
 
 function blindLayerCounts(
