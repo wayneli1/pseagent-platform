@@ -6,8 +6,13 @@ import {
   createPolicyEscalationDecision,
   evaluateProhibitedRequest,
 } from "./request-policy.js";
+import { evaluateUnsupportedCommitment } from "./unsupported-commitment.js";
 
-export type PolicyDecisionKind = "allowed" | "prohibited" | "uncertain";
+export type PolicyDecisionKind =
+  | "allowed"
+  | "prohibited"
+  | "unsupported_commitment"
+  | "uncertain";
 
 export interface PolicyRefusalContract {
   readonly ruleId: string;
@@ -28,7 +33,7 @@ export interface PolicySemanticClassifier {
   }>;
 }
 
-export const POLICY_CONTRACT_VERSION = "policy-contract-v1";
+export const POLICY_CONTRACT_VERSION = "policy-contract-v2";
 
 const policySemanticDecisionSchema = z.object({
   decision: z.enum(["allowed", "prohibited", "uncertain"]),
@@ -74,6 +79,10 @@ export async function evaluatePolicyPreflight(input: {
   const deterministic = evaluateProhibitedRequest(input.question);
   if (deterministic !== undefined) {
     return { kind: "prohibited", result: deterministic.result };
+  }
+  const unsupportedCommitment = evaluateUnsupportedCommitment(input.question);
+  if (unsupportedCommitment !== undefined) {
+    return { kind: "unsupported_commitment", result: unsupportedCommitment.result };
   }
   if (!containsRiskActionOrProtectedObject(input.question)) {
     return { kind: "allowed" };
