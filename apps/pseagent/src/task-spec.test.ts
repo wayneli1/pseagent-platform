@@ -1515,6 +1515,18 @@ describe("DeterministicTaskSpecGuard", () => {
       );
   });
 
+  it("does not interpret an existing limited coverage premise as a requested coverage list", () => {
+    const signals = extractExplicitQuestionSignals(
+      "大客户项目只覆盖一个联系人时，怎样按业务、技术、采购和高层关系分层制定补位动作？",
+    );
+
+    expect(signals.independentRequestClauses).toEqual([]);
+    expect(signals.requiredParallelGroups).toEqual([]);
+    expect(signals.requestClauses).toEqual([
+      "怎样按业务、技术、采购和高层关系分层制定补位动作",
+    ]);
+  });
+
   it.each([
     ["请分别对比甲公司、乙公司、丙公司的多节点方案", ["甲公司", "乙公司", "丙公司"]],
     ["请分析甲公司 vs 乙公司的差异", ["甲公司", "乙公司"]],

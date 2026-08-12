@@ -69,7 +69,11 @@ const DIRECT_EVIDENCE_PATTERN =
   /(?:版本|数字|数量|多少|支持|兼容|适配|授权|认证|证书|协议|接口|模块|功能|能力|SLA|RPO|RTO|是否有|能否)/iu;
 const CASE_JUDGEMENT_PATTERN =
   /(?:(?:判断|评估|预测).{0,28}(?:当前|现在|本次|这个|该).{0,28}(?:是否|能否|值得|赢率|胜率|成交|推进|可行|足够)|(?:当前|现在|本次|这个|该).{0,28}(?:是否|能否|值得|赢率|胜率|成交|推进|可行|足够)|应该报多少)/u;
-const PROCEDURE_PATTERN = /(?:如何|怎样|怎么|流程|步骤|组织|实施|推进方式|评估方法)/u;
+const PROCEDURE_PATTERN =
+  /(?:如何|怎样|怎么|流程|步骤|组织|实施|推进方式|评估方法|重新分工|保留升级路径|逐项对应)/u;
+const SHARED_METHOD_ACTION_PATTERN =
+  /(?:(?:如何|怎样|怎么|应如何).{0,160}(?:分阶段验收|关系分层|制定|转回|对应|标记|记录|组织|安排|重新分工|保留|统一|形成|转成|转为|转换)|^(?:(?:先|再|然后|随后|并)\s*)?(?:按\S{0,24})?(?:统一|重新分工|保留|记录|制定|标记|逐项对应))/u;
+const TRAILING_CONSTRAINT_PATTERN = /^(?:而不是|而非|但不要|但不应|不要|避免|不得|不能)/u;
 const COMPARISON_PATTERN = /(?:对比|比较|差异|区别|异同|优劣)/u;
 const RECOMMENDATION_PATTERN = /(?:建议|下一步|改进|提升|优化|应当|应该)/u;
 const RISK_PATTERN = /(?:风险|边界|隐患|注意事项)/u;
@@ -270,7 +274,7 @@ export function materializeGuardedTaskSpec(input: {
 
 function obligationSeeds(question: string): ObligationSeed[] {
   const analysis = analyzeObligationSource(question);
-  const seeds = analysis.atoms
+  let seeds = analysis.atoms
     .filter((atom) =>
       atom.kind !== "unresolved" &&
       atom.reason !== "context_premise" &&
@@ -278,6 +282,7 @@ function obligationSeeds(question: string): ObligationSeed[] {
     .map((atom) => trimSeedBounds(question, atom.start, atom.end, atom))
     .filter((seed): seed is ObligationSeed => seed !== undefined);
   const signals = extractExplicitQuestionSignals(question);
+  const explicitSeeds: ObligationSeed[] = [];
   for (const sourceText of [
     ...signals.requestClauses,
     ...signals.independentRequestClauses,
@@ -286,18 +291,41 @@ function obligationSeeds(question: string): ObligationSeed[] {
     const start = question.indexOf(sourceText);
     if (start < 0) continue;
     const end = start + sourceText.length;
-    if (seeds.some((seed) => start < seed.end && end > seed.start)) continue;
     const seed = trimSeedBounds(question, start, end);
-    if (seed !== undefined) seeds.push(seed);
+    if (seed === undefined || explicitSeeds.some((item) =>
+      item.start === seed.start && item.end === seed.end)) continue;
+    explicitSeeds.push(seed);
   }
+  for (const explicit of explicitSeeds) {
+    const overlappingAtoms = analysis.atoms.filter((atom) =>
+      explicit.start < atom.end && explicit.end > atom.start);
+    const overlappingSeeds = seeds.filter((seed) =>
+      explicit.start < seed.end && explicit.end > seed.start);
+    const shouldCoalesce = overlappingAtoms.length >= 2 ||
+      overlappingAtoms.some((atom) => atom.kind === "unresolved");
+    if (shouldCoalesce) {
+      seeds = seeds.filter((seed) =>
+        !(explicit.start < seed.end && explicit.end > seed.start));
+      seeds.push(explicit);
+      continue;
+    }
+    if (overlappingSeeds.length === 0) seeds.push(explicit);
+  }
+  const firstExplicitStart = explicitSeeds.reduce(
+    (minimum, seed) => Math.min(minimum, seed.start),
+    Number.POSITIVE_INFINITY,
+  );
+  seeds = seeds.filter((seed) =>
+    !(seed.atom !== undefined && seed.end <= firstExplicitStart) &&
+    !TRAILING_CONSTRAINT_PATTERN.test(seed.text));
   if (seeds.length === 0) {
     const start = question.search(/\S/u);
     const end = question.trimEnd().length;
     if (start >= 0 && end > start) seeds.push({ start, end, text: question.slice(start, end) });
   }
-  return seeds.sort((left, right) => left.start - right.start || left.end - right.end)
-    .filter((seed, index, ordered) => index === 0 ||
-      !(seed.start >= ordered[index - 1]!.start && seed.end <= ordered[index - 1]!.end));
+  return seeds.sort((left, right) => left.start - right.start || right.end - left.end)
+    .filter((seed, index, ordered) => !ordered.slice(0, index).some((earlier) =>
+      seed.start >= earlier.start && seed.end <= earlier.end));
 }
 
 function trimSeedBounds(
@@ -435,6 +463,7 @@ function deterministicEvidencePolicy(
   matched: TaskSpecObligation | undefined,
 ): AtomicObligation["evidencePolicy"] {
   if (kind === "case_judgement") return "customer_input";
+  if (kind === "procedure" && SHARED_METHOD_ACTION_PATTERN.test(text)) return "synthesis";
   const sourceAnalysis = analyzeObligationSource(text);
   const containsDefaultProtectedFact = sourceAnalysis.atoms.some((atom) =>
     atom.kind === "protected_fact" && atom.reason === "default_fact");

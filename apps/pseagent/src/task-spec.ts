@@ -1073,7 +1073,7 @@ export function extractExplicitQuestionSignals(
     items: string[];
   }> = [];
   const coverageListPattern =
-    /(?:请|需要|需|应|要)?(?:覆盖|涵盖)(?<list>[^。！？!?]{2,180}?)(?=(?:，|,)?\s*(?:并|同时|以及)?\s*(?:明确|说明|列出|给出|指出)|[。！？!?]|$)/gu;
+    /(?:(?:请|需要|需|应|要)(?:覆盖|涵盖)|(?<![只仅已未不])(?:覆盖|涵盖))(?<list>[^。！？!?]{2,180}?)(?=(?:，|,)?\s*(?:并|同时|以及)?\s*(?:明确|说明|列出|给出|指出)|[。！？!?]|$)/gu;
   for (const match of question.matchAll(coverageListPattern)) {
     const list = match.groups?.list;
     if (!list) continue;

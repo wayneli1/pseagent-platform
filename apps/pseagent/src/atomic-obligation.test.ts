@@ -269,7 +269,7 @@ describe("atomic obligation contract", () => {
     }
   });
 
-  it("routes expanded mixed-domain atoms individually instead of duplicating both domains", () => {
+  it("keeps one shared phased-acceptance request instead of splitting its stage dimensions", () => {
     const question = "从 Coremail 云服务迁回自建环境时，资产盘点、全量同步、增量追赶、切换和回退应如何分阶段验收？";
     const resolvedQuestion = identityResolvedQuestion(question);
     const taskSpec = compileDeterministicTaskSpecFallback({
@@ -280,12 +280,73 @@ describe("atomic obligation contract", () => {
 
     const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
 
-    expect(contract.obligations).toHaveLength(4);
+    expect(contract.obligations).toHaveLength(1);
+    expect(contract.obligations[0]).toMatchObject({
+      sourceText: "资产盘点、全量同步、增量追赶、切换和回退应如何分阶段验收",
+      kind: "procedure",
+      evidencePolicy: "synthesis",
+    });
     expect(new Set(contract.obligations.flatMap((item) => item.domains))).toEqual(
       new Set(["coremail-professional", "presales-general"]),
     );
     expect(contract.obligations.reduce((sum, item) => sum + item.domains.length, 0))
-      .toBeLessThanOrEqual(6);
+      .toBe(2);
+  });
+
+  it.each([
+    [
+      "大客户项目只覆盖一个联系人时，怎样按业务、技术、采购和高层关系分层制定补位动作？",
+      "怎样按业务、技术、采购和高层关系分层制定补位动作",
+    ],
+    [
+      "客户把讨论压到单价时，售前如何把对话转回业务影响、选择标准和可验证价值，而不是回避价格？",
+      "售前如何把对话转回业务影响、选择标准和可验证价值",
+    ],
+    [
+      "制作价值主张画布时，怎样把客户任务、痛点和收益与方案能力逐项对应并标记待验证假设？",
+      "怎样把客户任务、痛点和收益与方案能力逐项对应并标记待验证假设",
+    ],
+  ] as const)(
+    "coalesces shared-action dimensions without creating premise or constraint obligations: %s",
+    (question, sourceText) => {
+      const resolvedQuestion = identityResolvedQuestion(question);
+      const taskSpec = compileDeterministicTaskSpecFallback({
+        resolvedQuestion,
+        scopeHint: "general",
+        knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+      });
+
+      const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+
+      expect(contract.obligations).toHaveLength(1);
+      expect(contract.obligations[0]).toMatchObject({
+        sourceText,
+        kind: "procedure",
+        evidencePolicy: "synthesis",
+        domains: ["presales-general"],
+      });
+    },
+  );
+
+  it("keeps ordered continuation actions while excluding their scenario premise", () => {
+    const question = "渠道与直销同时联系同一客户时，怎样先统一客户窗口，再按证据重新分工并保留升级路径？";
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "general",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+
+    const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+
+    expect(contract.obligations.map((item) => item.sourceText)).toEqual([
+      "怎样先统一客户窗口",
+      "再按证据重新分工",
+      "保留升级路径",
+    ]);
+    expect(contract.obligations.every((item) =>
+      item.kind === "procedure" && item.evidencePolicy === "synthesis"
+    )).toBe(true);
   });
 
   it("reports overlapping and untraceable source spans", () => {
