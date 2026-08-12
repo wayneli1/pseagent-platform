@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { inferBoundaryScope } from "./boundary-scope.js";
 import type { AnswerResult, Scope } from "./contracts.js";
 import type { ModelClient } from "./model-client.js";
 import {
@@ -104,7 +105,7 @@ export async function evaluatePolicyPreflight(input: {
       : "semantic_policy_uncertain");
     const decision = createPolicyEscalationDecision({
       ruleId,
-      scope: inferPolicyScope(input.question),
+      scope: inferBoundaryScope(input.question),
     });
     return { kind: semantic.decision, result: decision.result };
   } catch {
@@ -120,15 +121,9 @@ function uncertainResult(question: string, ruleId: string): {
     kind: "uncertain",
     result: createPolicyEscalationDecision({
       ruleId,
-      scope: inferPolicyScope(question),
+      scope: inferBoundaryScope(question),
     }).result,
   };
-}
-
-function inferPolicyScope(question: string): Exclude<Scope, "normal"> {
-  return /(?:回扣|报价|竞品|建议书|合同|验收|客户确认|销售)/u.test(question)
-    ? "general"
-    : "professional";
 }
 
 async function raceWithSignal<T>(call: () => Promise<T>, signal: AbortSignal): Promise<T> {

@@ -1,3 +1,4 @@
+import { inferBoundaryScope } from "./boundary-scope.js";
 import type { AnswerResult, Scope } from "./contracts.js";
 
 type ProhibitedRequestRule = {
@@ -242,8 +243,60 @@ export function evaluateProhibitedRequest(
   const normalized = question.normalize("NFKC").trim();
   const rule = rules.find((candidate) =>
     candidate.all.every((pattern) => pattern.test(normalized)));
-  if (rule === undefined) return undefined;
-  return createPolicyEscalationDecision({ ruleId: rule.id, scope: rule.scope });
+  if (rule !== undefined) {
+    return createPolicyEscalationDecision({ ruleId: rule.id, scope: rule.scope });
+  }
+  const protectedAbuseRule = unambiguousProtectedAbuseRule(normalized);
+  if (protectedAbuseRule === undefined) return undefined;
+  return createPolicyEscalationDecision({
+    ruleId: protectedAbuseRule,
+    scope: inferBoundaryScope(normalized),
+  });
+}
+
+function unambiguousProtectedAbuseRule(question: string): string | undefined {
+  if (DEFENSIVE_OR_AUTHORIZED_PATTERN.test(question)) return undefined;
+  if (
+    (
+      /(?:关闭|禁用).{0,24}(?:二次认证|双因素认证|多因素认证|安全控制|访问控制)/u.test(question) &&
+      /(?:所有|全部|共用|共享|超级账号|上线后再恢复)/u.test(question)
+    ) ||
+    /(?:共用|共享).{0,12}(?:超级|管理员|特权).{0,8}(?:账号|账户)/u.test(question)
+  ) {
+    return "credential_or_control_abuse";
+  }
+  if (
+    /(?:伪造|冒充|假的|写成已通过|复制.{0,8}(?:签名|签字)|日期改成)/u.test(question) &&
+    /(?:演练|截图|验收|签名|签字|同意|记录|证据|授权函|客户授权|助理|发件人|报告|ROI)/iu.test(question)
+  ) {
+    return "record_or_identity_falsification";
+  }
+  if (
+    /(?:删除|清除|导出|同步|上传|原样(?:发|发送)|发到|发送|复制)/u.test(question) &&
+    /(?:法定留存|全部邮件|客户清单|邮箱账号|身份证号|手机号|私人邮件|客户数据|邮件样本)/u.test(question) &&
+    /(?:规避调查|个人网盘|别.{0,8}(?:脱敏|审批)|不需要.{0,16}(?:法务|数据负责人|审批|确认)|全部|原样|未经|未授权)/u.test(question)
+  ) {
+    return "unauthorized_data_operation";
+  }
+  if (
+    /(?:未经|没有|未获).{0,20}(?:许可|授权|审批).{0,40}(?:生产|压测)/u.test(question) ||
+    /生产.{0,24}压测.{0,24}(?:隐藏|关闭).{0,12}(?:告警|审计)/u.test(question)
+  ) {
+    return "production_control_evasion";
+  }
+  if (
+    /(?:修改|篡改).{0,16}(?:授权文件|许可证|License).{0,32}(?:上限|数量|用户|扩大|增加)/iu.test(question) ||
+    /(?:授权文件|许可证|License).{0,24}(?:扩大|增加).{0,16}(?:上限|数量|用户)/iu.test(question)
+  ) {
+    return "license_tampering";
+  }
+  if (
+    /(?:买|购买|获取).{0,24}(?:竞争对手|竞品).{0,24}(?:未公开|底价|投标)/u.test(question) ||
+    /(?:竞争对手|竞品).{0,20}员工.{0,24}(?:未公开|底价|投标)/u.test(question)
+  ) {
+    return "trade_secret_procurement";
+  }
+  return undefined;
 }
 
 function refusalContent(

@@ -1,8 +1,5 @@
-import type { AnswerResult, Scope } from "./contracts.js";
-import {
-  isUnambiguouslyGeneralPresalesQuestion,
-  isUnambiguouslyProfessionalQuestion,
-} from "./router.js";
+import { inferBoundaryScope } from "./boundary-scope.js";
+import type { AnswerResult } from "./contracts.js";
 
 const EXPLICIT_MISSING_INPUT_PATTERN =
   /(?:没有|没(?:有|拿到|确认|提供)|未(?:提供|确认|拿到)|未知|不知道|只有|只(?:有|知道|见过|凭)|仅(?:有|凭))/u;
@@ -11,8 +8,6 @@ const ASSESSMENT_REQUEST_PATTERN = /(?:确认|判断|预测|给出|改成)/u;
 const ABSOLUTE_CONCLUSION_PATTERN =
   /(?:所有|全部|任何|永久|一次.{0,8}成功|固定|一定|必然|绝不|绝不会|没有任何|不存在任何|立即|最终|完整|已经|就是|绝对|本(?:月|季度|年)|\d+\s*个|[一二三四五六七八九十百千万]+个|绿灯)/u;
 const REQUEST_START_PATTERN = /请|直接/u;
-const GENERAL_FALLBACK_PATTERN =
-  /(?:客户|销售|售前|决策人|联系人|价格|价值|演示|预算|黄灯|绿灯|谈判|商机|机会|报名|互动|BATNA|MTL)/iu;
 
 export type UnsupportedCommitmentDecision = {
   readonly result: AnswerResult;
@@ -40,7 +35,7 @@ export function evaluateUnsupportedCommitment(
   const missingInputs = normalizeDisplayClause(normalized.slice(0, requestStart));
   const verificationSubject = neutralizeRequestedConclusion(request);
   if (missingInputs === "" || verificationSubject === "") return undefined;
-  const scope = deterministicBoundaryScope(normalized);
+  const scope = inferBoundaryScope(normalized);
   return {
     result: {
       scope,
@@ -72,10 +67,4 @@ function normalizeDisplayClause(value: string): string {
     .replace(/^[\s，,；;。！？!?：:]+|[\s，,；;。！？!?：:]+$/gu, "")
     .replace(/\s+/gu, " ")
     .trim();
-}
-
-function deterministicBoundaryScope(question: string): Exclude<Scope, "normal"> {
-  if (isUnambiguouslyGeneralPresalesQuestion(question)) return "general";
-  if (isUnambiguouslyProfessionalQuestion(question)) return "professional";
-  return GENERAL_FALLBACK_PATTERN.test(question) ? "general" : "professional";
 }
