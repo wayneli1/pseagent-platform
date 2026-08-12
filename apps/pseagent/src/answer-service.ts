@@ -572,7 +572,7 @@ export class AnswerService {
           taskSpecActive &&
           this.dependencies.multiDomainActiveEnabled === true &&
           this.dependencies.answerCardFamilyActiveEnabled === true &&
-          !requiresContextualRouteResolution(question, conversationContext)
+          !questionResolution.contextUsed
         ? this.dependencies.answerCardMatcher?.routeTrustedFamily?.({
             question: routedQuestion,
             currentDomain: session.project,
@@ -584,6 +584,7 @@ export class AnswerService {
         : compileIndependentFamilyAnswerCardTaskSpec({
             match: trustedFamilyMatch,
             resolvedQuestion: identityResolvedQuestion(routedQuestion),
+            trustedRoute: true,
           });
       const loadLegacyPlan = async (): Promise<KnowledgePlan> => {
         const legacyPlan = await observeModelCall({
@@ -704,12 +705,21 @@ export class AnswerService {
             obligationCount: answerCardMatch.bindings.length,
           });
         } else {
+          const independentFamily = answerCardMatch.matchType === "family"
+            ? compileIndependentFamilyAnswerCardTaskSpec({
+                match: answerCardMatch,
+                resolvedQuestion: taskAnalysis?.resolvedQuestion ??
+                  identityResolvedQuestion(question),
+              })
+            : undefined;
           const adapted = answerCardMatch.matchType === "exact"
             ? compileExactAnswerCardTaskSpec({
                 match: answerCardMatch,
                 resolvedQuestion: taskAnalysis?.resolvedQuestion ??
                   identityResolvedQuestion(question),
               })
+            : independentFamily?.activated === true
+              ? independentFamily
             : taskAnalysis === undefined
               ? { activated: false as const, reason: "match_not_active" as const }
               : adaptAnswerCardToTaskSpec({

@@ -53,10 +53,33 @@ function page(path: string, title: string, type = "query"): KnowledgePage {
   };
 }
 
-function sessionFixture(options: { readonly priceFirst?: boolean } = {}) {
+function sessionFixture(options: {
+  readonly priceFirst?: boolean;
+  readonly entityFirst?: boolean;
+} = {}) {
   const search = vi.fn(async (query: string) => {
     const requirement = query.includes(" 2 ") ? "2" : "1";
-    const hits = options.priceFirst
+    const hits = options.entityFirst
+      ? [
+          {
+            path: "wiki/entities/第三方备份软件.md",
+            title: "第三方备份软件",
+            score: 0.99,
+            matchedTerms: ["备份"],
+            snippet: "实体摘要",
+            pageType: "entity",
+          },
+          {
+            path: "wiki/queries/客户大库备份选型.md",
+            title: "客户大库备份选型",
+            score: 0.7,
+            matchedTerms: ["备份", "选型"],
+            snippet: "审核答案卡",
+            pageType: "query",
+            reviewStatus: "approved",
+          },
+        ]
+      : options.priceFirst
       ? [
           {
             path: "wiki/quotes/migration-quote.md",
@@ -89,7 +112,11 @@ function sessionFixture(options: { readonly priceFirst?: boolean } = {}) {
   });
   const readPage = vi.fn(async (path: string) => path.includes("quote")
     ? page(path, "迁移能力报价", "quote")
-    : page(path, "Coremail 迁移能力"));
+    : path.includes("entities")
+      ? page(path, "第三方备份软件", "entity")
+      : path.includes("客户大库")
+        ? page(path, "客户大库备份选型")
+        : page(path, "Coremail 迁移能力"));
   const compactPage = vi.fn((value: KnowledgePage) => value.body);
   return {
     session: {
@@ -144,6 +171,29 @@ describe("DeterministicRetrievalCoordinator", () => {
 
     expect(result.evidence[0]?.path).toMatch(/^wiki\/(?:queries|concepts)\//u);
     expect(result.evidence[0]?.path).not.toMatch(/报价|quote/iu);
+    expect(readPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a governed preferred evidence path before a higher-ranked entity summary", async () => {
+    const { session, readPage } = sessionFixture({ entityFirst: true });
+    const governedPlan: DomainKnowledgePlan = {
+      ...domainPlan(1),
+      bindings: [{
+        ...domainPlan(1).bindings[0]!,
+        cardId: "PRO-LARGE-DATA-BACKUP-SELECTION",
+        preferredEvidencePaths: ["wiki/queries/客户大库备份选型.md"],
+      }],
+    };
+
+    const result = await new DeterministicRetrievalCoordinator().retrieve({
+      plan: governedPlan,
+      session,
+      deadlineAt: Date.now() + 10_000,
+      signal: new AbortController().signal,
+      trace,
+    });
+
+    expect(result.evidence[0]?.path).toBe("wiki/queries/客户大库备份选型.md");
     expect(readPage).toHaveBeenCalledTimes(1);
   });
 });

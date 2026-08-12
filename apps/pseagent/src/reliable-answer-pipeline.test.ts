@@ -11,6 +11,7 @@ import {
 } from "./high-risk-consensus.js";
 import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import {
+  coalesceHighRiskClaims,
   DeterministicReliableAnswerPipeline,
   ModelTargetedClaimReviser,
   reduceReliableOutcomes,
@@ -204,6 +205,38 @@ describe("ModelTargetedClaimReviser", () => {
 });
 
 describe("deterministic reliable answer pipeline", () => {
+  it("coalesces repeated high-risk facts per obligation before consensus", () => {
+    const first: BoundClaim = {
+      claimId: "CL1",
+      obligationId: "O1",
+      domain: "coremail-professional",
+      text: "密码不能直接迁移。",
+      kind: "boundary",
+      citationIndexes: [1],
+      coveredAspectIds: ["A1"],
+      support: "direct",
+      evidenceIdentities: [reference.contentHash],
+    };
+    const second: BoundClaim = {
+      ...first,
+      claimId: "CL2",
+      text: "标准做法是通过 AD 外部认证承接登录。",
+      kind: "fact",
+    };
+
+    expect(coalesceHighRiskClaims(
+      [first, second],
+      new Set(["O1"]),
+    )).toEqual([{
+      ...first,
+      text: "密码不能直接迁移；标准做法是通过 AD 外部认证承接登录。",
+    }]);
+    expect(coalesceHighRiskClaims([first, second], new Set())).toEqual([
+      first,
+      second,
+    ]);
+  });
+
   it("publishes evidence-identical governed facts when open-ended synthesis is invalid", async () => {
     const governedPlan: DomainKnowledgePlan = {
       ...plan,

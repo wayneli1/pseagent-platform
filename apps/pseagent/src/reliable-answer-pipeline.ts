@@ -204,10 +204,10 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
       highRiskObligationIds.has(claim.obligationId));
     const deterministicallyAccepted = projectedBinding.retained.filter((claim) =>
       !highRiskObligationIds.has(claim.obligationId));
-    const verifierClaims = stableClaims([
+    const verifierClaims = coalesceHighRiskClaims(stableClaims([
       ...firstBinding.retained,
       ...projectedHighRiskClaims,
-    ]);
+    ]), highRiskObligationIds);
     const firstVerificationStartedAt = Date.now();
     const verificationSignal = input.budget.signal("verification_consensus", input.signal);
     let finalConsensusSignal = verificationSignal;
@@ -231,21 +231,29 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
         verificationUnavailable = true;
       }
     }
-    const verifiedModelAccepted = supportedClaims(firstBinding.retained, firstDecisions);
-    const verifiedProjectedHighRisk = supportedClaims(
-      projectedHighRiskClaims,
-      firstDecisions,
-    );
+    const verifiedAccepted = supportedClaims(verifierClaims, firstDecisions);
     const initiallyAccepted = stableClaims([
       ...deterministicallyAccepted,
-      ...verifiedProjectedHighRisk,
-      ...verifiedModelAccepted,
+      ...verifiedAccepted,
     ]);
     const acceptedIds = new Set(initiallyAccepted.map((claim) => claim.claimId));
+    const satisfiedReplacementObligationIds = new Set(initiallyAccepted
+      .filter((claim) =>
+        highRiskObligationIds.has(claim.obligationId) ||
+        deterministicallyAccepted.some((accepted) =>
+          accepted.obligationId === claim.obligationId))
+      .map((claim) => claim.obligationId));
     const rejectedIds = new Set([
-      ...firstBinding.rejected.map((reason) => reason.split(":", 1)[0]!),
+      ...firstBinding.rejected.map((reason) => reason.split(":", 1)[0]!)
+        .filter((claimId) => {
+          const draft = globalDrafts.find((claim) => claim.claimId === claimId);
+          return draft === undefined ||
+            !satisfiedReplacementObligationIds.has(draft.obligationId);
+        }),
       ...firstBinding.retained
-        .filter((claim) => !acceptedIds.has(claim.claimId))
+        .filter((claim) =>
+          !acceptedIds.has(claim.claimId) &&
+          !satisfiedReplacementObligationIds.has(claim.obligationId))
         .map((claim) => claim.claimId),
     ]);
     recordStage(input, "verification_consensus", firstVerificationStartedAt,
@@ -287,7 +295,11 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
           contract: input.contract,
           retrievals: globalized.retrievals,
         });
-        if (revisedBinding.retained.length > 0) {
+        const revisedVerifierClaims = coalesceHighRiskClaims(
+          revisedBinding.retained,
+          highRiskObligationIds,
+        );
+        if (revisedVerifierClaims.length > 0) {
           calls.useStructured();
           revisedDecisions = await observeModelCall({
             trace: input.trace,
@@ -295,12 +307,12 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
             operation: "verify",
             signal: revisionSignal,
             call: () => this.dependencies.verifier.verify({
-              claims: revisedBinding.retained,
+              claims: revisedVerifierClaims,
               evidence: globalized.evidence,
               signal: revisionSignal,
             }),
           });
-          revisedAccepted = supportedClaims(revisedBinding.retained, revisedDecisions);
+          revisedAccepted = supportedClaims(revisedVerifierClaims, revisedDecisions);
         }
         recordStage(input, "targeted_revision", revisionStartedAt, "completed");
       } catch {
@@ -712,6 +724,71 @@ function stableClaims(claims: readonly BoundClaim[]): readonly BoundClaim[] {
   }
   return Object.freeze([...byContent.values()].sort((left, right) =>
     Number(left.claimId.slice(2)) - Number(right.claimId.slice(2))));
+}
+
+export function coalesceHighRiskClaims(
+  claims: readonly BoundClaim[],
+  highRiskObligationIds: ReadonlySet<string>,
+): readonly BoundClaim[] {
+  const ordinary = claims.filter((claim) => !highRiskObligationIds.has(claim.obligationId));
+  const groups = new Map<string, BoundClaim[]>();
+  for (const claim of claims) {
+    if (!highRiskObligationIds.has(claim.obligationId)) continue;
+    const key = JSON.stringify({
+      obligationId: claim.obligationId,
+      domain: claim.domain,
+      citations: [...claim.citationIndexes].sort((left, right) => left - right),
+    });
+    const current = groups.get(key) ?? [];
+    current.push(claim);
+    groups.set(key, current);
+  }
+  const coalesced = [...groups.values()].flatMap((group) => {
+    const chunks: BoundClaim[][] = [];
+    for (const claim of group) {
+      const current = chunks.at(-1);
+      const candidate = current === undefined
+        ? normalizeCompositeClaimText(claim.text)
+        : [...current, claim].map((item) => normalizeCompositeClaimText(item.text))
+            .filter((text, index, values) => values.indexOf(text) === index)
+            .join("；");
+      if (current === undefined || candidate.length > 1_900) {
+        chunks.push([claim]);
+      } else {
+        current.push(claim);
+      }
+    }
+    return chunks.map((chunk) => {
+      const first = chunk[0]!;
+      const texts = chunk.map((claim) => normalizeCompositeClaimText(claim.text))
+        .filter((text, index, values) => values.indexOf(text) === index);
+      return Object.freeze({
+        ...first,
+        text: `${texts.join("；")}。`,
+        kind: chunk.some((claim) => claim.kind === "boundary")
+          ? "boundary" as const
+          : chunk.some((claim) => claim.kind === "method")
+            ? "method" as const
+            : "fact" as const,
+        citationIndexes: Object.freeze([...new Set(chunk.flatMap((claim) =>
+          claim.citationIndexes))].sort((left, right) => left - right)),
+        coveredAspectIds: Object.freeze([...new Set(chunk.flatMap((claim) =>
+          claim.coveredAspectIds))].sort()),
+        support: chunk.every((claim) => claim.support === "direct")
+          ? "direct" as const
+          : "synthesized" as const,
+        evidenceIdentities: Object.freeze([...new Set(chunk.flatMap((claim) =>
+          claim.evidenceIdentities))].sort()),
+      });
+    });
+  });
+  return Object.freeze([...ordinary, ...coalesced].sort((left, right) =>
+    Number(left.claimId.slice(2)) - Number(right.claimId.slice(2))));
+}
+
+function normalizeCompositeClaimText(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim()
+    .replace(/[。；;]+$/u, "");
 }
 
 function emptyFinalAction(): FinalAction {

@@ -1190,6 +1190,15 @@ describe("answer card TaskSpec adapter", () => {
       match,
       resolvedQuestion: identityResolvedQuestion(question),
     })).toMatchObject({ activated: true });
+    expect(compileIndependentFamilyAnswerCardTaskSpec({
+      match,
+      resolvedQuestion: {
+        ...identityResolvedQuestion(question),
+        standaloneQuestion: "销售临时要求我马上做完整演示，但没有任何客户背景信息，这种情况下应该怎么办？",
+        contextUsed: true,
+        inheritedSubjects: ["客户演示"],
+      },
+    })).toMatchObject({ activated: true });
 
     expect(adaptAnswerCardToTaskSpec({
       match,
@@ -1200,6 +1209,61 @@ describe("answer card TaskSpec adapter", () => {
     })).toMatchObject({
       activated: false,
       reason: "guard_rejected",
+    });
+  });
+
+  it("compiles a trusted single-card family when the explicit-clause extractor returns no clauses", () => {
+    const question = "客户邮箱数据量很大，备份到底选高级备份还是第三方软件？";
+    const binding = (
+      id: string,
+      label: string,
+      evidencePolicy: "direct" | "synthesis",
+      requiredConcepts: readonly string[],
+    ): Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] => ({
+      obligationId: id,
+      cardObligationId: id,
+      cardId: "PRO-LARGE-DATA-BACKUP-SELECTION",
+      label,
+      domain: "coremail-professional",
+      domains: ["coremail-professional"],
+      required: true,
+      evidencePolicy,
+      requiredConcepts,
+      forbiddenClaims: [],
+      preferredEvidencePaths: ["wiki/queries/客户数据量较大时邮件系统备份如何选型.md"],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "c".repeat(64),
+      familyId: "large_mail_backup_selection",
+      bindings: [
+        binding("O1", "说明大库优先评估第三方软件备份且容量阈值没有定义", "direct", [
+          "大库", "第三方软件备份", "高级备份", "容量阈值", "没有定义",
+        ]),
+        binding("O2", "明确支持矩阵、恢复验证、交付责任与审批完成前不能承诺固定恢复时长", "synthesis", [
+          "支持矩阵", "恢复验证结果", "恢复指标", "审批", "不能",
+        ]),
+      ],
+      cardIdHashes: ["d".repeat(64)],
+      expectedRevisions: { "coremail-professional": professionalRevision },
+      candidateCount: 1,
+    };
+
+    expect(compileIndependentFamilyAnswerCardTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+    })).toMatchObject({ activated: false });
+    expect(compileIndependentFamilyAnswerCardTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      trustedRoute: true,
+    })).toMatchObject({
+      activated: true,
+      policies: [
+        expect.objectContaining({ cardObligationId: "O1" }),
+        expect.objectContaining({ cardObligationId: "O2" }),
+      ],
     });
   });
 

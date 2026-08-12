@@ -64,8 +64,12 @@ export function compileExactAnswerCardTaskSpec(input: {
 export function compileIndependentFamilyAnswerCardTaskSpec(input: {
   readonly match: Exclude<AnswerCardMatch, { matchType: "none" }>;
   readonly resolvedQuestion: ResolvedQuestion;
+  readonly trustedRoute?: boolean;
 }): AnswerCardTaskSpecAdapterResult {
-  if (!canCompileIndependentFamily(input.match, input.resolvedQuestion)) {
+  if (
+    !canCompileIndependentFamily(input.match, input.resolvedQuestion, input.trustedRoute === true) &&
+    !canCompileContextualFamily(input.match, input.resolvedQuestion)
+  ) {
     return {
       activated: false,
       reason: "guard_rejected",
@@ -424,7 +428,9 @@ function canCompileContextualFamily(
     resolvedQuestion.standaloneQuestion,
   ).requestClauses;
   return requestClauses.every((clause) =>
-    match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)));
+    match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)) ||
+    isGenericCardRequestClause(clause) ||
+    isTrustedCardSituationClause(clause));
 }
 
 function canCompileWholeFamily(
@@ -454,6 +460,7 @@ function canCompileWholeFamily(
 function canCompileIndependentFamily(
   match: Exclude<AnswerCardMatch, { matchType: "none" }>,
   resolvedQuestion: ResolvedQuestion,
+  trustedRoute = false,
 ): boolean {
   if (requiresMixedKnowledgeDomains(resolvedQuestion.standaloneQuestion)) return false;
   if (!(match.matchType === "family" &&
@@ -463,10 +470,14 @@ function canCompileIndependentFamily(
   const requestClauses = extractExplicitQuestionSignals(
     resolvedQuestion.standaloneQuestion,
   ).requestClauses;
-  return requestClauses.length > 0 && requestClauses.every((clause) =>
+  if (requestClauses.length === 0 && !trustedRoute) return false;
+  const trustedClauses = requestClauses.length > 0 ? requestClauses : [resolvedQuestion.standaloneQuestion];
+  return trustedClauses.every((clause) =>
     match.bindings.some((binding) => trustedCardClauseMatches(clause, binding)) ||
-    isGenericCardRequestClause(clause) ||
-    isTrustedCardSituationClause(clause));
+    (requestClauses.length > 0 && (
+      isGenericCardRequestClause(clause) ||
+      isTrustedCardSituationClause(clause)
+    )));
 }
 
 export function applyAnswerCardPoliciesToPlan(input: {

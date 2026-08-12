@@ -142,13 +142,13 @@ export class DeterministicRetrievalCoordinator {
       }
 
       const allAspectIds = requirement.evidenceAspects.map((aspect) => aspect.id);
-      const ranked = rankRetrievalCandidates({
+      const ranked = preferGovernedEvidencePaths(rankRetrievalCandidates({
         question: requirement.question,
         queries: groups.map((group) => group.query),
         evidenceMode: requirement.evidenceMode,
         missingAspectIds: allAspectIds,
         candidates: [...merged.values()],
-      });
+      }), binding);
       recordCandidateDiagnostics(input.trace, requirement.id, allAspectIds, ranked);
 
       const reads: EvidenceReadDraft[] = [];
@@ -265,6 +265,30 @@ export class DeterministicRetrievalCoordinator {
       }),
     };
   }
+}
+
+function preferGovernedEvidencePaths<T extends RetrievalRankingCandidate>(
+  ranked: readonly RankedRetrievalCandidate<T>[],
+  binding: DomainKnowledgePlan["bindings"][number],
+): readonly RankedRetrievalCandidate<T>[] {
+  if (binding.cardId === undefined || (binding.preferredEvidencePaths?.length ?? 0) === 0) {
+    return ranked;
+  }
+  const preference = new Map(binding.preferredEvidencePaths!.map((path, index) => [
+    path,
+    index,
+  ] as const));
+  return Object.freeze(ranked
+    .map((item, rank) => ({ item, rank, preferred: preference.get(item.candidate.path) }))
+    .sort((left, right) => {
+      if (left.preferred !== undefined && right.preferred !== undefined) {
+        return left.preferred - right.preferred || left.rank - right.rank;
+      }
+      if (left.preferred !== undefined) return -1;
+      if (right.preferred !== undefined) return 1;
+      return left.rank - right.rank;
+    })
+    .map(({ item }) => item));
 }
 
 function groupSeedQueries(
