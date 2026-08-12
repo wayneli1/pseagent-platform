@@ -8,6 +8,7 @@ import {
   isTechnicalAcceptanceChecklist,
   isProductNeutralGovernanceDeliverable,
   requiresMixedKnowledgeDomains,
+  requiresProfessionalKnowledgeOnly,
   taskSpecSchema,
   type KnowledgeDomain,
   type TaskSpec,
@@ -78,6 +79,8 @@ const COMPARISON_PATTERN = /(?:对比|比较|差异|区别|异同|优劣)/u;
 const RECOMMENDATION_PATTERN = /(?:建议|下一步|改进|提升|优化|应当|应该)/u;
 const RISK_PATTERN = /(?:风险|边界|隐患|注意事项)/u;
 const DIAGNOSIS_PATTERN = /(?:诊断|分析|评估|判断|原因|为什么|为何)/u;
+const EVIDENCE_ADMISSION_PATTERN =
+  /(?:(?:证据|材料).{0,16}(?:是否|能否|足以|足够).{0,16}(?:支持)?(?:参与|推进|准入)|是否.{0,4}(?:足以|足够).{0,8}(?:支持)?(?:参与|推进|准入))/u;
 const PROFESSIONAL_PATTERN =
   /(?:Coremail|Exchange|Office\s*365|邮件|邮箱|归档|网关|反垃圾|迁移|版本|接口|协议|模块|授权|容灾|多活|LDAP|AD|RPO|RTO)/iu;
 const CUSTOMER_INPUT_GOVERNANCE_PATTERN =
@@ -94,7 +97,7 @@ export function compileAtomicObligationContract(input: {
   const question = input.resolvedQuestion.standaloneQuestion;
   const taskItems = flattenTaskSpec(input.taskSpec);
   const seeds = obligationSeeds(question);
-  const obligations = ensureMixedAtomicDomainCoverage(
+  const obligations = ensureQuestionAtomicDomainCoverage(
     seeds.map((seed, index) => classifySeedWithModelTaskSpecOrDeterministicFallback(
       seed,
       index,
@@ -282,6 +285,18 @@ function obligationSeeds(question: string): ObligationSeed[] {
     .filter((seed): seed is ObligationSeed => seed !== undefined);
   const signals = extractExplicitQuestionSignals(question);
   const explicitSeeds: ObligationSeed[] = [];
+  const forcedParallelSeedRanges = signals.requiredParallelGroups
+    .flatMap((group) => group.items)
+    .flatMap((sourceText) => {
+      const start = question.indexOf(sourceText);
+      return start < 0 ? [] : [{ start, end: start + sourceText.length }];
+    });
+  const forcedParallelSeedKeys = new Set(forcedParallelSeedRanges
+    .map((range) => `${range.start}:${range.end}`));
+  const forcedParallelGroupRanges = signals.requiredParallelGroups.flatMap((group) => {
+    const start = question.indexOf(group.sourceText);
+    return start < 0 ? [] : [{ start, end: start + group.sourceText.length }];
+  });
   for (const sourceText of [
     ...signals.requestClauses,
     ...signals.independentRequestClauses,
@@ -296,6 +311,31 @@ function obligationSeeds(question: string): ObligationSeed[] {
     explicitSeeds.push(seed);
   }
   for (const explicit of explicitSeeds) {
+    const explicitKey = `${explicit.start}:${explicit.end}`;
+    if (
+      !forcedParallelSeedKeys.has(explicitKey) &&
+      forcedParallelSeedRanges.some((range) =>
+        explicit.start < range.end && explicit.end > range.start)
+    ) {
+      continue;
+    }
+    if (forcedParallelSeedRanges.filter((range) =>
+      range.start >= explicit.start && range.end <= explicit.end).length >= 2) {
+      continue;
+    }
+    if (forcedParallelSeedKeys.has(explicitKey)) {
+      seeds = seeds.filter((seed) =>
+        !(
+          seed.start <= explicit.start &&
+          seed.end >= explicit.end &&
+          (seed.start !== explicit.start || seed.end !== explicit.end)
+        ));
+      if (!seeds.some((seed) =>
+        seed.start === explicit.start && seed.end === explicit.end)) {
+        seeds.push(explicit);
+      }
+      continue;
+    }
     const overlappingAtoms = analysis.atoms.filter((atom) =>
       explicit.start < atom.end && explicit.end > atom.start);
     const overlappingSeeds = seeds.filter((seed) =>
@@ -315,6 +355,11 @@ function obligationSeeds(question: string): ObligationSeed[] {
     Number.POSITIVE_INFINITY,
   );
   seeds = seeds.filter((seed) =>
+    (
+      !forcedParallelGroupRanges.some((range) =>
+        seed.start >= range.start && seed.end <= range.end) ||
+      forcedParallelSeedKeys.has(`${seed.start}:${seed.end}`)
+    ) &&
     !(explicitSeeds.length > 0 && seed.atom !== undefined && seed.end <= firstExplicitStart) &&
     !TRAILING_CONSTRAINT_PATTERN.test(seed.text));
   if (seeds.length === 0) {
@@ -447,6 +492,7 @@ function deterministicKind(
   text: string,
   matchedKind?: TaskSpec["deliverables"][number]["kind"],
 ): AtomicObligationKind {
+  if (EVIDENCE_ADMISSION_PATTERN.test(text)) return "risk_assessment";
   if (CASE_JUDGEMENT_PATTERN.test(text)) return "case_judgement";
   if (COMPARISON_PATTERN.test(text)) return "comparison";
   if (PROCEDURE_PATTERN.test(text)) return "procedure";
@@ -462,6 +508,7 @@ function deterministicEvidencePolicy(
   matched: TaskSpecObligation | undefined,
 ): AtomicObligation["evidencePolicy"] {
   if (kind === "case_judgement") return "customer_input";
+  if (EVIDENCE_ADMISSION_PATTERN.test(text)) return "synthesis";
   if (kind === "procedure" && SHARED_METHOD_ACTION_PATTERN.test(text)) return "synthesis";
   const sourceAnalysis = analyzeObligationSource(text);
   const containsDefaultProtectedFact = sourceAnalysis.atoms.some((atom) =>
@@ -502,6 +549,7 @@ function deterministicDomains(
   }
   const professional = PROFESSIONAL_PATTERN.test(text);
   const general = evidencePolicy === "customer_input" ||
+    EVIDENCE_ADMISSION_PATTERN.test(text) ||
     CUSTOMER_INPUT_GOVERNANCE_PATTERN.test(text) ||
     isProductNeutralGovernanceDeliverable(text) ||
     (
@@ -525,10 +573,18 @@ function deterministicDomains(
     : ["presales-general"];
 }
 
-function ensureMixedAtomicDomainCoverage(
+function ensureQuestionAtomicDomainCoverage(
   obligations: readonly AtomicObligation[],
   question: string,
 ): AtomicObligation[] {
+  if (requiresProfessionalKnowledgeOnly(question)) {
+    return obligations.map((obligation) => Object.freeze({
+      ...obligation,
+      domains: obligation.evidencePolicy === "customer_input"
+        ? obligation.domains
+        : Object.freeze(["coremail-professional" as const]),
+    }));
+  }
   if (!requiresMixedKnowledgeDomains(question)) {
     return [...obligations];
   }

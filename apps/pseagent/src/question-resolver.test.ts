@@ -18,6 +18,8 @@ describe("requiresContextualRouteResolution", () => {
     "你刚才列的第二点具体怎么确认？",
     "那它在什么情况下算具备资格？",
     "这个具体怎么判断？",
+    "双轨图里跨系统日程不可用，只说明这项限制、用户替代动作和回退时如何通知。",
+    "刚才把预算标成黄灯，现在给出一个减速核验动作和转绿或转红的证据。",
   ])("detects a context-dependent follow-up: %s", (question) => {
     expect(requiresContextualRouteResolution(question, context)).toBe(true);
   });
@@ -44,6 +46,34 @@ describe("ModelQuestionResolver", () => {
 
     await expect(resolver.resolve({ question: "Coremail 如何部署？" }))
       .resolves.toEqual(identityResolvedQuestion("Coremail 如何部署？"));
+    expect(model.completeJson).not.toHaveBeenCalled();
+  });
+
+  it("deterministically carries an explicit contextual premise without a model call", async () => {
+    const model = {
+      completeJson: vi.fn(),
+      completeText: vi.fn(),
+    } as unknown as ModelClient;
+    const resolver = new ModelQuestionResolver(model);
+    const context = JSON.stringify({
+      version: 3,
+      recentTurns: [{
+        question: "机会中的技术适配为绿灯，预算信息为黄灯。",
+        answerOutline: "黄灯需要减速核验。",
+      }],
+    });
+
+    const result = await resolver.resolve({
+      question: "刚才把预算标成黄灯，现在给出转绿或转红的证据。",
+      conversationContext: context,
+    });
+
+    expect(result).toMatchObject({
+      contextUsed: true,
+      inheritedSubjects: ["机会中的技术适配为绿灯，预算信息为黄灯。"],
+    });
+    expect(result.standaloneQuestion).toContain("机会中的技术适配为绿灯");
+    expect(result.standaloneQuestion).toContain("现在给出转绿或转红的证据");
     expect(model.completeJson).not.toHaveBeenCalled();
   });
 

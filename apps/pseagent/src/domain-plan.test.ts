@@ -182,6 +182,161 @@ describe("deriveDomainKnowledgePlans", () => {
     expect(general.plan.requirements[0]?.evidenceAspects[0]?.terms)
       .toEqual(expect.arrayContaining(["售前", "交付", "结构化移交", "风险", "责任人"]));
   });
+
+  it.each([{
+    question: "用 XT v6 审计材料回应 RFP 时，怎样同时限定报告版本与范围，并判断该证据是否足以支持参与？",
+    scope: "professional" as const,
+    domain: "coremail-professional" as const,
+    expected: ["XT", "审计", "报告", "版本"],
+  }, {
+    question: "双轨图里跨系统日程不可用，只说明这项限制、用户替代动作和回退时如何通知。",
+    scope: "professional" as const,
+    domain: "coremail-professional" as const,
+    expected: ["跨系统", "日程", "回退"],
+  }, {
+    question: "刚才把预算标成黄灯，现在给出一个减速核验动作和转绿或转红的证据。",
+    scope: "general" as const,
+    domain: "presales-general" as const,
+    expected: ["预算", "黄灯", "减速核验", "转绿", "转红"],
+  }])("preserves question-level retrieval anchors: $question", ({
+    question: sourceQuestion,
+    scope,
+    domain,
+    expected,
+  }) => {
+    const resolved = identityResolvedQuestion(sourceQuestion);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion: resolved,
+      scopeHint: scope,
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+    const contract = compileAtomicObligationContract({
+      resolvedQuestion: resolved,
+      taskSpec,
+    });
+    const guard = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: resolved,
+      taskSpec,
+    });
+
+    const result = deriveDomainKnowledgePlans({
+      resolvedQuestion: resolved,
+      taskSpec,
+      obligationContract: contract,
+      guardResult: guard,
+    });
+
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+    const plan = result.plans.find((item) => item.domain === domain)!;
+    expect(plan.plan.requirements[0]?.queries[0]?.text).toBeTruthy();
+    expect(plan.plan.requirements[0]?.evidenceAspects[0]?.terms)
+      .toEqual(expect.arrayContaining(expected));
+  });
+
+  it.each([{
+    question: "用 XT v6 审计材料回应 RFP 时，怎样同时限定报告版本与范围，并判断该证据是否足以支持参与？",
+    scope: "professional" as const,
+    domain: "coremail-professional" as const,
+    canonicalQuery: "Coremail XT v6.0 源代码审计 报告版本 适用边界",
+  }, {
+    question: "双轨图里跨系统日程不可用，只说明这项限制、用户替代动作和回退时如何通知。",
+    scope: "professional" as const,
+    domain: "coremail-professional" as const,
+    canonicalQuery: "双轨并行 跨系统功能限制 日程 回退",
+  }, {
+    question: "刚才把预算标成黄灯，现在给出一个减速核验动作和转绿或转红的证据。",
+    scope: "general" as const,
+    domain: "presales-general" as const,
+    canonicalQuery: "交通灯状态 黄灯 减速核验 绿灯 红灯 证据",
+  }])("adds a canonical named-family retrieval query: $question", ({
+    question: sourceQuestion,
+    scope,
+    domain,
+    canonicalQuery,
+  }) => {
+    const resolved = identityResolvedQuestion(sourceQuestion);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion: resolved,
+      scopeHint: scope,
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+    const contract = compileAtomicObligationContract({
+      resolvedQuestion: resolved,
+      taskSpec,
+    });
+    const guard = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: resolved,
+      taskSpec,
+    });
+
+    const result = deriveDomainKnowledgePlans({
+      resolvedQuestion: resolved,
+      taskSpec,
+      obligationContract: contract,
+      guardResult: guard,
+    });
+
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+    expect(result.plans.find((item) => item.domain === domain)
+      ?.plan.requirements[0]?.queries[0]?.text).toBe(canonicalQuery);
+  });
+
+  it("uses obligation-specific canonical queries for a contextual dual-track list", () => {
+    const sourceQuestion =
+      "Exchange 与 Coremail 双轨并行，邮件路由已经验证；当前追问：双轨图里跨系统日程不可用，只说明这项限制、用户替代动作和回退时如何通知。";
+    const resolved = identityResolvedQuestion(sourceQuestion);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion: resolved,
+      scopeHint: "professional",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+    const contract = compileAtomicObligationContract({
+      resolvedQuestion: resolved,
+      taskSpec,
+    });
+    const guard = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: resolved,
+      taskSpec,
+    });
+
+    const result = deriveDomainKnowledgePlans({
+      resolvedQuestion: resolved,
+      taskSpec,
+      obligationContract: contract,
+      guardResult: guard,
+    });
+
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+    const requirements = result.plans[0]!.plan.requirements;
+    const userActionIndex = contract.obligations.findIndex((item) =>
+      item.sourceText.includes("用户替代动作"));
+    const rollbackNoticeIndex = contract.obligations.findIndex((item) =>
+      item.sourceText.includes("回退时如何通知"));
+    const userAction = requirements[userActionIndex];
+    const rollbackNotice = requirements[rollbackNoticeIndex];
+    expect(userAction?.queries[0]?.text).toBe(
+      "Exchange Coremail 双轨 用户替代 客户端切换 旧系统 新系统",
+    );
+    expect(rollbackNotice?.queries[0]?.text).toBe(
+      "Exchange 替换 用户通知 培训 回退 旧系统",
+    );
+    expect(userAction?.evidenceAspects[0]?.terms).toEqual(expect.arrayContaining([
+      "用户替代",
+      "客户端切换",
+      "旧系统",
+      "新系统",
+    ]));
+    expect(rollbackNotice?.evidenceAspects[0]?.terms).toEqual(expect.arrayContaining([
+      "回退",
+      "用户通知",
+      "培训",
+      "问题受理路径",
+    ]));
+  });
+
   it("uses the required atomic-obligation domain union even when TaskSpec domains are stale", () => {
     const taskSpec = mixedTaskSpec();
     for (const deliverable of taskSpec.deliverables) {

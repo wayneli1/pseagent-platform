@@ -1759,6 +1759,65 @@ describe("answer card TaskSpec adapter", () => {
     expect(adapted).toMatchObject({ activated: false, reason: "guard_rejected" });
   });
 
+  it("rejects a family overlay that replaces one mixed obligation with professional-only bindings", () => {
+    const question = "无法迁移 Exchange 明文密码时，怎样用透明专业建议向客户说明认证事实、可选过渡和用户影响？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: "Exchange", role: "product", sourceText: "Exchange" }],
+      deliverables: [{
+        id: "D1",
+        label: "认证边界与透明建议",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "说明认证事实、可选过渡和用户影响",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "synthesis",
+          domains: ["coremail-professional", "presales-general"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+    const binding = (
+      id: string,
+      label: string,
+    ): Exclude<AnswerCardMatch, { matchType: "none" }>["bindings"][number] => ({
+      obligationId: id,
+      cardObligationId: id,
+      cardId: "PRO-EXCHANGE-PASSWORD-AUTH",
+      label,
+      domain: "coremail-professional",
+      domains: ["coremail-professional"],
+      required: true,
+      evidencePolicy: "direct",
+      requiredConcepts: [label],
+      forbiddenClaims: [],
+      preferredEvidencePaths: [],
+    });
+    const match: Exclude<AnswerCardMatch, { matchType: "none" }> = {
+      matchType: "family",
+      confidence: "high",
+      catalogHash: "a".repeat(64),
+      familyId: "exchange_password_auth",
+      bindings: [
+        binding("O1", "Exchange 明文密码不能直接迁移"),
+        binding("O2", "外部认证与用户改密过渡"),
+      ],
+      cardIdHashes: ["b".repeat(64)],
+      expectedRevisions: { "coremail-professional": professionalRevision },
+      candidateCount: 1,
+    };
+
+    expect(adaptAnswerCardToTaskSpec({
+      match,
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    })).toEqual({ activated: false, reason: "guard_rejected" });
+  });
+
   it("keeps a contextual sub-question focused on the matching card obligation", () => {
     const question = "演示前如何确认客户关键业务问题？";
     const taskSpec = taskSpecSchema.parse({

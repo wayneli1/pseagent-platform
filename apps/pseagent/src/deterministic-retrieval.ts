@@ -319,7 +319,9 @@ function mergeSearchHits(
   result: KnowledgeSearchResult,
   group: SearchGroup,
 ): void {
+  const plannedQueryOffset = Math.min(...group.plannedQueryIndexes) * 10;
   for (const [rank, hit] of result.hits.entries()) {
+    const obligationVariantRank = plannedQueryOffset + rank + 1;
     const existing = merged.get(hit.path);
     if (existing === undefined) {
       merged.set(hit.path, {
@@ -334,7 +336,7 @@ function mergeSearchHits(
         sources: new Set(["seed"]),
         rrfScore: 1 / (60 + rank + 1),
         requirementSpecificMatch: true,
-        obligationVariantRank: rank + 1,
+        obligationVariantRank,
       });
       continue;
     }
@@ -342,8 +344,8 @@ function mergeSearchHits(
     for (const term of hit.matchedTerms) existing.matchedTerms.add(term);
     existing.rrfScore += 1 / (60 + rank + 1);
     existing.obligationVariantRank = Math.min(
-      existing.obligationVariantRank ?? rank + 1,
-      rank + 1,
+      existing.obligationVariantRank ?? obligationVariantRank,
+      obligationVariantRank,
     );
   }
 }

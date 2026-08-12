@@ -5,7 +5,6 @@ import {
   type TaskPlanAdapterInactiveReason,
 } from "./task-plan-adapter.js";
 import {
-  requiresMixedKnowledgeDomains,
   type KnowledgeDomain,
   type TaskSpec,
   type TaskSpecGuardResult,
@@ -167,6 +166,7 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
           adapted.plan,
           domain,
           input.resolvedQuestion.standaloneQuestion,
+          applicable.map((item) => item.obligation.sourceText),
         ),
         obligationIds: adapted.obligationIds,
         policies: input.cardPolicies ?? [],
@@ -255,11 +255,14 @@ function taskSpecForDomain(taskSpec: TaskSpec, domain: KnowledgeDomain): TaskSpe
 }
 
 const PROFESSIONAL_QUERY_CUES = [
+  "XT", "审计", "报告", "跨系统", "日程", "回退",
   "Coremail", "Exchange", "Office 365", "个人配置", "邮件", "邮箱", "迁移",
   "归档", "网关", "反垃圾", "日程", "通讯录", "规则", "协议", "接口", "版本",
   "部署", "容灾", "多活", "LDAP", "AD", "RPO", "RTO",
 ] as const;
 const GENERAL_QUERY_CUES = [
+  "预算", "黄灯", "减速核验", "转绿", "转红", "RFP", "参与", "退出",
+  "透明专业建议", "红旗", "优势", "客户协作",
   "售前", "交付", "结构化移交", "风险", "责任人", "用户动作", "可迁项", "POC",
   "验收", "客户", "价值", "关系", "决策", "采购", "范围", "变更", "升级路径",
 ] as const;
@@ -268,29 +271,107 @@ function specializeMixedDomainRetrievalPlan(
   plan: KnowledgePlan,
   domain: KnowledgeDomain,
   question: string,
+  obligationSources: readonly string[],
 ): KnowledgePlan {
-  if (!requiresMixedKnowledgeDomains(question)) return plan;
   const normalizedQuestion = question.toLocaleLowerCase("zh-CN");
+  const canonicalQuery = canonicalDomainQuery(question, domain);
   const cues = (domain === "coremail-professional"
     ? PROFESSIONAL_QUERY_CUES
     : GENERAL_QUERY_CUES).filter((cue) =>
       normalizedQuestion.includes(cue.toLocaleLowerCase("zh-CN")));
-  if (cues.length < 2) return plan;
-  const queryText = cues.slice(0, 8).join(" ");
+  if (canonicalQuery === undefined && cues.length < 2) return plan;
   return {
     ...plan,
-    requirements: plan.requirements.map((requirement) => ({
-      ...requirement,
-      evidenceAspects: requirement.evidenceAspects.map((aspect) => ({
-        ...aspect,
-        terms: stableUniqueSemanticText([...cues, ...aspect.terms]).slice(0, 8),
-      })),
-      queries: stableUniqueQueries([{
-        text: queryText,
-        aspectIds: requirement.evidenceAspects.map((aspect) => aspect.id),
-      }, ...requirement.queries]).slice(0, 3),
-    })),
+    requirements: plan.requirements.map((requirement, index) => {
+      const obligationSource = obligationSources[index] ?? requirement.question;
+      const requirementQuery = canonicalDomainQuery(
+        question,
+        domain,
+        obligationSource,
+      ) ?? canonicalQuery ?? cues.slice(0, 8).join(" ");
+      const obligationTerms = canonicalDomainObligationTerms(
+        question,
+        domain,
+        obligationSource,
+      );
+      return {
+        ...requirement,
+        evidenceAspects: requirement.evidenceAspects.map((aspect) => ({
+          ...aspect,
+          terms: stableUniqueSemanticText([
+            ...obligationTerms,
+            ...cues,
+            ...aspect.terms,
+          ]).slice(0, 8),
+        })),
+        queries: stableUniqueQueries([{
+          text: requirementQuery,
+          aspectIds: requirement.evidenceAspects.map((aspect) => aspect.id),
+        }, ...requirement.queries]).slice(0, 3),
+      };
+    }),
   };
+}
+
+function canonicalDomainObligationTerms(
+  question: string,
+  domain: KnowledgeDomain,
+  obligationSource: string,
+): readonly string[] {
+  if (
+    domain !== "coremail-professional" ||
+    !/双轨/u.test(question) ||
+    !/跨系统/u.test(question)
+  ) {
+    return [];
+  }
+  if (/(?:回退.{0,12}通知|通知.{0,12}回退)/u.test(obligationSource)) {
+    return ["回退", "用户通知", "培训", "问题受理路径"];
+  }
+  if (/用户替代/u.test(obligationSource)) {
+    return ["用户替代", "客户端切换", "旧系统", "新系统"];
+  }
+  if (/(?:跨系统|日程|功能限制)/u.test(obligationSource)) {
+    return ["跨系统", "日程", "功能限制"];
+  }
+  return [];
+}
+
+function canonicalDomainQuery(
+  question: string,
+  domain: KnowledgeDomain,
+  requirementQuestion = question,
+): string | undefined {
+  if (
+    domain === "coremail-professional" &&
+    /XT\s*v?6(?:\.0)?/iu.test(question) &&
+    /(?:源代码)?审计|审计材料|审计报告/u.test(question)
+  ) {
+    return "Coremail XT v6.0 源代码审计 报告版本 适用边界";
+  }
+  if (
+    domain === "coremail-professional" &&
+    /双轨/u.test(question) &&
+    /跨系统/u.test(question) &&
+    /(?:日程|功能限制|回退)/u.test(question)
+  ) {
+    if (/(?:回退.{0,12}通知|通知.{0,12}回退)/u.test(requirementQuestion)) {
+      return "Exchange 替换 用户通知 培训 回退 旧系统";
+    }
+    if (/用户替代/u.test(requirementQuestion)) {
+      return "Exchange Coremail 双轨 用户替代 客户端切换 旧系统 新系统";
+    }
+    return "双轨并行 跨系统功能限制 日程 回退";
+  }
+  if (
+    domain === "presales-general" &&
+    /黄灯/u.test(question) &&
+    /(?:转绿|绿灯)/u.test(question) &&
+    /(?:转红|红灯)/u.test(question)
+  ) {
+    return "交通灯状态 黄灯 减速核验 绿灯 红灯 证据";
+  }
+  return undefined;
 }
 
 function stableUniqueSemanticText(values: readonly string[]): string[] {

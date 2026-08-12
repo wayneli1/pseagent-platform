@@ -629,6 +629,12 @@ const EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN =
   /(?:(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b).{0,48}(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾)|(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾).{0,48}(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b))|(?:(?:POC|验收|核验|验证).{0,32}(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配)|(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配).{0,32}(?:POC|验收|核验|验证))/iu;
 const RELIABILITY_EXPLICIT_TECHNICAL_PATTERN =
   /(?:(?:可核验(?:的)?能力|能力核验).{0,32}(?:POC|验收|验证)|(?:POC|验收|验证).{0,32}(?:可核验(?:的)?能力|能力核验))/iu;
+const RELIABILITY_ENGINEERING_EVIDENCE_PATTERN =
+  /(?:POC.{0,48}(?:压力测试|压测|未采购(?:模块|功能)|环境隔离|负载模型|监控指标|停止条件)|SSL\s*证书|多活架构|Message-ID|投递日志|非多活.{0,20}(?:恢复方案|恢复能力|演练)|大库增量追赶|第三方(?:邮件)?网关|CAC|腾讯(?:企业)?邮箱.{0,20}(?:迁移|试迁)|XT\s*v?6.{0,24}(?:审计|报告))/iu;
+const EXPLICIT_CROSS_DOMAIN_METHOD_PATTERN =
+  /(?:Fit\s*三层|客户权力地图|阶段证据门|价值工程|MEDDPICC|NVC|PoC\s*反向设计|透明专业建议|有条件让步|三个\s*Why|阶段出口证据|价值讨论|结构化移交|红旗与优势|RFP.{0,32}(?:参与|退出)|四\s*B|Mom\s*Test|成功(?:指标|口径).{0,32}(?:责任人|退出条件)|投诉基线|测量周期|缺陷升级(?:规则|机制)|通过口径)/iu;
+const TECHNICAL_CONTROL_WITHOUT_GENERAL_METHOD_PATTERN =
+  /(?:竞品结论.{0,32}(?:客户)?确认|资产盘点.{0,80}分阶段验收|未采购(?:模块|功能).{0,64}(?:范围外项|变更审批|后续验证条件)|POC.{0,32}(?:压力测试|压测).{0,64}(?:环境隔离|负载模型|监控指标|停止条件)|第三方(?:邮件)?网关.{0,64}(?:现有覆盖|授权边界))/iu;
 const TECHNICAL_SYSTEM_ANCHOR_PATTERN =
   /(?:Coremail|Exchange|Office\s*365|邮件|邮箱|终端|客户端|系统|接口|API|SDK|协议|版本|标准版|进阶版|授权|数据库|MariaDB|国产数据库|东方通|多租户|容灾|HA|多活|镜像|网关|归档|迁移|加密|日程|文件中转|访问控制|公网\s*IP|RBL|Webadmin|DNS|TTL|DMZ|SSL|OAuth2|OpenSSL|Outlook|PCMail|PST|EML|H5|AIR|searchsvr|全文索引|deliveragent|Usertransport|中继|路由|账号盗用|发信队列|残留队列|队列处置|日志级别|并发数据|规格|总量|抽样正文|GT|灰名单|Ukey|证书链|NAT|防火墙|防暴卫士|威胁情报|分批切换|批次切换|报备|保护期|\bDA\b|\bMTA\b|\bMD\b|\bUD\b|MS0257|信创)/iu;
 const TECHNICAL_EVIDENCE_ACTION_PATTERN =
@@ -647,6 +653,14 @@ function deterministicTaskSpecFallback(input: TaskCompilerInput): TaskSpec {
     .filter(Boolean)
     .filter((clause, index, values) =>
       values.findIndex((candidate) => sameSemanticText(candidate, clause)) === index)
+    .filter((clause) => !signals.requiredParallelGroups.some((group) => {
+      if (group.items.length < 2) return false;
+      if (group.items.every((item) => containsSemanticText(clause, item))) {
+        return true;
+      }
+      return containsSemanticText(group.sourceText, clause) &&
+        !group.items.some((item) => sameSemanticText(item, clause));
+    }))
     .slice(0, 6);
   const clauses = baseClauses.length === 0 ? ["回答当前问题"] : baseClauses;
   const explicitEntityItems = stableUniqueText(
@@ -754,14 +768,24 @@ function repairProfessionalDirectDomains(
   if (scopeHint !== "professional") {
     return questionLevelRepaired;
   }
+  if (requiresProfessionalKnowledgeOnly(question)) {
+    return taskSpecSchema.parse({
+      ...questionLevelRepaired,
+      deliverables: questionLevelRepaired.deliverables.map((deliverable) => ({
+        ...deliverable,
+        obligations: deliverable.obligations.map((obligation) =>
+          obligation.evidencePolicy === "customer_input"
+            ? obligation
+            : { ...obligation, domains: ["coremail-professional" as const] }),
+      })),
+    });
+  }
   const structuredTechnicalRequirement =
     isStructuredTechnicalCapabilityRequirement(question);
   const technicalAcceptanceQuestion = isTechnicalAcceptanceChecklist(question);
   const singleObligationMixedRequest = requiredObligationCount(
     questionLevelRepaired,
-  ) === 1 &&
-    isProductNeutralGovernanceDeliverable(question) &&
-    isExplicitTechnicalEvidenceDeliverable(question);
+  ) === 1 && requiresMixedKnowledgeDomains(question);
   const repaired = taskSpecSchema.parse({
     ...questionLevelRepaired,
     deliverables: questionLevelRepaired.deliverables.map((deliverable) => ({
@@ -811,10 +835,7 @@ function ensureQuestionLevelMixedDomainCoverage(
   question: string,
   taskSpec: TaskSpec,
 ): TaskSpec {
-  if (
-    !isProductNeutralGovernanceDeliverable(question) ||
-    !isExplicitTechnicalEvidenceDeliverable(question)
-  ) {
+  if (!requiresMixedKnowledgeDomains(question)) {
     return taskSpec;
   }
   const existingDomains = new Set(taskSpec.deliverables.flatMap((deliverable) =>
@@ -861,8 +882,20 @@ function ensureQuestionLevelMixedDomainCoverage(
 }
 
 export function requiresMixedKnowledgeDomains(question: string): boolean {
-  return isProductNeutralGovernanceDeliverable(question) &&
-    isExplicitTechnicalEvidenceDeliverable(question);
+  return isExplicitTechnicalEvidenceDeliverable(question) &&
+    (
+      EXPLICIT_CROSS_DOMAIN_METHOD_PATTERN.test(question) ||
+      (
+        isProductNeutralGovernanceDeliverable(question) &&
+        !TECHNICAL_CONTROL_WITHOUT_GENERAL_METHOD_PATTERN.test(question)
+      )
+    );
+}
+
+export function requiresProfessionalKnowledgeOnly(question: string): boolean {
+  return isExplicitTechnicalEvidenceDeliverable(question) &&
+    TECHNICAL_CONTROL_WITHOUT_GENERAL_METHOD_PATTERN.test(question) &&
+    !requiresMixedKnowledgeDomains(question);
 }
 
 export function repairTaskSpecKnowledgeDomains(input: {
@@ -877,9 +910,10 @@ export function repairTaskSpecKnowledgeDomains(input: {
   );
 }
 
-function isExplicitTechnicalEvidenceDeliverable(value: string): boolean {
+export function isExplicitTechnicalEvidenceDeliverable(value: string): boolean {
   return EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(value) ||
     RELIABILITY_EXPLICIT_TECHNICAL_PATTERN.test(value) ||
+    RELIABILITY_ENGINEERING_EVIDENCE_PATTERN.test(value) ||
     (
       TECHNICAL_SYSTEM_ANCHOR_PATTERN.test(value) &&
       TECHNICAL_EVIDENCE_ACTION_PATTERN.test(value)
@@ -1117,6 +1151,34 @@ export function extractExplicitQuestionSignals(
       }
     }
   }
+  const explicitActionParallelListPattern =
+    /(?:现在|接下来|只)\s*(?:给出|列出|说明|总结)\s*(?<list>[^，,；;。！？!?]{2,180})/u;
+  for (const rawSegment of question.split(/[；;。！？!?]+/u)) {
+    const segment = rawSegment.trim();
+    if (!segment) continue;
+    const actionMatch = explicitActionParallelListPattern.exec(segment);
+    const list = actionMatch?.groups?.list?.trim();
+    if (!list) continue;
+    const clauses = splitIndependentRequestItems(list)
+      .map(cleanRequestClause)
+      .filter((clause) => [...clause].length >= 2);
+    const premise = actionMatch === null
+      ? ""
+      : segment.slice(0, actionMatch.index).replace(/[，,\s]+$/gu, "").trim();
+    if (
+      clauses.length > 0 &&
+      /^(?:这|该)(?:一)?项(?:限制|结论|证据|状态)?$/u.test(clauses[0]!) &&
+      [...premise].length >= 4
+    ) {
+      clauses[0] = premise;
+    }
+    if (clauses.length < 2) continue;
+    requiredParallelGroups.push({ sourceText: segment, items: clauses });
+    for (const clause of clauses) {
+      requestClauses.push(clause);
+      independentRequestClauses.push(clause);
+    }
+  }
   for (const rawSegment of question.split(/[，,；;。！？!?]+/u)) {
     const segment = rawSegment.trim();
     if (!segment) continue;
@@ -1195,7 +1257,7 @@ function escapeRegularExpression(value: string): string {
 const REQUEST_INTERROGATIVE_PATTERN =
   /(?:什么时候|何时|如何提升|怎么提升|怎么办|怎么做|如何|怎样|为什么|哪些|多少|是否|能否|有没有|是什么|怎么|什么)/gu;
 const REQUEST_ACTION_PATTERN =
-  /(?:^|请|帮我|需要|还要|以及|同时|然后|并且|并|再|且|要)\s*(?:(?:分别|逐一|逐个|各自)\s*)?(?:检索|搜索|查找|分析|评估|介绍|说明|列出|总结|建议|推荐|给出|制定|设计|判断|排查)/gu;
+  /(?:^|请|帮我|需要|还要|以及|同时|然后|并且|并|再|且|要|现在|接下来|只)\s*(?:(?:分别|逐一|逐个|各自)\s*)?(?:检索|搜索|查找|分析|评估|介绍|说明|列出|总结|建议|推荐|给出|制定|设计|判断|排查)/gu;
 
 function requestClauseBoundaries(segment: string): number[] {
   const actionMatches = [...segment.matchAll(REQUEST_ACTION_PATTERN)];

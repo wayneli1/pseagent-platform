@@ -6,6 +6,7 @@ import {
   DeterministicTaskSpecGuard,
   extractExplicitQuestionSignals,
   ModelTaskCompiler,
+  requiresMixedKnowledgeDomains,
   TASK_SPEC_SYSTEM_PROMPT,
   taskSpecSchema,
 } from "./task-spec.js";
@@ -20,6 +21,82 @@ const plan: KnowledgePlan = {
     queries: [{ text: "客户 多节点 案例", aspectIds: ["A1"] }],
   }],
 };
+
+describe("explicit mixed knowledge domain detection", () => {
+  it.each([
+    "5000 用户多活架构评估中，怎样用价值工程把服务器角色、容量假设、投入和业务连续性收益对应起来？",
+    "重复发信故障引发客户指责时，怎样一边核对 Message-ID 和投递日志，一边用 NVC 提出共同取证请求？",
+    "POC 临时增加未采购功能时，怎样用有条件让步明确测试范围、额外投入、审批和交换条件？",
+    "非多活信创系统的恢复方案怎样用三个 Why 说明为什么要建设恢复能力、为什么现在演练以及为什么采用当前路径？",
+    "大库增量追赶方案上线前，怎样用阶段出口证据确认全量基线、增量差异、一致性和最终停机窗口？",
+    "已有第三方网关的客户质疑 CAC 价格时，怎样把现有覆盖和授权缺口转成价值讨论而不是只做折扣？",
+    "腾讯邮箱迁移试迁前，怎样用红旗与优势记录协议、凭据、样本和客户协作条件？",
+    "用 XT v6 审计材料回应 RFP 时，怎样同时限定报告版本与范围，并判断该证据是否足以支持参与？",
+  ])("recognizes an explicit technical plus presales method request: %s", (question) => {
+    expect(requiresMixedKnowledgeDomains(question)).toBe(true);
+  });
+
+  it.each([
+    "客户把 Coremail 与彩讯放在同一场演示中时，哪些 Coremail 展示点已有证据，哪些竞品结论必须留作客户确认？",
+    "从 Coremail 云服务迁回自建环境时，资产盘点、全量同步、增量追赶、切换和回退应如何分阶段验收？",
+    "POC 现场临时要求验证未采购模块时，如何记录范围外项、变更审批和后续验证条件？",
+    "客户已有第三方邮件网关时，评估 CAC 和反病毒采购应怎样区分现有覆盖、缺口与授权边界？",
+  ])("does not invent a second domain for a technical evidence request: %s", (question) => {
+    expect(requiresMixedKnowledgeDomains(question)).toBe(false);
+  });
+});
+
+describe("contextual action extraction", () => {
+  it("treats a now-prefixed action as the explicit request instead of the prior state", () => {
+    const signals = extractExplicitQuestionSignals(
+      "刚才把预算标成黄灯，现在给出一个减速核验动作和转绿或转红的证据。",
+    );
+
+    expect(signals.requestClauses).toContain(
+      "现在给出一个减速核验动作和转绿或转红的证据",
+    );
+  });
+
+  it("recognizes a scope-limited explain action", () => {
+    const signals = extractExplicitQuestionSignals(
+      "双轨图里跨系统日程不可用，只说明这项限制、用户替代动作和回退时如何通知。",
+    );
+
+    expect(signals.requestClauses).toEqual(expect.arrayContaining([
+      "双轨图里跨系统日程不可用",
+      "用户替代动作",
+      "回退时如何通知",
+    ]));
+  });
+
+  it("keeps a contextual scope-limited list as exactly three independent obligations", () => {
+    const question =
+      "Exchange 与 Coremail 双轨并行时，邮件路由已经验证；当前追问：双轨图里跨系统日程不可用，只说明这项限制、用户替代动作和回退时如何通知。";
+
+    const taskSpec = compileDeterministicTaskSpecFallback(
+      compilerInput(question, "professional"),
+    );
+    const sources = taskSpec.deliverables.flatMap((deliverable) =>
+      deliverable.obligations.map((obligation) => obligation.sourceText));
+
+    expect(sources).toEqual([
+      "当前追问：双轨图里跨系统日程不可用",
+      "用户替代动作",
+      "回退时如何通知",
+    ]);
+  });
+
+  it("splits an explicitly requested action from its state-transition evidence", () => {
+    const signals = extractExplicitQuestionSignals(
+      "刚才把预算标成黄灯，现在给出一个减速核验动作和转绿或转红的证据。",
+    );
+
+    expect(signals.requiredParallelGroups).toContainEqual({
+      sourceText: "刚才把预算标成黄灯，现在给出一个减速核验动作和转绿或转红的证据",
+      items: ["一个减速核验动作", "转绿或转红的证据"],
+    });
+  });
+});
 
 function parallelEntityTaskSpec(entityLabels = ["工行", "华为", "比亚迪"]) {
   const entities = ["平安", ...entityLabels].map((label, index) => ({

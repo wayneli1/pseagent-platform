@@ -296,8 +296,11 @@ function loadReliabilityControlPlaneEnabled(
   taskSpecActiveEnabled: boolean,
   multiDomainActiveEnabled: boolean,
 ): boolean {
+  const defaultValue = taskSpecActiveEnabled && multiDomainActiveEnabled
+    ? "true"
+    : "false";
   const enabled = z.enum(["true", "false"]).parse(
-    env.PSE_RELIABILITY_CONTROL_PLANE_ENABLED ?? "false",
+    env.PSE_RELIABILITY_CONTROL_PLANE_ENABLED ?? defaultValue,
   ) === "true";
   if (enabled && (!taskSpecActiveEnabled || !multiDomainActiveEnabled)) {
     throw new Error(

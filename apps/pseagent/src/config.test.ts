@@ -150,6 +150,19 @@ describe("loadConfig", () => {
       PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
     });
     expect(config.reliabilityControlPlaneEnabled).toBe(true);
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+    }).reliabilityControlPlaneEnabled).toBe(true);
+    expect(loadConfig({
+      ...baseEnv,
+      PSE_TASK_SPEC_SHADOW_ENABLED: "true",
+      PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
+      PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "false",
+    }).reliabilityControlPlaneEnabled).toBe(false);
     expect(() => loadConfig({
       ...baseEnv,
       PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",

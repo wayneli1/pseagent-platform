@@ -44,7 +44,9 @@ export function requiresContextualRouteResolution(
   conversationContext?: string,
 ): boolean {
   if (!conversationContext?.trim() || isExplicitTopicSwitch(question)) return false;
-  return hasExplicitAnswerItemReference(question) || hasLeadingContextReference(question);
+  return hasExplicitAnswerItemReference(question) ||
+    hasLeadingContextReference(question) ||
+    hasContextualPremiseReference(question);
 }
 
 export class InvalidResolvedQuestionError extends Error {
@@ -87,6 +89,8 @@ export class ModelQuestionResolver implements QuestionResolver {
     const question = input.question.trim();
     const context = input.conversationContext?.trim();
     if (!context) return identityResolvedQuestion(question);
+    const deterministic = deterministicContextualPremiseResolution(question, context);
+    if (deterministic !== undefined) return deterministic;
 
     const messages = [
       { role: "system" as const, content: QUESTION_RESOLVER_SYSTEM_PROMPT },
@@ -106,6 +110,28 @@ export class ModelQuestionResolver implements QuestionResolver {
     });
     return validateResolvedQuestion(question, context, action, 1);
   }
+}
+
+function deterministicContextualPremiseResolution(
+  question: string,
+  context: string,
+): ResolvedQuestion | undefined {
+  if (
+    hasExplicitAnswerItemReference(question) ||
+    !hasContextualPremiseReference(question)
+  ) {
+    return undefined;
+  }
+  const parentQuestion = latestRecentQuestion(context);
+  if (parentQuestion === undefined) return undefined;
+  const standaloneQuestion = `${parentQuestion}；当前追问：${question}`.slice(0, 16_384);
+  return {
+    rawQuestion: question,
+    standaloneQuestion,
+    contextUsed: true,
+    inheritedSubjects: [parentQuestion.slice(0, 128)],
+    corrections: [],
+  };
 }
 
 function validateResolvedQuestion(
@@ -208,6 +234,11 @@ function hasLeadingContextReference(value: string): boolean {
 function hasExplicitAnswerItemReference(value: string): boolean {
   return /(?:刚才|上一(?:条|次|轮)|前面).{0,16}(?:第[一二三四五六七八九十\d]+(?:点|项|条)|这(?:一)?点|那(?:一)?点)/u
     .test(normalizeSemanticText(value));
+}
+
+function hasContextualPremiseReference(value: string): boolean {
+  return /(?:刚才|上文|前面|上一(?:条|次|轮)|此前)|(?:这|该|上述|上面)(?:一)?(?:项|个|条|点|张|份)(?:限制|结论|证据|状态|方案|图|材料|内容)?/u
+    .test(value.trim());
 }
 
 function hasRecentTurns(context: string): boolean {

@@ -419,6 +419,59 @@ describe("deterministic reliable answer pipeline", () => {
     expect(documentedBoundary[0]?.state).toBe("complete");
   });
 
+  it("requires an explicit conclusion for evidence-admission obligations", () => {
+    const admissionQuestion = "判断该审计证据是否足以支持参与RFP。";
+    const admissionContract: AtomicObligationContract = {
+      ...contract,
+      sourceQuestion: admissionQuestion,
+      obligations: [{
+        ...contract.obligations[0]!,
+        sourceSpan: { start: 0, end: admissionQuestion.length },
+        sourceText: admissionQuestion,
+        kind: "risk_assessment",
+        evidencePolicy: "synthesis",
+        evidenceTypes: ["method"],
+      }],
+    };
+    const methodClaim: BoundClaim = {
+      claimId: "CL1",
+      obligationId: "O1",
+      domain: "coremail-professional",
+      text: "RFP参与应按问题优先级、方案适配、时间资源和竞争位置进行Go/No-Go评估。",
+      kind: "method",
+      citationIndexes: [1],
+      coveredAspectIds: ["A1"],
+      support: "synthesized",
+      evidenceIdentities: [reference.contentHash],
+    };
+    const input = {
+      contract: admissionContract,
+      plans: [plan],
+      retrievals: [retrievalResult],
+      failedDomains: new Set<"coremail-professional" | "presales-general">(),
+      verificationUnavailable: false,
+      consensusRejectedObligationIds: new Set<string>(),
+    };
+
+    const incomplete = reduceReliableOutcomes({
+      ...input,
+      claims: [methodClaim],
+    });
+    const explicit = reduceReliableOutcomes({
+      ...input,
+      claims: [{
+        ...methodClaim,
+        text: "仅凭该审计证据不足以支持参与RFP，仍需完成Go/No-Go评估。",
+      }],
+    });
+
+    expect(incomplete[0]).toMatchObject({
+      state: "partial",
+      gapReason: expect.stringMatching(/未证明.*仅凭.*材料.*参与.*Go\/No-Go/u),
+    });
+    expect(explicit[0]?.state).toBe("complete");
+  });
+
   it("uses deterministic retrieval and one structured synthesis without a legacy agent loop", async () => {
     const { trace, events } = traceFixture();
     const fixture = pipelineFixture();

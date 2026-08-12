@@ -180,6 +180,25 @@ export function adaptAnswerCardToTaskSpec(input: {
       resolvedQuestion: input.resolvedQuestion,
     });
   }
+  if (requiresMixedKnowledgeDomains(input.resolvedQuestion.standaloneQuestion)) {
+    const bindingDomains = new Set(input.match.bindings.flatMap((binding) =>
+      binding.required ? binding.domains : []));
+    const missingDomains = ([
+      "coremail-professional",
+      "presales-general",
+    ] as const).filter((domain) => !bindingDomains.has(domain));
+    const independentlyPreservedDomains = new Set(input.taskSpec.deliverables.flatMap(
+      (deliverable) => !deliverable.required
+        ? []
+        : deliverable.obligations.flatMap((obligation) =>
+            obligation.required && obligation.domains.length === 1
+              ? obligation.domains
+              : []),
+    ));
+    if (missingDomains.some((domain) => !independentlyPreservedDomains.has(domain))) {
+      return { activated: false, reason: "guard_rejected" };
+    }
+  }
   if (canCompileWholeFamily(input.match, input.resolvedQuestion, input.taskSpec)) {
     return compileSingleCardAnswerCardTaskSpec({
       match: input.match,
@@ -325,6 +344,19 @@ export function adaptAnswerCardToTaskSpec(input: {
       return compileSingleCardAnswerCardTaskSpec({ match: input.match, resolvedQuestion: input.resolvedQuestion });
     }
     return { activated: false, reason: "task_spec_contract_exceeded" };
+  }
+  if (requiresMixedKnowledgeDomains(input.resolvedQuestion.standaloneQuestion)) {
+    const candidateDomains = new Set(parsed.data.deliverables.flatMap((deliverable) =>
+      !deliverable.required
+        ? []
+        : deliverable.obligations.flatMap((obligation) =>
+            obligation.required ? obligation.domains : [])));
+    if (
+      !candidateDomains.has("coremail-professional") ||
+      !candidateDomains.has("presales-general")
+    ) {
+      return { activated: false, reason: "guard_rejected" };
+    }
   }
   const rawGuard = new DeterministicTaskSpecGuard().validate({
     resolvedQuestion: input.resolvedQuestion,

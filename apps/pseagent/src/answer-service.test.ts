@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentRunner, DetailedAgentRunner } from "./answer-service.js";
 import {
   AnswerService,
+  effectiveTaskAnalysisTimeoutMs,
   PSE_ACTIVE_DEADLINE_MS,
   temporaryUnavailableResult,
 } from "./answer-service.js";
@@ -58,6 +59,21 @@ const knowledgePlan = {
     evidenceMode: "direct_only" as const,
   }],
 };
+
+describe("reliability task analysis budget", () => {
+  it("bounds optional model analysis so deterministic recovery keeps the stage alive", () => {
+    expect(effectiveTaskAnalysisTimeoutMs({
+      configuredMs: 120_000,
+      remainingMs: 35_000,
+      reliabilityControlPlaneEnabled: true,
+    })).toBe(8_000);
+    expect(effectiveTaskAnalysisTimeoutMs({
+      configuredMs: 120_000,
+      remainingMs: 35_000,
+      reliabilityControlPlaneEnabled: false,
+    })).toBe(35_000);
+  });
+});
 
 function createPlanner() {
   return { plan: vi.fn(async () => knowledgePlan) } satisfies KnowledgePlanner;
@@ -994,6 +1010,55 @@ describe("AnswerService", () => {
     expect(execution.result.scope).toBe("general");
   });
 
+  it("resolves context before planning even when the first route is already professional", async () => {
+    const rawQuestion = "双轨图里跨系统日程不可用，只说明这项限制和回退通知。";
+    const standaloneQuestion =
+      "Exchange 与 Coremail 双轨并行时，跨系统日程不可用；说明这项限制和回退通知。";
+    const conversationContext = JSON.stringify({
+      version: 3,
+      recentTurns: [{
+        question: "Exchange 与 Coremail 双轨并行，邮件路由已经验证。",
+        answerOutline: "跨系统协同功能需要单列限制和用户过渡。",
+        scope: "professional",
+      }],
+    });
+    const questionResolver = {
+      resolve: vi.fn(async () => ({
+        rawQuestion,
+        standaloneQuestion,
+        contextUsed: true,
+        inheritedSubjects: ["Exchange 与 Coremail 双轨并行"],
+        corrections: [],
+      })),
+    };
+    const planner = createPlanner();
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "professional",
+      status: "answered",
+      answer: "明确跨系统限制，并在回退前通知用户。",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: { completeText: vi.fn() } as unknown as ModelClient,
+      router: { route: vi.fn(async () => "professional" as const) },
+      planner,
+      knowledge: { open: vi.fn(async () => createKnowledgeSessionFixture()) },
+      runAgent,
+      questionResolver,
+    });
+
+    const execution = await service.answerDetailed(rawQuestion, conversationContext);
+
+    expect(questionResolver.resolve).toHaveBeenCalledOnce();
+    expect(planner.plan).toHaveBeenCalledWith(expect.objectContaining({
+      question: standaloneQuestion,
+    }));
+    expect(execution.questionResolution).toMatchObject({
+      standaloneQuestion,
+      contextUsed: true,
+    });
+  });
+
   it("prefers the governed parent-card item over a model guess for numbered follow-ups", async () => {
     const rawQuestion = "你刚才列的第二点具体怎么确认？";
     const standaloneQuestion = "演示资格判断中“客户要解决的关键业务问题”这一项具体怎么确认？";
@@ -1134,6 +1199,58 @@ describe("AnswerService", () => {
     const execution = await service.answerDetailed(rawQuestion, conversationContext);
 
     expect(execution.result.scope).toBe("professional");
+    expect(router.route).toHaveBeenCalledOnce();
+  });
+
+  it("lets the current follow-up scope override a professional premise added by resolution", async () => {
+    const rawQuestion =
+      "刚才把预算标成黄灯，现在给出一个减速核验动作和转绿或转红的证据。";
+    const standaloneQuestion =
+      "机会中的技术适配为绿灯，预算信息为黄灯；当前追问：刚才把预算标成黄灯，现在给出一个减速核验动作和转绿或转红的证据。";
+    const conversationContext = JSON.stringify({
+      version: 3,
+      recentTurns: [{
+        question: "先判断技术适配状态。",
+        answerOutline: "技术适配为绿灯，预算信息为黄灯。",
+        scope: "professional",
+      }],
+    });
+    const router = { route: vi.fn(async () => "general" as const) };
+    const runAgent = vi.fn<AgentRunner>(async () => ({
+      scope: "general",
+      status: "answered",
+      answer: "先核验预算来源、审批人与时间；证据充分转绿，否则转红。",
+      references: [],
+    }));
+    const service = new AnswerService({
+      model: { completeText: vi.fn() } as unknown as ModelClient,
+      router,
+      planner: createPlanner(),
+      knowledge: {
+        open: vi.fn(async () => ({
+          ...createKnowledgeSessionFixture(),
+          project: "presales-general" as const,
+        } as unknown as KnowledgeSession)),
+      },
+      runAgent,
+      questionResolver: {
+        resolve: vi.fn(async () => ({
+          rawQuestion,
+          standaloneQuestion,
+          contextUsed: true,
+          inheritedSubjects: ["预算黄灯"],
+          corrections: [],
+        })),
+      },
+    });
+
+    const execution = await service.answerDetailed(rawQuestion, conversationContext);
+
+    expect(execution.result.scope).toBe("general");
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      scope: "general",
+      question: standaloneQuestion,
+    }));
     expect(router.route).toHaveBeenCalledOnce();
   });
 

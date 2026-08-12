@@ -516,6 +516,7 @@ describe("main wiring", () => {
       PSE_TASK_SPEC_SHADOW_ENABLED: "true",
       PSE_TASK_SPEC_ACTIVE_ENABLED: "true",
       PSE_MULTI_DOMAIN_ACTIVE_ENABLED: "true",
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "false",
     }, {
       createModel: () => model,
       createRouter: () => ({ route: vi.fn(async () => "professional" as const) }),

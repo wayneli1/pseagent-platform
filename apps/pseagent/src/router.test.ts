@@ -112,6 +112,23 @@ describe("ScopeRouter", () => {
     expect(completeJson).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "在 POC 中决定是否做压力测试前，应确认哪些环境隔离、负载模型、监控指标和停止条件？",
+    "SSL 证书轮换上线前，怎样用阶段证据门定义备份、替换、服务恢复和访问验证的通过条件？",
+    "5000 用户多活架构评估中，怎样用价值工程把服务器角色、容量假设、投入和业务连续性收益对应起来？",
+    "重复发信故障引发客户指责时，怎样一边核对 Message-ID 和投递日志，一边用 NVC 提出共同取证请求？",
+    "POC 临时增加未采购功能时，怎样用有条件让步明确测试范围、额外投入、审批和交换条件？",
+    "非多活信创系统的恢复方案怎样用三个 Why 说明为什么要建设恢复能力、为什么现在演练以及为什么采用当前路径？",
+  ])("keeps explicit reliability engineering work in the professional scope: %s", async (question) => {
+    const completeJson = vi.fn();
+    const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
+
+    expect(isUnambiguouslyProfessionalQuestion(question)).toBe(true);
+    expect(isUnambiguouslyGeneralPresalesQuestion(question)).toBe(false);
+    await expect(new ScopeRouter(model).route(question)).resolves.toBe("professional");
+    expect(completeJson).not.toHaveBeenCalled();
+  });
+
   it("does not inherit an old professional domain when the new topic is neutral governance", async () => {
     const completeJson = vi.fn();
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;

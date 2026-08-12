@@ -424,12 +424,10 @@ export class AnswerService {
             inheritedSubjects: cardResolution.inheritedSubjects,
             corrections: [],
           };
-          scope = explicitScopeForResolvedQuestion(cardResolution.standaloneQuestion) ??
+          scope = explicitScopeForResolvedQuestion(question) ??
+            explicitScopeForResolvedQuestion(cardResolution.standaloneQuestion) ??
             inheritedScope!;
-        } else if (
-          scope === "normal" &&
-          this.dependencies.questionResolver !== undefined
-        ) {
+        } else if (this.dependencies.questionResolver !== undefined) {
           try {
             const resolved = await observeModelCall({
             trace,
@@ -447,7 +445,8 @@ export class AnswerService {
               resolved.standaloneQuestion.trim() !== question.trim()
             ) {
               questionResolution = resolved;
-              const explicitScope = explicitScopeForResolvedQuestion(
+              const explicitScope = explicitScopeForResolvedQuestion(question) ??
+                explicitScopeForResolvedQuestion(
                 resolved.standaloneQuestion,
               );
               const resolvedInheritedScope = latestConversationKnowledgeScope(
@@ -608,6 +607,36 @@ export class AnswerService {
         return legacyPlan;
       };
       let legacyPlan = taskSpecActive ? undefined : await loadLegacyPlan();
+      const deterministicParallelAnalysis =
+        taskSpecActive &&
+        exactRoute === undefined &&
+        this.dependencies.reliabilityControlPlaneEnabled === true &&
+        extractExplicitQuestionSignals(routedQuestion).requiredParallelGroups.length > 0
+          ? deterministicTaskAnalysisFallback({
+              resolvedQuestion: questionResolution.contextUsed
+                ? questionResolution
+                : identityResolvedQuestion(routedQuestion),
+              scope,
+              session,
+            })
+          : undefined;
+      if (deterministicParallelAnalysis !== undefined) {
+        recordDiagnostic(trace, {
+          event: "task_spec_recovery",
+          trigger: "explicit_parallel_contract",
+          result: deterministicParallelAnalysis.guard.ok ? "recovered" : "rejected",
+          issueCodes: stableUniqueIssueCodes(
+            deterministicParallelAnalysis.guard.issues.map((issue) => issue.code),
+          ),
+          domainCount: new Set(
+            deterministicParallelAnalysis.obligationContract.obligations.flatMap(
+              (obligation) => obligation.domains,
+            ),
+          ).size,
+          obligationCount:
+            deterministicParallelAnalysis.obligationContract.obligations.length,
+        });
+      }
       let taskAnalysis = trustedFamilyCompilation?.activated === true
         ? completeTaskAnalysisResult({
             resolvedQuestion: identityResolvedQuestion(routedQuestion),
@@ -615,7 +644,7 @@ export class AnswerService {
             guard: trustedFamilyCompilation.guard,
             elapsedMs: 0,
           })
-        : exactRoute === undefined
+        : deterministicParallelAnalysis ?? (exactRoute === undefined
         ? await observeTaskAnalysisShadow({
             ...(this.dependencies.taskAnalysisShadow === undefined
               ? {}
@@ -634,12 +663,14 @@ export class AnswerService {
             },
             trace,
             signal: obligationSignal,
-            timeoutMs: Math.min(
-              this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
-              Math.max(1, stageBudget.remainingMs("obligation_compile")),
-            ),
+            timeoutMs: effectiveTaskAnalysisTimeoutMs({
+              configuredMs: this.dependencies.taskSpecShadowTimeoutMs ?? 15_000,
+              remainingMs: stageBudget.remainingMs("obligation_compile"),
+              reliabilityControlPlaneEnabled:
+                this.dependencies.reliabilityControlPlaneEnabled === true,
+            }),
           })
-        : undefined;
+        : undefined);
       if (
         this.dependencies.reliabilityControlPlaneEnabled === true &&
         (taskAnalysis === undefined || !taskAnalysis.guard.ok)
@@ -1452,6 +1483,22 @@ export class AnswerService {
       );
     }
   }
+}
+
+const RELIABILITY_OPTIONAL_TASK_ANALYSIS_MAX_MS = 8_000;
+
+export function effectiveTaskAnalysisTimeoutMs(input: {
+  readonly configuredMs: number;
+  readonly remainingMs: number;
+  readonly reliabilityControlPlaneEnabled: boolean;
+}): number {
+  return Math.max(1, Math.min(
+    input.configuredMs,
+    input.remainingMs,
+    input.reliabilityControlPlaneEnabled
+      ? RELIABILITY_OPTIONAL_TASK_ANALYSIS_MAX_MS
+      : Number.POSITIVE_INFINITY,
+  ));
 }
 
 function explicitScopeForResolvedQuestion(question: string): Scope | undefined {

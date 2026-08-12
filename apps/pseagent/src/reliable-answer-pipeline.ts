@@ -820,6 +820,14 @@ export function reduceReliableOutcomes(input: {
         gapReason: "正式知识只能证明未覆盖目标，不能证明用户询问的支持或兼容结论。",
       });
     }
+    if (evidenceAdmissionConclusionMissing(obligation.sourceText, claims)) {
+      return Object.freeze({
+        obligationId: obligation.id,
+        state: "partial" as const,
+        claims: Object.freeze(claims),
+        gapReason: "现有正式证据未证明仅凭该材料即可参与；仍需结合上述 Go/No-Go 条件作出结论。",
+      });
+    }
     if (claims.length > 0) {
       return Object.freeze({
         obligationId: obligation.id,
@@ -845,6 +853,10 @@ export function reduceReliableOutcomes(input: {
 
 const POLAR_TARGET_QUESTION_PATTERN =
   /(?:是否|能否|可否|有没有|有无|是不是|能不能|支不支持|兼不兼容)/u;
+const EVIDENCE_ADMISSION_OUTCOME_PATTERN =
+  /(?:(?:证据|材料).{0,20}(?:是否|能否|足以|足够).{0,16}(?:支持)?(?:参与|推进|准入)|是否.{0,4}(?:足以|足够).{0,8}(?:支持)?(?:参与|推进|准入))/u;
+const EXPLICIT_ADMISSION_CONCLUSION_PATTERN =
+  /(?:(?:不足以|尚不足以|足以|足够|不能(?:仅|单独)?|无法(?:仅|单独)?|可以(?:仅|单独)?).{0,24}(?:支持)?(?:参与|推进|准入)|(?:仅凭|单凭).{0,24}(?:不足|不够|不能|无法|尚未))/u;
 const QUOTED_UNCOVERED_TARGET_PATTERN =
   /(?:未提及|未覆盖|没有(?:提供|说明|记载)?)[^“”「」『』"']{0,12}[“「『"']([^”」』"']{2,120})[”」』"']/gu;
 
@@ -865,6 +877,15 @@ function governedPolarTargetIsUnconfirmed(
     }
     return false;
   });
+}
+
+function evidenceAdmissionConclusionMissing(
+  sourceText: string,
+  claims: readonly BoundClaim[],
+): boolean {
+  return claims.length > 0 &&
+    EVIDENCE_ADMISSION_OUTCOME_PATTERN.test(sourceText) &&
+    !claims.some((claim) => EXPLICIT_ADMISSION_CONCLUSION_PATTERN.test(claim.text));
 }
 
 function normalizeBoundaryTarget(value: string): string {

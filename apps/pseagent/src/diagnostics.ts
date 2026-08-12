@@ -85,7 +85,10 @@ export type DiagnosticEvent =
     }
   | {
       readonly event: "task_spec_recovery";
-      readonly trigger: "guard_rejected" | "analysis_unavailable";
+      readonly trigger:
+        | "guard_rejected"
+        | "analysis_unavailable"
+        | "explicit_parallel_contract";
       readonly result: "recovered" | "rejected";
       readonly issueCodes: readonly TaskSpecIssueCode[];
       readonly domainCount: number;

@@ -102,7 +102,13 @@ export function renderBoundClaims(input: {
       : `- 资料缺口：${normalizeLine(outcome.gapReason)}`;
     if (gapLine !== "" && !lines.includes(gapLine)) lines.push(gapLine);
     if (lines.length === 0) return "";
-    return [`### ${obligation.id} ${normalizeLine(obligation.sourceText)}`, ...lines].join("\n");
+    const headingCitations = stableUnique(outcome.claims.flatMap((claim) =>
+      claim.kind === "gap" || claim.support === "gap"
+        ? []
+        : claim.citationIndexes));
+    const heading = `### ${obligation.id} ${normalizeLine(obligation.sourceText)}` +
+      headingCitations.map((citation) => `[${citation}]`).join("");
+    return [heading, ...lines].join("\n");
   });
   return sections.filter(Boolean).join("\n\n");
 }

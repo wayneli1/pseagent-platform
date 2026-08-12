@@ -105,4 +105,34 @@ describe("rankRetrievalCandidates", () => {
     expect(ranked[0]?.candidate.id).toBe("direct");
     expect(ranked[0]?.score.obligationFit).toBeGreaterThan(0);
   });
+
+  it("does not let a generic concept tier outrank the exact obligation result", () => {
+    const ranked = rankRetrievalCandidates({
+      question: "用 XT v6 审计材料限定报告版本与范围",
+      queries: ["Coremail XT v6.0 源代码审计 报告版本 适用边界"],
+      evidenceMode: "direct_only",
+      missingAspectIds: ["A1"],
+      candidates: [{
+        id: "exact",
+        path: "wiki/synthesis/Coremail-XT-v6-0源代码审计结论与适用边界.md",
+        title: "Coremail XT v6.0 源代码审计结论与适用边界",
+        pageType: "synthesis",
+        aspectIds: ["A1"],
+        rrfScore: 0.016,
+        requirementSpecificMatch: true,
+        obligationVariantRank: 1,
+      }, {
+        id: "generic",
+        path: "wiki/concepts/研发配置审计与验证.md",
+        title: "研发配置审计与验证",
+        pageType: "concept",
+        aspectIds: ["A1"],
+        rrfScore: 0.015,
+        requirementSpecificMatch: true,
+        obligationVariantRank: 2,
+      }],
+    });
+
+    expect(ranked[0]?.candidate.id).toBe("exact");
+  });
 });

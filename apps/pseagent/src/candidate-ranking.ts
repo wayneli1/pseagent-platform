@@ -51,7 +51,7 @@ export function rankRetrievalCandidates<T extends RetrievalRankingCandidate>(inp
     const byFreshness = right.score.freshness - left.score.freshness;
     const byRrf = right.score.rrf - left.score.rrf;
     return input.evidenceMode === "direct_only"
-      ? bySourceTier || byObligationFit || byAspect || byTitle || byDirectness || byFreshness ||
+      ? byObligationFit || byAspect || byTitle || byDirectness || bySourceTier || byFreshness ||
         byRrf || left.candidate.path.localeCompare(right.candidate.path)
       : byObligationFit || byAspect || byDirectness || byTitle || bySourceTier || byFreshness ||
         byRrf || left.candidate.path.localeCompare(right.candidate.path);
@@ -68,8 +68,13 @@ function scoreCandidate(input: {
     input.candidate.title,
     [input.question, ...input.queries],
   );
+  const sourceTier = candidateSourceTier(
+    input.candidate.path,
+    input.candidate.pageType,
+  );
   const obligationVariantRank = input.candidate.obligationVariantRank;
-  const obligationFit = typeof obligationVariantRank === "number" &&
+  const obligationFit = sourceTier < 4 &&
+      typeof obligationVariantRank === "number" &&
       Number.isSafeInteger(obligationVariantRank) &&
       obligationVariantRank > 0 &&
       obligationVariantRank <= 10
@@ -79,10 +84,6 @@ function scoreCandidate(input: {
   const aspectCoverage = [...input.candidate.aspectIds].filter((id) =>
     missing.has(id)).length;
   const directness = input.candidate.requirementSpecificMatch ? 1 : 0;
-  const sourceTier = candidateSourceTier(
-    input.candidate.path,
-    input.candidate.pageType,
-  );
   const freshness = /^(?:approved|current|verified)$/iu.test(
     input.candidate.reviewStatus ?? "",
   ) ? 1 : 0;

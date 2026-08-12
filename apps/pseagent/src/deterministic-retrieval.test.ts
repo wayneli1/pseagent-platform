@@ -174,6 +174,71 @@ describe("DeterministicRetrievalCoordinator", () => {
     expect(readPage).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the dedicated first query ahead of a broad fallback query", async () => {
+    const dedicatedQuery = "Exchange 替换 用户通知 培训 回退 旧系统";
+    const broadQuestion =
+      "Exchange 与 Coremail 双轨并行，邮件路由已经验证；当前追问：双轨图里跨系统日程不可用，只说明这项限制、用户替代动作和回退时如何通知。";
+    const directPath = "wiki/concepts/Exchange替换项目中的客户端切换影响.md";
+    const broadPath = "wiki/queries/Exchange与Coremail同域名并行时如何配置邮件路由.md";
+    const base = domainPlan(1);
+    const orderedPlan: DomainKnowledgePlan = {
+      ...base,
+      plan: {
+        ...base.plan,
+        subject: "回退通知",
+        requirements: [{
+          ...base.plan.requirements[0]!,
+          question: broadQuestion,
+          queries: [
+            { text: dedicatedQuery, aspectIds: ["A1"] },
+            { text: broadQuestion, aspectIds: ["A1"] },
+          ],
+        }],
+      },
+    };
+    const search = vi.fn(async (query: string) => ({
+      project: "coremail-professional" as const,
+      revision,
+      hits: query === dedicatedQuery
+        ? [{
+            path: directPath,
+            title: "Exchange替换项目中的客户端切换影响",
+            score: 1,
+            matchedTerms: ["用户通知", "回退"],
+            pageType: "concept",
+          }]
+        : [{
+            path: broadPath,
+            title: "Exchange 与 Coremail 同域名并行时如何配置邮件路由",
+            score: 1,
+            matchedTerms: ["Exchange", "Coremail", "双轨"],
+            pageType: "query",
+          }],
+    }));
+    const readPage = vi.fn(async (path: string) =>
+      path === directPath
+        ? page(path, "Exchange替换项目中的客户端切换影响", "concept")
+        : page(path, "Exchange 与 Coremail 同域名并行时如何配置邮件路由"));
+    const session = {
+      project: "coremail-professional",
+      revision,
+      search,
+      readPage,
+      compactPage: vi.fn((value: KnowledgePage) => value.body),
+    } as unknown as KnowledgeSession;
+
+    const result = await new DeterministicRetrievalCoordinator().retrieve({
+      plan: orderedPlan,
+      session,
+      deadlineAt: Date.now() + 10_000,
+      signal: new AbortController().signal,
+      trace,
+    });
+
+    expect(result.evidence[0]?.path).toBe(directPath);
+    expect(readPage).toHaveBeenCalledWith(directPath, expect.any(AbortSignal));
+  });
+
   it("reads a governed preferred evidence path before a higher-ranked entity summary", async () => {
     const { session, readPage } = sessionFixture({ entityFirst: true });
     const governedPlan: DomainKnowledgePlan = {

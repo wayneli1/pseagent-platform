@@ -175,6 +175,8 @@ describe("bound claim renderer", () => {
     expect(rendered).toContain("- 支持邮件归档。[1]");
     expect(rendered).toContain("- 应核对预算与决策链。[2]");
     expect(rendered).toContain("- 资料缺口：尚缺少本项目事实");
+    expect(rendered).toContain("### O1 说明归档能力[1]");
+    expect(rendered).toContain("### O2 判断当前项目是否可推进[2]");
     for (const line of rendered.split("\n").filter((item) => /^- (?!资料缺口)/u.test(item))) {
       expect(line).toMatch(/\[\d+\]$/u);
     }

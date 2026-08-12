@@ -79,6 +79,10 @@ const TECHNICAL_ACRONYM_PATTERN = /\b[A-Z][A-Z0-9]{1,15}\b/gu;
 const TECHNICAL_IMPLEMENTATION_CUE_PATTERN =
   /(?:支持|兼容|适配|扫描|审核|放行|集成|接口|协议|引擎|客户端|移动端|服务端|部署|配置|模块|版本)/gu;
 const CAPABILITY_VERIFICATION_PATTERN = /(?:核验|验证|确认|承诺|逐项|能力|需求)/u;
+const RELIABILITY_ENGINEERING_SCOPE_PATTERN =
+  /(?:POC.{0,48}(?:压力测试|压测|未采购(?:模块|功能)|环境隔离|负载模型|监控指标|停止条件)|SSL\s*证书|多活架构.{0,48}(?:服务器|容量|业务连续性)|Message-ID.{0,32}投递日志|投递日志.{0,32}Message-ID|非多活.{0,24}(?:恢复方案|恢复能力|演练)|大库增量追赶)/iu;
+const GENERAL_RELIABILITY_METHOD_PATTERN =
+  /(?:事实观察.{0,40}(?:感受|影响).{0,24}需要.{0,24}(?:请求|回应)|演示排期.{0,64}(?:参会角色|关键问题|紧迫性|预期价值)|已知事实.{0,32}(?:团队)?假设.{0,32}(?:待追问|继续发现)|不适配项.{0,48}(?:证据|影响|可选路径|升级确认)|调动预算与资源|绿灯.{0,24}黄灯.{0,24}红灯|预算.{0,24}(?:黄灯|绿灯|红灯).{0,40}(?:核验|证据|转绿|转红)|免费增加范围.{0,40}有条件让步|客户行为证据.{0,32}成功标准|支持者.{0,24}Coach|客户访谈.{0,64}(?:真实发生|资源投入|推动责任)|可信度.{0,24}可靠性.{0,24}亲密感.{0,24}自我导向)/iu;
 
 export function isUnambiguouslyProfessionalQuestion(
   question: string,
@@ -87,6 +91,7 @@ export function isUnambiguouslyProfessionalQuestion(
     KNOWLEDGE_RECORD_PATTERN.test(question) ||
     TECHNICAL_CAPABILITY_BOUNDARY_PATTERN.test(question) ||
     EXPLICIT_PRODUCT_TECHNICAL_SIGNAL_PATTERN.test(question) ||
+    RELIABILITY_ENGINEERING_SCOPE_PATTERN.test(question) ||
     isStructuredTechnicalCapabilityRequirement(question);
 }
 
@@ -124,7 +129,14 @@ function isProfessionalArchitectureFollowUp(
 export function isUnambiguouslyGeneralPresalesQuestion(
   question: string,
 ): boolean {
-  if (EXPLICIT_GENERAL_METHOD_PATTERN.test(question)) return true;
+  if (
+    GENERAL_RELIABILITY_METHOD_PATTERN.test(question) &&
+    !isUnambiguouslyProfessionalQuestion(question)
+  ) return true;
+  if (
+    EXPLICIT_GENERAL_METHOD_PATTERN.test(question) &&
+    !RELIABILITY_ENGINEERING_SCOPE_PATTERN.test(question)
+  ) return true;
   if (
     GENERAL_PRESALES_METHOD_PATTERN.test(question) &&
     !isUnambiguouslyProfessionalQuestion(question)
@@ -134,7 +146,8 @@ export function isUnambiguouslyGeneralPresalesQuestion(
   if (
     PRODUCT_NEUTRAL_GOVERNANCE_PATTERN.test(question) &&
     GOVERNANCE_METHOD_CUE_PATTERN.test(question) &&
-    !EXPLICIT_PRODUCT_TECHNICAL_SIGNAL_PATTERN.test(question)
+    !EXPLICIT_PRODUCT_TECHNICAL_SIGNAL_PATTERN.test(question) &&
+    !RELIABILITY_ENGINEERING_SCOPE_PATTERN.test(question)
   ) {
     return true;
   }

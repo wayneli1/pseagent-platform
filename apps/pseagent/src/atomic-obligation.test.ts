@@ -13,6 +13,101 @@ import {
 } from "./atomic-obligation.js";
 
 describe("atomic obligation contract", () => {
+  it.each([
+    "客户把 Coremail 与彩讯放在同一场演示中时，哪些 Coremail 展示点已有证据，哪些竞品结论必须留作客户确认？",
+    "从 Coremail 云服务迁回自建环境时，资产盘点、全量同步、增量追赶、切换和回退应如何分阶段验收？",
+    "POC 现场临时要求验证未采购模块时，如何记录范围外项、变更审批和后续验证条件？",
+    "客户已有第三方邮件网关时，评估 CAC 和反病毒采购应怎样区分现有覆盖、缺口与授权边界？",
+  ])("keeps a professional-only reliability question in one knowledge domain: %s", (question) => {
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "professional",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+    const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+
+    expect(new Set(contract.obligations.flatMap((item) => item.domains))).toEqual(
+      new Set(["coremail-professional"]),
+    );
+  });
+
+  it.each([
+    "5000 用户多活架构评估中，怎样用价值工程把服务器角色、容量假设、投入和业务连续性收益对应起来？",
+    "重复发信故障引发客户指责时，怎样一边核对 Message-ID 和投递日志，一边用 NVC 提出共同取证请求？",
+    "POC 临时增加未采购功能时，怎样用有条件让步明确测试范围、额外投入、审批和交换条件？",
+    "非多活信创系统的恢复方案怎样用三个 Why 说明为什么要建设恢复能力、为什么现在演练以及为什么采用当前路径？",
+    "已有第三方网关的客户质疑 CAC 价格时，怎样把现有覆盖和授权缺口转成价值讨论而不是只做折扣？",
+  ])("preserves both domains for an explicit cross-domain method: %s", (question) => {
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "professional",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+    const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+
+    expect(new Set(contract.obligations.flatMap((item) => item.domains))).toEqual(
+      new Set(["coremail-professional", "presales-general"]),
+    );
+  });
+
+  it("keeps the explicit action and state-transition evidence in a contextual follow-up", () => {
+    const question = "刚才把预算标成黄灯，现在给出一个减速核验动作和转绿或转红的证据。";
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "general",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+
+    const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+    const source = contract.obligations.map((item) => item.sourceText).join(" ");
+
+    expect(contract.obligations).toHaveLength(2);
+    expect(source).toContain("减速核验动作");
+    expect(source).toContain("转绿或转红的证据");
+  });
+
+  it("does not let a boundary fragment replace an authoritative parallel item", () => {
+    const question =
+      "Exchange 与 Coremail 双轨并行时，邮件路由已经验证；当前追问：双轨图里跨系统日程不可用，只说明这项限制、用户替代动作和回退时如何通知。";
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "professional",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+
+    const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+
+    expect(contract.obligations.map((item) => item.sourceText)).toEqual([
+      "当前追问：双轨图里跨系统日程不可用",
+      "用户替代动作",
+      "回退时如何通知",
+    ]);
+  });
+
+  it("treats RFP evidence admission as a synthesis judgement in the general domain", () => {
+    const question = "用 XT v6 审计材料回应 RFP 时，怎样同时限定报告版本与范围，并判断该证据是否足以支持参与？";
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "professional",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+
+    const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+    const judgement = contract.obligations.find((item) =>
+      item.sourceText.includes("是否足以支持参与"));
+
+    expect(judgement).toMatchObject({
+      kind: "risk_assessment",
+      evidencePolicy: "synthesis",
+      domains: ["presales-general"],
+    });
+  });
+
   it("preserves every governed card obligation when one source question has multiple policies", () => {
     const question = "没买的功能可以先放到POC里测吗？";
     const taskSpec = taskSpecSchema.parse({
@@ -341,10 +436,10 @@ describe("atomic obligation contract", () => {
       evidencePolicy: "synthesis",
     });
     expect(new Set(contract.obligations.flatMap((item) => item.domains))).toEqual(
-      new Set(["coremail-professional", "presales-general"]),
+      new Set(["coremail-professional"]),
     );
     expect(contract.obligations.reduce((sum, item) => sum + item.domains.length, 0))
-      .toBe(2);
+      .toBe(1);
   });
 
   it.each([
