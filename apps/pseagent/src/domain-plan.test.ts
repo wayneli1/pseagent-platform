@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { ResolvedQuestion } from "./question-resolver.js";
-import type { TaskSpec, TaskSpecGuardResult } from "./task-spec.js";
+import { identityResolvedQuestion, type ResolvedQuestion } from "./question-resolver.js";
+import {
+  compileDeterministicTaskSpecFallback,
+  DeterministicTaskSpecGuard,
+  type TaskSpec,
+  type TaskSpecGuardResult,
+} from "./task-spec.js";
 import { deriveDomainKnowledgePlans } from "./domain-plan.js";
 import { compileAtomicObligationContract } from "./atomic-obligation.js";
 import type { AtomicObligationContract, AtomicObligationKind } from "./atomic-obligation.js";
@@ -137,6 +142,46 @@ function deriveFor(
 }
 
 describe("deriveDomainKnowledgePlans", () => {
+  it("adds domain-specific retrieval queries for a shared mixed-domain obligation", () => {
+    const sourceQuestion = "个人配置不能全部随邮件迁移时，怎样在售前向交付结构化移交可迁项、用户动作、风险和责任人？";
+    const resolved = identityResolvedQuestion(sourceQuestion);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion: resolved,
+      scopeHint: "professional",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+    const contract = compileAtomicObligationContract({
+      resolvedQuestion: resolved,
+      taskSpec,
+    });
+    const guard = new DeterministicTaskSpecGuard().validate({
+      resolvedQuestion: resolved,
+      taskSpec,
+    });
+
+    const result = deriveDomainKnowledgePlans({
+      resolvedQuestion: resolved,
+      taskSpec,
+      obligationContract: contract,
+      guardResult: guard,
+    });
+
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+    const professional = result.plans.find((item) =>
+      item.domain === "coremail-professional")!;
+    const general = result.plans.find((item) => item.domain === "presales-general")!;
+    expect(professional.plan.requirements[0]?.queries[0]?.text).toMatch(
+      /个人配置.*邮件.*迁移/u,
+    );
+    expect(general.plan.requirements[0]?.queries[0]?.text).toMatch(
+      /售前.*交付.*结构化移交.*风险.*责任人/u,
+    );
+    expect(professional.plan.requirements[0]?.evidenceAspects[0]?.terms)
+      .toEqual(expect.arrayContaining(["个人配置", "邮件", "迁移"]));
+    expect(general.plan.requirements[0]?.evidenceAspects[0]?.terms)
+      .toEqual(expect.arrayContaining(["售前", "交付", "结构化移交", "风险", "责任人"]));
+  });
   it("uses the required atomic-obligation domain union even when TaskSpec domains are stale", () => {
     const taskSpec = mixedTaskSpec();
     for (const deliverable of taskSpec.deliverables) {

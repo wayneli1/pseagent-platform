@@ -213,12 +213,14 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
     }
     const localDraftGroups = draftSettled.flatMap((item) =>
       item.status === "fulfilled" ? [item.value] : []);
-    const synthesisFailedDomains = new Set(retrieved
-      .filter((_item, index) => {
+    const synthesisFailedBindings = new Set(retrieved
+      .flatMap((item, index) => {
         const outcome = draftSettled[index];
-        return outcome?.status !== "fulfilled" || outcome.value.drafts.length === 0;
-      })
-      .map((item) => item.plan.domain));
+        return outcome?.status !== "fulfilled" || outcome.value.drafts.length === 0
+          ? item.plan.bindings.map((binding) =>
+              obligationDomainKey(item.plan.domain, binding.obligationId))
+          : [];
+      }));
     recordStage(input, "claim_draft", draftStartedAt,
       draftSettled.every((item) => item.status === "fulfilled")
         ? "completed"
@@ -229,7 +231,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
       contract: input.contract,
       plans: input.plans,
       evidence: globalized.evidence,
-      ungovernedFallbackDomains: synthesisFailedDomains,
+      ungovernedFallbackBindings: synthesisFailedBindings,
       firstClaimIndex: globalDrafts.length + 1,
     });
     const firstBinding = bindClaimsToEvidence({
@@ -406,8 +408,43 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
     }
     const consensusRetainedIds = new Set(consensusResult?.retainedClaimIds ?? []);
     const consensusRejectedIds = new Set(consensusResult?.rejectedClaimIds ?? []);
-    const finalClaims = stableClaims(consensusCandidates.filter((claim) =>
+    const consensusFinalClaims = stableClaims(consensusCandidates.filter((claim) =>
       !highRiskObligationIds.has(claim.obligationId) || consensusRetainedIds.has(claim.claimId)));
+    const lowRiskObligationIds = new Set<string>(input.contract.obligations
+      .filter((obligation) => obligation.risk === "low")
+      .map((obligation) => obligation.id));
+    const verificationFallbackBindings = new Set(input.plans.flatMap((plan) =>
+      plan.bindings.flatMap((binding) => {
+        const key = obligationDomainKey(plan.domain, binding.obligationId);
+        const hasFormalEvidence = globalized.evidence.some((item) =>
+          item.domain === plan.domain &&
+          item.obligationId === binding.obligationId &&
+          item.sourceBoundary === "formal" &&
+          item.aspectIds.length > 0);
+        const hasPublishedClaim = consensusFinalClaims.some((claim) =>
+          claim.domain === plan.domain && claim.obligationId === binding.obligationId);
+        return lowRiskObligationIds.has(binding.obligationId) &&
+          hasFormalEvidence && !hasPublishedClaim
+          ? [key]
+          : [];
+      })));
+    const verificationFallbackDrafts = projectGroundedClaims({
+      contract: input.contract,
+      plans: input.plans,
+      evidence: globalized.evidence,
+      ungovernedFallbackBindings: verificationFallbackBindings,
+      firstClaimIndex: consensusFinalClaims.length + 1,
+    });
+    const verificationFallbackBinding = bindClaimsToEvidence({
+      claims: verificationFallbackDrafts,
+      contract: input.contract,
+      retrievals: globalized.retrievals,
+    });
+    const finalClaims = stableClaims([
+      ...consensusFinalClaims,
+      ...verificationFallbackBinding.retained.filter((claim) =>
+        lowRiskObligationIds.has(claim.obligationId)),
+    ]);
     const consensusRejectedObligationIds = new Set(consensusCandidates
       .filter((claim) => consensusRejectedIds.has(claim.claimId))
       .map((claim) => claim.obligationId));
@@ -586,7 +623,7 @@ function projectGroundedClaims(input: {
   readonly contract: AtomicObligationContract;
   readonly plans: readonly DomainKnowledgePlan[];
   readonly evidence: readonly RetrievedEvidence[];
-  readonly ungovernedFallbackDomains: ReadonlySet<KnowledgeDomain>;
+  readonly ungovernedFallbackBindings: ReadonlySet<string>;
   readonly firstClaimIndex: number;
 }): readonly ClaimDraft[] {
   const facts = groundedAnswerCardFacts(
@@ -637,7 +674,9 @@ function projectGroundedClaims(input: {
       obligation.evidencePolicy === "customer_input" ||
       source.sourceBoundary !== "formal" ||
       source.aspectIds.length === 0 ||
-      !input.ungovernedFallbackDomains.has(source.domain) ||
+      !input.ungovernedFallbackBindings.has(
+        obligationDomainKey(source.domain, source.obligationId),
+      ) ||
       governedBindings.has(`${source.domain}\u0000${source.obligationId}`) ||
       seenEvidence.has(evidenceKey)
     ) {
@@ -662,6 +701,10 @@ function projectGroundedClaims(input: {
       ...claim,
       claimId: `CL${input.firstClaimIndex + index}` as `CL${number}`,
     })));
+}
+
+function obligationDomainKey(domain: KnowledgeDomain, obligationId: string): string {
+  return `${domain}\u0000${obligationId}`;
 }
 
 function exactFormalEvidenceExcerpt(source: RetrievedEvidence): string | undefined {

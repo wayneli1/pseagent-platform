@@ -631,6 +631,49 @@ describe("deterministic reliable answer pipeline", () => {
     });
   });
 
+  it("projects exact formal evidence when verification removes every low-risk claim", async () => {
+    const { trace } = traceFixture();
+    const fixture = pipelineFixture({ verifierVerdicts: ["insufficient"] });
+
+    const execution = await fixture.pipeline.answer({
+      question: contract.sourceQuestion,
+      scope: "professional",
+      contract,
+      plans: [plan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).toBe("answered");
+    expect(execution.result.answer).toContain("正式资料说明支持邮件归档。[1]");
+    expect(fixture.verifier.verify).toHaveBeenCalledOnce();
+    expect(fixture.synthesizer.draft).toHaveBeenCalledOnce();
+  });
+
+  it("does not bypass verification rejection for a high-risk claim", async () => {
+    const { trace } = traceFixture();
+    const fixture = pipelineFixture({ verifierVerdicts: ["insufficient"] });
+    const highRiskContract: AtomicObligationContract = {
+      ...contract,
+      obligations: [{ ...contract.obligations[0]!, risk: "high" }],
+    };
+
+    const execution = await fixture.pipeline.answer({
+      question: highRiskContract.sourceQuestion,
+      scope: "professional",
+      contract: highRiskContract,
+      plans: [plan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).not.toBe("answered");
+    expect(execution.result.answer).not.toContain("正式资料说明支持邮件归档");
+    expect(fixture.verifier.verify).toHaveBeenCalledOnce();
+  });
+
   it("publishes a fixed limitation when a high-risk claim lacks two-verdict agreement", async () => {
     const { trace } = traceFixture();
     const expectedClaim: BoundClaim = {

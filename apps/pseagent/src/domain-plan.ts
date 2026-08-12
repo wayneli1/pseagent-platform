@@ -4,10 +4,11 @@ import {
   adaptTaskSpecToKnowledgePlan,
   type TaskPlanAdapterInactiveReason,
 } from "./task-plan-adapter.js";
-import type {
-  KnowledgeDomain,
-  TaskSpec,
-  TaskSpecGuardResult,
+import {
+  requiresMixedKnowledgeDomains,
+  type KnowledgeDomain,
+  type TaskSpec,
+  type TaskSpecGuardResult,
 } from "./task-spec.js";
 import type { RequirementEvidenceCondition } from "./evidence-ledger.js";
 import {
@@ -162,7 +163,11 @@ export function deriveDomainKnowledgePlans(input: DomainPlanInput): DomainPlanRe
       domain,
       scope,
       plan: applyAnswerCardPoliciesToPlan({
-        plan: adapted.plan,
+        plan: specializeMixedDomainRetrievalPlan(
+          adapted.plan,
+          domain,
+          input.resolvedQuestion.standaloneQuestion,
+        ),
         obligationIds: adapted.obligationIds,
         policies: input.cardPolicies ?? [],
       }),
@@ -247,4 +252,67 @@ function taskSpecForDomain(taskSpec: TaskSpec, domain: KnowledgeDomain): TaskSpe
       return obligations.length === 0 ? [] : [{ ...deliverable, obligations }];
     }),
   };
+}
+
+const PROFESSIONAL_QUERY_CUES = [
+  "Coremail", "Exchange", "Office 365", "个人配置", "邮件", "邮箱", "迁移",
+  "归档", "网关", "反垃圾", "日程", "通讯录", "规则", "协议", "接口", "版本",
+  "部署", "容灾", "多活", "LDAP", "AD", "RPO", "RTO",
+] as const;
+const GENERAL_QUERY_CUES = [
+  "售前", "交付", "结构化移交", "风险", "责任人", "用户动作", "可迁项", "POC",
+  "验收", "客户", "价值", "关系", "决策", "采购", "范围", "变更", "升级路径",
+] as const;
+
+function specializeMixedDomainRetrievalPlan(
+  plan: KnowledgePlan,
+  domain: KnowledgeDomain,
+  question: string,
+): KnowledgePlan {
+  if (!requiresMixedKnowledgeDomains(question)) return plan;
+  const normalizedQuestion = question.toLocaleLowerCase("zh-CN");
+  const cues = (domain === "coremail-professional"
+    ? PROFESSIONAL_QUERY_CUES
+    : GENERAL_QUERY_CUES).filter((cue) =>
+      normalizedQuestion.includes(cue.toLocaleLowerCase("zh-CN")));
+  if (cues.length < 2) return plan;
+  const queryText = cues.slice(0, 8).join(" ");
+  return {
+    ...plan,
+    requirements: plan.requirements.map((requirement) => ({
+      ...requirement,
+      evidenceAspects: requirement.evidenceAspects.map((aspect) => ({
+        ...aspect,
+        terms: stableUniqueSemanticText([...cues, ...aspect.terms]).slice(0, 8),
+      })),
+      queries: stableUniqueQueries([{
+        text: queryText,
+        aspectIds: requirement.evidenceAspects.map((aspect) => aspect.id),
+      }, ...requirement.queries]).slice(0, 3),
+    })),
+  };
+}
+
+function stableUniqueSemanticText(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = value.normalize("NFKC").toLocaleLowerCase("zh-CN")
+      .replace(/[\s\p{P}\p{S}]+/gu, "");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function stableUniqueQueries(
+  values: readonly KnowledgePlan["requirements"][number]["queries"][number][],
+): KnowledgePlan["requirements"][number]["queries"] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = value.text.normalize("NFKC").toLocaleLowerCase("zh-CN")
+      .replace(/[\s\p{P}\p{S}]+/gu, "");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

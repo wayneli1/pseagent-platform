@@ -298,6 +298,29 @@ describe("atomic obligation contract", () => {
     );
     expect(contract.obligations.reduce((sum, item) => sum + item.domains.length, 0))
       .toBeLessThanOrEqual(contract.obligations.length + 1);
+    expect(contract.obligations).toEqual([
+      expect.objectContaining({
+        risk: "low",
+        completionCriteria: ["claim_supported", "all_required_aspects_covered"],
+      }),
+    ]);
+  });
+
+  it.each([
+    "合同违约责任应如何划分？",
+    "请确认数据泄露的法律责任归属。",
+    "项目失败后由谁承担赔偿责任？",
+  ])("keeps contractual or legal responsibility questions high-risk: %s", (question) => {
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "general",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+
+    const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+
+    expect(contract.obligations.some((item) => item.risk === "high")).toBe(true);
   });
 
   it("keeps one shared phased-acceptance request instead of splitting its stage dimensions", () => {
