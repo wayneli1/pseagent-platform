@@ -6,12 +6,72 @@ import {
 } from "./task-spec.js";
 import {
   compileAtomicObligationContract,
+  compileGovernedAtomicObligationContract,
   materializeGuardedTaskSpec,
   validateAtomicObligationContract,
   type AtomicObligationContract,
 } from "./atomic-obligation.js";
 
 describe("atomic obligation contract", () => {
+  it("preserves every governed card obligation when one source question has multiple policies", () => {
+    const question = "没买的功能可以先放到POC里测吗？";
+    const taskSpec = taskSpecSchema.parse({
+      subject: question,
+      entities: [{ id: "E1", label: question, role: "subject", sourceText: question }],
+      deliverables: [{
+        id: "D1",
+        label: "受治理答案",
+        kind: "recommendation",
+        required: true,
+        sourceText: question,
+        obligations: [{
+          id: "O1",
+          label: "默认不纳入未购买功能",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText: question,
+        }, {
+          id: "O2",
+          label: "结合合同和客户现状人工确认",
+          targetEntityIds: ["E1"],
+          evidencePolicy: "customer_input",
+          domains: ["presales-general"],
+          required: true,
+          sourceText: question,
+        }],
+      }],
+    });
+
+    const contract = compileGovernedAtomicObligationContract({
+      resolvedQuestion: identityResolvedQuestion(question),
+      taskSpec,
+    });
+
+    expect(contract.obligations).toHaveLength(2);
+    expect(contract.obligations.map((item) => ({
+      id: item.id,
+      evidencePolicy: item.evidencePolicy,
+      domains: item.domains,
+      provenance: item.provenance,
+    }))).toEqual([{
+      id: "O1",
+      evidencePolicy: "direct",
+      domains: ["coremail-professional"],
+      provenance: "governed",
+    }, {
+      id: "O2",
+      evidencePolicy: "customer_input",
+      domains: ["presales-general"],
+      provenance: "governed",
+    }]);
+    expect(contract.obligations.every((item) =>
+      question.slice(item.sourceSpan.start, item.sourceSpan.end) === item.sourceText
+    )).toBe(true);
+    expect(validateAtomicObligationContract(contract).ok).toBe(true);
+  });
+
   it("restores a source-backed case judgement omitted by the model task spec", () => {
     const question = "说明如何评估当前商机，并判断这个项目现在是否值得推进。";
     const taskSpec = taskSpecSchema.parse({

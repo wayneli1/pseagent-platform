@@ -9,10 +9,11 @@ import {
   HighRiskConsensusGate,
   consensusClaimSignature,
 } from "./high-risk-consensus.js";
-import type { ModelClient } from "./model-client.js";
+import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import {
   DeterministicReliableAnswerPipeline,
   ModelTargetedClaimReviser,
+  reduceReliableOutcomes,
   type TargetedClaimReviser,
 } from "./reliable-answer-pipeline.js";
 import { StageBudgetAllocator } from "./stage-budget.js";
@@ -90,6 +91,11 @@ const retrievalResult: DeterministicRetrievalResult = {
     title: reference.title,
     compactContent: "正式资料说明支持邮件归档。",
     aspectIds: ["A1"],
+    aspectRequirements: [{
+      id: "A1",
+      label: "mail archive support",
+      terms: ["mail", "archive"],
+    }],
     sourceBoundary: "formal",
   }],
   references: [reference],
@@ -198,6 +204,184 @@ describe("ModelTargetedClaimReviser", () => {
 });
 
 describe("deterministic reliable answer pipeline", () => {
+  it("publishes evidence-identical governed facts when open-ended synthesis is invalid", async () => {
+    const governedPlan: DomainKnowledgePlan = {
+      ...plan,
+      bindings: [{
+        ...plan.bindings[0]!,
+        cardId: "CM-ARCHIVE-001",
+        cardTitle: "归档说明",
+        requiredConcepts: ["邮件归档"],
+        preferredEvidencePaths: [reference.path],
+        answerTemplate: "正式资料说明支持邮件归档。",
+      }],
+    };
+    const governedRetrieval: DeterministicRetrievalResult = {
+      ...retrievalResult,
+      evidenceLedger: {
+        ...evidenceLedger,
+        units: [{
+          binding: governedPlan.bindings[0],
+          requirement: governedPlan.plan.requirements[0],
+          inputState: "not_applicable",
+          verification: { coverage: "complete" },
+        }],
+      } as unknown as EvidenceLedger,
+    };
+    const synthesizer = {
+      draft: vi.fn(async () => {
+        throw new InvalidModelPayloadError("invalid_schema:claims:required");
+      }),
+    };
+    const verifier = { verify: vi.fn() };
+    const pipeline = new DeterministicReliableAnswerPipeline({
+      knowledge: {
+        open: vi.fn(async () => ({ project: "coremail-professional" }) as KnowledgeSession),
+      },
+      retrieval: { retrieve: vi.fn(async () => governedRetrieval) },
+      synthesizer,
+      verifier,
+    });
+    const { trace } = traceFixture();
+
+    const execution = await pipeline.answer({
+      question: contract.sourceQuestion,
+      scope: "professional",
+      contract,
+      plans: [governedPlan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).toBe("answered");
+    expect(execution.result.answer).toContain("正式资料说明支持邮件归档。[1]");
+    expect(synthesizer.draft).toHaveBeenCalledOnce();
+    expect(verifier.verify).not.toHaveBeenCalled();
+    expect(execution.callBudget).toMatchObject({
+      usedOpenEndedCalls: 1,
+      usedStructuredCalls: 0,
+    });
+  });
+
+  it("names governed customer inputs in a deterministic missing-input outcome", () => {
+    const customerInputContract: AtomicObligationContract = {
+      ...contract,
+      obligations: [{
+        ...contract.obligations[0]!,
+        evidencePolicy: "customer_input",
+        evidenceTypes: ["customer_fact"],
+        domains: ["presales-general"],
+      }],
+    };
+    const customerInputPlan: DomainKnowledgePlan = {
+      ...plan,
+      domain: "presales-general",
+      scope: "general",
+      bindings: [{
+        domain: "presales-general",
+        requirementId: "R1",
+        deliverableId: "D1",
+        obligationId: "O1",
+        order: 0,
+        cardId: "PRO-POC-UNPURCHASED-FUNCTIONS",
+        requiredConcepts: ["合同范围", "客户现状", "人工确认"],
+      }],
+    };
+    const customerInputLedger = {
+      ...evidenceLedger,
+      project: "presales-general",
+      units: [{
+        binding: customerInputPlan.bindings[0],
+        requirement: customerInputPlan.plan.requirements[0],
+        inputState: "missing",
+        verification: { coverage: "not_covered" },
+      }],
+    } as unknown as EvidenceLedger;
+
+    const outcomes = reduceReliableOutcomes({
+      contract: customerInputContract,
+      plans: [customerInputPlan],
+      retrievals: [{
+        ...retrievalResult,
+        project: "presales-general",
+        evidence: [],
+        references: [],
+        evidenceLedger: customerInputLedger,
+      }],
+      claims: [],
+      failedDomains: new Set(),
+      verificationUnavailable: false,
+      consensusRejectedObligationIds: new Set(),
+    });
+
+    expect(outcomes[0]).toMatchObject({
+      state: "missing_input",
+      gapReason: expect.stringMatching(/合同范围.*客户现状.*人工确认/u),
+    });
+  });
+
+  it("does not mark a governed target complete when formal evidence only proves it is unconfirmed", () => {
+    const boundaryQuestion = "系统是否支持星际量子邮件协议？请直接回答支持或不支持。";
+    const boundaryContract: AtomicObligationContract = {
+      ...contract,
+      sourceQuestion: boundaryQuestion,
+      obligations: [{
+        ...contract.obligations[0]!,
+        sourceSpan: { start: 0, end: boundaryQuestion.length },
+        sourceText: boundaryQuestion,
+        provenance: "governed",
+      }],
+    };
+    const boundaryClaim: BoundClaim = {
+      claimId: "CL1",
+      obligationId: "O1",
+      domain: "coremail-professional",
+      text: "正式知识库未提及“星际量子邮件协议”，无法确认系统是否支持或兼容该协议。",
+      kind: "fact",
+      citationIndexes: [1],
+      coveredAspectIds: ["A1"],
+      support: "direct",
+      evidenceIdentities: [reference.contentHash],
+    };
+
+    const outcomes = reduceReliableOutcomes({
+      contract: boundaryContract,
+      plans: [plan],
+      retrievals: [retrievalResult],
+      claims: [boundaryClaim],
+      failedDomains: new Set(),
+      verificationUnavailable: false,
+      consensusRejectedObligationIds: new Set(),
+    });
+
+    expect(outcomes[0]).toMatchObject({
+      state: "not_covered",
+      claims: [boundaryClaim],
+      gapReason: expect.stringContaining("正式知识只能证明未覆盖目标"),
+    });
+
+    const documentedBoundaryQuestion = "请说明星际量子邮件协议在正式知识中的边界。";
+    const documentedBoundary = reduceReliableOutcomes({
+      contract: {
+        ...boundaryContract,
+        sourceQuestion: documentedBoundaryQuestion,
+        obligations: [{
+          ...boundaryContract.obligations[0]!,
+          sourceSpan: { start: 0, end: documentedBoundaryQuestion.length },
+          sourceText: documentedBoundaryQuestion,
+        }],
+      },
+      plans: [plan],
+      retrievals: [retrievalResult],
+      claims: [boundaryClaim],
+      failedDomains: new Set(),
+      verificationUnavailable: false,
+      consensusRejectedObligationIds: new Set(),
+    });
+    expect(documentedBoundary[0]?.state).toBe("complete");
+  });
+
   it("uses deterministic retrieval and one structured synthesis without a legacy agent loop", async () => {
     const { trace, events } = traceFixture();
     const fixture = pipelineFixture();

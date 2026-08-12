@@ -44,6 +44,7 @@ export interface AtomicObligation {
   readonly risk: ObligationRisk;
   readonly completionCriteria: readonly string[];
   readonly required: true;
+  readonly provenance?: "governed";
 }
 
 export interface AtomicObligationContract {
@@ -116,27 +117,38 @@ export function compileGovernedAtomicObligationContract(input: {
   const compiled = compileAtomicObligationContract(input);
   const governed = flattenTaskSpec(input.taskSpec)
     .filter(({ deliverable, obligation }) => deliverable.required && obligation.required);
-  if (governed.length !== compiled.obligations.length) return compiled;
+  if (governed.length === 0) return compiled;
+  const question = input.resolvedQuestion.standaloneQuestion;
   const contract: AtomicObligationContract = Object.freeze({
     ...compiled,
-    obligations: Object.freeze(compiled.obligations.map((obligation, index) => {
-      const taskItem = governed[index]!;
+    obligations: Object.freeze(governed.map((taskItem, index) => {
+      const source = governedSourceSeed(
+        question,
+        taskItem,
+        compiled.obligations[index] ?? compiled.obligations.at(-1)!,
+      );
       const evidencePolicy = taskItem.obligation.evidencePolicy;
+      const risk = deterministicRisk(source.text);
       return Object.freeze({
-        ...obligation,
+        id: `O${index + 1}` as const,
+        sourceSpan: Object.freeze({ start: source.start, end: source.end }),
+        sourceText: source.text,
         kind: taskItem.deliverable.kind,
         targetEntityIds: Object.freeze([...taskItem.obligation.targetEntityIds]),
         domains: Object.freeze([...taskItem.obligation.domains]),
         evidencePolicy,
         evidenceTypes: Object.freeze(evidenceTypes(
-          obligation.sourceText,
+          source.text,
           evidencePolicy,
-          obligation.risk,
+          risk,
         )),
+        risk,
         completionCriteria: Object.freeze(completionCriteria(
           evidencePolicy,
-          obligation.risk,
+          risk,
         )),
+        required: true as const,
+        provenance: "governed" as const,
       });
     })),
   });
@@ -147,12 +159,40 @@ export function compileGovernedAtomicObligationContract(input: {
   return contract;
 }
 
+function governedSourceSeed(
+  question: string,
+  taskItem: TaskSpecObligation,
+  fallback: AtomicObligation,
+): ObligationSeed {
+  const candidates = [
+    taskItem.obligation.sourceText,
+    taskItem.deliverable.sourceText,
+  ].filter((candidate, index, values) =>
+    candidate.trim() !== "" && values.indexOf(candidate) === index);
+  for (const candidate of candidates) {
+    const start = question.indexOf(candidate);
+    if (start >= 0) {
+      return {
+        start,
+        end: start + candidate.length,
+        text: question.slice(start, start + candidate.length),
+      };
+    }
+  }
+  return {
+    start: fallback.sourceSpan.start,
+    end: fallback.sourceSpan.end,
+    text: fallback.sourceText,
+  };
+}
+
 export function validateAtomicObligationContract(
   contract: AtomicObligationContract,
 ): { readonly ok: boolean; readonly issueCodes: readonly string[] } {
   const issueCodes: string[] = [];
   if (contract.obligations.length === 0) issueCodes.push("obligation_contract_empty");
   let previousEnd = -1;
+  let previousProvenance: AtomicObligation["provenance"];
   for (const [index, obligation] of [...contract.obligations]
     .sort((left, right) => left.sourceSpan.start - right.sourceSpan.start)
     .entries()) {
@@ -168,8 +208,14 @@ export function validateAtomicObligationContract(
     } else if (contract.sourceQuestion.slice(start, end) !== obligation.sourceText) {
       issueCodes.push("obligation_source_text_mismatch");
     }
-    if (start < previousEnd) issueCodes.push("obligation_source_span_overlap");
+    if (
+      start < previousEnd &&
+      !(previousProvenance === "governed" && obligation.provenance === "governed")
+    ) {
+      issueCodes.push("obligation_source_span_overlap");
+    }
     previousEnd = Math.max(previousEnd, end);
+    previousProvenance = obligation.provenance;
     if (obligation.id !== `O${index + 1}`) {
       issueCodes.push("obligation_ids_must_be_sequential");
     }

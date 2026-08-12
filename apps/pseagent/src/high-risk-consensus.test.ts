@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ModelClient } from "./model-client.js";
+import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import {
   HighRiskConsensusGate,
   consensusClaimSignature,
@@ -53,6 +53,33 @@ function modelReturning(verdicts: readonly ("supported" | "insufficient")[]): Mo
 }
 
 describe("high-risk consensus gate", () => {
+  it("retries one invalid structured verdict without selecting among valid answers", async () => {
+    const secondVerifier = modelReturning(["supported", "supported"]);
+    vi.mocked(secondVerifier.completeJson).mockRejectedValueOnce(
+      new InvalidModelPayloadError(
+        "invalid_schema:verdicts:required",
+        undefined,
+        "pse_high_risk_consensus_verdicts",
+      ),
+    );
+    const onModelAttempt = vi.fn();
+
+    const result = await new HighRiskConsensusGate().evaluate({
+      claims,
+      firstVerdicts,
+      firstVerifier: modelReturning(["supported", "supported"]),
+      secondVerifier,
+      firstModelId: "same-model",
+      secondModelId: "same-model",
+      signal: new AbortController().signal,
+      onModelAttempt,
+    });
+
+    expect(result.retainedClaimIds).toEqual(["CL1", "CL2"]);
+    expect(secondVerifier.completeJson).toHaveBeenCalledTimes(2);
+    expect(onModelAttempt).toHaveBeenCalledTimes(2);
+  });
+
   it("publishes only the exact-signature intersection supported by both verdicts", async () => {
     const gate = new HighRiskConsensusGate();
     const secondVerifier = modelReturning(["supported", "insufficient"]);

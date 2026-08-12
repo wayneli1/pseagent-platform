@@ -22,6 +22,7 @@ import { DeterministicTaskSpecGuard, taskSpecSchema } from "./task-spec.js";
 import {
   applyGroundedAnswerCardRequiredConcepts,
   answerCardRequirementsWithGroundedConcepts,
+  groundedAnswerCardFacts,
   missingAnswerCardRequiredConcepts,
   violatesAnswerCardForbiddenClaims,
 } from "./answer-card-policy.js";
@@ -622,6 +623,7 @@ describe("answer card TaskSpec adapter", () => {
       expect.objectContaining({
         obligationId: "O1",
         cardId: "CM-MIGRATION-001",
+        cardTitle: source.cards[0]!.title,
         preferredEvidencePaths: ["wiki/queries/coremail-migration.md"],
       }),
     ]);
@@ -1925,6 +1927,37 @@ describe("answer card TaskSpec adapter", () => {
     expect(missingAnswerCardRequiredConcepts(grounded, [binding])).toEqual([{
       requirementId: "R1",
       requiredConcepts: ["measurement"],
+    }]);
+  });
+
+  it("extracts governed facts from the reviewed answer-card query page", () => {
+    const facts = groundedAnswerCardFacts([{
+      domain: "presales-general",
+      requirementId: "R1",
+      deliverableId: "D1",
+      obligationId: "O1",
+      order: 0,
+      cardId: "GEN-DISCOVERY-UNCLEAR-NEEDS",
+      cardTitle: "客户需求不明确时如何继续追问",
+      requiredConcepts: ["情境问题", "暗示问题"],
+      preferredEvidencePaths: ["wiki/concepts/spin四类问题.md"],
+      answerTemplate: "按情境问题和暗示问题逐层追问。",
+    }], [{
+      requirementId: "R1",
+      citation: 1,
+      path: "wiki/queries/客户需求不明确时如何继续追问.md",
+      title: "客户需求不明确时如何继续追问",
+      content: "用情境问题补信息缺口，并用暗示问题探索实际影响。",
+    }]);
+
+    expect(facts).toEqual([{
+      requirementId: "R1",
+      obligationId: "O1",
+      domain: "presales-general",
+      citation: 1,
+      path: "wiki/queries/客户需求不明确时如何继续追问.md",
+      text: "用情境问题补信息缺口，并用暗示问题探索实际影响。",
+      coveredConcepts: ["情境问题", "暗示问题"],
     }]);
   });
 

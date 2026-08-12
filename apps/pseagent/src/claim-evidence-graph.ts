@@ -28,7 +28,11 @@ export function bindClaimsToEvidence(input: {
       ) {
         continue;
       }
-      evidenceByKey.set(evidenceKey(evidence.domain, evidence.citation), {
+      evidenceByKey.set(evidenceKey(
+        evidence.domain,
+        evidence.citation,
+        evidence.obligationId,
+      ), {
         evidence,
         reference,
       });
@@ -74,7 +78,7 @@ export function bindClaimsToEvidence(input: {
       continue;
     }
     const bound = claim.citationIndexes.map((citation) =>
-      evidenceByKey.get(evidenceKey(claim.domain, citation)));
+      evidenceByKey.get(evidenceKey(claim.domain, citation, claim.obligationId)));
     if (bound.some((item) => item === undefined)) {
       reject("claim_evidence_unread");
       continue;
@@ -153,8 +157,8 @@ export function mergeBoundDomainClaims(input: {
   };
 }
 
-function evidenceKey(domain: string, citation: number): string {
-  return `${domain}\u0000${citation}`;
+function evidenceKey(domain: string, citation: number, obligationId: string): string {
+  return `${domain}\u0000${citation}\u0000${obligationId}`;
 }
 
 function referenceIdentity(reference: Reference): string {

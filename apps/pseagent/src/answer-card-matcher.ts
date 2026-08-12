@@ -21,6 +21,7 @@ export interface AnswerCardMatchBinding {
   readonly obligationId: string;
   readonly cardObligationId: string;
   readonly cardId: string;
+  readonly cardTitle?: string;
   readonly label: string;
   readonly domain: KnowledgeDomain;
   readonly domains: readonly KnowledgeDomain[];
@@ -623,6 +624,7 @@ function bindingFromCardObligation(
     obligationId,
     cardObligationId: obligation.id,
     cardId: card.cardId,
+    cardTitle: card.title,
     label,
     domain: card.domain,
     domains: Object.freeze([...obligation.domains]),

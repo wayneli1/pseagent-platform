@@ -76,6 +76,8 @@ const CLAIM_VERIFY_PROMPT = `你是主张支持度裁判，只判断给定主张
 每条主张输出 supported、contradicted 或 insufficient。claimId、claimHash 和 citationIndexes 必须原样返回。
 只输出根对象 {"decisions":[...]}，每项严格包含 claimId、claimHash、citationIndexes、verdict。`;
 
+const CLAIM_ASPECT_GUIDANCE = `输入证据的 aspectRequirements 给出该证据应核对的覆盖语义。非 gap 主张应在 compactContent 确实支持时明确覆盖相应 label 或 terms，并把对应 id 放入 coveredAspectIds；aspectRequirements 只说明核对目标，不能替代证据正文。`;
+
 export class ModelStructuredClaimSynthesizer {
   constructor(private readonly model: ModelClient) {}
 
@@ -88,7 +90,10 @@ export class ModelStructuredClaimSynthesizer {
       obligation.domains.includes(input.retrieval.project));
     const envelope = await this.model.completeJson({
       messages: [
-        { role: "system", content: CLAIM_DRAFT_PROMPT },
+        {
+          role: "system",
+          content: `${CLAIM_DRAFT_PROMPT}\n${CLAIM_ASPECT_GUIDANCE}`,
+        },
         {
           role: "user",
           content: structuredTransformationInput("claims", {
@@ -177,6 +182,7 @@ function compactEvidenceForModel(evidence: RetrievedEvidence) {
     title: evidence.title,
     compactContent: evidence.compactContent,
     aspectIds: evidence.aspectIds,
+    aspectRequirements: evidence.aspectRequirements,
     sourceBoundary: evidence.sourceBoundary,
   };
 }

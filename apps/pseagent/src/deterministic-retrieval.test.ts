@@ -122,6 +122,11 @@ describe("DeterministicRetrievalCoordinator", () => {
       "R1",
       "R2",
     ]);
+    expect(result.evidence[0]?.aspectRequirements).toEqual([{
+      id: "A1",
+      label: "迁移能力",
+      terms: ["迁移", "能力"],
+    }]);
     expect(result.evidenceLedger.units).toHaveLength(2);
     expect(model.completeJson).not.toHaveBeenCalled();
   });

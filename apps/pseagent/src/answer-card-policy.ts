@@ -14,6 +14,75 @@ export interface MissingAnswerCardConcepts {
   readonly requiredConcepts: readonly string[];
 }
 
+export interface GroundedAnswerCardFact {
+  readonly requirementId: string;
+  readonly obligationId: string;
+  readonly domain: DomainRequirementBinding["domain"];
+  readonly citation: number;
+  readonly path: string;
+  readonly text: string;
+  readonly coveredConcepts: readonly string[];
+}
+
+export function groundedAnswerCardFacts(
+  bindings: readonly DomainRequirementBinding[] = [],
+  evidence: readonly AnswerCardPolicyEvidence[] = [],
+): readonly GroundedAnswerCardFact[] {
+  const facts = new Map<string, {
+    readonly requirementId: string;
+    readonly obligationId: string;
+    readonly domain: DomainRequirementBinding["domain"];
+    readonly citation: number;
+    readonly path: string;
+    readonly text: string;
+    readonly coveredConcepts: string[];
+  }>();
+  for (const binding of bindings) {
+    if (binding.cardId === undefined) continue;
+    const preferredPaths = new Set(binding.preferredEvidencePaths ?? []);
+    const governedEvidence = evidence.filter((document) =>
+      document.requirementId === binding.requirementId &&
+      (
+        preferredPaths.has(document.path) ||
+        (
+          binding.answerTemplate !== undefined &&
+          binding.cardTitle !== undefined &&
+          normalizePolicyText(document.title) === normalizePolicyText(binding.cardTitle)
+        )
+      ));
+    for (const item of groundedConcepts(
+      binding.requiredConcepts ?? [],
+      governedEvidence,
+    )) {
+      const key = [
+        binding.requirementId,
+        binding.obligationId,
+        item.citation,
+        item.path,
+        normalizePolicyText(item.fact),
+      ].join("\u0000");
+      const existing = facts.get(key);
+      if (existing !== undefined) {
+        existing.coveredConcepts.push(item.concept);
+        continue;
+      }
+      facts.set(key, {
+        requirementId: binding.requirementId,
+        obligationId: binding.obligationId,
+        domain: binding.domain,
+        citation: item.citation,
+        path: item.path,
+        text: item.fact,
+        coveredConcepts: [item.concept],
+      });
+    }
+  }
+  return Object.freeze([...facts.values()].map((fact) => Object.freeze({
+    ...fact,
+    coveredConcepts: Object.freeze(fact.coveredConcepts),
+  })));
+}
+
 export function answerCardRequirementsWithGroundedConcepts(
   bindings: readonly DomainRequirementBinding[] = [],
   evidence: readonly AnswerCardPolicyEvidence[] = [],
@@ -241,7 +310,12 @@ function normalizePolicyText(value: string): string {
 function groundedConcepts(
   concepts: readonly string[],
   evidence: readonly AnswerCardPolicyEvidence[],
-): readonly { readonly concept: string; readonly citation: number; readonly fact: string }[] {
+): readonly {
+  readonly concept: string;
+  readonly citation: number;
+  readonly path: string;
+  readonly fact: string;
+}[] {
   const seen = new Set<string>();
   return concepts.flatMap((concept) => {
     const normalizedConcept = normalizePolicyText(concept);
@@ -253,7 +327,9 @@ function groundedConcepts(
       );
       if (!normalizedEvidence.includes(normalizedConcept)) return [];
       const fact = evidenceFactForConcept(document.content, normalizedConcept);
-      return fact === undefined ? [] : [{ concept, citation: document.citation, fact }];
+      return fact === undefined
+        ? []
+        : [{ concept, citation: document.citation, path: document.path, fact }];
     });
     candidates.sort((left, right) => left.citation - right.citation);
     return candidates.slice(0, 1);

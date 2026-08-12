@@ -20,6 +20,7 @@ export interface AnswerCardObligationPolicy {
   readonly obligationId: string;
   readonly label: string;
   readonly cardId: string;
+  readonly cardTitle?: string;
   readonly cardObligationId: string;
   readonly requiredConcepts: readonly string[];
   readonly forbiddenClaims: readonly string[];
@@ -124,6 +125,7 @@ function compileSingleCardAnswerCardTaskSpec(input: {
     obligationId: `O${index + 1}`,
     label: binding.label,
     cardId: binding.cardId,
+    ...(binding.cardTitle === undefined ? {} : { cardTitle: binding.cardTitle }),
     cardObligationId: binding.cardObligationId,
     requiredConcepts: Object.freeze([...binding.requiredConcepts]),
     forbiddenClaims: Object.freeze([...binding.forbiddenClaims]),
@@ -293,6 +295,9 @@ export function adaptAnswerCardToTaskSpec(input: {
                 ? draft.cardBinding.label
                 : draft.value.label,
               cardId: draft.cardBinding.cardId,
+              ...(draft.cardBinding.cardTitle === undefined
+                ? {}
+                : { cardTitle: draft.cardBinding.cardTitle }),
               cardObligationId: draft.cardBinding.cardObligationId,
               requiredConcepts: Object.freeze([...draft.cardBinding.requiredConcepts]),
               forbiddenClaims: Object.freeze([...draft.cardBinding.forbiddenClaims]),

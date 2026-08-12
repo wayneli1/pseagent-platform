@@ -39,6 +39,11 @@ const retrieval = {
     title: "迁移能力",
     compactContent: "正式资料说明迁移能力。",
     aspectIds: ["A1"],
+    aspectRequirements: [{
+      id: "A1",
+      label: "migration capability",
+      terms: ["migration", "capability"],
+    }],
     sourceBoundary: "formal",
   }],
   references: [],
@@ -79,6 +84,10 @@ describe("ModelStructuredClaimSynthesizer", () => {
     const inputMessage = vi.mocked(completeJson).mock.calls[0]![0].messages[1]!.content;
     expect(inputMessage).toContain("禁止复制输入");
     expect(inputMessage.trimStart().startsWith("{")).toBe(false);
+    expect(inputMessage).toContain('"label":"migration capability"');
+    expect(inputMessage).toContain('"terms":["migration","capability"]');
+    const systemMessage = vi.mocked(completeJson).mock.calls[0]![0].messages[0]!.content;
+    expect(systemMessage).toContain("aspectRequirements");
   });
 
   it("rejects model text that embeds rendered Markdown citations", async () => {

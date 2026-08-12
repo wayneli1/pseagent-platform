@@ -1,4 +1,4 @@
-import type { Reference } from "./contracts.js";
+import type { EvidenceAspect, Reference } from "./contracts.js";
 import {
   rankRetrievalCandidates,
   type RankedRetrievalCandidate,
@@ -34,6 +34,7 @@ export interface RetrievedEvidence {
   readonly title: string;
   readonly compactContent: string;
   readonly aspectIds: readonly string[];
+  readonly aspectRequirements: readonly EvidenceAspect[];
   readonly sourceBoundary: EvidenceSourceBoundary;
 }
 
@@ -179,6 +180,12 @@ export class DeterministicRetrievalCoordinator {
               [...item.candidate.matchedTerms],
             ),
             aspectIds: stableInOrder(allAspectIds, item.candidate.aspectIds),
+            aspectRequirements: requirement.evidenceAspects
+              .filter((aspect) => item.candidate.aspectIds.has(aspect.id))
+              .map((aspect) => ({
+                ...aspect,
+                terms: [...aspect.terms],
+              })),
             sourceBoundary,
           });
           reads.push({

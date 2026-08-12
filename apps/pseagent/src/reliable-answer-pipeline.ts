@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AtomicObligationContract } from "./atomic-obligation.js";
 import { bindClaimsToEvidence, mergeBoundDomainClaims } from "./claim-evidence-graph.js";
+import { groundedAnswerCardFacts } from "./answer-card-policy.js";
 import type { AnswerResult, FinalAction, Scope } from "./contracts.js";
 import {
   DeterministicRetrievalCoordinator,
@@ -181,17 +182,38 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
         : draftSignal.aborted ? "timeout" : "degraded");
 
     const globalDrafts = globalizeDrafts(localDraftGroups, globalized.localToGlobal);
+    const projectedDrafts = projectGroundedClaims({
+      plans: input.plans,
+      evidence: globalized.evidence,
+      firstClaimIndex: globalDrafts.length + 1,
+    });
     const firstBinding = bindClaimsToEvidence({
       claims: globalDrafts,
       contract: input.contract,
       retrievals: globalized.retrievals,
     });
+    const projectedBinding = bindClaimsToEvidence({
+      claims: projectedDrafts,
+      contract: input.contract,
+      retrievals: globalized.retrievals,
+    });
+    const highRiskObligationIds = new Set(input.contract.obligations
+      .filter((obligation) => obligation.risk === "high")
+      .map((obligation) => obligation.id));
+    const projectedHighRiskClaims = projectedBinding.retained.filter((claim) =>
+      highRiskObligationIds.has(claim.obligationId));
+    const deterministicallyAccepted = projectedBinding.retained.filter((claim) =>
+      !highRiskObligationIds.has(claim.obligationId));
+    const verifierClaims = stableClaims([
+      ...firstBinding.retained,
+      ...projectedHighRiskClaims,
+    ]);
     const firstVerificationStartedAt = Date.now();
     const verificationSignal = input.budget.signal("verification_consensus", input.signal);
     let finalConsensusSignal = verificationSignal;
     let verificationUnavailable = false;
     let firstDecisions: readonly ClaimSupportDecision[] = [];
-    if (firstBinding.retained.length > 0) {
+    if (verifierClaims.length > 0) {
       try {
         calls.useStructured();
         firstDecisions = await observeModelCall({
@@ -200,7 +222,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
           operation: "verify",
           signal: verificationSignal,
           call: () => this.dependencies.verifier.verify({
-            claims: firstBinding.retained,
+            claims: verifierClaims,
             evidence: globalized.evidence,
             signal: verificationSignal,
           }),
@@ -209,7 +231,16 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
         verificationUnavailable = true;
       }
     }
-    const initiallyAccepted = supportedClaims(firstBinding.retained, firstDecisions);
+    const verifiedModelAccepted = supportedClaims(firstBinding.retained, firstDecisions);
+    const verifiedProjectedHighRisk = supportedClaims(
+      projectedHighRiskClaims,
+      firstDecisions,
+    );
+    const initiallyAccepted = stableClaims([
+      ...deterministicallyAccepted,
+      ...verifiedProjectedHighRisk,
+      ...verifiedModelAccepted,
+    ]);
     const acceptedIds = new Set(initiallyAccepted.map((claim) => claim.claimId));
     const rejectedIds = new Set([
       ...firstBinding.rejected.map((reason) => reason.split(":", 1)[0]!),
@@ -282,9 +313,6 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
       ...initiallyAccepted,
       ...revisedAccepted,
     ]);
-    const highRiskObligationIds = new Set(input.contract.obligations
-      .filter((obligation) => obligation.risk === "high")
-      .map((obligation) => obligation.id));
     const highRiskClaims = consensusCandidates.filter((claim) =>
       highRiskObligationIds.has(claim.obligationId));
     let consensusResult: HighRiskConsensusResult | undefined;
@@ -297,7 +325,6 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
           agreed: false,
         });
       } else {
-        calls.useStructured();
         consensusResult = await this.dependencies.highRiskConsensus.gate.evaluate({
           claims: highRiskClaims,
           firstVerdicts: [...firstDecisions, ...revisedDecisions],
@@ -308,6 +335,7 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
           secondModelId: this.dependencies.highRiskConsensus.secondModelId,
           signal: finalConsensusSignal,
           trace: input.trace,
+          onModelAttempt: () => calls.useStructured(),
         });
       }
       recordDiagnostic(input.trace, {
@@ -330,9 +358,11 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
       .filter((_plan, index) => retrievalSettled[index]?.status !== "fulfilled")
       .map((plan) => plan.domain));
     const draftFailedDomains = new Set(retrieved
-      .filter((_item, index) => draftSettled[index]?.status !== "fulfilled")
+      .filter((item, index) =>
+        draftSettled[index]?.status !== "fulfilled" &&
+        !projectedBinding.retained.some((claim) => claim.domain === item.plan.domain))
       .map((item) => item.plan.domain));
-    const outcomes = reduceToOutcomes({
+    const outcomes = reduceReliableOutcomes({
       contract: input.contract,
       plans: input.plans,
       retrievals: globalized.retrievals,
@@ -495,6 +525,41 @@ function globalizeDrafts(
   return Object.freeze(drafts);
 }
 
+function projectGroundedClaims(input: {
+  readonly plans: readonly DomainKnowledgePlan[];
+  readonly evidence: readonly RetrievedEvidence[];
+  readonly firstClaimIndex: number;
+}): readonly ClaimDraft[] {
+  const facts = groundedAnswerCardFacts(
+    input.plans.flatMap((plan) => plan.bindings),
+    input.evidence.map((item) => ({
+      requirementId: item.requirementId,
+      citation: item.citation,
+      path: item.path,
+      title: item.title,
+      content: item.compactContent,
+    })),
+  );
+  return Object.freeze(facts.flatMap((fact, index): ClaimDraft[] => {
+    const source = input.evidence.find((item) =>
+      item.requirementId === fact.requirementId &&
+      item.obligationId === fact.obligationId &&
+      item.domain === fact.domain &&
+      item.citation === fact.citation &&
+      item.path === fact.path);
+    if (source === undefined || source.aspectIds.length === 0) return [];
+    return [Object.freeze({
+      claimId: `CL${input.firstClaimIndex + index}` as `CL${number}`,
+      obligationId: fact.obligationId as `O${number}`,
+      domain: fact.domain,
+      text: fact.text,
+      kind: "fact" as const,
+      citationIndexes: Object.freeze([fact.citation]),
+      coveredAspectIds: Object.freeze([...source.aspectIds]),
+    })];
+  }));
+}
+
 function supportedClaims(
   claims: readonly BoundClaim[],
   decisions: readonly ClaimSupportDecision[],
@@ -520,7 +585,7 @@ function validateTargetedRevision(
   }
 }
 
-function reduceToOutcomes(input: {
+export function reduceReliableOutcomes(input: {
   readonly contract: AtomicObligationContract;
   readonly plans: readonly DomainKnowledgePlan[];
   readonly retrievals: readonly DeterministicRetrievalResult[];
@@ -538,6 +603,11 @@ function reduceToOutcomes(input: {
       .map((plan) => plan.domain));
     const domainFailed = [...requiredDomains].some((domain) => input.failedDomains.has(domain));
     const missingInput = units.some((unit) => unit.inputState === "missing");
+    const missingInputConcepts = [...new Set(input.plans.flatMap((plan) =>
+      plan.bindings
+        .filter((binding) =>
+          binding.obligationId === obligation.id && binding.cardId !== undefined)
+        .flatMap((binding) => binding.requiredConcepts ?? [])))];
     const allComplete = requiredDomains.size > 0 &&
       !domainFailed &&
       units.length >= requiredDomains.size &&
@@ -560,7 +630,21 @@ function reduceToOutcomes(input: {
         obligationId: obligation.id,
         state: "missing_input" as const,
         claims: Object.freeze(claims),
-        gapReason: "缺少完成该义务所需的客户事实。",
+        gapReason: missingInputConcepts.length === 0
+          ? "缺少完成该义务所需的客户事实。"
+          : `缺少完成该义务所需的客户事实；需要补充或确认：${missingInputConcepts.join("、")}。`,
+      });
+    }
+    if (governedPolarTargetIsUnconfirmed(
+      input.contract.sourceQuestion,
+      obligation.provenance,
+      claims,
+    )) {
+      return Object.freeze({
+        obligationId: obligation.id,
+        state: "not_covered" as const,
+        claims: Object.freeze(claims),
+        gapReason: "正式知识只能证明未覆盖目标，不能证明用户询问的支持或兼容结论。",
       });
     }
     if (claims.length > 0) {
@@ -586,9 +670,47 @@ function reduceToOutcomes(input: {
   }));
 }
 
+const POLAR_TARGET_QUESTION_PATTERN =
+  /(?:是否|能否|可否|有没有|有无|是不是|能不能|支不支持|兼不兼容)/u;
+const QUOTED_UNCOVERED_TARGET_PATTERN =
+  /(?:未提及|未覆盖|没有(?:提供|说明|记载)?)[^“”「」『』"']{0,12}[“「『"']([^”」』"']{2,120})[”」』"']/gu;
+
+function governedPolarTargetIsUnconfirmed(
+  question: string,
+  provenance: "governed" | undefined,
+  claims: readonly BoundClaim[],
+): boolean {
+  if (provenance !== "governed" || !POLAR_TARGET_QUESTION_PATTERN.test(question)) {
+    return false;
+  }
+  const normalizedQuestion = normalizeBoundaryTarget(question);
+  return claims.some((claim) => {
+    if (!/(?:无法|不能|不足以)(?:确认|判断|证明)/u.test(claim.text)) return false;
+    for (const match of claim.text.matchAll(QUOTED_UNCOVERED_TARGET_PATTERN)) {
+      const target = normalizeBoundaryTarget(match[1] ?? "");
+      if (target.length >= 2 && normalizedQuestion.includes(target)) return true;
+    }
+    return false;
+  });
+}
+
+function normalizeBoundaryTarget(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("zh-CN")
+    .replace(/[\p{P}\p{S}\s]+/gu, "");
+}
+
 function stableClaims(claims: readonly BoundClaim[]): readonly BoundClaim[] {
-  const byId = new Map(claims.map((claim) => [claim.claimId, claim] as const));
-  return Object.freeze([...byId.values()].sort((left, right) =>
+  const byContent = new Map<string, BoundClaim>();
+  for (const claim of claims) {
+    const key = JSON.stringify({
+      obligationId: claim.obligationId,
+      domain: claim.domain,
+      text: claim.text.normalize("NFKC").replace(/\s+/gu, " ").trim(),
+      citations: [...claim.citationIndexes].sort((left, right) => left - right),
+    });
+    if (!byContent.has(key)) byContent.set(key, claim);
+  }
+  return Object.freeze([...byContent.values()].sort((left, right) =>
     Number(left.claimId.slice(2)) - Number(right.claimId.slice(2))));
 }
 

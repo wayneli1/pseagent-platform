@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { RetrievedEvidence } from "./deterministic-retrieval.js";
 import type { DiagnosticTrace } from "./diagnostics.js";
-import type { ModelClient } from "./model-client.js";
+import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { observeModelCall } from "./model-observability.js";
 import { structuredTransformationInput } from "./structured-model-input.js";
 import {
@@ -49,6 +49,7 @@ export class HighRiskConsensusGate {
     readonly secondModelId: string;
     readonly signal: AbortSignal;
     readonly trace?: DiagnosticTrace;
+    readonly onModelAttempt?: () => void;
   }): Promise<HighRiskConsensusResult> {
     const mode = input.firstModelId === input.secondModelId
       ? "repeated_same_model" as const
@@ -69,7 +70,7 @@ export class HighRiskConsensusGate {
     });
     try {
       const first = input.firstVerdicts === undefined
-        ? await requestConsensusVerdicts({
+        ? await requestConsensusVerdictsWithSchemaRetry({
             model: input.firstVerifier,
             role: "verifier",
             operation: "verify",
@@ -77,9 +78,12 @@ export class HighRiskConsensusGate {
             evidence: input.evidence ?? [],
             signal: input.signal,
             ...(input.trace === undefined ? {} : { trace: input.trace }),
+            ...(input.onModelAttempt === undefined
+              ? {}
+              : { onModelAttempt: input.onModelAttempt }),
           })
         : firstConsensusVerdicts(input.claims, input.firstVerdicts);
-      const second = await requestConsensusVerdicts({
+      const second = await requestConsensusVerdictsWithSchemaRetry({
         model: input.secondVerifier,
         role: "consensus_verifier",
         operation: "consensus_verify",
@@ -87,6 +91,9 @@ export class HighRiskConsensusGate {
         evidence: input.evidence ?? [],
         signal: input.signal,
         ...(input.trace === undefined ? {} : { trace: input.trace }),
+        ...(input.onModelAttempt === undefined
+          ? {}
+          : { onModelAttempt: input.onModelAttempt }),
       });
       const firstById = new Map(first.map((verdict) => [verdict.claimId, verdict]));
       const secondById = new Map(second.map((verdict) => [verdict.claimId, verdict]));
@@ -114,6 +121,33 @@ export class HighRiskConsensusGate {
       return rejectAll();
     }
   }
+}
+
+async function requestConsensusVerdictsWithSchemaRetry(input: {
+  readonly model: ModelClient;
+  readonly role: "verifier" | "consensus_verifier";
+  readonly operation: "verify" | "consensus_verify";
+  readonly claims: readonly BoundClaim[];
+  readonly evidence: readonly RetrievedEvidence[];
+  readonly signal: AbortSignal;
+  readonly trace?: DiagnosticTrace;
+  readonly onModelAttempt?: () => void;
+}): Promise<readonly ConsensusVerdict[]> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    input.onModelAttempt?.();
+    try {
+      return await requestConsensusVerdicts(input);
+    } catch (error) {
+      if (
+        attempt > 0 ||
+        input.signal.aborted ||
+        !(error instanceof InvalidModelPayloadError)
+      ) {
+        throw error;
+      }
+    }
+  }
+  throw new Error("consensus_schema_retry_exhausted");
 }
 
 export function consensusClaimSignature(claim: BoundClaim): string {

@@ -66,6 +66,11 @@ function retrieval(sourceBoundary: "formal" | "summary_only" = "formal"):
       title: reference.title,
       compactContent: "Coremail 迁移能力正式说明。",
       aspectIds: ["A1"],
+      aspectRequirements: [{
+        id: "A1",
+        label: "migration capability",
+        terms: ["migration", "capability"],
+      }],
       sourceBoundary,
     }],
     references: [reference],
@@ -119,6 +124,41 @@ describe("claim evidence graph", () => {
     });
     expect(result.retained).toHaveLength(1);
     expect(result.retained[0]?.evidenceIdentities[0]).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("binds one deduplicated reference independently to multiple obligations", () => {
+    const sharedContract: AtomicObligationContract = {
+      ...contract,
+      obligations: contract.obligations.map((obligation) => ({
+        ...obligation,
+        domains: ["coremail-professional"],
+        evidencePolicy: "direct",
+      })),
+    };
+    const first = retrieval();
+    const sharedRetrieval: DeterministicRetrievalResult = {
+      ...first,
+      evidence: [
+        first.evidence[0]!,
+        {
+          ...first.evidence[0]!,
+          requirementId: "R2",
+          obligationId: "O2",
+        },
+      ],
+    };
+
+    const result = bindClaimsToEvidence({
+      claims: [
+        claim(),
+        claim({ claimId: "CL2", obligationId: "O2" }),
+      ],
+      contract: sharedContract,
+      retrievals: [sharedRetrieval],
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.retained.map((item) => item.obligationId)).toEqual(["O1", "O2"]);
   });
 
   it("remaps local domain citations to stable global references", () => {

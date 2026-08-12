@@ -38,6 +38,7 @@ export interface DomainRequirementBinding {
   readonly obligationId: string;
   readonly order: number;
   readonly cardId?: string;
+  readonly cardTitle?: string;
   readonly cardObligationId?: string;
   readonly requiredConcepts?: readonly string[];
   readonly forbiddenClaims?: readonly string[];
@@ -201,6 +202,7 @@ function bindingPolicy(
 ): Pick<
   DomainRequirementBinding,
   | "cardId"
+  | "cardTitle"
   | "cardObligationId"
   | "requiredConcepts"
   | "forbiddenClaims"
@@ -210,6 +212,7 @@ function bindingPolicy(
   if (policy === undefined) return {};
   return {
     cardId: policy.cardId,
+    ...(policy.cardTitle === undefined ? {} : { cardTitle: policy.cardTitle }),
     cardObligationId: policy.cardObligationId,
     requiredConcepts: policy.requiredConcepts,
     forbiddenClaims: policy.forbiddenClaims,

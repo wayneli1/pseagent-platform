@@ -1560,6 +1560,7 @@ function singleDomainBindings(input: {
         ? {}
         : {
             cardId: policy.cardId,
+            ...(policy.cardTitle === undefined ? {} : { cardTitle: policy.cardTitle }),
             cardObligationId: policy.cardObligationId,
             requiredConcepts: policy.requiredConcepts,
             forbiddenClaims: policy.forbiddenClaims,
