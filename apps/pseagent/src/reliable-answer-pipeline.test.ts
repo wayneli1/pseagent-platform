@@ -478,6 +478,73 @@ describe("deterministic reliable answer pipeline", () => {
     });
   });
 
+  it("retries one ungoverned synthesis that returns no claims despite formal evidence", async () => {
+    const { trace } = traceFixture();
+    const fixture = pipelineFixture();
+    vi.mocked(fixture.synthesizer.draft).mockResolvedValueOnce([]);
+
+    const execution = await fixture.pipeline.answer({
+      question: contract.sourceQuestion,
+      scope: "professional",
+      contract,
+      plans: [plan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).toBe("answered");
+    expect(execution.result.answer).toContain("支持邮件归档。[1]");
+    expect(fixture.synthesizer.draft).toHaveBeenCalledTimes(2);
+    expect(execution.callBudget.usedOpenEndedCalls).toBe(2);
+  });
+
+  it("projects a low-risk formal excerpt when the single empty-draft retry is also empty", async () => {
+    const { trace } = traceFixture();
+    const fixture = pipelineFixture();
+    vi.mocked(fixture.synthesizer.draft).mockResolvedValue([]);
+
+    const execution = await fixture.pipeline.answer({
+      question: contract.sourceQuestion,
+      scope: "professional",
+      contract,
+      plans: [plan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).toBe("answered");
+    expect(execution.result.answer).toContain("正式资料说明支持邮件归档。[1]");
+    expect(fixture.synthesizer.draft).toHaveBeenCalledTimes(2);
+    expect(execution.callBudget.usedOpenEndedCalls).toBe(2);
+  });
+
+  it("does not retry an empty draft when retrieval found no formal evidence", async () => {
+    const { trace } = traceFixture();
+    const fixture = pipelineFixture();
+    vi.mocked(fixture.retrieval.retrieve).mockResolvedValueOnce({
+      ...retrievalResult,
+      evidence: [],
+      references: [],
+    });
+    vi.mocked(fixture.synthesizer.draft).mockResolvedValueOnce([]);
+
+    const execution = await fixture.pipeline.answer({
+      question: contract.sourceQuestion,
+      scope: "professional",
+      contract,
+      plans: [plan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).toBe("not_covered");
+    expect(fixture.synthesizer.draft).toHaveBeenCalledOnce();
+    expect(execution.callBudget.usedOpenEndedCalls).toBe(1);
+  });
+
   it("publishes an exact formal evidence excerpt after a low-risk transport failure", async () => {
     const { trace } = traceFixture();
     const fixture = pipelineFixture();

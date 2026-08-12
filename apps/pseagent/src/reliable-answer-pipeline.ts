@@ -176,10 +176,14 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
     }));
     for (const [index, outcome] of draftSettled.entries()) {
       const item = retrieved[index];
+      const emptyEvidenceBackedDraft = outcome.status === "fulfilled" &&
+        outcome.value.drafts.length === 0 &&
+        (item?.retrieval.evidence.length ?? 0) > 0;
+      const invalidPayload = outcome.status === "rejected" &&
+        outcome.reason instanceof InvalidModelPayloadError;
       if (
         item === undefined ||
-        outcome.status !== "rejected" ||
-        !(outcome.reason instanceof InvalidModelPayloadError) ||
+        (!invalidPayload && !emptyEvidenceBackedDraft) ||
         draftSignal.aborted ||
         !calls.hasOpenEndedCapacity() ||
         item.plan.bindings.some((binding) => binding.answerTemplate !== undefined)
@@ -210,7 +214,10 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
     const localDraftGroups = draftSettled.flatMap((item) =>
       item.status === "fulfilled" ? [item.value] : []);
     const synthesisFailedDomains = new Set(retrieved
-      .filter((_item, index) => draftSettled[index]?.status !== "fulfilled")
+      .filter((_item, index) => {
+        const outcome = draftSettled[index];
+        return outcome?.status !== "fulfilled" || outcome.value.drafts.length === 0;
+      })
       .map((item) => item.plan.domain));
     recordStage(input, "claim_draft", draftStartedAt,
       draftSettled.every((item) => item.status === "fulfilled")

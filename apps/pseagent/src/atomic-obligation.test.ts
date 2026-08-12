@@ -269,6 +269,37 @@ describe("atomic obligation contract", () => {
     }
   });
 
+  it("restores both mixed domains even when the model task spec omitted one domain", () => {
+    const question = "个人配置不能全部随邮件迁移时，怎样在售前向交付结构化移交可迁项、用户动作、风险和责任人？";
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const deterministic = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "professional",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+    const professionalOnly = taskSpecSchema.parse({
+      ...deterministic,
+      deliverables: deterministic.deliverables.map((deliverable) => ({
+        ...deliverable,
+        obligations: deliverable.obligations.map((obligation) => ({
+          ...obligation,
+          domains: ["coremail-professional"],
+        })),
+      })),
+    });
+
+    const contract = compileAtomicObligationContract({
+      resolvedQuestion,
+      taskSpec: professionalOnly,
+    });
+
+    expect(new Set(contract.obligations.flatMap((item) => item.domains))).toEqual(
+      new Set(["coremail-professional", "presales-general"]),
+    );
+    expect(contract.obligations.reduce((sum, item) => sum + item.domains.length, 0))
+      .toBeLessThanOrEqual(contract.obligations.length + 1);
+  });
+
   it("keeps one shared phased-acceptance request instead of splitting its stage dimensions", () => {
     const question = "从 Coremail 云服务迁回自建环境时，资产盘点、全量同步、增量追赶、切换和回退应如何分阶段验收？";
     const resolvedQuestion = identityResolvedQuestion(question);

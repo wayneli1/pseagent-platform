@@ -103,7 +103,6 @@ export function compileAtomicObligationContract(input: {
       taskItems,
     )),
     question,
-    taskItems,
   );
   const contract: AtomicObligationContract = Object.freeze({
     subject: input.taskSpec.subject,
@@ -529,14 +528,14 @@ function deterministicDomains(
 function ensureMixedAtomicDomainCoverage(
   obligations: readonly AtomicObligation[],
   question: string,
-  taskItems: readonly TaskSpecObligation[],
 ): AtomicObligation[] {
-  const expectedDomains = stableUnique(taskItems
-    .filter(({ deliverable, obligation }) => deliverable.required && obligation.required)
-    .flatMap(({ obligation }) => obligation.domains));
-  if (expectedDomains.length !== 2 || !requiresMixedKnowledgeDomains(question)) {
+  if (!requiresMixedKnowledgeDomains(question)) {
     return [...obligations];
   }
+  const expectedDomains = [
+    "coremail-professional",
+    "presales-general",
+  ] as const satisfies readonly KnowledgeDomain[];
   const output = [...obligations];
   for (const missingDomain of expectedDomains.filter((domain) =>
     !output.some((obligation) => obligation.domains.includes(domain)))) {
