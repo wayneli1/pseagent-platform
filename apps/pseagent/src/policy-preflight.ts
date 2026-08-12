@@ -83,7 +83,7 @@ export async function evaluatePolicyPreflight(input: {
   }
   try {
     const semantic = await raceWithSignal(
-      input.classifier.classify({
+      () => input.classifier!.classify({
         question: input.question,
         signal: input.signal,
       }),
@@ -122,8 +122,9 @@ function inferPolicyScope(question: string): Exclude<Scope, "normal"> {
     : "professional";
 }
 
-async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+async function raceWithSignal<T>(call: () => Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw signal.reason;
+  const promise = call();
   let removeAbortListener: () => void = () => {};
   const aborted = new Promise<never>((_resolve, reject) => {
     const onAbort = () => reject(signal.reason ?? new Error("policy_preflight_aborted"));

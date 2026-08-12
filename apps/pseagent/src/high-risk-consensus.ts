@@ -190,7 +190,7 @@ async function requestConsensusVerdicts(input: {
   readonly trace?: DiagnosticTrace;
 }): Promise<readonly ConsensusVerdict[]> {
   const expectedIds = new Set<string>(input.claims.map((claim) => claim.claimId));
-  const raw = await raceWithSignal(observeModelCall({
+  const raw = await raceWithSignal(() => observeModelCall({
     trace: input.trace,
     role: input.role,
     operation: input.operation,
@@ -247,8 +247,9 @@ function sameNumbers(left: readonly number[], right: readonly number[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+async function raceWithSignal<T>(call: () => Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw signal.reason;
+  const promise = call();
   let removeAbortListener: () => void = () => {};
   const aborted = new Promise<never>((_resolve, reject) => {
     const onAbort = () => reject(signal.reason ?? new Error("consensus_verifier_aborted"));

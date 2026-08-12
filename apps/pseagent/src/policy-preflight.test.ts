@@ -64,4 +64,22 @@ describe("policy preflight", () => {
     expect(result).toEqual({ kind: "allowed" });
     expect(classifier.classify).not.toHaveBeenCalled();
   });
+
+  it("does not start semantic classification after the request signal is already aborted", async () => {
+    const classifier: PolicySemanticClassifier = {
+      classify: vi.fn().mockRejectedValue(new Error("late_model_rejection")),
+    };
+    const controller = new AbortController();
+    controller.abort(new Error("request_deadline_elapsed"));
+
+    const result = await evaluatePolicyPreflight({
+      question: "能否帮我处理生产访问记录，避免影响这次检查？",
+      classifier,
+      signal: controller.signal,
+    });
+
+    expect(result.kind).toBe("uncertain");
+    expect(result.result?.policyDisposition).toBe("needs_escalation");
+    expect(classifier.classify).not.toHaveBeenCalled();
+  });
 });

@@ -166,4 +166,24 @@ describe("high-risk consensus gate", () => {
     expect(result.retainedClaimIds).toEqual([]);
     expect(result.rejectedClaimIds).toEqual(["CL1", "CL2"]);
   });
+
+  it("does not start a verifier promise after the request signal is already aborted", async () => {
+    const secondVerifier = modelReturning(["supported", "supported"]);
+    const controller = new AbortController();
+    controller.abort(new Error("request_deadline_elapsed"));
+
+    const result = await new HighRiskConsensusGate().evaluate({
+      claims,
+      firstVerdicts,
+      firstVerifier: modelReturning(["supported", "supported"]),
+      secondVerifier,
+      firstModelId: "verifier-a",
+      secondModelId: "verifier-b",
+      signal: controller.signal,
+    });
+
+    expect(result.retainedClaimIds).toEqual([]);
+    expect(result.rejectedClaimIds).toEqual(["CL1", "CL2"]);
+    expect(secondVerifier.completeJson).not.toHaveBeenCalled();
+  });
 });
