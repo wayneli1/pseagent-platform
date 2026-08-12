@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "matrixSha256": "bac4ab60afebb31874f1404de622587ac883141c64a94f1fde1a86ef8dde7b47",
+  "excludedQuestionCount": 851,
+  "excludedQuestionsSha256": "16492d92015b6b852e45341cf72e2b4b346dd10e46d2885b28c35fa34645676c",
+  "priorSemanticFingerprintCount": 100,
+  "priorSemanticFingerprintsSha256": "6e1a805079a002a1c38fb886a9ccb1220664a295ad3dca1fdbf3723518c9a895"
+}
