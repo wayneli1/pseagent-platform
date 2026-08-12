@@ -3,6 +3,7 @@ import {
   collectReliabilityModelMetrics,
   evaluateReliabilityLoadGate,
   parseReliabilityKnowledgeHealth,
+  parseReliabilityRuntimeIdentity,
   parseReliabilitySchedulerIdentity,
   selectReliabilityCases,
   summarizeReliabilityLoad,
@@ -60,6 +61,25 @@ describe("reliability load report", () => {
     expect(() => parseReliabilitySchedulerIdentity({
       PSE_MODEL_MAX_QUEUE: "-1",
     })).toThrow("invalid_reliability_scheduler_identity");
+  });
+
+  it("fails closed unless the deterministic control plane is active with a cold cache", () => {
+    expect(parseReliabilityRuntimeIdentity({
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
+      PSE_QUALIFIED_CACHE_ENABLED: "false",
+    })).toEqual({
+      controlPlaneEnabled: true,
+      cacheMode: "disabled",
+    });
+    expect(() => parseReliabilityRuntimeIdentity({}))
+      .toThrow("reliability_control_plane_required");
+    expect(() => parseReliabilityRuntimeIdentity({
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "false",
+    })).toThrow("reliability_control_plane_required");
+    expect(() => parseReliabilityRuntimeIdentity({
+      PSE_RELIABILITY_CONTROL_PLANE_ENABLED: "true",
+      PSE_QUALIFIED_CACHE_ENABLED: "true",
+    })).toThrow("reliability_load_requires_cold_cache");
   });
 
   it("keeps content-free queue and execution metrics for one request", () => {

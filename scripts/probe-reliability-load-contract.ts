@@ -20,6 +20,26 @@ export interface ReliabilitySchedulerIdentity {
   readonly queueTimeoutMs: number;
 }
 
+export interface ReliabilityRuntimeIdentity {
+  readonly controlPlaneEnabled: true;
+  readonly cacheMode: "disabled";
+}
+
+export function parseReliabilityRuntimeIdentity(
+  env: Readonly<Record<string, string | undefined>>,
+): ReliabilityRuntimeIdentity {
+  if (env.PSE_RELIABILITY_CONTROL_PLANE_ENABLED !== "true") {
+    throw new Error("reliability_control_plane_required");
+  }
+  if (env.PSE_QUALIFIED_CACHE_ENABLED === "true") {
+    throw new Error("reliability_load_requires_cold_cache");
+  }
+  return Object.freeze({
+    controlPlaneEnabled: true,
+    cacheMode: "disabled",
+  });
+}
+
 export function parseReliabilitySchedulerIdentity(
   env: Readonly<Record<string, string | undefined>>,
 ): ReliabilitySchedulerIdentity {

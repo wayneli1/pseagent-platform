@@ -7,6 +7,7 @@ import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.ts";
 import {
   evaluateReliabilityLoadGate,
   parseReliabilityKnowledgeHealth,
+  parseReliabilityRuntimeIdentity,
   parseReliabilitySchedulerIdentity,
   selectReliabilityCases,
   summarizeReliabilityLoad,
@@ -30,6 +31,7 @@ const profiles = parseProfiles(process.env.PSE_RELIABILITY_CONCURRENCY ?? "1,2,4
 const limit = positiveInteger(process.env.PSE_RELIABILITY_LIMIT, 10);
 const repeat = positiveInteger(process.env.PSE_RELIABILITY_REPEAT, 1);
 const timeoutMs = positiveInteger(process.env.PSE_RELIABILITY_TIMEOUT_MS, 180_000);
+const runtimeIdentity = parseReliabilityRuntimeIdentity(process.env);
 const selected = selectReliabilityCases(
   cases,
   process.env.PSE_RELIABILITY_IDS,
@@ -50,6 +52,7 @@ const report = {
     verifier: process.env.PSE_VERIFIER_MODEL_NAME ?? process.env.PSE_MODEL_NAME,
   },
   knowledgeRevisions,
+  runtimeIdentity,
   scheduler,
   profiles: [] as Array<{
     readonly summary: ReturnType<typeof summarizeReliabilityLoad>;

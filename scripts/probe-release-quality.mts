@@ -11,9 +11,11 @@ import {
 } from "../services/knowledge-ops-worker/src/release-quality-gate.ts";
 import { ReliabilityDiagnosticCollector } from "./reliability-diagnostics.ts";
 import { runWithBoundedConcurrency } from "./bounded-concurrency.ts";
+import { parseReliabilityRuntimeIdentity } from "./probe-reliability-load-contract.ts";
 
 const REQUIRED_MODEL = "deepseek_v4_flash";
 assertFixedModel(process.env);
+const runtimeIdentity = parseReliabilityRuntimeIdentity(process.env);
 const source = JSON.parse(readFileSync(
   new URL("../tests/regression/release-quality-suites.json", import.meta.url),
   "utf8",
@@ -94,6 +96,7 @@ const report = {
   multiDomainActive: process.env.PSE_MULTI_DOMAIN_ACTIVE_ENABLED === "true",
   answerCardExactActive: process.env.PSE_ANSWER_CARD_EXACT_ACTIVE_ENABLED === "true",
   answerCardFamilyActive: process.env.PSE_ANSWER_CARD_FAMILY_ACTIVE_ENABLED === "true",
+  runtimeIdentity,
   suiteConcurrency,
   records: records.sort((left, right) => String(left.suiteId).localeCompare(String(right.suiteId))),
 };
