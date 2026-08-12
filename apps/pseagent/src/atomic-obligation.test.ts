@@ -269,6 +269,25 @@ describe("atomic obligation contract", () => {
     }
   });
 
+  it("routes expanded mixed-domain atoms individually instead of duplicating both domains", () => {
+    const question = "从 Coremail 云服务迁回自建环境时，资产盘点、全量同步、增量追赶、切换和回退应如何分阶段验收？";
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "professional",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+
+    const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+
+    expect(contract.obligations).toHaveLength(4);
+    expect(new Set(contract.obligations.flatMap((item) => item.domains))).toEqual(
+      new Set(["coremail-professional", "presales-general"]),
+    );
+    expect(contract.obligations.reduce((sum, item) => sum + item.domains.length, 0))
+      .toBeLessThanOrEqual(6);
+  });
+
   it("reports overlapping and untraceable source spans", () => {
     const contract: AtomicObligationContract = {
       subject: "测试",

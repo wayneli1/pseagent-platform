@@ -90,14 +90,17 @@ export function compileAtomicObligationContract(input: {
   const question = input.resolvedQuestion.standaloneQuestion;
   const taskItems = flattenTaskSpec(input.taskSpec);
   const seeds = obligationSeeds(question);
-  const obligations = seeds.map((seed, index) =>
-    classifySeedWithModelTaskSpecOrDeterministicFallback(
+  const obligations = ensureMixedAtomicDomainCoverage(
+    seeds.map((seed, index) => classifySeedWithModelTaskSpecOrDeterministicFallback(
       seed,
       index,
       question,
       input.taskSpec,
       taskItems,
-    ));
+    )),
+    question,
+    taskItems,
+  );
   const contract: AtomicObligationContract = Object.freeze({
     subject: input.taskSpec.subject,
     sourceQuestion: question,
@@ -463,12 +466,6 @@ function deterministicDomains(
 ): KnowledgeDomain[] {
   const stableFallbackDomains = stableUnique(fallbackDomains);
   if (
-    stableFallbackDomains.length === 2 &&
-    requiresMixedKnowledgeDomains(question)
-  ) {
-    return [...stableFallbackDomains];
-  }
-  if (
     stableFallbackDomains.length === 1 &&
     stableFallbackDomains[0] === "coremail-professional" &&
     isTechnicalAcceptanceChecklist(question)
@@ -498,6 +495,44 @@ function deterministicDomains(
   return PROFESSIONAL_PATTERN.test(question)
     ? ["coremail-professional"]
     : ["presales-general"];
+}
+
+function ensureMixedAtomicDomainCoverage(
+  obligations: readonly AtomicObligation[],
+  question: string,
+  taskItems: readonly TaskSpecObligation[],
+): AtomicObligation[] {
+  const expectedDomains = stableUnique(taskItems
+    .filter(({ deliverable, obligation }) => deliverable.required && obligation.required)
+    .flatMap(({ obligation }) => obligation.domains));
+  if (expectedDomains.length !== 2 || !requiresMixedKnowledgeDomains(question)) {
+    return [...obligations];
+  }
+  const output = [...obligations];
+  for (const missingDomain of expectedDomains.filter((domain) =>
+    !output.some((obligation) => obligation.domains.includes(domain)))) {
+    let preferredIndex = output.findIndex((obligation) =>
+      missingDomain === "coremail-professional"
+        ? PROFESSIONAL_PATTERN.test(obligation.sourceText)
+        : obligation.evidencePolicy === "customer_input" ||
+          isProductNeutralGovernanceDeliverable(obligation.sourceText));
+    if (preferredIndex < 0) {
+      preferredIndex = output.findIndex((obligation) =>
+        missingDomain === "coremail-professional"
+          ? obligation.evidencePolicy === "direct"
+          : obligation.evidencePolicy === "synthesis");
+    }
+    if (preferredIndex < 0) preferredIndex = 0;
+    const obligation = output[preferredIndex];
+    if (obligation === undefined) continue;
+    const domains = (["coremail-professional", "presales-general"] as const)
+      .filter((domain) => obligation.domains.includes(domain) || domain === missingDomain);
+    output[preferredIndex] = Object.freeze({
+      ...obligation,
+      domains: Object.freeze(domains),
+    });
+  }
+  return output;
 }
 
 function deterministicRisk(text: string): ObligationRisk {

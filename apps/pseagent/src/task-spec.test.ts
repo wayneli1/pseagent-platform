@@ -3193,6 +3193,25 @@ describe("deterministic task recovery semantics", () => {
     expect(checklistSignals.unresolvedDistributiveGroups).toEqual([]);
   });
 
+  it("does not treat distributive action transformations as entity lookups", () => {
+    for (const question of [
+      "机会复盘中的红旗和优势怎样分别转成有负责人、日期和退出条件的行动？",
+      "把风险和优势分别转为可跟踪的行动与复核项。",
+      "让问题与收益分别形成责任明确的下一步。",
+    ]) {
+      const input = compilerInput(question, "general");
+      const taskSpec = compileDeterministicTaskSpecFallback(input);
+      const guard = new DeterministicTaskSpecGuard().validate({
+        resolvedQuestion: input.resolvedQuestion,
+        taskSpec,
+      });
+      expect(guard.issues).not.toContainEqual(expect.objectContaining({
+        code: "distributive_entity_group_unresolved",
+      }));
+      expect(guard.ok).toBe(true);
+    }
+  });
+
   it("keeps technical acceptance checklists in the professional domain", () => {
     for (const question of [
       "零停机迁移完成后，邮件数量、文件夹、抽样正文和增量差异应怎样形成完整性验收证据？",

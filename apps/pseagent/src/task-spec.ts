@@ -1051,7 +1051,7 @@ export function extractExplicitQuestionSignals(
     }
   }
   const distributiveParallelListPattern =
-    /(?:^|[，,；;。！？!?])\s*(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)\s*(?=(?:各自|分别|逐一|逐个)(?!\s*(?:检索|搜索|查找|说明|介绍|分析|评估|检查|验证|核对|复核|对比|比较|列出|给出)))/gu;
+    /(?:^|[，,；;。！？!?])\s*(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)\s*(?=(?:各自|分别|逐一|逐个)(?!\s*(?:检索|搜索|查找|说明|介绍|分析|评估|检查|验证|核对|复核|对比|比较|列出|给出|转成|转为|转换(?:成|为)?|形成)))/gu;
   for (const match of question.matchAll(distributiveParallelListPattern)) {
     const sourceText = match.groups?.list
       ?.replace(/^.*?(?:区分|对比|比较)\s*/u, "")
