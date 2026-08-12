@@ -76,6 +76,9 @@ describe("ModelStructuredClaimSynthesizer", () => {
         content: expect.stringContaining('{"claims":[...]}'),
       })]),
     }));
+    const inputMessage = vi.mocked(completeJson).mock.calls[0]![0].messages[1]!.content;
+    expect(inputMessage).toContain("禁止复制输入");
+    expect(inputMessage.trimStart().startsWith("{")).toBe(false);
   });
 
   it("rejects model text that embeds rendered Markdown citations", async () => {
@@ -149,5 +152,8 @@ describe("ModelClaimSupportVerifier", () => {
         content: expect.stringContaining('{"decisions":[...]}'),
       })]),
     }));
+    const inputMessage = vi.mocked(completeJson).mock.calls[0]![0].messages[1]!.content;
+    expect(inputMessage).toContain("禁止复制输入");
+    expect(inputMessage.trimStart().startsWith("{")).toBe(false);
   });
 });

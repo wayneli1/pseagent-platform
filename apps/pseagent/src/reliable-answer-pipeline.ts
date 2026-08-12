@@ -31,6 +31,7 @@ import {
   type ModelStructuredClaimSynthesizer,
 } from "./structured-claim.js";
 import type { KnowledgeDomain } from "./task-spec.js";
+import { structuredTransformationInput } from "./structured-model-input.js";
 
 export const PSE_MAX_OPEN_ENDED_CALLS = 3;
 
@@ -390,11 +391,11 @@ export class ModelTargetedClaimReviser implements TargetedClaimReviser {
       messages: [
         {
           role: "system",
-          content: "仅修订给出的不合格主张。claimId、obligationId 和 domain 必须原样保留；只能使用给出的证据及其 citation，不得改写已通过主张，不得补充新主张。只输出根对象 {\"revisions\":[...]}，text 中禁止写 [n] 引用。",
+          content: "仅修订给出的不合格主张。禁止复述或原样返回输入，顶层不能出现 rejectedClaims、obligations 或 allowedEvidence。claimId、obligationId 和 domain 必须原样保留；只能使用给出的证据及其 citation，不得改写已通过主张，不得补充新主张。只输出根对象 {\"revisions\":[...]}，每项严格包含 claimId、obligationId、domain、text、kind、citationIndexes、coveredAspectIds；text 中禁止写 [n] 引用。",
         },
         {
           role: "user",
-          content: JSON.stringify({
+          content: structuredTransformationInput("revisions", {
             rejectedClaims: input.rejectedClaims,
             obligations: input.contract.obligations.filter((obligation) =>
               input.rejectedClaims.some((claim) => claim.obligationId === obligation.id)),

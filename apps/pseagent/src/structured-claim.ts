@@ -10,6 +10,7 @@ import {
   type ModelClient,
 } from "./model-client.js";
 import type { KnowledgeDomain } from "./task-spec.js";
+import { structuredTransformationInput } from "./structured-model-input.js";
 
 export interface ClaimDraft {
   readonly claimId: `CL${number}`;
@@ -64,13 +65,16 @@ const supportDecisionEnvelopeSchema = z.object({
 }).strict();
 
 const CLAIM_DRAFT_PROMPT = `你根据已读取的正式证据，为每个原子义务生成最小、独立的结构化主张。
-只输出根对象 {"claims":[...]}。text 中禁止写 [1] 之类引用标记；引用只放 citationIndexes。
+禁止复述或原样返回输入。只输出根对象 {"claims":[...]}，顶层不能出现 obligations 或 evidence。
+每项严格包含 claimId、obligationId、domain、text、kind、citationIndexes、coveredAspectIds；示例：{"claims":[{"claimId":"CL1","obligationId":"O1","domain":"coremail-professional","text":"证据支持的主张","kind":"fact","citationIndexes":[1],"coveredAspectIds":["A1"]}]}。
+text 中禁止写 [1] 之类引用标记；引用只放 citationIndexes。
 不得跨义务或跨知识域借用证据，不得扩展证据没有支持的数字、版本、承诺或边界。
 资料不足时生成 kind=gap 的明确缺口主张，citationIndexes 为空。`;
 
 const CLAIM_VERIFY_PROMPT = `你是主张支持度裁判，只判断给定主张是否被指定证据支持。
-不得改写主张，不得增加引用。每条主张输出 supported、contradicted 或 insufficient。
-claimId、claimHash 和 citationIndexes 必须原样返回。只输出根对象 {"decisions":[...]}。`;
+禁止复述或原样返回输入，顶层不能出现 claims 或 evidence。不得改写主张，不得增加引用。
+每条主张输出 supported、contradicted 或 insufficient。claimId、claimHash 和 citationIndexes 必须原样返回。
+只输出根对象 {"decisions":[...]}，每项严格包含 claimId、claimHash、citationIndexes、verdict。`;
 
 export class ModelStructuredClaimSynthesizer {
   constructor(private readonly model: ModelClient) {}
@@ -87,7 +91,7 @@ export class ModelStructuredClaimSynthesizer {
         { role: "system", content: CLAIM_DRAFT_PROMPT },
         {
           role: "user",
-          content: JSON.stringify({
+          content: structuredTransformationInput("claims", {
             obligations,
             evidence: input.retrieval.evidence.map(compactEvidenceForModel),
           }),
@@ -130,7 +134,7 @@ export class ModelClaimSupportVerifier {
         { role: "system", content: CLAIM_VERIFY_PROMPT },
         {
           role: "user",
-          content: JSON.stringify({
+          content: structuredTransformationInput("decisions", {
             claims: input.claims.map((claim, index) => ({
               ...expected[index],
               text: claim.text,

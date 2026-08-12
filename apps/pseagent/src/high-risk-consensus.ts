@@ -4,6 +4,7 @@ import type { RetrievedEvidence } from "./deterministic-retrieval.js";
 import type { DiagnosticTrace } from "./diagnostics.js";
 import type { ModelClient } from "./model-client.js";
 import { observeModelCall } from "./model-observability.js";
+import { structuredTransformationInput } from "./structured-model-input.js";
 import {
   hashClaimText,
   type BoundClaim,
@@ -164,11 +165,11 @@ async function requestConsensusVerdicts(input: {
       messages: [
         {
           role: "system",
-          content: "你是高风险主张的独立证据裁决器。只判断每条主张是否被指定正式证据直接支持，不得改写主张或改变引用。claimId、claimHash、citationIndexes 必须原样返回。只输出根对象 {\"verdicts\":[...]}。",
+          content: "你是高风险主张的独立证据裁决器。禁止复述或原样返回输入，顶层不能出现 claims 或 evidence。只判断每条主张是否被指定正式证据直接支持，不得改写主张或改变引用。claimId、claimHash、citationIndexes 必须原样返回。只输出根对象 {\"verdicts\":[...]}，每项严格包含 claimId、claimHash、citationIndexes、verdict。",
         },
         {
           role: "user",
-          content: JSON.stringify({
+          content: structuredTransformationInput("verdicts", {
             claims: input.claims.map((claim) => ({
               claimId: claim.claimId,
               claimHash: consensusClaimSignature(claim),

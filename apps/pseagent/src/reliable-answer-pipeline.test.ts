@@ -191,6 +191,9 @@ describe("ModelTargetedClaimReviser", () => {
         content: expect.stringContaining('{"revisions":[...]}'),
       })]),
     }));
+    const inputMessage = vi.mocked(completeJson).mock.calls[0]![0].messages[1]!.content;
+    expect(inputMessage).toContain("禁止复制输入");
+    expect(inputMessage.trimStart().startsWith("{")).toBe(false);
   });
 });
 

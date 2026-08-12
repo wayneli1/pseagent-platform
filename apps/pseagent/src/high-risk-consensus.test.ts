@@ -78,6 +78,10 @@ describe("high-risk consensus gate", () => {
         content: expect.stringContaining('{"verdicts":[...]}'),
       })]),
     }));
+    const inputMessage = vi.mocked(secondVerifier.completeJson).mock.calls[0]![0]
+      .messages[1]!.content;
+    expect(inputMessage).toContain("禁止复制输入");
+    expect(inputMessage.trimStart().startsWith("{")).toBe(false);
   });
 
   it("rejects a verdict that changes the claim signature or citation set", async () => {
