@@ -16,7 +16,7 @@ import {
   HighRiskConsensusGate,
   type HighRiskConsensusResult,
 } from "./high-risk-consensus.js";
-import type { ModelClient } from "./model-client.js";
+import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import { observeModelCall } from "./model-observability.js";
 import {
   type ObligationOutcome,
@@ -174,6 +174,39 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
       });
       return { domain: plan.domain, drafts };
     }));
+    for (const [index, outcome] of draftSettled.entries()) {
+      const item = retrieved[index];
+      if (
+        item === undefined ||
+        outcome.status !== "rejected" ||
+        !(outcome.reason instanceof InvalidModelPayloadError) ||
+        draftSignal.aborted ||
+        !calls.hasOpenEndedCapacity() ||
+        item.plan.bindings.some((binding) => binding.answerTemplate !== undefined)
+      ) {
+        continue;
+      }
+      try {
+        calls.useOpenEnded("synthesize_schema_retry");
+        const drafts = await observeModelCall({
+          trace: input.trace,
+          role: "synthesizer",
+          operation: "synthesize",
+          signal: draftSignal,
+          call: () => this.dependencies.synthesizer.draft({
+            contract: input.contract,
+            retrieval: item.retrieval,
+            signal: draftSignal,
+          }),
+        });
+        draftSettled[index] = {
+          status: "fulfilled",
+          value: { domain: item.plan.domain, drafts },
+        };
+      } catch (error) {
+        draftSettled[index] = { status: "rejected", reason: error };
+      }
+    }
     const localDraftGroups = draftSettled.flatMap((item) =>
       item.status === "fulfilled" ? [item.value] : []);
     recordStage(input, "claim_draft", draftStartedAt,

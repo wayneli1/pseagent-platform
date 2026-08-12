@@ -9,7 +9,11 @@ import {
   HighRiskConsensusGate,
   consensusClaimSignature,
 } from "./high-risk-consensus.js";
-import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
+import {
+  InvalidModelPayloadError,
+  ModelUnavailableError,
+  type ModelClient,
+} from "./model-client.js";
 import {
   coalesceHighRiskClaims,
   DeterministicReliableAnswerPipeline,
@@ -444,6 +448,56 @@ describe("deterministic reliable answer pipeline", () => {
       usedOpenEndedCalls: 1,
       usedStructuredCalls: 1,
     });
+  });
+
+  it("retries one ungoverned synthesis after an invalid structured payload", async () => {
+    const { trace, events } = traceFixture();
+    const fixture = pipelineFixture();
+    vi.mocked(fixture.synthesizer.draft).mockRejectedValueOnce(
+      new InvalidModelPayloadError("invalid_schema:claims:required"),
+    );
+
+    const execution = await fixture.pipeline.answer({
+      question: contract.sourceQuestion,
+      scope: "professional",
+      contract,
+      plans: [plan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).toBe("answered");
+    expect(fixture.synthesizer.draft).toHaveBeenCalledTimes(2);
+    expect(events.filter((event) =>
+      event.event === "model_call" && event.operation === "synthesize"))
+      .toHaveLength(2);
+    expect(execution.callBudget).toMatchObject({
+      usedOpenEndedCalls: 2,
+      usedStructuredCalls: 1,
+    });
+  });
+
+  it("does not retry an ungoverned synthesis after a transport failure", async () => {
+    const { trace } = traceFixture();
+    const fixture = pipelineFixture();
+    vi.mocked(fixture.synthesizer.draft).mockRejectedValueOnce(
+      new ModelUnavailableError("model_timeout"),
+    );
+
+    const execution = await fixture.pipeline.answer({
+      question: contract.sourceQuestion,
+      scope: "professional",
+      contract,
+      plans: [plan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).toBe("temporarily_unavailable");
+    expect(fixture.synthesizer.draft).toHaveBeenCalledOnce();
+    expect(execution.callBudget.usedOpenEndedCalls).toBe(1);
   });
 
   it("performs at most one targeted revision for all rejected claims", async () => {
