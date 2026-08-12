@@ -32,6 +32,10 @@ describe("ScopeRouter", () => {
     "售前工程师的工作职责有哪些？",
     "请综合知识库说明售前工程师通常承担哪些核心工作。",
     "售前如何做好客户需求访谈和冲突沟通？",
+    "大客户项目只覆盖一个联系人时，怎样按业务、技术、采购和高层关系分层制定补位动作？",
+    "客户把讨论压到单价时，如何把对话转回业务影响、选择标准和可验证价值，而不是回避价格？",
+    "机会复盘中的红旗和优势怎样分别转成有负责人、日期和退出条件的行动？",
+    "制作价值主张画布时，怎样把客户任务、痛点和收益与方案能力逐项对应并标记待验证假设？",
   ])("routes an unambiguously generic presales question without model drift: %s", async (question) => {
     const completeJson = vi.fn();
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;
@@ -97,6 +101,7 @@ describe("ScopeRouter", () => {
     "XT6 在验收时如何核验 SMTP 与 LDAP 兼容性？",
     "Exchange 迁移到 Coremail 时要验证哪些产品能力？",
     "Coremail 归档模块的版本边界和验收指标是什么？",
+    "POC 现场临时要求验证未采购模块时，如何记录范围外项、变更审批和后续验证条件？",
   ])("keeps technical POC and acceptance counterexamples professional: %s", async (question) => {
     const completeJson = vi.fn();
     const model = { completeJson, completeText: vi.fn() } as unknown as ModelClient;

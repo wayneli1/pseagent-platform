@@ -62,6 +62,8 @@ const EXPLICIT_PRODUCT_TECHNICAL_SIGNAL_PATTERN =
   /(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b)|(?:(?:POC|验收|核验|验证).{0,40}(?:产品能力|技术能力|模块|接口|协议|版本|兼容|适配|部署|配置|归档|网关|反垃圾)|(?:产品能力|技术能力|模块|接口|协议|版本|兼容|适配|部署|配置|归档|网关|反垃圾).{0,40}(?:POC|验收|核验|验证))/iu;
 const EXPLICIT_GENERAL_METHOD_PATTERN =
   /(?:(?:报价|价格).{0,16}(?:压价|业务价值|价值异议)|压价.{0,16}(?:业务价值|价值|异议)|(?:讲不清|说不清|不明确).{0,16}(?:需求|目标)|(?:需求|目标).{0,16}(?:讲不清|说不清|不明确|继续追问)|继续追问|澄清需求|需求访谈)/u;
+const GENERAL_PRESALES_METHOD_PATTERN =
+  /(?:关系分层|补位动作|购买角色|业务影响|选择标准|可验证价值|机会复盘|红旗|价值主张画布|客户任务|待验证假设|交通灯|信任方程|非暴力沟通|原则性谈判|价值工程|内部支持者|经济角色|技术否决者|\b(?:SPIN|MEDDPICC|NVC|BATNA|RFP|JOLT|MTL)\b)/iu;
 const PROFESSIONAL_ARCHITECTURE_CUE_PATTERN =
   /(?:RPO|RTO|两地三中心|多活|容灾|镜像|故障切换|数据一致性|容量输入|用户规模)/giu;
 const EXPLICIT_NORMAL_RESET_PATTERN = /(?:换个话题|转换话题|另外写|题外话)/u;
@@ -84,6 +86,7 @@ export function isUnambiguouslyProfessionalQuestion(
   return PRODUCT_BOUNDARY_PATTERN.test(question) ||
     KNOWLEDGE_RECORD_PATTERN.test(question) ||
     TECHNICAL_CAPABILITY_BOUNDARY_PATTERN.test(question) ||
+    EXPLICIT_PRODUCT_TECHNICAL_SIGNAL_PATTERN.test(question) ||
     isStructuredTechnicalCapabilityRequirement(question);
 }
 
@@ -122,6 +125,12 @@ export function isUnambiguouslyGeneralPresalesQuestion(
   question: string,
 ): boolean {
   if (EXPLICIT_GENERAL_METHOD_PATTERN.test(question)) return true;
+  if (
+    GENERAL_PRESALES_METHOD_PATTERN.test(question) &&
+    !isUnambiguouslyProfessionalQuestion(question)
+  ) {
+    return true;
+  }
   if (
     PRODUCT_NEUTRAL_GOVERNANCE_PATTERN.test(question) &&
     GOVERNANCE_METHOD_CUE_PATTERN.test(question) &&
