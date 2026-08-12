@@ -31,6 +31,7 @@
     "probe:release-quality": "node --env-file=.env.local --import tsx scripts/probe-release-quality.mts",
     "probe:stability": "node --env-file=.env.local --import tsx scripts/probe-stability.mts",
     "probe:reliability-load": "node --env-file=.env.local --import tsx scripts/probe-reliability-load.mts",
+    "probe:stage-budget-faults": "node --import tsx scripts/probe-stage-budget-fault-injection.mts",
     "probe:coverage-calibration": "node --env-file=.env.local --import tsx scripts/probe-coverage-calibration.mts",
     "probe:finalization-development": "node --env-file-if-exists=.env.local --import tsx scripts/probe-finalization-development.mts",
     "probe:mixed-domain-development": "node --env-file-if-exists=.env.local --import tsx scripts/probe-mixed-domain-development.mts",
