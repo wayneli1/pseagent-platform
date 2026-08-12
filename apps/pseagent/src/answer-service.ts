@@ -607,34 +607,33 @@ export class AnswerService {
         return legacyPlan;
       };
       let legacyPlan = taskSpecActive ? undefined : await loadLegacyPlan();
-      const deterministicParallelAnalysis =
+      const deterministicControlPlaneAnalysis =
         taskSpecActive &&
         exactRoute === undefined &&
-        this.dependencies.reliabilityControlPlaneEnabled === true &&
-        extractExplicitQuestionSignals(routedQuestion).requiredParallelGroups.length > 0
+        this.dependencies.reliabilityControlPlaneEnabled === true
           ? deterministicTaskAnalysisFallback({
               resolvedQuestion: questionResolution.contextUsed
                 ? questionResolution
                 : identityResolvedQuestion(routedQuestion),
               scope,
               session,
-            })
+          })
           : undefined;
-      if (deterministicParallelAnalysis !== undefined) {
+      if (deterministicControlPlaneAnalysis !== undefined) {
         recordDiagnostic(trace, {
           event: "task_spec_recovery",
-          trigger: "explicit_parallel_contract",
-          result: deterministicParallelAnalysis.guard.ok ? "recovered" : "rejected",
+          trigger: "deterministic_control_plane_contract",
+          result: deterministicControlPlaneAnalysis.guard.ok ? "recovered" : "rejected",
           issueCodes: stableUniqueIssueCodes(
-            deterministicParallelAnalysis.guard.issues.map((issue) => issue.code),
+            deterministicControlPlaneAnalysis.guard.issues.map((issue) => issue.code),
           ),
           domainCount: new Set(
-            deterministicParallelAnalysis.obligationContract.obligations.flatMap(
+            deterministicControlPlaneAnalysis.obligationContract.obligations.flatMap(
               (obligation) => obligation.domains,
             ),
           ).size,
           obligationCount:
-            deterministicParallelAnalysis.obligationContract.obligations.length,
+            deterministicControlPlaneAnalysis.obligationContract.obligations.length,
         });
       }
       let taskAnalysis = trustedFamilyCompilation?.activated === true
@@ -644,7 +643,7 @@ export class AnswerService {
             guard: trustedFamilyCompilation.guard,
             elapsedMs: 0,
           })
-        : deterministicParallelAnalysis ?? (exactRoute === undefined
+        : deterministicControlPlaneAnalysis ?? (exactRoute === undefined
         ? await observeTaskAnalysisShadow({
             ...(this.dependencies.taskAnalysisShadow === undefined
               ? {}
@@ -1970,8 +1969,11 @@ function deterministicTaskAnalysisFallback(input: {
   readonly scope: Exclude<Scope, "normal">;
   readonly session: KnowledgeSession;
 }): TaskAnalysisShadowResult {
+  const obligationQuestion = input.resolvedQuestion.contextUsed
+    ? identityResolvedQuestion(input.resolvedQuestion.rawQuestion)
+    : input.resolvedQuestion;
   const taskSpec = compileDeterministicTaskSpecFallback({
-    resolvedQuestion: input.resolvedQuestion,
+    resolvedQuestion: obligationQuestion,
     scopeHint: input.scope,
     knowledgeContext: {
       purpose: input.session.purpose,
@@ -1980,11 +1982,11 @@ function deterministicTaskAnalysisFallback(input: {
     },
   });
   const obligationContract = compileAtomicObligationContract({
-    resolvedQuestion: input.resolvedQuestion,
+    resolvedQuestion: obligationQuestion,
     taskSpec,
   });
   const guard = new DeterministicTaskSpecGuard().validate({
-    resolvedQuestion: input.resolvedQuestion,
+    resolvedQuestion: obligationQuestion,
     taskSpec,
   });
   const guardedTaskSpec = materializeGuardedTaskSpec({

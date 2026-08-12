@@ -88,7 +88,8 @@ export type DiagnosticEvent =
       readonly trigger:
         | "guard_rejected"
         | "analysis_unavailable"
-        | "explicit_parallel_contract";
+        | "explicit_parallel_contract"
+        | "deterministic_control_plane_contract";
       readonly result: "recovered" | "rejected";
       readonly issueCodes: readonly TaskSpecIssueCode[];
       readonly domainCount: number;
@@ -752,7 +753,12 @@ function allowlistDiagnosticEvent(
         event: event.event,
         trigger: safeEnum(
           event.trigger,
-          ["guard_rejected", "analysis_unavailable"] as const,
+          [
+            "guard_rejected",
+            "analysis_unavailable",
+            "explicit_parallel_contract",
+            "deterministic_control_plane_contract",
+          ] as const,
         ),
         result: safeEnum(event.result, ["recovered", "rejected"] as const),
         issueCodes: safeArray(event.issueCodes, (item) =>

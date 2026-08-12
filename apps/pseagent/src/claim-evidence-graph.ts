@@ -105,6 +105,18 @@ export function bindClaimsToEvidence(input: {
       reject("claim_aspect_mismatch");
       continue;
     }
+    const aspectRequirements = new Map(local.flatMap(({ evidence }) =>
+      evidence.aspectRequirements.map((aspect) => [aspect.id, aspect] as const)));
+    if (
+      availableAspects.size >= 2 &&
+      claim.coveredAspectIds.some((aspectId) => {
+        const aspect = aspectRequirements.get(aspectId);
+        return aspect !== undefined && !claimTextCoversAspect(claim.text, aspect.label);
+      })
+    ) {
+      reject("claim_aspect_text_mismatch");
+      continue;
+    }
     retained.push({
       ...claim,
       support: obligation.evidencePolicy === "direct" ? "direct" : "synthesized",
@@ -168,6 +180,29 @@ function referenceIdentity(reference: Reference): string {
     reference.path,
     reference.contentHash,
   ].join("\u0000");
+}
+
+function claimTextCoversAspect(text: string, label: string): boolean {
+  const normalizedText = normalizeSemanticText(text);
+  const normalizedLabel = normalizeSemanticText(label);
+  if (normalizedLabel.length < 2) return true;
+  if (normalizedText.includes(normalizedLabel)) return true;
+  const labelBigrams = bigrams(normalizedLabel);
+  if (labelBigrams.size === 0) return false;
+  const textBigrams = bigrams(normalizedText);
+  const shared = [...labelBigrams].filter((item) => textBigrams.has(item)).length;
+  return shared >= 2 && shared / labelBigrams.size >= 0.6;
+}
+
+function normalizeSemanticText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("zh-CN")
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function bigrams(value: string): Set<string> {
+  const characters = [...value];
+  return new Set(characters.slice(0, -1).map((character, index) =>
+    `${character}${characters[index + 1] ?? ""}`));
 }
 
 function stableUnique<T>(values: readonly T[]): T[] {

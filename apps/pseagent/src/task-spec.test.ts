@@ -3267,6 +3267,38 @@ function compilerInput(
 }
 
 describe("deterministic task recovery semantics", () => {
+  it("recognizes contextual action clauses without treating output dimensions as entities", () => {
+    const cases = [
+      {
+        question: "为 5000 用户规划多活邮件系统时，怎样说明服务器数量参考、角色分布和容量假设，避免把参考架构当成固定承诺？",
+        requests: ["怎样说明服务器数量参考、角色分布和容量假设"],
+      },
+      {
+        question: "沿用刚才的认证方案，令牌校验失败时先查哪三类配置，哪些版本事实不能猜？",
+        requests: ["令牌校验失败时先查哪三类配置", "哪些版本事实不能猜"],
+      },
+      {
+        question: "压测环境和负载模型已经确认，接下来把监控指标、停止阈值和结果审批写成出口条件。",
+        requests: ["接下来把监控指标、停止阈值和结果审批写成出口条件"],
+      },
+      {
+        question: "那项红旗到期仍未关闭，只写出降低投入、保护关系和记录原因的动作。",
+        requests: ["只写出降低投入、保护关系和记录原因的动作"],
+      },
+      {
+        question: "市场把低互动名单全部交给销售了，按 MTL 只补上评分、培育和反馈责任。",
+        requests: ["按 MTL 只补上评分、培育和反馈责任"],
+      },
+    ] as const;
+
+    for (const { question, requests } of cases) {
+      const signals = extractExplicitQuestionSignals(question);
+      expect(signals.requestClauses).toEqual(expect.arrayContaining([...requests]));
+    }
+
+    expect(extractExplicitQuestionSignals(cases[0].question).entityGroups).toEqual([]);
+  });
+
   it("parses a governed distributive component list without rejecting checklist wording", () => {
     const componentSignals = extractExplicitQuestionSignals(
       "排障时如何区分 MD、UD 和日志数据库各自保存的数据，并据此安排备份与恢复顺序？",

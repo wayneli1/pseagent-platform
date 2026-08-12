@@ -53,6 +53,33 @@ function modelReturning(verdicts: readonly ("supported" | "insufficient")[]): Mo
 }
 
 describe("high-risk consensus gate", () => {
+  it("accepts identity-preserving verdicts with harmless model-added metadata", async () => {
+    const secondVerifier = modelReturning(["supported", "supported"]);
+    vi.mocked(secondVerifier.completeJson).mockImplementationOnce(async (input) =>
+      input.schema.parse({
+        note: "逐项核对完成",
+        verdicts: claims.map((claim) => ({
+          claimId: claim.claimId,
+          claimHash: consensusClaimSignature(claim),
+          citationIndexes: claim.citationIndexes,
+          verdict: "supported",
+          reason: "指定证据直接支持",
+        })),
+      }));
+
+    const result = await new HighRiskConsensusGate().evaluate({
+      claims,
+      firstVerdicts,
+      firstVerifier: modelReturning(["supported", "supported"]),
+      secondVerifier,
+      firstModelId: "same-model",
+      secondModelId: "same-model",
+      signal: new AbortController().signal,
+    });
+
+    expect(result.retainedClaimIds).toEqual(["CL1", "CL2"]);
+  });
+
   it("retries one invalid structured verdict without selecting among valid answers", async () => {
     const secondVerifier = modelReturning(["supported", "supported"]);
     vi.mocked(secondVerifier.completeJson).mockRejectedValueOnce(

@@ -72,6 +72,56 @@ function taskSpec(): TaskSpec {
 }
 
 describe("adaptTaskSpecToKnowledgePlan", () => {
+  it("turns an enumerated shared action into independently verifiable evidence aspects", () => {
+    const enumeratedQuestion =
+      "信创邮件系统暂不建设多活时，上线方案应怎样覆盖备份、重建、恢复演练和恢复时间边界？";
+    const enumeratedResolved: ResolvedQuestion = {
+      rawQuestion: enumeratedQuestion,
+      standaloneQuestion: enumeratedQuestion,
+      contextUsed: false,
+      inheritedSubjects: [],
+      corrections: [],
+    };
+    const sourceText = "上线方案应怎样覆盖备份、重建、恢复演练和恢复时间边界";
+    const spec: TaskSpec = {
+      subject: enumeratedQuestion,
+      entities: [{
+        id: "E1",
+        label: "信创邮件系统",
+        role: "product",
+        sourceText: "信创邮件系统",
+      }],
+      deliverables: [{
+        id: "D1",
+        label: sourceText,
+        kind: "procedure",
+        required: true,
+        sourceText,
+        obligations: [{
+          id: "O1",
+          label: sourceText,
+          targetEntityIds: [],
+          evidencePolicy: "direct",
+          domains: ["coremail-professional"],
+          required: true,
+          sourceText,
+        }],
+      }],
+    };
+
+    const result = adaptTaskSpecToKnowledgePlan({
+      scope: "professional",
+      resolvedQuestion: enumeratedResolved,
+      taskSpec: spec,
+      guardResult: { ...passingGuard, explicitEntityCount: 0, mappedExplicitEntityCount: 0 },
+    });
+
+    expect(result.activated).toBe(true);
+    if (!result.activated) return;
+    expect(result.plan.requirements[0]?.evidenceAspects.map((aspect) => aspect.label))
+      .toEqual(["备份", "重建", "恢复演练", "恢复时间边界"]);
+  });
+
   it("creates one requirement per applicable required obligation", () => {
     const result = adaptTaskSpecToKnowledgePlan({
       scope: "professional",

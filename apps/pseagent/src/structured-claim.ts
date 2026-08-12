@@ -45,24 +45,24 @@ const claimDraftSchema = z.object({
   kind: z.enum(["fact", "method", "boundary", "gap"]),
   citationIndexes: z.array(z.number().int().positive()).max(6),
   coveredAspectIds: z.array(z.string().regex(/^A[1-9]\d*$/u)).max(8),
-}).strict();
+});
 
 const claimDraftListSchema = z.array(claimDraftSchema).min(1).max(18);
 const claimDraftEnvelopeSchema = z.object({
   claims: claimDraftListSchema,
-}).strict();
+});
 
 const supportDecisionSchema = z.object({
   claimId: z.string().regex(/^CL[1-9]\d*$/u),
   claimHash: z.string().regex(/^[a-f0-9]{64}$/u),
   citationIndexes: z.array(z.number().int().positive()).max(6),
   verdict: z.enum(["supported", "contradicted", "insufficient"]),
-}).strict();
+});
 
 const supportDecisionListSchema = z.array(supportDecisionSchema).min(1).max(18);
 const supportDecisionEnvelopeSchema = z.object({
   decisions: supportDecisionListSchema,
-}).strict();
+});
 
 const CLAIM_DRAFT_PROMPT = `你根据已读取的正式证据，为每个原子义务生成最小、独立的结构化主张。
 禁止复述或原样返回输入。只输出根对象 {"claims":[...]}，顶层不能出现 obligations 或 evidence。

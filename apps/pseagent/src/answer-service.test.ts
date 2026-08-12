@@ -2379,6 +2379,7 @@ describe("AnswerService", () => {
     }
 
     it("selects the reliable pipeline and never enters the legacy detailed-agent loop", async () => {
+      const shadow = mixedShadow();
       const reliablePipeline = {
         answer: vi.fn(async (input: Parameters<ReliableAnswerPipeline["answer"]>[0]) => ({
           result: {
@@ -2404,7 +2405,10 @@ describe("AnswerService", () => {
           },
         })),
       } satisfies ReliableAnswerPipeline;
-      const { service, runAgent, runAgentDetailed } = createMixedService({ reliablePipeline });
+      const { service, runAgent, runAgentDetailed } = createMixedService({
+        reliablePipeline,
+        shadow,
+      });
 
       const execution = await service.answerDetailed(mixedQuestion);
 
@@ -2420,6 +2424,7 @@ describe("AnswerService", () => {
       }));
       expect(runAgent).not.toHaveBeenCalled();
       expect(runAgentDetailed).not.toHaveBeenCalled();
+      expect(shadow.analyze).not.toHaveBeenCalled();
       expect(execution).toMatchObject({
         result: { status: "answered", answer: "可靠控制面回答" },
         domainsUsed: ["coremail-professional", "presales-general"],

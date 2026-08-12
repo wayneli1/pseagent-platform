@@ -126,6 +126,35 @@ describe("claim evidence graph", () => {
     expect(result.retained[0]?.evidenceIdentities[0]).toMatch(/^[a-f0-9]{64}$/u);
   });
 
+  it("rejects a generic claim that declares several aspects without naming them", () => {
+    const multiAspectRetrieval: DeterministicRetrievalResult = {
+      ...retrieval(),
+      evidence: [{
+        ...retrieval().evidence[0]!,
+        compactContent: "备份、重建、恢复演练和恢复时间边界均有正式说明。",
+        aspectIds: ["A1", "A2", "A3", "A4"],
+        aspectRequirements: [
+          { id: "A1", label: "备份", terms: ["备份"] },
+          { id: "A2", label: "重建", terms: ["重建"] },
+          { id: "A3", label: "恢复演练", terms: ["恢复演练"] },
+          { id: "A4", label: "恢复时间边界", terms: ["恢复时间边界"] },
+        ],
+      }],
+    };
+
+    const result = bindClaimsToEvidence({
+      claims: [claim({
+        text: "邮件系统多活架构。",
+        coveredAspectIds: ["A1", "A2", "A3", "A4"],
+      })],
+      contract,
+      retrievals: [multiAspectRetrieval],
+    });
+
+    expect(result.retained).toEqual([]);
+    expect(result.rejected).toEqual(["CL1:claim_aspect_text_mismatch"]);
+  });
+
   it("binds one deduplicated reference independently to multiple obligations", () => {
     const sharedContract: AtomicObligationContract = {
       ...contract,

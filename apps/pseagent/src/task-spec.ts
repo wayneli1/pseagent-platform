@@ -628,7 +628,7 @@ const RELIABILITY_GOVERNANCE_FRAMEWORK_PATTERN =
 const EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN =
   /(?:(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b).{0,48}(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾)|(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾).{0,48}(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b))|(?:(?:POC|验收|核验|验证).{0,32}(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配)|(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配).{0,32}(?:POC|验收|核验|验证))/iu;
 const RELIABILITY_EXPLICIT_TECHNICAL_PATTERN =
-  /(?:(?:可核验(?:的)?能力|能力核验).{0,32}(?:POC|验收|验证)|(?:POC|验收|验证).{0,32}(?:可核验(?:的)?能力|能力核验))/iu;
+  /(?:(?:可核验(?:的)?能力|能力核验).{0,32}(?:POC|验收|验证)|(?:POC|验收|验证).{0,32}(?:可核验(?:的)?能力|能力核验)|(?:旧)?邮箱.{0,16}只读入口)/iu;
 const RELIABILITY_ENGINEERING_EVIDENCE_PATTERN =
   /(?:POC.{0,48}(?:压力测试|压测|未采购(?:模块|功能)|环境隔离|负载模型|监控指标|停止条件)|SSL\s*证书|多活架构|Message-ID|投递日志|非多活.{0,20}(?:恢复方案|恢复能力|演练)|大库增量追赶|第三方(?:邮件)?网关|CAC|腾讯(?:企业)?邮箱.{0,20}(?:迁移|试迁)|XT\s*v?6.{0,24}(?:审计|报告))/iu;
 const EXPLICIT_CROSS_DOMAIN_METHOD_PATTERN =
@@ -1057,7 +1057,7 @@ export function extractExplicitQuestionSignals(
 ): ExplicitQuestionSignals {
   const entityGroups: Array<{ sourceText: string; items: string[] }> = [];
   const unresolvedDistributiveGroups: string[] = [];
-  const listPattern = /(?:参考(?:看看|一下)?|(?:分别|各自)?(?:对比|比较|说明|介绍|分析|检索|搜索|查找))(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)(?=(?:各自)?的|各自|分别|方案|案例|架构|差异|区别|[，,；;。！？!?]\s*(?:请|给出|列出|说明|分析)|$)/giu;
+  const listPattern = /(?:参考(?:看看|一下)?|(?:分别|各自)(?:说明|介绍|分析|检索|搜索|查找)|(?:分别|各自)?(?:对比|比较))(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)(?=(?:各自)?的|各自|分别|方案|案例|架构|差异|区别|[，,；;。！？!?]\s*(?:请|给出|列出|说明|分析)|$)/giu;
   for (const match of question.matchAll(listPattern)) {
     const sourceText = match.groups?.list?.trim();
     if (!sourceText) continue;
@@ -1196,12 +1196,21 @@ export function extractExplicitQuestionSignals(
     }
   }
   return {
-    entityGroups,
+    entityGroups: entityGroups.filter((group) =>
+      !/(?:按|沿用)(?:上文|前文|前面|此前|刚才)/u.test(group.sourceText)),
     unresolvedDistributiveGroups: stableUniqueText(unresolvedDistributiveGroups),
-    requestClauses: stableUniqueText(requestClauses),
-    independentRequestClauses: stableUniqueText(independentRequestClauses),
+    requestClauses: stableUniqueText(requestClauses).filter((clause) =>
+      !isContextPremiseOnly(clause)),
+    independentRequestClauses: stableUniqueText(independentRequestClauses).filter((clause) =>
+      !isContextPremiseOnly(clause)),
     requiredParallelGroups,
   };
+}
+
+function isContextPremiseOnly(value: string): boolean {
+  return /(?:时|后|前|期间|阶段|情况下)$/u.test(value) &&
+    !/(?:如何|怎样|怎么|哪(?:些|三|几)|什么|先查|列出|给出|说明|标记|写出|补上)/u
+      .test(value);
 }
 
 function splitIndependentRequestItems(value: string): string[] {
@@ -1258,9 +1267,14 @@ const REQUEST_INTERROGATIVE_PATTERN =
   /(?:什么时候|何时|如何提升|怎么提升|怎么办|怎么做|如何|怎样|为什么|哪些|多少|是否|能否|有没有|是什么|怎么|什么)/gu;
 const REQUEST_ACTION_PATTERN =
   /(?:^|请|帮我|需要|还要|以及|同时|然后|并且|并|再|且|要|现在|接下来|只)\s*(?:(?:分别|逐一|逐个|各自)\s*)?(?:检索|搜索|查找|分析|评估|介绍|说明|列出|总结|建议|推荐|给出|制定|设计|判断|排查)/gu;
+const CONTEXTUAL_REQUEST_ACTION_PATTERN =
+  /(?:^|\s)(?:(?:令牌|认证|配置|版本|故障|失败|异常|问题)\S{0,16}?时)?先查|(?:^|\s)接下来把|(?:^|\s)按\s*\S{0,24}?\s*(?:分别)?(?:只)?(?:列出|标记|补上)|(?:^|\s)沿用\s*\S{1,24}?\s*说明|(?:^|\s)只(?:写出|补上|标记)/gu;
 
 function requestClauseBoundaries(segment: string): number[] {
-  const actionMatches = [...segment.matchAll(REQUEST_ACTION_PATTERN)];
+  const actionMatches = [
+    ...segment.matchAll(REQUEST_ACTION_PATTERN),
+    ...segment.matchAll(CONTEXTUAL_REQUEST_ACTION_PATTERN),
+  ];
   const directComparisonSegment = /(?:对比|比较|区别|差异|差别)/u.test(segment);
   const positions = [
     ...[...segment.matchAll(REQUEST_INTERROGATIVE_PATTERN)]

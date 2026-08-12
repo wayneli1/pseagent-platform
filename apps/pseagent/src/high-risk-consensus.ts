@@ -31,12 +31,12 @@ const consensusVerdictSchema = z.object({
   claimHash: z.string().regex(/^[a-f0-9]{64}$/u),
   citationIndexes: z.array(z.number().int().positive()).max(6),
   verdict: z.enum(["supported", "contradicted", "insufficient"]),
-}).strict();
+});
 
 const consensusVerdictListSchema = z.array(consensusVerdictSchema).min(1).max(18);
 const consensusVerdictEnvelopeSchema = z.object({
   verdicts: consensusVerdictListSchema,
-}).strict();
+});
 
 export class HighRiskConsensusGate {
   async evaluate(input: {
@@ -133,13 +133,13 @@ async function requestConsensusVerdictsWithSchemaRetry(input: {
   readonly trace?: DiagnosticTrace;
   readonly onModelAttempt?: () => void;
 }): Promise<readonly ConsensusVerdict[]> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     input.onModelAttempt?.();
     try {
       return await requestConsensusVerdicts(input);
     } catch (error) {
       if (
-        attempt > 0 ||
+        attempt >= 2 ||
         input.signal.aborted ||
         !(error instanceof InvalidModelPayloadError)
       ) {

@@ -183,7 +183,13 @@ describe("ModelTargetedClaimReviser", () => {
       coveredAspectIds: ["A1"],
     }];
     const completeJson = vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
-      input.schema.parse({ revisions }));
+      input.schema.parse({
+        note: "修订完成",
+        revisions: revisions.map((revision) => ({
+          ...revision,
+          reason: "仅使用指定证据",
+        })),
+      }));
     const reviser = new ModelTargetedClaimReviser({
       completeJson,
       completeText: vi.fn(),
@@ -702,6 +708,79 @@ describe("deterministic reliable answer pipeline", () => {
     expect(execution.result.answer).toContain("正式资料说明支持邮件归档。[1]");
     expect(fixture.verifier.verify).toHaveBeenCalledOnce();
     expect(fixture.synthesizer.draft).toHaveBeenCalledOnce();
+  });
+
+  it("projects one exact excerpt per missing aspect when a generic model claim overstates coverage", async () => {
+    const { trace } = traceFixture();
+    const multiAspectPlan: DomainKnowledgePlan = {
+      ...plan,
+      plan: {
+        ...plan.plan,
+        requirements: [{
+          ...plan.plan.requirements[0]!,
+          evidenceAspects: [
+            { id: "A1", label: "备份", terms: ["备份"] },
+            { id: "A2", label: "恢复演练", terms: ["恢复演练"] },
+          ],
+          queries: [{ text: "备份 恢复演练", aspectIds: ["A1", "A2"] }],
+        }],
+      },
+    };
+    const multiAspectRetrieval: DeterministicRetrievalResult = {
+      ...retrievalResult,
+      evidence: [{
+        ...retrievalResult.evidence[0]!,
+        compactContent: "Body:\n备份应保留可恢复副本。\n\n恢复演练应记录恢复结果。",
+        aspectIds: ["A1", "A2"],
+        aspectRequirements: [
+          { id: "A1", label: "备份", terms: ["备份"] },
+          { id: "A2", label: "恢复演练", terms: ["恢复演练"] },
+        ],
+      }],
+      evidenceLedger: {
+        ...evidenceLedger,
+        units: [{
+          binding: multiAspectPlan.bindings[0],
+          requirement: multiAspectPlan.plan.requirements[0],
+          inputState: "not_applicable",
+          verification: { coverage: "complete" },
+        }],
+      } as unknown as EvidenceLedger,
+    };
+    const synthesizer = {
+      draft: vi.fn(async () => [{
+        claimId: "CL1" as const,
+        obligationId: "O1" as const,
+        domain: "coremail-professional" as const,
+        text: "邮件系统架构已有说明。",
+        kind: "fact" as const,
+        citationIndexes: [1],
+        coveredAspectIds: ["A1", "A2"],
+      }]),
+    };
+    const pipeline = new DeterministicReliableAnswerPipeline({
+      knowledge: {
+        open: vi.fn(async () => ({ project: "coremail-professional" }) as KnowledgeSession),
+      },
+      retrieval: { retrieve: vi.fn(async () => multiAspectRetrieval) },
+      synthesizer,
+      verifier: { verify: vi.fn(async () => []) },
+    });
+
+    const execution = await pipeline.answer({
+      question: contract.sourceQuestion,
+      scope: "professional",
+      contract,
+      plans: [multiAspectPlan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).toBe("answered");
+    expect(execution.result.answer).toContain("备份应保留可恢复副本。[1]");
+    expect(execution.result.answer).toContain("恢复演练应记录恢复结果。[1]");
+    expect(execution.result.answer).not.toContain("邮件系统架构已有说明");
   });
 
   it("does not bypass verification rejection for a high-risk claim", async () => {

@@ -245,11 +245,12 @@ export function adaptTaskSpecToKnowledgePlan(
           parallelLeadingContext,
           leadingTopicAnchor,
         );
-    const comparisonDimensions = explicitComparisonDimensions(
-      obligationContext,
-    );
-    const evidenceAspects = comparisonDimensions.length >= 2
-      ? comparisonDimensions.map((dimension, dimensionIndex) => ({
+    const evidenceDimensions = stableUniqueText([
+      ...explicitComparisonDimensions(obligationContext),
+      ...explicitEnumeratedDimensions(item.obligation.sourceText),
+    ]).slice(0, 8);
+    const evidenceAspects = evidenceDimensions.length >= 2
+      ? evidenceDimensions.map((dimension, dimensionIndex) => ({
           id: `A${dimensionIndex + 1}` as KnowledgePlan["requirements"][number]["evidenceAspects"][number]["id"],
           label: dimension,
           terms: buildAspectTerms(entitySourceTexts, dimension) ?? [dimension],
@@ -593,6 +594,26 @@ function explicitComparisonDimensions(value: string): string[] {
       .filter((dimension) =>
         dimension.length > 0 &&
         characterLength(dimension) <= 64
+      ),
+  );
+  return dimensions.length >= 2 && dimensions.length <= 8 ? dimensions : [];
+}
+
+function explicitEnumeratedDimensions(value: string): string[] {
+  const list = value.match(
+    /(?:寻找哪些|观察哪些|接下来把|覆盖|围绕|写出|补上|标记|说明|把)(?<list>.+)$/u,
+  )?.groups?.list
+    ?.replace(/^(?:还缺的|需要的|应有的)/u, "")
+    .replace(/(?:写清楚|来写|写成[^，,；;。！？!?]{1,32}|的动作)$/u, "")
+    .trim();
+  if (list === undefined || !/[、，,；;]|(?:以及|和|与|及)/u.test(list)) {
+    return [];
+  }
+  const dimensions = stableUniqueText(
+    list.split(/[、，,；;]|\s*(?:以及|和|与|及)\s*/u)
+      .map((dimension) => dimension.trim())
+      .filter((dimension) =>
+        characterLength(dimension) >= 2 && characterLength(dimension) <= 64
       ),
   );
   return dimensions.length >= 2 && dimensions.length <= 8 ? dimensions : [];

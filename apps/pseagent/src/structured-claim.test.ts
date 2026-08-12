@@ -64,7 +64,10 @@ describe("ModelStructuredClaimSynthesizer", () => {
       coveredAspectIds: ["A1"],
     }];
     const completeJson = vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
-      input.schema.parse({ claims: payload }));
+      input.schema.parse({
+        note: "已逐项核对",
+        claims: payload.map((claim) => ({ ...claim, reason: "正式证据支持" })),
+      }));
     const synthesizer = new ModelStructuredClaimSynthesizer({
       completeJson,
       completeText: vi.fn(),
@@ -140,7 +143,10 @@ describe("ModelClaimSupportVerifier", () => {
       verdict: "supported" as const,
     }];
     const completeJson = vi.fn(async (input: Parameters<ModelClient["completeJson"]>[0]) =>
-      input.schema.parse({ decisions }));
+      input.schema.parse({
+        note: "核验完成",
+        decisions: decisions.map((decision) => ({ ...decision, reason: "直接支持" })),
+      }));
     const verifier = new ModelClaimSupportVerifier({
       completeJson, completeText: vi.fn(),
     } as unknown as ModelClient);

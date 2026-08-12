@@ -421,10 +421,20 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
           item.obligationId === binding.obligationId &&
           item.sourceBoundary === "formal" &&
           item.aspectIds.length > 0);
-        const hasPublishedClaim = consensusFinalClaims.some((claim) =>
-          claim.domain === plan.domain && claim.obligationId === binding.obligationId);
+        const requiredAspectIds = new Set(globalized.evidence
+          .filter((item) =>
+            item.domain === plan.domain &&
+            item.obligationId === binding.obligationId &&
+            item.sourceBoundary === "formal")
+          .flatMap((item) => item.aspectIds));
+        const publishedAspectIds = new Set(consensusFinalClaims
+          .filter((claim) =>
+            claim.domain === plan.domain && claim.obligationId === binding.obligationId)
+          .flatMap((claim) => claim.coveredAspectIds));
+        const hasUnpublishedAspect = [...requiredAspectIds].some((aspectId) =>
+          !publishedAspectIds.has(aspectId));
         return lowRiskObligationIds.has(binding.obligationId) &&
-          hasFormalEvidence && !hasPublishedClaim
+          hasFormalEvidence && hasUnpublishedAspect
           ? [key]
           : [];
       })));
@@ -497,10 +507,10 @@ const targetedClaimListSchema = z.array(z.object({
   kind: z.enum(["fact", "method", "boundary", "gap"]),
   citationIndexes: z.array(z.number().int().positive()).max(6),
   coveredAspectIds: z.array(z.string().regex(/^A[1-9]\d*$/u)).max(8),
-}).strict()).min(1).max(18);
+})).min(1).max(18);
 const targetedClaimEnvelopeSchema = z.object({
   revisions: targetedClaimListSchema,
-}).strict();
+});
 
 export class ModelTargetedClaimReviser implements TargetedClaimReviser {
   constructor(private readonly model: ModelClient) {}
@@ -662,12 +672,6 @@ function projectGroundedClaims(input: {
   const seenEvidence = new Set<string>();
   const projectedEvidence = input.evidence.flatMap((source): ClaimDraft[] => {
     const obligation = obligationById.get(source.obligationId as `O${number}`);
-    const evidenceKey = [
-      source.domain,
-      source.obligationId,
-      source.citation,
-      source.path,
-    ].join("\u0000");
     if (
       obligation === undefined ||
       obligation.risk !== "low" ||
@@ -677,24 +681,35 @@ function projectGroundedClaims(input: {
       !input.ungovernedFallbackBindings.has(
         obligationDomainKey(source.domain, source.obligationId),
       ) ||
-      governedBindings.has(`${source.domain}\u0000${source.obligationId}`) ||
-      seenEvidence.has(evidenceKey)
+      governedBindings.has(`${source.domain}\u0000${source.obligationId}`)
     ) {
       return [];
     }
-    const text = exactFormalEvidenceExcerpt(source);
-    if (text === undefined) return [];
-    seenEvidence.add(evidenceKey);
-    return [Object.freeze({
-      claimId: `CL${input.firstClaimIndex + governed.length + seenEvidence.size - 1}` as
-        `CL${number}`,
-      obligationId: obligation.id,
-      domain: source.domain,
-      text,
-      kind: obligation.evidencePolicy === "direct" ? "fact" as const : "method" as const,
-      citationIndexes: Object.freeze([source.citation]),
-      coveredAspectIds: Object.freeze([...source.aspectIds]),
-    })];
+    return source.aspectRequirements
+      .filter((aspect) => source.aspectIds.includes(aspect.id))
+      .flatMap((aspect): ClaimDraft[] => {
+        const evidenceKey = [
+          source.domain,
+          source.obligationId,
+          source.citation,
+          source.path,
+          aspect.id,
+        ].join("\u0000");
+        if (seenEvidence.has(evidenceKey)) return [];
+        const text = exactFormalEvidenceExcerpt(source, aspect.id);
+        if (text === undefined) return [];
+        seenEvidence.add(evidenceKey);
+        return [Object.freeze({
+          claimId: `CL${input.firstClaimIndex + governed.length + seenEvidence.size - 1}` as
+            `CL${number}`,
+          obligationId: obligation.id,
+          domain: source.domain,
+          text,
+          kind: obligation.evidencePolicy === "direct" ? "fact" as const : "method" as const,
+          citationIndexes: Object.freeze([source.citation]),
+          coveredAspectIds: Object.freeze([aspect.id]),
+        })];
+      });
   });
   return Object.freeze([...governed, ...projectedEvidence].map((claim, index) =>
     Object.freeze({
@@ -707,7 +722,10 @@ function obligationDomainKey(domain: KnowledgeDomain, obligationId: string): str
   return `${domain}\u0000${obligationId}`;
 }
 
-function exactFormalEvidenceExcerpt(source: RetrievedEvidence): string | undefined {
+function exactFormalEvidenceExcerpt(
+  source: RetrievedEvidence,
+  aspectId: string,
+): string | undefined {
   const bodyMarker = /(?:^|\n)Body:\s*\n/u.exec(source.compactContent);
   const body = bodyMarker === null
     ? source.compactContent.trim()
@@ -716,7 +734,9 @@ function exactFormalEvidenceExcerpt(source: RetrievedEvidence): string | undefin
   const paragraphs = body.split(/\n\s*\n/u).map((paragraph) => paragraph.trim())
     .filter(Boolean);
   if (paragraphs.length === 0) return undefined;
-  const terms = source.aspectRequirements.flatMap((aspect) => [aspect.label, ...aspect.terms])
+  const terms = source.aspectRequirements
+    .filter((aspect) => aspect.id === aspectId)
+    .flatMap((aspect) => [aspect.label, ...aspect.terms])
     .map((term) => term.normalize("NFKC").toLocaleLowerCase("zh-CN")
       .replace(/[\s\p{P}\p{S}]+/gu, ""))
     .filter((term) => term.length >= 2);
