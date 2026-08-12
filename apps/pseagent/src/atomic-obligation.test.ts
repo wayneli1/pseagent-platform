@@ -349,6 +349,22 @@ describe("atomic obligation contract", () => {
     )).toBe(true);
   });
 
+  it("keeps semantic request atoms when no explicit request clause was extracted", () => {
+    const question = "没有 AIR 客户端版本和网络策略，请确认所有 AI 写信功能都能永久离线使用。";
+    const resolvedQuestion = identityResolvedQuestion(question);
+    const taskSpec = compileDeterministicTaskSpecFallback({
+      resolvedQuestion,
+      scopeHint: "professional",
+      knowledgeContext: { purpose: "", schema: "", planningOverview: "" },
+    });
+
+    const contract = compileAtomicObligationContract({ resolvedQuestion, taskSpec });
+
+    expect(contract.obligations.map((item) => item.sourceText)).toEqual([
+      "请确认所有 AI 写信功能都能永久离线使用",
+    ]);
+  });
+
   it("reports overlapping and untraceable source spans", () => {
     const contract: AtomicObligationContract = {
       subject: "测试",

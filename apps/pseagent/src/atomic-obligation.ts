@@ -316,7 +316,7 @@ function obligationSeeds(question: string): ObligationSeed[] {
     Number.POSITIVE_INFINITY,
   );
   seeds = seeds.filter((seed) =>
-    !(seed.atom !== undefined && seed.end <= firstExplicitStart) &&
+    !(explicitSeeds.length > 0 && seed.atom !== undefined && seed.end <= firstExplicitStart) &&
     !TRAILING_CONSTRAINT_PATTERN.test(seed.text));
   if (seeds.length === 0) {
     const start = question.search(/\S/u);
