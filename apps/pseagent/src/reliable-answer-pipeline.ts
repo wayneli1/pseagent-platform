@@ -209,6 +209,9 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
     }
     const localDraftGroups = draftSettled.flatMap((item) =>
       item.status === "fulfilled" ? [item.value] : []);
+    const synthesisFailedDomains = new Set(retrieved
+      .filter((_item, index) => draftSettled[index]?.status !== "fulfilled")
+      .map((item) => item.plan.domain));
     recordStage(input, "claim_draft", draftStartedAt,
       draftSettled.every((item) => item.status === "fulfilled")
         ? "completed"
@@ -216,8 +219,10 @@ export class DeterministicReliableAnswerPipeline implements ReliableAnswerPipeli
 
     const globalDrafts = globalizeDrafts(localDraftGroups, globalized.localToGlobal);
     const projectedDrafts = projectGroundedClaims({
+      contract: input.contract,
       plans: input.plans,
       evidence: globalized.evidence,
+      ungovernedFallbackDomains: synthesisFailedDomains,
       firstClaimIndex: globalDrafts.length + 1,
     });
     const firstBinding = bindClaimsToEvidence({
@@ -571,8 +576,10 @@ function globalizeDrafts(
 }
 
 function projectGroundedClaims(input: {
+  readonly contract: AtomicObligationContract;
   readonly plans: readonly DomainKnowledgePlan[];
   readonly evidence: readonly RetrievedEvidence[];
+  readonly ungovernedFallbackDomains: ReadonlySet<KnowledgeDomain>;
   readonly firstClaimIndex: number;
 }): readonly ClaimDraft[] {
   const facts = groundedAnswerCardFacts(
@@ -585,7 +592,7 @@ function projectGroundedClaims(input: {
       content: item.compactContent,
     })),
   );
-  return Object.freeze(facts.flatMap((fact, index): ClaimDraft[] => {
+  const governed = facts.flatMap((fact, index): ClaimDraft[] => {
     const source = input.evidence.find((item) =>
       item.requirementId === fact.requirementId &&
       item.obligationId === fact.obligationId &&
@@ -602,7 +609,78 @@ function projectGroundedClaims(input: {
       citationIndexes: Object.freeze([fact.citation]),
       coveredAspectIds: Object.freeze([...source.aspectIds]),
     })];
-  }));
+  });
+  const governedBindings = new Set(input.plans.flatMap((plan) => plan.bindings
+    .filter((binding) => binding.cardId !== undefined)
+    .map((binding) => `${binding.domain}\u0000${binding.obligationId}`)));
+  const obligationById = new Map(input.contract.obligations.map((obligation) =>
+    [obligation.id, obligation] as const));
+  const seenEvidence = new Set<string>();
+  const projectedEvidence = input.evidence.flatMap((source): ClaimDraft[] => {
+    const obligation = obligationById.get(source.obligationId as `O${number}`);
+    const evidenceKey = [
+      source.domain,
+      source.obligationId,
+      source.citation,
+      source.path,
+    ].join("\u0000");
+    if (
+      obligation === undefined ||
+      obligation.risk !== "low" ||
+      obligation.evidencePolicy === "customer_input" ||
+      source.sourceBoundary !== "formal" ||
+      source.aspectIds.length === 0 ||
+      !input.ungovernedFallbackDomains.has(source.domain) ||
+      governedBindings.has(`${source.domain}\u0000${source.obligationId}`) ||
+      seenEvidence.has(evidenceKey)
+    ) {
+      return [];
+    }
+    const text = exactFormalEvidenceExcerpt(source);
+    if (text === undefined) return [];
+    seenEvidence.add(evidenceKey);
+    return [Object.freeze({
+      claimId: `CL${input.firstClaimIndex + governed.length + seenEvidence.size - 1}` as
+        `CL${number}`,
+      obligationId: obligation.id,
+      domain: source.domain,
+      text,
+      kind: obligation.evidencePolicy === "direct" ? "fact" as const : "method" as const,
+      citationIndexes: Object.freeze([source.citation]),
+      coveredAspectIds: Object.freeze([...source.aspectIds]),
+    })];
+  });
+  return Object.freeze([...governed, ...projectedEvidence].map((claim, index) =>
+    Object.freeze({
+      ...claim,
+      claimId: `CL${input.firstClaimIndex + index}` as `CL${number}`,
+    })));
+}
+
+function exactFormalEvidenceExcerpt(source: RetrievedEvidence): string | undefined {
+  const bodyMarker = /(?:^|\n)Body:\s*\n/u.exec(source.compactContent);
+  const body = bodyMarker === null
+    ? source.compactContent.trim()
+    : source.compactContent.slice(bodyMarker.index + bodyMarker[0].length).trim();
+  if (!body) return undefined;
+  const paragraphs = body.split(/\n\s*\n/u).map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  if (paragraphs.length === 0) return undefined;
+  const terms = source.aspectRequirements.flatMap((aspect) => [aspect.label, ...aspect.terms])
+    .map((term) => term.normalize("NFKC").toLocaleLowerCase("zh-CN")
+      .replace(/[\s\p{P}\p{S}]+/gu, ""))
+    .filter((term) => term.length >= 2);
+  const ranked = paragraphs.map((paragraph, index) => {
+    const normalized = paragraph.normalize("NFKC").toLocaleLowerCase("zh-CN")
+      .replace(/[\s\p{P}\p{S}]+/gu, "");
+    return {
+      paragraph,
+      index,
+      score: terms.filter((term) => normalized.includes(term)).length,
+    };
+  }).sort((left, right) => right.score - left.score || left.index - right.index);
+  const selected = ranked[0]?.paragraph;
+  return selected === undefined ? undefined : [...selected].slice(0, 1_200).join("");
 }
 
 function supportedClaims(

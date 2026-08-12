@@ -478,7 +478,7 @@ describe("deterministic reliable answer pipeline", () => {
     });
   });
 
-  it("does not retry an ungoverned synthesis after a transport failure", async () => {
+  it("publishes an exact formal evidence excerpt after a low-risk transport failure", async () => {
     const { trace } = traceFixture();
     const fixture = pipelineFixture();
     vi.mocked(fixture.synthesizer.draft).mockRejectedValueOnce(
@@ -495,9 +495,37 @@ describe("deterministic reliable answer pipeline", () => {
       signal: new AbortController().signal,
     });
 
-    expect(execution.result.status).toBe("temporarily_unavailable");
+    expect(execution.result.status).toBe("answered");
+    expect(execution.result.answer).toContain("正式资料说明支持邮件归档。[1]");
+    expect(execution.result.references).toHaveLength(1);
     expect(fixture.synthesizer.draft).toHaveBeenCalledOnce();
     expect(execution.callBudget.usedOpenEndedCalls).toBe(1);
+  });
+
+  it("does not project an unreviewed evidence excerpt for a high-risk obligation", async () => {
+    const { trace } = traceFixture();
+    const fixture = pipelineFixture();
+    vi.mocked(fixture.synthesizer.draft).mockRejectedValueOnce(
+      new ModelUnavailableError("model_timeout"),
+    );
+    const highRiskContract: AtomicObligationContract = {
+      ...contract,
+      obligations: [{ ...contract.obligations[0]!, risk: "high" }],
+    };
+
+    const execution = await fixture.pipeline.answer({
+      question: highRiskContract.sourceQuestion,
+      scope: "professional",
+      contract: highRiskContract,
+      plans: [plan],
+      budget: new StageBudgetAllocator({ startedAt: Date.now() }),
+      trace,
+      signal: new AbortController().signal,
+    });
+
+    expect(execution.result.status).toBe("temporarily_unavailable");
+    expect(execution.result.references).toEqual([]);
+    expect(fixture.synthesizer.draft).toHaveBeenCalledOnce();
   });
 
   it("performs at most one targeted revision for all rejected claims", async () => {
