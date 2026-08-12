@@ -14,7 +14,7 @@ const baseEnvSchema = z.object({
   PSE_MODEL_JSON_RESPONSE_FORMAT: z.enum(["true", "false"]).default("true"),
   PSE_MODEL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(180_000).default(60_000),
   PSE_MODEL_MAX_TOKENS: z.coerce.number().int().min(1_024).max(32_768).default(8_192),
-  PSE_MODEL_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(3),
+  PSE_MODEL_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
   PSE_MODEL_MAX_QUEUE: z.coerce.number().int().min(0).max(1_024).default(32),
   PSE_MODEL_QUEUE_TIMEOUT_MS: z.coerce.number().int().min(100).max(180_000).default(60_000),
   PSE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(1_800_000).default(180_000),

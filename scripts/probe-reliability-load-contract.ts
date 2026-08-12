@@ -14,6 +14,33 @@ export interface ReliabilityModelMetrics {
   readonly modelAttemptCount: number;
 }
 
+export interface ReliabilitySchedulerIdentity {
+  readonly maxConcurrency: number;
+  readonly maxQueueSize: number;
+  readonly queueTimeoutMs: number;
+}
+
+export function parseReliabilitySchedulerIdentity(
+  env: Readonly<Record<string, string | undefined>>,
+): ReliabilitySchedulerIdentity {
+  const maxConcurrency = boundedInteger(env.PSE_MODEL_MAX_CONCURRENCY, 4, 1, 32);
+  const maxQueueSize = boundedInteger(env.PSE_MODEL_MAX_QUEUE, 32, 0, 1_024);
+  const queueTimeoutMs = boundedInteger(
+    env.PSE_MODEL_QUEUE_TIMEOUT_MS,
+    60_000,
+    100,
+    180_000,
+  );
+  if (
+    maxConcurrency === undefined ||
+    maxQueueSize === undefined ||
+    queueTimeoutMs === undefined
+  ) {
+    throw new Error("invalid_reliability_scheduler_identity");
+  }
+  return Object.freeze({ maxConcurrency, maxQueueSize, queueTimeoutMs });
+}
+
 export function selectReliabilityCases<T extends { readonly id: string }>(
   cases: readonly T[],
   idsValue: string | undefined,
@@ -244,6 +271,20 @@ function nonNegativeNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : 0;
+}
+
+function boundedInteger(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  const parsed = value === undefined || value.trim() === ""
+    ? fallback
+    : Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum
+    ? parsed
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

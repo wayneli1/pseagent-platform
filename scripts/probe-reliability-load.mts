@@ -7,6 +7,7 @@ import { createPseAgentRuntime } from "../apps/pseagent/src/embedded.ts";
 import {
   evaluateReliabilityLoadGate,
   parseReliabilityKnowledgeHealth,
+  parseReliabilitySchedulerIdentity,
   selectReliabilityCases,
   summarizeReliabilityLoad,
   type ReliabilityLoadObservation,
@@ -37,6 +38,7 @@ const selected = selectReliabilityCases(
 if (selected.length === 0) throw new Error("no_reliability_cases_selected");
 const work = Array.from({ length: repeat }, () => selected).flat();
 const knowledgeRevisions = await readKnowledgeRevisions();
+const scheduler = parseReliabilitySchedulerIdentity(process.env);
 const report = {
   generatedAt: new Date().toISOString(),
   commit: gitCommit(),
@@ -48,6 +50,7 @@ const report = {
     verifier: process.env.PSE_VERIFIER_MODEL_NAME ?? process.env.PSE_MODEL_NAME,
   },
   knowledgeRevisions,
+  scheduler,
   profiles: [] as Array<{
     readonly summary: ReturnType<typeof summarizeReliabilityLoad>;
     readonly records: readonly (ReliabilityLoadObservation & {

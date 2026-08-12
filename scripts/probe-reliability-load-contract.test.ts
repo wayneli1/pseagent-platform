@@ -3,6 +3,7 @@ import {
   collectReliabilityModelMetrics,
   evaluateReliabilityLoadGate,
   parseReliabilityKnowledgeHealth,
+  parseReliabilitySchedulerIdentity,
   selectReliabilityCases,
   summarizeReliabilityLoad,
 } from "./probe-reliability-load-contract.js";
@@ -39,6 +40,26 @@ describe("reliability load report", () => {
       professional: "a".repeat(40),
       general: "b".repeat(40),
     });
+  });
+
+  it("records the bounded scheduler identity used by the load run", () => {
+    expect(parseReliabilitySchedulerIdentity({})).toEqual({
+      maxConcurrency: 4,
+      maxQueueSize: 32,
+      queueTimeoutMs: 60_000,
+    });
+    expect(parseReliabilitySchedulerIdentity({
+      PSE_MODEL_MAX_CONCURRENCY: "7",
+      PSE_MODEL_MAX_QUEUE: "64",
+      PSE_MODEL_QUEUE_TIMEOUT_MS: "90000",
+    })).toEqual({
+      maxConcurrency: 7,
+      maxQueueSize: 64,
+      queueTimeoutMs: 90_000,
+    });
+    expect(() => parseReliabilitySchedulerIdentity({
+      PSE_MODEL_MAX_QUEUE: "-1",
+    })).toThrow("invalid_reliability_scheduler_identity");
   });
 
   it("keeps content-free queue and execution metrics for one request", () => {
