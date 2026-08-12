@@ -84,6 +84,14 @@ export type DiagnosticEvent =
       readonly elapsedMs: number;
     }
   | {
+      readonly event: "task_spec_recovery";
+      readonly trigger: "guard_rejected" | "analysis_unavailable";
+      readonly result: "recovered" | "rejected";
+      readonly issueCodes: readonly TaskSpecIssueCode[];
+      readonly domainCount: number;
+      readonly obligationCount: number;
+    }
+  | {
       readonly event: "task_spec_activation";
       readonly activated: boolean;
       readonly reason:
@@ -735,6 +743,19 @@ function allowlistDiagnosticEvent(
           ["completed", "invalid", "unavailable", "timeout"] as const,
         ),
         elapsedMs: safeCount(event.elapsedMs),
+      };
+    case "task_spec_recovery":
+      return {
+        event: event.event,
+        trigger: safeEnum(
+          event.trigger,
+          ["guard_rejected", "analysis_unavailable"] as const,
+        ),
+        result: safeEnum(event.result, ["recovered", "rejected"] as const),
+        issueCodes: safeArray(event.issueCodes, (item) =>
+          safeEnum(item, TASK_SPEC_ISSUE_VALUES)),
+        domainCount: safeCount(event.domainCount),
+        obligationCount: safeCount(event.obligationCount),
       };
     case "task_spec_activation":
       return {

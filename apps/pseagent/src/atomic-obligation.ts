@@ -5,6 +5,9 @@ import {
 } from "./obligation-semantics.js";
 import {
   extractExplicitQuestionSignals,
+  isTechnicalAcceptanceChecklist,
+  isProductNeutralGovernanceDeliverable,
+  requiresMixedKnowledgeDomains,
   taskSpecSchema,
   type KnowledgeDomain,
   type TaskSpec,
@@ -72,8 +75,8 @@ const RISK_PATTERN = /(?:风险|边界|隐患|注意事项)/u;
 const DIAGNOSIS_PATTERN = /(?:诊断|分析|评估|判断|原因|为什么|为何)/u;
 const PROFESSIONAL_PATTERN =
   /(?:Coremail|Exchange|Office\s*365|邮件|邮箱|归档|网关|反垃圾|迁移|版本|接口|协议|模块|授权|容灾|多活|LDAP|AD|RPO|RTO)/iu;
-const GENERAL_GOVERNANCE_PATTERN =
-  /(?:POC|合同|验收|售前|商机|赢率|胜率|成交|客户现状|采购|预算|决策|职责|流程|组织|沟通|升级路径|风险沟通)/iu;
+const CUSTOMER_INPUT_GOVERNANCE_PATTERN =
+  /(?:客户(?:信息|现状|事实|输入).{0,12}(?:不足|缺失|不完整|未知)|如何推进项目|项目如何推进|售前.{0,8}(?:推进|建议))/u;
 const HIGH_RISK_PATTERN =
   /(?:合同|承诺|保证|必然|认证|合规|监管|安全|权限|隐私|凭据|密码|密钥|审计|删除|导出|生产环境|SLA|价格底线|责任)/iu;
 const PROHIBITED_PATTERN =
@@ -227,13 +230,14 @@ function obligationSeeds(question: string): ObligationSeed[] {
     .filter((seed): seed is ObligationSeed => seed !== undefined);
   const signals = extractExplicitQuestionSignals(question);
   for (const sourceText of [
+    ...signals.requestClauses,
     ...signals.independentRequestClauses,
     ...signals.requiredParallelGroups.flatMap((group) => group.items),
   ]) {
     const start = question.indexOf(sourceText);
     if (start < 0) continue;
     const end = start + sourceText.length;
-    if (seeds.some((seed) => start >= seed.start && end <= seed.end)) continue;
+    if (seeds.some((seed) => start < seed.end && end > seed.start)) continue;
     const seed = trimSeedBounds(question, start, end);
     if (seed !== undefined) seeds.push(seed);
   }
@@ -278,7 +282,16 @@ function classifySeedWithModelTaskSpecOrDeterministicFallback(
   const source = refinedSourceSeed(seed, question, matched);
   const kind = deterministicKind(source.text, matched?.deliverable.kind);
   const evidencePolicy = deterministicEvidencePolicy(source.text, kind, matched);
-  const domains = deterministicDomains(source.text, question, kind, evidencePolicy, matched);
+  const domains = deterministicDomains(
+    source.text,
+    question,
+    kind,
+    evidencePolicy,
+    matched,
+    stableUnique(taskItems
+      .filter(({ deliverable, obligation }) => deliverable.required && obligation.required)
+      .flatMap(({ obligation }) => obligation.domains)),
+  );
   const risk = deterministicRisk(source.text);
   const targetEntityIds = matched?.obligation.targetEntityIds ?? taskSpec.entities
     .filter((entity) => normalize(source.text).includes(normalize(entity.sourceText)))
@@ -334,6 +347,15 @@ function bestTaskSpecMatch(
   items: readonly TaskSpecObligation[],
 ): TaskSpecObligation | undefined {
   const seed = normalize(seedText);
+  const sourceContained = items
+    .map((item) => ({ item, source: normalize(item.obligation.sourceText) }))
+    .filter(({ source }) =>
+      source.length > 0 && seed.length > 0 &&
+      (source.includes(seed) || seed.includes(source)))
+    .sort((left, right) =>
+      Math.abs(left.source.length - seed.length) -
+        Math.abs(right.source.length - seed.length));
+  if (sourceContained.length > 0) return sourceContained[0]!.item;
   let best: { readonly item: TaskSpecObligation; readonly score: number } | undefined;
   for (const item of items) {
     const source = normalize(item.obligation.sourceText);
@@ -364,7 +386,21 @@ function deterministicEvidencePolicy(
   matched: TaskSpecObligation | undefined,
 ): AtomicObligation["evidencePolicy"] {
   if (kind === "case_judgement") return "customer_input";
-  if (DIRECT_EVIDENCE_PATTERN.test(text) && kind !== "procedure") return "direct";
+  const sourceAnalysis = analyzeObligationSource(text);
+  const containsDefaultProtectedFact = sourceAnalysis.atoms.some((atom) =>
+    atom.kind === "protected_fact" && atom.reason === "default_fact");
+  const containsExplicitSynthesis = sourceAnalysis.atoms.some((atom) =>
+    atom.kind === "synthesis");
+  if (
+    DIRECT_EVIDENCE_PATTERN.test(text) ||
+    (
+      sourceAnalysis.requiresDirectEvidence &&
+      containsDefaultProtectedFact &&
+      !containsExplicitSynthesis
+    )
+  ) {
+    return "direct";
+  }
   if (["procedure", "recommendation", "diagnosis", "risk_assessment"].includes(kind)) {
     return "synthesis";
   }
@@ -377,18 +413,42 @@ function deterministicDomains(
   kind: AtomicObligationKind,
   evidencePolicy: AtomicObligation["evidencePolicy"],
   matched: TaskSpecObligation | undefined,
+  fallbackDomains: readonly KnowledgeDomain[],
 ): KnowledgeDomain[] {
+  const stableFallbackDomains = stableUnique(fallbackDomains);
+  if (
+    stableFallbackDomains.length === 2 &&
+    requiresMixedKnowledgeDomains(question)
+  ) {
+    return [...stableFallbackDomains];
+  }
+  if (
+    stableFallbackDomains.length === 1 &&
+    stableFallbackDomains[0] === "coremail-professional" &&
+    isTechnicalAcceptanceChecklist(question)
+  ) {
+    return [...stableFallbackDomains];
+  }
   const professional = PROFESSIONAL_PATTERN.test(text);
-  const general = GENERAL_GOVERNANCE_PATTERN.test(text) ||
-    evidencePolicy === "customer_input" ||
-    ["procedure", "recommendation", "diagnosis", "risk_assessment", "case_judgement"]
-      .includes(kind) && !professional;
-  if (professional && general && /(?:POC|合同|验收|职责|流程|组织|沟通)/iu.test(text)) {
+  const general = evidencePolicy === "customer_input" ||
+    CUSTOMER_INPUT_GOVERNANCE_PATTERN.test(text) ||
+    isProductNeutralGovernanceDeliverable(text) ||
+    (
+      isProductNeutralGovernanceDeliverable(question) &&
+      !professional &&
+      ["procedure", "recommendation", "diagnosis", "risk_assessment"]
+        .includes(kind)
+    );
+  if (professional && general) {
     return ["coremail-professional", "presales-general"];
   }
   if (professional) return ["coremail-professional"];
   if (general) return ["presales-general"];
   if (matched !== undefined) return [...matched.obligation.domains];
+  if (["procedure", "recommendation", "diagnosis", "risk_assessment"].includes(kind)) {
+    return ["presales-general"];
+  }
+  if (fallbackDomains.length > 0) return [...fallbackDomains];
   return PROFESSIONAL_PATTERN.test(question)
     ? ["coremail-professional"]
     : ["presales-general"];
@@ -457,6 +517,6 @@ function takeCharacters(value: string, maximum: number): string {
   return [...value].slice(0, maximum).join("");
 }
 
-function stableUnique(values: readonly string[]): string[] {
+function stableUnique<T extends string>(values: readonly T[]): T[] {
   return [...new Set(values)];
 }

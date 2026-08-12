@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { KnowledgePlan } from "./contracts.js";
 import { InvalidModelPayloadError, type ModelClient } from "./model-client.js";
 import {
+  compileDeterministicTaskSpecFallback,
   DeterministicTaskSpecGuard,
   extractExplicitQuestionSignals,
   ModelTaskCompiler,
@@ -3175,3 +3176,58 @@ function compilerInput(
     },
   };
 }
+
+describe("deterministic task recovery semantics", () => {
+  it("parses a governed distributive component list without rejecting checklist wording", () => {
+    const componentSignals = extractExplicitQuestionSignals(
+      "排障时如何区分 MD、UD 和日志数据库各自保存的数据，并据此安排备份与恢复顺序？",
+    );
+    expect(componentSignals.entityGroups).toEqual(expect.arrayContaining([
+      expect.objectContaining({ items: ["MD", "UD", "日志数据库"] }),
+    ]));
+    expect(componentSignals.unresolvedDistributiveGroups).toEqual([]);
+
+    const checklistSignals = extractExplicitQuestionSignals(
+      "Fit 三层验证如何分别检查问题、方案和组织采用，防止只验证技术功能？",
+    );
+    expect(checklistSignals.unresolvedDistributiveGroups).toEqual([]);
+  });
+
+  it("keeps technical acceptance checklists in the professional domain", () => {
+    for (const question of [
+      "零停机迁移完成后，邮件数量、文件夹、抽样正文和增量差异应怎样形成完整性验收证据？",
+      "XT6.0.8 采用 MariaDB 与国产数据库时，安装路径、依赖和验收项有哪些需要分别核对？",
+      "切换后总量一致但抽样正文不同，沿前面的验收框架说明如何暂停和复核。",
+    ]) {
+      const taskSpec = compileDeterministicTaskSpecFallback(
+        compilerInput(question, "professional"),
+      );
+      const domains = new Set(taskSpec.deliverables.flatMap((deliverable) =>
+        deliverable.obligations.flatMap((obligation) => obligation.domains)));
+      expect(domains).toEqual(new Set(["coremail-professional"]));
+      expect(new DeterministicTaskSpecGuard().validate({
+        resolvedQuestion: compilerInput(question, "professional").resolvedQuestion,
+        taskSpec,
+      }).ok).toBe(true);
+    }
+  });
+
+  it("preserves both domains for technical scenarios governed by named methods", () => {
+    for (const question of [
+      "Usertransport 并行中继方案怎样按 PoC 反向设计，从回退决策倒推未切换用户的路由测试？",
+      "MariaDB 与国产数据库安装差异如何纳入 Fit 三层验证，同时检查技术、运维采用和项目约束？",
+      "设计旧邮箱只读入口前，怎样用 Mom Test 追问用户过去查阅历史邮件的真实频率和场景？",
+      "东方通资源尚未定型时，售前原型怎样展示部署角色又明确并发数据和规格都不是交付承诺？",
+    ]) {
+      const taskSpec = compileDeterministicTaskSpecFallback(
+        compilerInput(question, "professional"),
+      );
+      const domains = new Set(taskSpec.deliverables.flatMap((deliverable) =>
+        deliverable.obligations.flatMap((obligation) => obligation.domains)));
+      expect(domains).toEqual(new Set([
+        "coremail-professional",
+        "presales-general",
+      ]));
+    }
+  });
+});

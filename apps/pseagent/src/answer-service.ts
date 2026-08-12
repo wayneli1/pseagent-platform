@@ -62,6 +62,8 @@ import {
   type PolicySemanticClassifier,
 } from "./policy-preflight.js";
 import {
+  compileDeterministicTaskSpecFallback,
+  DeterministicTaskSpecGuard,
   extractExplicitQuestionSignals,
   type KnowledgeDomain,
   type TaskSpecIssueCode,
@@ -637,6 +639,36 @@ export class AnswerService {
             ),
           })
         : undefined;
+      if (
+        this.dependencies.reliabilityControlPlaneEnabled === true &&
+        (taskAnalysis === undefined || !taskAnalysis.guard.ok)
+      ) {
+        const recoveryTrigger = taskAnalysis === undefined
+          ? "analysis_unavailable" as const
+          : "guard_rejected" as const;
+        const recovered = deterministicTaskAnalysisFallback({
+          resolvedQuestion: taskAnalysis?.resolvedQuestion ?? (
+            questionResolution.contextUsed
+              ? questionResolution
+              : identityResolvedQuestion(routedQuestion)
+          ),
+          scope,
+          session,
+        });
+        recordDiagnostic(trace, {
+          event: "task_spec_recovery",
+          trigger: recoveryTrigger,
+          result: recovered.guard.ok ? "recovered" : "rejected",
+          issueCodes: stableUniqueIssueCodes(
+            recovered.guard.issues.map((issue) => issue.code),
+          ),
+          domainCount: new Set(recovered.obligationContract.obligations.flatMap(
+            (obligation) => obligation.domains,
+          )).size,
+          obligationCount: recovered.obligationContract.obligations.length,
+        });
+        taskAnalysis = recovered;
+      }
       if(taskAnalysis!==undefined)questionResolution=taskAnalysis.resolvedQuestion;
       const contextualCardIdHashes = questionResolution.contextUsed
         ? latestConversationAnswerCardIdHashes(conversationContext)
@@ -909,6 +941,16 @@ export class AnswerService {
           reason: "analysis_unavailable",
           requirementCount: 0,
         });
+      }
+      if (this.dependencies.reliabilityControlPlaneEnabled === true) {
+        recordDiagnostic(trace, { event: "stop", reason: "domain_plan_invalid" });
+        return withQuestionResolution(finishExecution(
+          trace,
+          temporaryUnavailableResult(scope),
+          startedAt,
+          false,
+          false,
+        ));
       }
       if (effectivePlan === undefined) {
         legacyPlan = await loadLegacyPlan();
@@ -1862,6 +1904,41 @@ function completeTaskAnalysisResult(input: {
       contract: obligationContract,
     }),
     obligationContract,
+  };
+}
+
+function deterministicTaskAnalysisFallback(input: {
+  readonly resolvedQuestion: ResolvedQuestion;
+  readonly scope: Exclude<Scope, "normal">;
+  readonly session: KnowledgeSession;
+}): TaskAnalysisShadowResult {
+  const taskSpec = compileDeterministicTaskSpecFallback({
+    resolvedQuestion: input.resolvedQuestion,
+    scopeHint: input.scope,
+    knowledgeContext: {
+      purpose: input.session.purpose,
+      schema: input.session.schema,
+      planningOverview: input.session.planningOverview,
+    },
+  });
+  const obligationContract = compileAtomicObligationContract({
+    resolvedQuestion: input.resolvedQuestion,
+    taskSpec,
+  });
+  const guard = new DeterministicTaskSpecGuard().validate({
+    resolvedQuestion: input.resolvedQuestion,
+    taskSpec,
+  });
+  const guardedTaskSpec = materializeGuardedTaskSpec({
+    original: taskSpec,
+    contract: obligationContract,
+  });
+  return {
+    resolvedQuestion: input.resolvedQuestion,
+    taskSpec: guardedTaskSpec,
+    obligationContract,
+    guard,
+    elapsedMs: 0,
   };
 }
 

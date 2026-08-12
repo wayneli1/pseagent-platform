@@ -61,6 +61,14 @@ describe("development diagnostic trace", () => {
       elapsedMs: 12,
     });
     trace.record({
+      event: "task_spec_recovery",
+      trigger: "guard_rejected",
+      result: "recovered",
+      issueCodes: [],
+      domainCount: 2,
+      obligationCount: 2,
+    });
+    trace.record({
       event: "task_spec_activation",
       activated: true,
       reason: "activated",
@@ -150,6 +158,7 @@ describe("development diagnostic trace", () => {
       "task_spec",
       "task_spec_guard",
       "task_spec_shadow",
+      "task_spec_recovery",
       "task_spec_activation",
       "answer_card_match",
       "answer_card_activation",
@@ -199,6 +208,14 @@ describe("development diagnostic trace", () => {
       .toMatchObject({
         reason: "guard_rejected",
         issueCodes: ["customer_input_request_unmapped", "protected_fact_not_direct"],
+      });
+    expect(records.find((record) => record.event === "task_spec_recovery"))
+      .toMatchObject({
+        trigger: "guard_rejected",
+        result: "recovered",
+        issueCodes: [],
+        domainCount: 2,
+        obligationCount: 2,
       });
     expect(content.length).toBeLessThan(10_000);
   });

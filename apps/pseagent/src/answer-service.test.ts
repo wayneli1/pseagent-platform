@@ -2178,6 +2178,7 @@ describe("AnswerService", () => {
       readonly shadow?: TaskAnalysisShadow;
       readonly historicalProvider?: HistoricalAnswerProvider;
       readonly multiDomainActiveEnabled?: boolean;
+      readonly reliabilityControlPlaneEnabled?: boolean;
       readonly diagnostics?: DiagnosticTraceFactory;
       readonly reliablePipeline?: ReliableAnswerPipeline;
       readonly qualifiedCache?: QualifiedAnswerCache;
@@ -2240,7 +2241,8 @@ describe("AnswerService", () => {
         taskAnalysisShadow: options.shadow ?? mixedShadow(),
         taskSpecActiveEnabled: true,
         multiDomainActiveEnabled: options.multiDomainActiveEnabled ?? true,
-        reliabilityControlPlaneEnabled: options.reliablePipeline !== undefined,
+        reliabilityControlPlaneEnabled: options.reliabilityControlPlaneEnabled ??
+          options.reliablePipeline !== undefined,
         ...(options.reliablePipeline === undefined
           ? {}
           : { reliablePipeline: options.reliablePipeline }),
@@ -2304,6 +2306,135 @@ describe("AnswerService", () => {
       expect(execution).toMatchObject({
         result: { status: "answered", answer: "可靠控制面回答" },
         domainsUsed: ["coremail-professional", "presales-general"],
+      });
+    });
+
+    it("recovers a rejected model TaskSpec with a deterministic dual-domain contract", async () => {
+      const source = mixedShadow();
+      const shadow = {
+        analyze: vi.fn(async (input: Parameters<TaskAnalysisShadow["analyze"]>[0]) => {
+          const result = await source.analyze(input);
+          return {
+            ...result,
+            guard: {
+              ...result.guard,
+              ok: false,
+              issues: [{
+                code: "protected_fact_not_direct" as const,
+                severity: "error" as const,
+                deliverableId: "D1",
+                obligationId: "O1",
+              }],
+            },
+          };
+        }),
+      } satisfies TaskAnalysisShadow;
+      const reliablePipeline = {
+        answer: vi.fn(async (input: Parameters<ReliableAnswerPipeline["answer"]>[0]) => ({
+          result: {
+            scope: input.scope,
+            status: "answered" as const,
+            policyDisposition: "allowed" as const,
+            knowledgeCoverage: "complete" as const,
+            caseAssessability: "not_applicable" as const,
+            answer: "确定性恢复后的双域回答",
+            references: [],
+          },
+          domainsUsed: input.plans.map((plan) => plan.domain),
+          evidenceLedgers: [],
+          outcomes: [],
+          callBudget: {
+            maximumOpenEndedCalls: 3,
+            usedOpenEndedCalls: 1,
+            usedStructuredCalls: 1,
+          },
+        })),
+      } satisfies ReliableAnswerPipeline;
+      const { service, runAgent, runAgentDetailed } = createMixedService({
+        shadow,
+        reliablePipeline,
+      });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+
+      expect(reliablePipeline.answer).toHaveBeenCalledWith(expect.objectContaining({
+        plans: expect.arrayContaining([
+          expect.objectContaining({ domain: "coremail-professional" }),
+          expect.objectContaining({ domain: "presales-general" }),
+        ]),
+      }));
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(runAgentDetailed).not.toHaveBeenCalled();
+      expect(execution.domainsUsed).toEqual([
+        "coremail-professional",
+        "presales-general",
+      ]);
+    });
+
+    it("recovers unavailable TaskSpec analysis without losing the dual-domain union", async () => {
+      const shadow = {
+        analyze: vi.fn(async () => {
+          throw new InvalidModelPayloadError("invalid_task_spec");
+        }),
+      } satisfies TaskAnalysisShadow;
+      const reliablePipeline = {
+        answer: vi.fn(async (input: Parameters<ReliableAnswerPipeline["answer"]>[0]) => ({
+          result: {
+            scope: input.scope,
+            status: "partially_answered" as const,
+            policyDisposition: "limited" as const,
+            knowledgeCoverage: "partial" as const,
+            caseAssessability: "not_applicable" as const,
+            answer: "确定性分析降级回答",
+            references: [],
+          },
+          domainsUsed: input.plans.map((plan) => plan.domain),
+          evidenceLedgers: [],
+          outcomes: [],
+          callBudget: {
+            maximumOpenEndedCalls: 3,
+            usedOpenEndedCalls: 1,
+            usedStructuredCalls: 1,
+          },
+        })),
+      } satisfies ReliableAnswerPipeline;
+      const { service, runAgent, runAgentDetailed } = createMixedService({
+        shadow,
+        reliablePipeline,
+      });
+
+      const execution = await service.answerDetailed(mixedQuestion);
+
+      expect(reliablePipeline.answer).toHaveBeenCalledWith(expect.objectContaining({
+        plans: expect.arrayContaining([
+          expect.objectContaining({ domain: "coremail-professional" }),
+          expect.objectContaining({ domain: "presales-general" }),
+        ]),
+      }));
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(runAgentDetailed).not.toHaveBeenCalled();
+      expect(execution.result.status).toBe("partially_answered");
+    });
+
+    it("fails closed instead of entering the legacy loop when the reliable pipeline is unavailable", async () => {
+      const question = "对比 Coremail 与 Exchange 的差异";
+      const shadow = {
+        analyze: vi.fn(async () => {
+          throw new InvalidModelPayloadError("invalid_task_spec");
+        }),
+      } satisfies TaskAnalysisShadow;
+      const { service, runAgent, runAgentDetailed } = createMixedService({
+        shadow,
+        reliabilityControlPlaneEnabled: true,
+      });
+
+      const execution = await service.answerDetailed(question);
+
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(runAgentDetailed).not.toHaveBeenCalled();
+      expect(execution).toMatchObject({
+        result: { status: "temporarily_unavailable" },
+        stopReason: "domain_execution_unavailable",
       });
     });
 

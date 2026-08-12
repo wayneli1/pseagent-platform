@@ -562,13 +562,13 @@ export class ModelTaskCompiler implements TaskCompiler {
           taskSpec,
         });
         if (guard.issues.some((issue) => issue.code === "explicit_request_unmapped")) {
-          return repairedDeterministicTaskSpecFallback(input);
+          return compileDeterministicTaskSpecFallback(input);
         }
         return taskSpec;
       } catch (error) {
         if (!(error instanceof InvalidModelPayloadError)) throw error;
         if (attempt === 1) {
-          return repairedDeterministicTaskSpecFallback(input);
+          return compileDeterministicTaskSpecFallback(input);
         }
       }
     }
@@ -580,14 +580,31 @@ export class ModelTaskCompiler implements TaskCompiler {
   }
 }
 
-function repairedDeterministicTaskSpecFallback(input: TaskCompilerInput): TaskSpec {
+export function compileDeterministicTaskSpecFallback(
+  input: TaskCompilerInput,
+): TaskSpec {
   const question = input.resolvedQuestion.standaloneQuestion;
   return repairProfessionalDirectDomains(
     input.scopeHint,
     question,
-    repairNumericOpportunityForecastPolicy(
+    repairExplicitEvidenceConditions(
       question,
-      deterministicTaskSpecFallback(input),
+      repairNumericOpportunityForecastPolicy(
+        question,
+        repairComparisonObligationExpansion(
+          input.scopeHint,
+          question,
+          repairProtectedEvidencePolicies(
+            repairUnambiguousCustomerInputSourceBinding(
+              question,
+              repairExplicitEntityObligationBindings(
+                question,
+                deterministicTaskSpecFallback(input),
+              ),
+            ),
+          ),
+        ),
+      ),
     ),
   );
 }
@@ -596,6 +613,8 @@ const DETERMINISTIC_SYNTHESIS_OVERRIDE_PATTERN =
   /(?:结合客户现状|(?:如何|怎样|怎么|应该怎样).{0,24}设计|(?:重新)?评估(?:项目|商机|机会).*(?:下一步|建议|行动)|(?:^|[，,；;。])[^，,；;。]{0,12}(?:应该|应当)(?:如何|怎样|怎么)\S+)/u;
 const DETERMINISTIC_GENERAL_DOMAIN_PATTERN =
   /(?:售前|销售|商机|赢率|胜率|成交|机会|项目评估|评估项目|下一步|预算|竞争|决策链|客户信息|采购|POC|沟通|表达|客户关系|需求发现|业务价值)/iu;
+const DETERMINISTIC_STRONG_GENERAL_DOMAIN_PATTERN =
+  /(?:销售|商机|赢率|胜率|成交|机会|项目评估|评估项目|下一步|预算|竞争|决策链|客户信息|采购|POC|沟通|表达|客户关系|需求发现|业务价值)/iu;
 const DETERMINISTIC_PROFESSIONAL_DOMAIN_PATTERN =
   /(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b|邮件|邮箱|电子信箱|网关|反垃圾|归档|迁移|部署|版本|兼容|授权|容灾|多活|镜像|AD|LDAP|RPO|RTO)/iu;
 const PRODUCT_NEUTRAL_GOVERNANCE_DELIVERABLE_PATTERN =
@@ -604,12 +623,16 @@ const GOVERNANCE_DELIVERABLE_METHOD_PATTERN =
   /(?:如何|怎样|怎么|应该|应当|哪些|什么|流程|原则|模板|清单|组织|分工|约定|沟通|控制|机制|路径|检查点|边界)/u;
 const STRONG_PRODUCT_NEUTRAL_GOVERNANCE_PATTERN =
   /(?:成功(?:指标|标准|口径)|反向设计|阶段出口|退出条件|责任(?:人|边界|分工)|角色责任|职责分工|RACI|投诉基线|测量周期|合同(?:边界|承诺|责任)|客户(?:承诺|确认|事实|输入)|升级(?:路径|机制|规则)|采购(?:评价|标准)|客观(?:评价)?标准|双方认可|最终决策人|决策(?:标准|边界|记录)|审批人|通过(?:口径|标准)|缺陷(?:升级|处置)|风险(?:沟通|触发条件|披露)|黄灯(?:对话)?|业务情境|技术胜利|结果优先|分层下钻|可观察反馈|问题、价值、组织|价值地图|用户任务|采用收益|证据门|异议预防|购买角色|经济角色|用户角色|技术角色|授权人|使用者|技术否决者|小承诺|共同界定|避免先归责|四栏|事实.{0,12}假设.{0,12}风险.{0,12}未决|有条件(?:的)?.{0,8}让步|交通灯|边界表达|补救方案|透明(?:的)?(?:边界|专业建议)|结构化交接|交给实施团队|剩余假设|预算|内部支持者|TCO|总拥有成本|截止时间)/iu;
+const RELIABILITY_GOVERNANCE_FRAMEWORK_PATTERN =
+  /(?:MEDDPICC|NVC|非暴力沟通|权力地图|四\s*B|Fit\s*三层|Mom\s*Test|原则性谈判|客观.{0,8}标准|价值假设|价值工程|JOLT)/iu;
 const EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN =
   /(?:(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b).{0,48}(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾)|(?:支持|能力|功能|模块|接口|协议|版本|兼容|适配|部署|配置|迁移|归档|网关|反垃圾).{0,48}(?:Coremail|Exchange|\bXT\d+(?:\.\d+)*\b))|(?:(?:POC|验收|核验|验证).{0,32}(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配)|(?:技术能力|产品能力|模块|接口|协议|版本|兼容|适配).{0,32}(?:POC|验收|核验|验证))/iu;
+const RELIABILITY_EXPLICIT_TECHNICAL_PATTERN =
+  /(?:(?:可核验(?:的)?能力|能力核验).{0,32}(?:POC|验收|验证)|(?:POC|验收|验证).{0,32}(?:可核验(?:的)?能力|能力核验))/iu;
 const TECHNICAL_SYSTEM_ANCHOR_PATTERN =
-  /(?:Coremail|Exchange|Office\s*365|邮件|邮箱|终端|客户端|系统|接口|API|SDK|协议|版本|标准版|进阶版|授权|数据库|多租户|容灾|HA|多活|镜像|网关|归档|迁移|加密|日程|文件中转|访问控制|公网\s*IP|RBL|Webadmin|DNS|TTL|DMZ|SSL|OAuth2|OpenSSL|Outlook|PCMail|PST|EML|H5|AIR|searchsvr|全文索引|deliveragent|账号盗用|发信队列|残留队列|队列处置|日志级别|\bDA\b|\bMTA\b|\bMD\b|\bUD\b|MS0257|信创)/iu;
+  /(?:Coremail|Exchange|Office\s*365|邮件|邮箱|终端|客户端|系统|接口|API|SDK|协议|版本|标准版|进阶版|授权|数据库|MariaDB|国产数据库|东方通|多租户|容灾|HA|多活|镜像|网关|归档|迁移|加密|日程|文件中转|访问控制|公网\s*IP|RBL|Webadmin|DNS|TTL|DMZ|SSL|OAuth2|OpenSSL|Outlook|PCMail|PST|EML|H5|AIR|searchsvr|全文索引|deliveragent|Usertransport|中继|路由|账号盗用|发信队列|残留队列|队列处置|日志级别|并发数据|规格|总量|抽样正文|GT|灰名单|Ukey|证书链|NAT|防火墙|防暴卫士|威胁情报|分批切换|批次切换|报备|保护期|\bDA\b|\bMTA\b|\bMD\b|\bUD\b|MS0257|信创)/iu;
 const TECHNICAL_EVIDENCE_ACTION_PATTERN =
-  /(?:事实|证据|能力|技术结果|技术缺口|产品条件|核验|验证|测试|演示|互通|恢复|适配|隔离|过滤|访问控制|申诉|权限|限制|切换|回退|前提|版本矩阵|版本边界|版本.{0,8}升级|升级.{0,8}版本|邮件流|技术风险|日志|排查|故障|队列|索引|重建|配置|端口|路由|离线|投递|调高|处置)/iu;
+  /(?:事实|证据|能力|技术结果|技术缺口|产品条件|核验|核对|验证|确认|测试|演示|展示|互通|恢复|适配|隔离|过滤|访问控制|申诉|权限|授权|限制|切换|回退|前提|版本矩阵|版本边界|版本.{0,8}升级|升级.{0,8}版本|邮件流|技术风险|日志|排查|故障|延迟|重试|白名单|队列|索引|重建|配置|端口|路由|离线|投递|调高|处置)/iu;
 const EXPLICIT_CONFLICT_PATTERN = /(?:冲突|不一致|相互矛盾|口径差异|结论差异)/u;
 const EXPLICIT_AMBIGUITY_PATTERN = /(?:不明确|不清楚|模糊|歧义|不确定)/u;
 const EXPLICIT_FRESHNESS_PATTERN = /(?:过期|历史资料|旧案例|时效|现行|最新|昨天.*今天)/u;
@@ -696,17 +719,25 @@ function deterministicDomainFor(
   evidencePolicy: "direct" | "synthesis" | "customer_input",
   scopeHint: Exclude<Scope, "normal">,
 ): KnowledgeDomain {
-  if (
-    evidencePolicy === "customer_input" ||
-    DETERMINISTIC_GENERAL_DOMAIN_PATTERN.test(sourceText)
-  ) {
+  if (evidencePolicy === "customer_input") {
     return "presales-general";
   }
   if (
-    DETERMINISTIC_PROFESSIONAL_DOMAIN_PATTERN.test(sourceText) ||
-    scopeHint === "professional"
+    DETERMINISTIC_PROFESSIONAL_DOMAIN_PATTERN.test(sourceText)
   ) {
     return "coremail-professional";
+  }
+  if (DETERMINISTIC_STRONG_GENERAL_DOMAIN_PATTERN.test(sourceText)) {
+    return "presales-general";
+  }
+  if (
+    scopeHint === "professional" &&
+    !isProductNeutralGovernanceDeliverable(sourceText)
+  ) {
+    return "coremail-professional";
+  }
+  if (DETERMINISTIC_GENERAL_DOMAIN_PATTERN.test(sourceText)) {
+    return "presales-general";
   }
   return "presales-general";
 }
@@ -725,6 +756,7 @@ function repairProfessionalDirectDomains(
   }
   const structuredTechnicalRequirement =
     isStructuredTechnicalCapabilityRequirement(question);
+  const technicalAcceptanceQuestion = isTechnicalAcceptanceChecklist(question);
   const singleObligationMixedRequest = requiredObligationCount(
     questionLevelRepaired,
   ) === 1 &&
@@ -736,10 +768,14 @@ function repairProfessionalDirectDomains(
       ...deliverable,
       obligations: deliverable.obligations.map((obligation) => {
         const semanticText = `${obligation.label} ${obligation.sourceText}`;
-        const governance = isProductNeutralGovernanceDeliverable(semanticText);
+        const governance = !technicalAcceptanceQuestion &&
+          isProductNeutralGovernanceDeliverable(semanticText);
         const productFact = EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(
           semanticText,
         );
+        const strongGeneralOnly = DETERMINISTIC_STRONG_GENERAL_DOMAIN_PATTERN.test(
+          semanticText,
+        ) && !isExplicitTechnicalEvidenceDeliverable(semanticText);
         if ((governance && productFact) || singleObligationMixedRequest) {
           return {
             ...obligation,
@@ -750,6 +786,9 @@ function repairProfessionalDirectDomains(
           };
         }
         if (governance) {
+          return { ...obligation, domains: ["presales-general" as const] };
+        }
+        if (strongGeneralOnly) {
           return { ...obligation, domains: ["presales-general" as const] };
         }
         return obligation.evidencePolicy === "direct" ||
@@ -840,18 +879,29 @@ export function repairTaskSpecKnowledgeDomains(input: {
 
 function isExplicitTechnicalEvidenceDeliverable(value: string): boolean {
   return EXPLICIT_PRODUCT_FACT_DELIVERABLE_PATTERN.test(value) ||
+    RELIABILITY_EXPLICIT_TECHNICAL_PATTERN.test(value) ||
     (
       TECHNICAL_SYSTEM_ANCHOR_PATTERN.test(value) &&
       TECHNICAL_EVIDENCE_ACTION_PATTERN.test(value)
     );
 }
 
-function isProductNeutralGovernanceDeliverable(value: string): boolean {
+export function isProductNeutralGovernanceDeliverable(value: string): boolean {
+  if (isTechnicalAcceptanceChecklist(value)) return false;
   return STRONG_PRODUCT_NEUTRAL_GOVERNANCE_PATTERN.test(value) ||
+    RELIABILITY_GOVERNANCE_FRAMEWORK_PATTERN.test(value) ||
+    /(?:交付承诺)/u.test(value) ||
     (
       PRODUCT_NEUTRAL_GOVERNANCE_DELIVERABLE_PATTERN.test(value) &&
       GOVERNANCE_DELIVERABLE_METHOD_PATTERN.test(value)
     );
+}
+
+export function isTechnicalAcceptanceChecklist(value: string): boolean {
+  return TECHNICAL_SYSTEM_ANCHOR_PATTERN.test(value) &&
+    /(?:验收|核对|复核|验证)/u.test(value) &&
+    /(?:邮件数量|文件夹|抽样正文|增量差异|安装路径|依赖|验收项|总量一致|正文不同)/u.test(value) &&
+    !/(?:组织|职责|责任|承诺|决策|采购|合同|范围|项目约束|运维采用|退出条件|阶段出口)/u.test(value);
 }
 
 function deterministicDeliverableKind(
@@ -1001,9 +1051,11 @@ export function extractExplicitQuestionSignals(
     }
   }
   const distributiveParallelListPattern =
-    /(?:^|[，,；;。！？!?])\s*(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)\s*(?=(?:各自|分别|逐一|逐个)(?!\s*(?:检索|搜索|查找|说明|介绍|分析|评估|对比|比较|列出|给出)))/gu;
+    /(?:^|[，,；;。！？!?])\s*(?<list>[\p{L}\p{N}A-Za-z·（）()、，,\s和与及.]{2,160}?)\s*(?=(?:各自|分别|逐一|逐个)(?!\s*(?:检索|搜索|查找|说明|介绍|分析|评估|检查|验证|核对|复核|对比|比较|列出|给出)))/gu;
   for (const match of question.matchAll(distributiveParallelListPattern)) {
-    const sourceText = match.groups?.list?.trim();
+    const sourceText = match.groups?.list
+      ?.replace(/^.*?(?:区分|对比|比较)\s*/u, "")
+      .trim();
     if (!sourceText) continue;
     const distribution = distributiveEntityItems(
       sourceText,
@@ -1197,7 +1249,13 @@ function distributiveEntityItems(
 ): { readonly items: readonly string[]; readonly unresolved: boolean } {
   const strongSeparated = sourceText.split(/(?:、|，|,)/u);
   if (strongSeparated.length > 1) {
-    const items = strongSeparated.map(cleanExplicitEntity).filter(isPlausibleExplicitEntity);
+    const items = strongSeparated
+      .flatMap((segment) =>
+        /^\s*[A-Z][A-Z0-9._-]*\s*(?:和|与|及)\s*\S+/u.test(segment)
+          ? splitConjoinedEntitySegment(segment)
+          : [segment])
+      .map(cleanExplicitEntity)
+      .filter(isPlausibleExplicitEntity);
     if (items.length < 2) return { items, unresolved: true };
     if (anchoredEntitySourceTexts === undefined) return { items, unresolved: false };
     const anchors = anchoredEntitySourceTexts.map((anchor) => anchor.trim());

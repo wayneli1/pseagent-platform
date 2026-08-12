@@ -76,6 +76,7 @@ export class AnswerProgressTracker {
       case "question_resolution":
       case "task_spec_guard":
       case "task_spec_shadow":
+      case "task_spec_recovery":
       case "answer_card_match":
       case "answer_card_activation":
         this.advance("planning");
